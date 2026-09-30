@@ -1,0 +1,56 @@
+{
+  "fileMenu": {
+    "title": "File",
+    "newProject": "New Project",
+    "openProject": "Open Project",
+    "saveProjectInPlace": "Save Project (in-place)",
+    "saveProject": "Save Project",
+    "saveProjectAs": "Save Project As...",
+    "autoSave": "Auto-save",
+    "exportImage": "Export as Image..."
+  },
+  "bottomBar": {
+    "autoSaveOff": "Auto-save off",
+    "autoSaveOn": "Auto-save on",
+    "autoSavedJustNow": "Auto-saved just now",
+    "autoSavedSecondsAgo": "Auto-saved {{count}}s ago",
+    "autoSavedMinutesAgo": "Auto-saved {{count}}m ago",
+    "autoSaveShortOff": "Off",
+    "autoSaveShortOn": "On",
+    "lastSavedNone": "Last saved: —",
+    "lastSavedNotSaved": "Not saved",
+    "lastSavedJustNow": "Last saved: just now",
+    "lastSavedSecondsAgo": "Last saved: {{count}}s ago",
+    "lastSavedMinutesAgo": "Last saved: {{count}}m ago",
+    "lastSavedHoursAgo": "Last saved: {{count}}h ago",
+    "lastSavedDaysAgo": "Last saved: {{count}}d ago",
+    "shortJustNow": "Just now",
+    "shortSecondsAgo": "{{count}}s ago",
+    "shortMinutesAgo": "{{count}}m ago",
+    "shortHoursAgo": "{{count}}h ago",
+    "shortDaysAgo": "{{count}}d ago",
+    "zoom": "Zoom:",
+    "x": "X:",
+    "y": "Y:",
+    "tool": "Tool:",
+    "home": "Home",
+    "toggleAutoSave": "Toggle auto-save",
+    "resetView": "Reset view to center",
+    "coords": "({{x}}, {{y}}, {{scale}}%)"
+  },
+  "keyLabels": {
+    "ctrl": "Ctrl",
+    "alt": "Alt",
+    "shift": "Shift",
+    "esc": "Esc",
+    "space": "Space"
+  },
+  "toolHints": {
+    "select": "Select: {{modifier}} to multi-sel, drag to move",
+    "rectangle": "Rectangle: {{modifier}} to square",
+    "ellipse": "Ellipse: {{modifier}} to circle",
+    "callout": "Callout: Space to start arrow; {{modifier}} to straight arrow",
+    "line": "Line: {{modifier}} to straight line",
+    "arrow": "Arrow: Space to start arrow, {{modifier}} to straight arrow"
+  }
+}
