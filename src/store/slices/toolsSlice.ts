@@ -1,7 +1,9 @@
 import type { StoreSlice } from '../storeTypes';
-import { defaultToolSettings } from '../storeDefaults';
-import { readJSON, STORAGE_KEYS, writeJSON } from '../storage';
 
+/**
+ * Tool selection + quick-access settings popup state. `toolSettings` /
+ * `setToolSettings` moved to `settingsSlice`; they had no other coupling here.
+ */
 export const createToolsSlice: StoreSlice = (set) => ({
     activeTool: 'select',
     setActiveTool: (tool) => set((state) => {
@@ -10,12 +12,6 @@ export const createToolsSlice: StoreSlice = (set) => ({
             return { showToolSettings: true };
         }
         return { activeTool: tool, showToolSettings: false };
-    }),
-    toolSettings: readJSON(STORAGE_KEYS.toolSettings, defaultToolSettings),
-    setToolSettings: (settings) => set((state) => {
-        const nextSettings = { ...state.toolSettings, ...settings };
-        writeJSON(STORAGE_KEYS.toolSettings, nextSettings);
-        return { toolSettings: nextSettings };
     }),
     showToolSettings: false,
     setShowToolSettings: (show) => set({ showToolSettings: show }),

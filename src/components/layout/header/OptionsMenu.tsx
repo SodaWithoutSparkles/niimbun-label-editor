@@ -7,14 +7,14 @@ interface OptionsMenuProps {
     activeMenu: string | null;
     onToggle: (menu: string) => void;
     onCloseMenu: () => void;
-    onShowShortcutConfig: () => void;
+    onShowSettings: () => void;
 }
 
 export const OptionsMenu: React.FC<OptionsMenuProps> = ({
     activeMenu,
     onToggle,
     onCloseMenu,
-    onShowShortcutConfig
+    onShowSettings
 }) => {
     const { t } = useTranslation();
     return (
@@ -23,7 +23,7 @@ export const OptionsMenu: React.FC<OptionsMenuProps> = ({
                 className={`px-3 hover:bg-gray-700 cursor-pointer h-full flex items-center ${activeMenu === 'option' ? 'bg-gray-700' : ''}`}
                 onClick={() => onToggle('option')}
             >
-                Options
+                {t('options.title')}
             </div>
             {activeMenu === 'option' && (
                 <div className="absolute top-full left-0 bg-gray-800 border border-gray-600 shadow-xl py-1 rounded-b-md min-w-[260px]">
@@ -31,8 +31,8 @@ export const OptionsMenu: React.FC<OptionsMenuProps> = ({
 
                     <div className="h-px bg-gray-700 my-1" />
                     <MenuItem
-                        label="Keyboard Shortcuts..."
-                        onClick={() => { onShowShortcutConfig(); onCloseMenu(); }}
+                        label={t('settings.menuLabel')}
+                        onClick={() => { onShowSettings(); onCloseMenu(); }}
                     />
                 </div>
             )}

@@ -13,6 +13,7 @@ export const KeyboardShortcuts = () => {
     const setActiveTool = useStore((state) => state.setActiveTool);
     const setDropperActive = useStore((state) => state.setDropperActive);
     const keyboardShortcuts = useStore((state) => state.keyboardShortcuts);
+    const openSettings = useStore((state) => state.openSettings);
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -53,6 +54,14 @@ export const KeyboardShortcuts = () => {
                     e.preventDefault();
                     selectAllItems();
                 }
+                return;
+            }
+
+            // Ctrl/Cmd + , - Open Settings
+            // (`,` is not a tool shortcut: tool keys are s q w e a c 1 t i)
+            if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+                e.preventDefault();
+                openSettings();
                 return;
             }
 
@@ -103,7 +112,7 @@ export const KeyboardShortcuts = () => {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [undo, redo, cloneSelected, deleteSelected, moveSelectedLayer, selectAllItems, selectedIds.length, objects.length, setActiveTool, setDropperActive, keyboardShortcuts]);
+    }, [undo, redo, cloneSelected, deleteSelected, moveSelectedLayer, selectAllItems, selectedIds.length, objects.length, setActiveTool, setDropperActive, keyboardShortcuts, openSettings]);
 
     return null;
 };

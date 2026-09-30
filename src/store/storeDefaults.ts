@@ -1,5 +1,9 @@
 import type { AppState, ColorPreset, KeyboardShortcutConfig } from './storeTypes';
 
+export const defaultAutoSave = true;
+
+export const defaultLanguage = 'en';
+
 export const defaultKeyboardShortcuts: KeyboardShortcutConfig = {
     modifyKey: 'ctrl',
     cancelKey: 'Escape',

@@ -1,7 +1,10 @@
 import type { StoreSlice } from '../storeTypes';
-import { defaultKeyboardShortcuts } from '../storeDefaults';
-import { readBoolean, readJSON, STORAGE_KEYS, writeBoolean, writeJSON } from '../storage';
 
+/**
+ * Non-preference/misc state. The preference fields (autoSave, keyboard
+ * shortcuts) now live in `settingsSlice`; this slice keeps runtime and
+ * transient UI state (history, export modal, last autosave timestamp).
+ */
 export const createPreferencesSlice: StoreSlice = (set) => ({
     history: [],
     historyUndoCount: 0,
@@ -15,47 +18,10 @@ export const createPreferencesSlice: StoreSlice = (set) => ({
         };
     }),
 
-    autoSave: readBoolean(STORAGE_KEYS.autoSave, true),
-    toggleAutoSave: () => set((state) => {
-        const nextAutoSave = !state.autoSave;
-        writeBoolean(STORAGE_KEYS.autoSave, nextAutoSave);
-        return { autoSave: nextAutoSave };
-    }),
     lastAutoSaveAt: null,
     setLastAutoSaveAt: (timestamp) => set({ lastAutoSaveAt: timestamp }),
 
     isExportModalOpen: false,
     openExportModal: () => set({ isExportModalOpen: true }),
     closeExportModal: () => set({ isExportModalOpen: false }),
-
-    keyboardShortcuts: readJSON(STORAGE_KEYS.keyboardShortcuts, defaultKeyboardShortcuts),
-    setModifyKey: (key) => set((state) => {
-        const nextShortcuts = { ...state.keyboardShortcuts, modifyKey: key };
-        writeJSON(STORAGE_KEYS.keyboardShortcuts, nextShortcuts);
-        return { keyboardShortcuts: nextShortcuts };
-    }),
-    setCancelKey: (key) => set((state) => {
-        const nextShortcuts = { ...state.keyboardShortcuts, cancelKey: key };
-        writeJSON(STORAGE_KEYS.keyboardShortcuts, nextShortcuts);
-        return { keyboardShortcuts: nextShortcuts };
-    }),
-    setTextSaveShortcut: (modifier, key) => set((state) => {
-        const nextShortcuts = {
-            ...state.keyboardShortcuts,
-            textSave: { modifier, key }
-        };
-        writeJSON(STORAGE_KEYS.keyboardShortcuts, nextShortcuts);
-        return { keyboardShortcuts: nextShortcuts };
-    }),
-    setToolShortcut: (tool, key) => set((state) => {
-        const nextShortcuts = {
-            ...state.keyboardShortcuts,
-            tools: {
-                ...state.keyboardShortcuts.tools,
-                [tool]: key
-            }
-        };
-        writeJSON(STORAGE_KEYS.keyboardShortcuts, nextShortcuts);
-        return { keyboardShortcuts: nextShortcuts };
-    }),
 });

@@ -5,18 +5,18 @@ import type { SaveFile } from '../../types';
 import { compressToBase64 } from '../../utils/compress';
 import { createDefaultProjectName } from '../../utils/projectName';
 import { sanitizeFilename, ensureSaveExtension, buildDefaultSaveName, parseTimestamp, parseSaveFile, writeSaveFileToHandle, downloadSaveFile } from '../../utils/saveProject';
-import { ShortcutConfigModal } from '../common/ShortcutConfigModal';
 import { FileMenu } from './header/FileMenu';
 import { EditMenu } from './header/EditMenu';
 import { OptionsMenu } from './header/OptionsMenu';
 import { HelpMenu } from './header/HelpMenu';
 import { HelpModal } from '../help/HelpModal';
+import { SettingsModal } from '../settings/SettingsModal';
 import { Modal, confirm, promptText } from '../common/dialogs';
+import i18n from '../../i18n';
 
 export const Header: React.FC = () => {
     const { t } = useTranslation();
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
-    const [showShortcutConfig, setShowShortcutConfig] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
@@ -55,6 +55,11 @@ export const Header: React.FC = () => {
     // Store state getters for save - fetch individually to prevent re-render loops
     const objects = useStore(state => state.objects);
     const version = useStore(state => state.version);
+
+    const language = useStore(state => state.language);
+    const isSettingsOpen = useStore(state => state.isSettingsOpen);
+    const openSettings = useStore(state => state.openSettings);
+    const closeSettings = useStore(state => state.closeSettings);
 
     const supportsFileSystemAccess = typeof window !== 'undefined' && 'showSaveFilePicker' in window;
 
@@ -103,6 +108,14 @@ export const Header: React.FC = () => {
             setNameDraft(projectName);
         }
     }, [projectName, isEditingName]);
+
+    // Keep i18next in step with the settings store's `language`. Guarded so the
+    // store's initial value (already applied at i18n init) does not re-fire.
+    useEffect(() => {
+        if (i18n.language !== language) {
+            void i18n.changeLanguage(language);
+        }
+    }, [language]);
 
     // Auto-save effect
     useEffect(() => {
@@ -436,7 +449,7 @@ export const Header: React.FC = () => {
                 activeMenu={activeMenu}
                 onToggle={toggleMenu}
                 onCloseMenu={() => setActiveMenu(null)}
-                onShowShortcutConfig={() => setShowShortcutConfig(true)}
+                onShowSettings={openSettings}
             />
 
             <HelpMenu
@@ -494,9 +507,9 @@ export const Header: React.FC = () => {
                     </div>
                 </div>
             </Modal>
-            <ShortcutConfigModal
-                isOpen={showShortcutConfig}
-                onClose={() => setShowShortcutConfig(false)}
+            <SettingsModal
+                open={isSettingsOpen}
+                onClose={closeSettings}
             />
             <HelpModal
                 isOpen={showHelp}

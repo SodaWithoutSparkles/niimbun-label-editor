@@ -142,6 +142,16 @@ export interface AppState {
     setTextSaveShortcut: (modifier: TextSaveModifier, key: string) => void;
     setToolShortcut: (tool: keyof KeyboardShortcutConfig['tools'], key: string) => void;
 
+    // Settings / Preferences
+    language: string;
+    setLanguage: (language: string) => void;
+    resetSettings: () => void;
+
+    // Settings window (shared so the global Ctrl/Cmd+, binding can open it)
+    isSettingsOpen: boolean;
+    openSettings: () => void;
+    closeSettings: () => void;
+
     // Notifications
     notifications: Notification[];
     addNotification: (notification: Omit<Notification, 'id'> & { id?: string }) => string;

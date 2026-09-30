@@ -75,6 +75,9 @@
     "title": "About",
     "message": "Drawing App v0.1.0\nBuilt with React & Vite"
   },
+  "options": {
+    "title": "Options"
+  },
   "help": {
     "title": "Help",
     "close": "Close help",
@@ -109,5 +112,73 @@
     "fileNamePlaceholder": "filename.fsp",
     "hint": "Use .fsp for compressed saves or .json for legacy format.",
     "save": "Save"
+  },
+  "settings": {
+    "title": "Settings",
+    "menuLabel": "Settings…",
+    "reset": "Reset to default",
+    "resetConfirm": "Reset all settings to their defaults?",
+    "languages": {
+      "en": "English"
+    },
+    "general": {
+      "label": "General",
+      "language": "Language",
+      "autoSave": "Auto-save"
+    },
+    "shortcuts": {
+      "label": "Keyboard Shortcuts",
+      "drawingModifiers": "Drawing Modifiers",
+      "constrain": "Constrain (square/circle/45°)",
+      "modifierNone": "None",
+      "toolShortcuts": "Tool Shortcuts",
+      "select": "Select",
+      "rectangle": "Rectangle",
+      "ellipse": "Ellipse",
+      "line": "Line",
+      "arrow": "Arrow",
+      "callout": "Callout",
+      "star": "Star",
+      "text": "Text",
+      "dropper": "Color Dropper",
+      "editing": "Editing",
+      "cancelKey": "Cancel (Esc)",
+      "saveText": "Save Text"
+    },
+    "tools": {
+      "label": "Tools",
+      "shapeTab": "Shape",
+      "textTab": "Text"
+    }
+  },
+  "toolSettings": {
+    "lineWidth": "Line Width",
+    "fontSize": "Font Size",
+    "fontFamily": "Font Family",
+    "fontFamilyOptions": {
+      "arial": "Arial",
+      "timesNewRoman": "Times New Roman",
+      "courierNew": "Courier New",
+      "georgia": "Georgia",
+      "verdana": "Verdana",
+      "comicSansMs": "Comic Sans MS"
+    },
+    "fontWeight": "Font Weight",
+    "fontWeightOptions": {
+      "normal": "Normal",
+      "bold": "Bold"
+    },
+    "fontStyle": "Font Style",
+    "fontStyleOptions": {
+      "normal": "Normal",
+      "italic": "Italic"
+    },
+    "textAlign": "Text Align",
+    "textAlignOptions": {
+      "left": "Left",
+      "center": "Center",
+      "right": "Right"
+    },
+    "textColor": "Color"
   }
 }

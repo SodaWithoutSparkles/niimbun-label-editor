@@ -1,0 +1,73 @@
+import type { StoreSlice } from '../storeTypes';
+import {
+    defaultAutoSave,
+    defaultColors,
+    defaultKeyboardShortcuts,
+    defaultLanguage,
+    defaultToolSettings,
+} from '../storeDefaults';
+
+/**
+ * Preference fields and actions. Moved verbatim out of `preferencesSlice`
+ * (autoSave + keyboard shortcuts) and `toolsSlice` (toolSettings). No state key
+ * or action name was renamed — slices are spread flat, so consumers are blind
+ * to the move. `colors` stays owned by `colorsSlice`; `resetSettings` only
+ * writes to it because the store state is flat.
+ */
+export const createSettingsSlice: StoreSlice = (set) => ({
+    autoSave: defaultAutoSave,
+    toggleAutoSave: () => set((state) => {
+        const nextAutoSave = !state.autoSave;
+        return { autoSave: nextAutoSave };
+    }),
+
+    keyboardShortcuts: defaultKeyboardShortcuts,
+    setModifyKey: (key) => set((state) => {
+        const nextShortcuts = { ...state.keyboardShortcuts, modifyKey: key };
+        return { keyboardShortcuts: nextShortcuts };
+    }),
+    setCancelKey: (key) => set((state) => {
+        const nextShortcuts = { ...state.keyboardShortcuts, cancelKey: key };
+        return { keyboardShortcuts: nextShortcuts };
+    }),
+    setTextSaveShortcut: (modifier, key) => set((state) => {
+        const nextShortcuts = {
+            ...state.keyboardShortcuts,
+            textSave: { modifier, key }
+        };
+        return { keyboardShortcuts: nextShortcuts };
+    }),
+    setToolShortcut: (tool, key) => set((state) => {
+        const nextShortcuts = {
+            ...state.keyboardShortcuts,
+            tools: {
+                ...state.keyboardShortcuts.tools,
+                [tool]: key
+            }
+        };
+        return { keyboardShortcuts: nextShortcuts };
+    }),
+
+    toolSettings: defaultToolSettings,
+    setToolSettings: (settings) => set((state) => {
+        const nextSettings = { ...state.toolSettings, ...settings };
+        return { toolSettings: nextSettings };
+    }),
+
+    language: defaultLanguage,
+    setLanguage: (language) => set({ language }),
+
+    // Settings-window open state lives in the store (not `Header` local state)
+    // so the global Ctrl/Cmd+, handler can open it without prop-drilling.
+    isSettingsOpen: false,
+    openSettings: () => set({ isSettingsOpen: true }),
+    closeSettings: () => set({ isSettingsOpen: false }),
+
+    resetSettings: () => set({
+        autoSave: defaultAutoSave,
+        keyboardShortcuts: defaultKeyboardShortcuts,
+        toolSettings: defaultToolSettings,
+        colors: defaultColors,
+        language: defaultLanguage,
+    }),
+});

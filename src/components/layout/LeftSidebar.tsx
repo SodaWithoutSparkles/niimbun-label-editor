@@ -4,6 +4,7 @@ import { MousePointer2, Square, Circle, Minus, Star, Type, ArrowRight, MessageSq
 import clsx from 'clsx';
 import { DualColorPicker } from '../common/DualColorPicker';
 import { ToolSettingsModal } from '../common/ToolSettingsModal';
+import { formatKey } from '../../utils/formatKey';
 
 export const LeftSidebar: React.FC = () => {
     const activeTool = useStore((state) => state.activeTool);
@@ -12,16 +13,17 @@ export const LeftSidebar: React.FC = () => {
     const setColors = useStore((state) => state.setColors);
     const isDropperActive = useStore((state) => state.isDropperActive);
     const setDropperActive = useStore((state) => state.setDropperActive);
+    const toolShortcuts = useStore((state) => state.keyboardShortcuts.tools);
 
     const tools = [
-        { id: 'select', icon: MousePointer2, label: 'Select (V)' },
-        { id: 'rectangle', icon: Square, label: 'Rectangle (M)' },
-        { id: 'ellipse', icon: Circle, label: 'Ellipse (L)' },
-        { id: 'line', icon: Minus, label: 'Line (P)' },
-        { id: 'arrow', icon: ArrowRight, label: 'Arrow (A)' },
-        { id: 'callout', icon: MessageSquare, label: 'Text Box + Arrow (C)' },
-        { id: 'star', icon: Star, label: 'Star (S)' },
-        { id: 'text', icon: Type, label: 'Text (T)' },
+        { id: 'select', icon: MousePointer2, label: 'Select' },
+        { id: 'rectangle', icon: Square, label: 'Rectangle' },
+        { id: 'ellipse', icon: Circle, label: 'Ellipse' },
+        { id: 'line', icon: Minus, label: 'Line' },
+        { id: 'arrow', icon: ArrowRight, label: 'Arrow' },
+        { id: 'callout', icon: MessageSquare, label: 'Text Box + Arrow' },
+        { id: 'star', icon: Star, label: 'Star' },
+        { id: 'text', icon: Type, label: 'Text' },
     ] as const;
 
     return (
@@ -37,7 +39,7 @@ export const LeftSidebar: React.FC = () => {
                             "p-2 rounded hover:bg-gray-700 transition-colors relative group",
                             activeTool === tool.id && !isDropperActive ? "bg-gray-700 text-blue-400" : "text-gray-400"
                         )}
-                        title={tool.label}
+                        title={`${tool.label} (${formatKey(toolShortcuts[tool.id])})`}
                     >
                         <tool.icon size={20} />
                     </button>

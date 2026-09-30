@@ -1,19 +1,183 @@
 import { create } from 'zustand';
+import { createJSONStorage, persist } from 'zustand/middleware';
 import type { AppState } from './storeTypes';
 import { createCanvasSlice } from './slices/canvasSlice';
 import { createColorsSlice } from './slices/colorsSlice';
 import { createNotificationsSlice } from './slices/notificationsSlice';
 import { createPreferencesSlice } from './slices/preferencesSlice';
 import { createProjectSlice } from './slices/projectSlice';
+import { createSettingsSlice } from './slices/settingsSlice';
 import { createToolsSlice } from './slices/toolsSlice';
 import { createNavigationSlice } from './slices/navigationSlice';
+import {
+    defaultAutoSave,
+    defaultColors,
+    defaultKeyboardShortcuts,
+    defaultLanguage,
+    defaultToolSettings,
+} from './storeDefaults';
+import { clearLegacyPreferences, readLegacyPreferences } from './legacyStorage';
+import {
+    pickPersistedKeys,
+    type PersistedSettings,
+} from './preferenceValidation';
 
-export const useStore = create<AppState>((set, get, store) => ({
-    ...createProjectSlice(set, get, store),
-    ...createCanvasSlice(set, get, store),
-    ...createToolsSlice(set, get, store),
-    ...createColorsSlice(set, get, store),
-    ...createNotificationsSlice(set, get, store),
-    ...createPreferencesSlice(set, get, store),
-    ...createNavigationSlice(set, get, store),
-} as AppState));
+/** The preference defaults, used to repair whatever `ui_settings` holds. */
+const persistedDefaults: PersistedSettings = {
+    autoSave: defaultAutoSave,
+    keyboardShortcuts: defaultKeyboardShortcuts,
+    toolSettings: defaultToolSettings,
+    colors: defaultColors,
+    language: defaultLanguage,
+};
+
+/**
+ * Wraps a `Storage` so every *write* failure is swallowed while reads keep
+ * behaving normally.
+ *
+ * `persist` funnels each write through `storage.setItem` at runtime (it patches
+ * `api.setState`), so a quota-exceeded or private-mode `setItem` would throw out
+ * of ordinary interaction. Containing it here — the single adapter every write
+ * crosses — restores the containment the deleted `storage.ts` had, without
+ * touching the store's public shape.
+ *
+ * Only `setItem` swallows. A read failure (`getItem`, `length`, `key`) must
+ * surface as a genuine error, never silently become "no preferences".
+ * `removeItem`/`clear` are deliberately NOT swallowed here: they are not on the
+ * persist write path (`clearLegacyPreferences` already guards its own
+ * `removeItem` calls), and a failed delete of an ignored legacy key is harmless
+ * while hiding it would mask real adapter bugs.
+ *
+ * Methods are bound to the real storage explicitly so `this` is never lost —
+ * `localStorage.getItem` must be called with `localStorage` as receiver.
+ */
+const createSafeStorage = (storage: Storage): Storage => ({
+    getItem: (key: string) => storage.getItem(key),
+    setItem(key: string, value: string) {
+        try {
+            storage.setItem(key, value);
+        } catch {
+            // quota exceeded / private mode: preferences just don't persist
+        }
+    },
+    removeItem: (key: string) => storage.removeItem(key),
+    clear: () => storage.clear(),
+    key: (index: number) => storage.key(index),
+    get length() {
+        return storage.length;
+    },
+});
+
+/**
+ * Builds a store bound to `storage`. Exported so the legacy migration can be
+ * exercised headlessly against a fake `Storage`; the app uses `useStore`.
+ */
+export const createAppStore = (storage?: Storage) => {
+    const safeStorage = storage ? createSafeStorage(storage) : undefined;
+    const store = create<AppState>()(
+        persist<AppState, [], [], PersistedSettings>(
+            (set, get, api) => {
+                // 1. Legacy values seed the initial state where present.
+                const legacy = storage ? readLegacyPreferences(storage) : {};
+                const state: Partial<AppState> = {
+                    ...createProjectSlice(set, get, api),
+                    ...createCanvasSlice(set, get, api),
+                    ...createToolsSlice(set, get, api),
+                    ...createColorsSlice(set, get, api),
+                    ...createNotificationsSlice(set, get, api),
+                    ...createPreferencesSlice(set, get, api),
+                    ...createSettingsSlice(set, get, api),
+                    ...createNavigationSlice(set, get, api),
+                };
+                if (legacy.autoSave !== undefined) state.autoSave = legacy.autoSave;
+                if (legacy.keyboardShortcuts !== undefined) state.keyboardShortcuts = legacy.keyboardShortcuts;
+                if (legacy.toolSettings !== undefined) state.toolSettings = legacy.toolSettings;
+                if (legacy.colors !== undefined) state.colors = legacy.colors;
+                return state as AppState;
+            },
+            {
+                name: 'ui_settings',
+                version: 1,
+                // Only hand persist a real storage. Passing a `createJSONStorage`
+                // over `undefined` makes `options.storage` truthy while every
+                // `setItem`/`getItem` throws, and persist takes no no-storage path.
+                // When `storage` is absent we pass `undefined` so persist uses its
+                // built-in degraded mode (a plain store; see zustand middleware
+                // `if (!storage) return config(...)`).
+                storage: safeStorage ? createJSONStorage(() => safeStorage) : undefined,
+                // 2. `persist` rehydrates `ui_settings` over the seed — persisted wins.
+                //    `partialize` is load-bearing: without it the whole flattened
+                //    state (objects, undo history, notifications, fileHandle) would
+                //    land in localStorage.
+                partialize: (s) => ({
+                    autoSave: s.autoSave,
+                    keyboardShortcuts: s.keyboardShortcuts,
+                    toolSettings: s.toolSettings,
+                    colors: s.colors,
+                    language: s.language,
+                }),
+                migrate: (persisted) => persisted as PersistedSettings,
+                // `persist`'s default merge is a *shallow* spread over the seed,
+                // so a partial or wrong-typed `keyboardShortcuts` in the blob
+                // would replace the whole default object and bypass the legacy
+                // deep merge — hitting the exact crash sites this guards.
+                //
+                // Repair the persisted blob to a full, safe shape, but only
+                // *override* keys the blob actually carries: a field that is
+                // absent must fall through to `current` (the legacy seed), not
+                // be reset to the default. `validatePersistedSettings` fills
+                // gaps from `defaults`; `pickPersistedKeys` decides which of its
+                // results are allowed to win.
+                merge: (persisted, current) => ({
+                    ...current,
+                    ...pickPersistedKeys(persisted, persistedDefaults),
+                }),
+            },
+        ),
+    );
+
+    // 3/4. Once rehydration is done, force `ui_settings` to be written (zustand
+    // only writes on `set`) and only then drop the legacy keys. Without the
+    // forced flush a first run that changes nothing would delete the legacy
+    // keys without ever creating the new one.
+    const finishMigration = () => {
+        // A throwing `setItem` (quota exceeded / private mode) must never take
+        // the app down: the old `storage.ts` swallowed storage errors, and a
+        // failed preference write is not worth a boot failure. Swallow and go on.
+        try {
+            store.setState({});
+            if (storage) clearLegacyPreferences(storage);
+        } catch {
+            // ignore storage errors
+        }
+    };
+
+    // `persist` does not install `api.persist` when it had no storage (it returns
+    // the plain config early), so guard the hydration hookup too.
+    if (storage && store.persist) {
+        if (store.persist.hasHydrated()) finishMigration();
+        else store.persist.onFinishHydration(finishMigration);
+    }
+
+    return store;
+};
+
+/**
+ * Resolves the browser storage, tolerating environments where merely *touching*
+ * `window.localStorage` throws `SecurityError` (sandboxed iframe, Firefox with
+ * cookies/site-data blocked). That is evaluated at module import, before
+ * `createSafeStorage` exists, so an unguarded access would white-screen the app
+ * before any containment runs. On failure we return `undefined`, which routes
+ * into the store's degraded no-storage path.
+ */
+const resolveStorage = (): Storage | undefined => {
+    try {
+        if (typeof window !== 'undefined' && window.localStorage) return window.localStorage;
+        if (typeof localStorage !== 'undefined') return localStorage;
+    } catch {
+        // storage access denied — fall through to the no-storage path
+    }
+    return undefined;
+};
+
+export const useStore = createAppStore(resolveStorage());

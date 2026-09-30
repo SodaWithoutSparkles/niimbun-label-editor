@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import { X } from 'lucide-react';
 import { ColorPicker } from './ColorPicker';
 
 export const ToolSettingsModal: React.FC = () => {
+    const { t } = useTranslation();
     const showToolSettings = useStore((state) => state.showToolSettings);
     const setShowToolSettings = useStore((state) => state.setShowToolSettings);
     const activeTool = useStore((state) => state.activeTool);
@@ -69,7 +71,7 @@ export const ToolSettingsModal: React.FC = () => {
                 {isShapeTool && (
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">
-                            <label className="text-sm text-gray-300">Line Width</label>
+                            <label className="text-sm text-gray-300">{t('toolSettings.lineWidth')}</label>
                             <span className="text-xs text-gray-400">{toolSettings.lineWidth}px</span>
                         </div>
                         <input
@@ -91,7 +93,7 @@ export const ToolSettingsModal: React.FC = () => {
                     <>
                         <div className="space-y-2">
                             <div className="flex items-center justify-between">
-                                <label className="text-sm text-gray-300">Font Size</label>
+                                <label className="text-sm text-gray-300">{t('toolSettings.fontSize')}</label>
                                 <span className="text-xs text-gray-400">{toolSettings.fontSize}px</span>
                             </div>
                             <input
@@ -108,60 +110,60 @@ export const ToolSettingsModal: React.FC = () => {
                         </div>
 
                         <div className="flex items-center justify-between gap-4">
-                            <label className="text-sm text-gray-300">Font Family</label>
+                            <label className="text-sm text-gray-300">{t('toolSettings.fontFamily')}</label>
                             <select
                                 value={toolSettings.fontFamily}
                                 onChange={(e) => setToolSettings({ fontFamily: e.target.value })}
                                 className="w-44 px-3 py-2 bg-gray-700 text-gray-300 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
                             >
-                                <option value="Arial">Arial</option>
-                                <option value="Times New Roman">Times New Roman</option>
-                                <option value="Courier New">Courier New</option>
-                                <option value="Georgia">Georgia</option>
-                                <option value="Verdana">Verdana</option>
-                                <option value="Comic Sans MS">Comic Sans MS</option>
+                                <option value="Arial">{t('toolSettings.fontFamilyOptions.arial')}</option>
+                                <option value="Times New Roman">{t('toolSettings.fontFamilyOptions.timesNewRoman')}</option>
+                                <option value="Courier New">{t('toolSettings.fontFamilyOptions.courierNew')}</option>
+                                <option value="Georgia">{t('toolSettings.fontFamilyOptions.georgia')}</option>
+                                <option value="Verdana">{t('toolSettings.fontFamilyOptions.verdana')}</option>
+                                <option value="Comic Sans MS">{t('toolSettings.fontFamilyOptions.comicSansMs')}</option>
                             </select>
                         </div>
 
                         <div className="flex items-center justify-between gap-4">
-                            <label className="text-sm text-gray-300">Font Weight</label>
+                            <label className="text-sm text-gray-300">{t('toolSettings.fontWeight')}</label>
                             <select
                                 value={toolSettings.fontWeight}
                                 onChange={(e) => setToolSettings({ fontWeight: e.target.value as 'normal' | 'bold' })}
                                 className="w-44 px-3 py-2 bg-gray-700 text-gray-300 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
                             >
-                                <option value="normal">Normal</option>
-                                <option value="bold">Bold</option>
+                                <option value="normal">{t('toolSettings.fontWeightOptions.normal')}</option>
+                                <option value="bold">{t('toolSettings.fontWeightOptions.bold')}</option>
                             </select>
                         </div>
 
                         <div className="flex items-center justify-between gap-4">
-                            <label className="text-sm text-gray-300">Font Style</label>
+                            <label className="text-sm text-gray-300">{t('toolSettings.fontStyle')}</label>
                             <select
                                 value={toolSettings.fontStyle}
                                 onChange={(e) => setToolSettings({ fontStyle: e.target.value as 'normal' | 'italic' })}
                                 className="w-44 px-3 py-2 bg-gray-700 text-gray-300 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
                             >
-                                <option value="normal">Normal</option>
-                                <option value="italic">Italic</option>
+                                <option value="normal">{t('toolSettings.fontStyleOptions.normal')}</option>
+                                <option value="italic">{t('toolSettings.fontStyleOptions.italic')}</option>
                             </select>
                         </div>
 
                         <div className="flex items-center justify-between gap-4">
-                            <label className="text-sm text-gray-300">Text Align</label>
+                            <label className="text-sm text-gray-300">{t('toolSettings.textAlign')}</label>
                             <select
                                 value={toolSettings.textAlign}
                                 onChange={(e) => setToolSettings({ textAlign: e.target.value as 'left' | 'center' | 'right' })}
                                 className="w-44 px-3 py-2 bg-gray-700 text-gray-300 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
                             >
-                                <option value="left">Left</option>
-                                <option value="center">Center</option>
-                                <option value="right">Right</option>
+                                <option value="left">{t('toolSettings.textAlignOptions.left')}</option>
+                                <option value="center">{t('toolSettings.textAlignOptions.center')}</option>
+                                <option value="right">{t('toolSettings.textAlignOptions.right')}</option>
                             </select>
                         </div>
 
                         <div className="flex items-center justify-between gap-4">
-                            <label className="text-sm text-gray-300">Color</label>
+                            <label className="text-sm text-gray-300">{t('toolSettings.textColor')}</label>
                             <div className="flex items-center space-x-3">
                                 <ColorPicker
                                     color={toolSettings.textColor}

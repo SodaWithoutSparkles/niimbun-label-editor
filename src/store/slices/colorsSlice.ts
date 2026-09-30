@@ -1,9 +1,8 @@
 import type { StoreSlice } from '../storeTypes';
 import { defaultColors, defaultColorPresets } from '../storeDefaults';
-import { readJSON, STORAGE_KEYS, writeJSON } from '../storage';
 
 export const createColorsSlice: StoreSlice = (set) => ({
-    colors: readJSON(STORAGE_KEYS.colors, defaultColors),
+    colors: defaultColors,
     setColors: (colors) => set((state) => {
         const nextColors = { ...state.colors, ...colors };
         const shouldUpdateSelection =
@@ -11,7 +10,6 @@ export const createColorsSlice: StoreSlice = (set) => ({
             (Object.prototype.hasOwnProperty.call(colors, 'stroke') || Object.prototype.hasOwnProperty.call(colors, 'fill'));
 
         if (!shouldUpdateSelection) {
-            writeJSON(STORAGE_KEYS.colors, nextColors);
             return {
                 colors: nextColors,
                 selectedPresetIndex: null
@@ -19,7 +17,6 @@ export const createColorsSlice: StoreSlice = (set) => ({
         }
 
         const idSet = new Set(state.selectedIds);
-        writeJSON(STORAGE_KEYS.colors, nextColors);
         return {
             colors: nextColors,
             selectedPresetIndex: null,
