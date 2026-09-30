@@ -1,4 +1,5 @@
 import React, { Suspense, lazy } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Header } from './Header';
 import { LeftSidebar } from './LeftSidebar';
 import { RightSidebar } from './RightSidebar';
@@ -8,6 +9,7 @@ const DrawingCanvas = lazy(() => import('../canvas/DrawingCanvas').then((m) => (
 const KeyboardShortcuts = lazy(() => import('../common/KeyboardShortcuts').then((m) => ({ default: m.KeyboardShortcuts })));
 
 export const MainLayout: React.FC = () => {
+    const { t } = useTranslation();
     return (
         <div className="flex flex-col h-screen w-screen overflow-hidden bg-gray-900">
             <Suspense fallback={null}>
@@ -25,7 +27,7 @@ export const MainLayout: React.FC = () => {
                 {/* Center Canvas Area */}
                 <div className="flex-1 bg-gray-500 relative overflow-hidden flex flex-col">
                     <div className="flex-1 relative bg-gray-200">
-                        <Suspense fallback={<div className="h-full w-full flex items-center justify-center text-gray-700">Loading canvas...</div>}>
+                        <Suspense fallback={<div className="h-full w-full flex items-center justify-center text-gray-700">{t('mainLayout.loadingCanvas')}</div>}>
                             <DrawingCanvas />
                         </Suspense>
                     </div>

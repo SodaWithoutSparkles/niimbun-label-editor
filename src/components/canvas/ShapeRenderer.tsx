@@ -1,5 +1,6 @@
 import React from 'react';
 import { Rect, Circle, Line, Star, Arrow, Text as KonvaText, Image as KonvaImage, Transformer, Group } from 'react-konva';
+import { useTranslation } from 'react-i18next';
 import type { CanvasItem, ImageShape } from '../../types';
 import { useStore } from '../../store/useStore';
 
@@ -26,6 +27,7 @@ export const ShapeRenderer: React.FC<ShapeRendererProps> = ({
     onGroupDragMove,
     onGroupDragEnd
 }) => {
+    const { t } = useTranslation();
     const shapeRef = React.useRef<any>(null);
     const trRef = React.useRef<any>(null);
     const [image, setImage] = React.useState<HTMLImageElement | null>(null);
@@ -39,7 +41,7 @@ export const ShapeRenderer: React.FC<ShapeRendererProps> = ({
     const imageSrc = isImage(item) ? item.src : null;
 
     const formatImageSourceLabel = (src: string) => {
-        if (src.startsWith('data:image/')) return 'Pasted image data';
+        if (src.startsWith('data:image/')) return t('canvas.pastedImageData');
         if (src.length > 140) return `${src.slice(0, 140)}…`;
         return src;
     };
@@ -89,8 +91,8 @@ export const ShapeRenderer: React.FC<ShapeRendererProps> = ({
             console.error('Image failed to load for item.src:', item.src);
             addNotification({
                 type: 'error',
-                title: 'Image Load Failed',
-                message: 'Unable to load the image. This may be caused by CORS restrictions or the resource being unavailable.',
+                title: t('canvas.imageLoadFailedTitle'),
+                message: t('canvas.imageLoadFailedShort'),
                 detail: formatImageSourceLabel(item.src)
             });
         }
@@ -320,7 +322,7 @@ export const ShapeRenderer: React.FC<ShapeRendererProps> = ({
                 );
             } else {
                 const isError = imageError;
-                const displayText = isError ? "Image Load Error\n(CORS/404)" : "Loading Image...";
+                const displayText = isError ? t('canvas.imageLoadError') : t('canvas.imageLoading');
                 const strokeColor = isError ? "red" : "#999";
                 const bgColor = isError ? "#ffe6e6" : "#f0f0f0";
 

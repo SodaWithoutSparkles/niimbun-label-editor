@@ -81,10 +81,14 @@ export interface StarShape extends BaseShape {
 // Union type for all shapes
 export type CanvasItem = RectangleShape | EllipseShape | LineShape | TextShape | ImageShape | ArrowShape | StarShape | PolygonShape;
 
+// A history entry. New entries carry a catalogue key plus interpolation params
+// so they re-render in the active language at display time; `string` is kept in
+// the union so history saved by earlier versions (plain baked text) still renders.
+export type HistoryEntry = { key: string; params?: Record<string, unknown> } | string;
+
 // The Project Save File Format — a generic serialization of the app's slices.
 // It intentionally contains NO domain-specific data.
-export interface SaveFile {
-    version: string;
+export interface SaveFile {    version: string;
     projectName?: string;
     // Optional preferred filename chosen by the user during Save As (helps with autosave recovery)
     saveFileName?: string;

@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import { Home } from 'lucide-react';
 import clsx from 'clsx';
+import { formatKey } from '../../utils/formatKey';
 
 export const BottomBar: React.FC = () => {
     const { t } = useTranslation();
@@ -14,6 +15,25 @@ export const BottomBar: React.FC = () => {
     const keyboardShortcuts = useStore((state) => state.keyboardShortcuts);
     const canvasPosition = useStore((state) => state.canvasPosition);
     const triggerHomeView = useStore((state) => state.triggerHomeView);
+    const language = useStore((state) => state.language);
+
+    // One formatter per language, reused across every call. `numeric: 'always'`
+    // (the default) keeps the older "3 seconds ago" wording rather than the
+    // "yesterday"/"now" that `numeric: 'auto'` would produce.
+    const rtf = useMemo(() => new Intl.RelativeTimeFormat(language, { numeric: 'always' }), [language]);
+
+    // Pick the largest unit whose value is >= 1, mirroring the old ladder.
+    // `maxUnit` caps the tier: auto-save never goes past minutes, last-saved
+    // goes up to days.
+    const relative = (seconds: number, maxUnit: 'minute' | 'day'): string => {
+        if (seconds < 60) return rtf.format(-seconds, 'second');
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60 || maxUnit === 'minute') return rtf.format(-minutes, 'minute');
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return rtf.format(-hours, 'hour');
+        const days = Math.floor(hours / 24);
+        return rtf.format(-days, 'day');
+    };
 
     // Keep time-sensitive statuses fresh by forcing a re-render every 10s when nothing else changes.
     const [, setTick] = useState(0);
@@ -31,39 +51,21 @@ export const BottomBar: React.FC = () => {
 
     const isCompact = viewportWidth < 1100;
 
-    const formatKey = (key: string) => {
-        if (!key) return '';
-        if (key.toLowerCase() === 'ctrl') return t('keyLabels.ctrl');
-        if (key.toLowerCase() === 'alt') return t('keyLabels.alt');
-        if (key.toLowerCase() === 'shift') return t('keyLabels.shift');
-        if (key.toLowerCase() === 'escape') return t('keyLabels.esc');
-        if (key.toLowerCase() === ' ') return t('keyLabels.space');
-        return key.length === 1 ? key.toUpperCase() : key;
-    };
-
-    const modifierKeyLabel = formatKey(keyboardShortcuts.modifyKey);
+    const modifierKeyLabel = formatKey(keyboardShortcuts.modifyKey, t);
 
     const getAutoSaveStatus = () => {
         if (!autoSave) return t('bottomBar.autoSaveOff');
         if (!lastAutoSaveAt) return t('bottomBar.autoSaveOn');
         const seconds = Math.floor((Date.now() - lastAutoSaveAt) / 1000);
         if (seconds < 5) return t('bottomBar.autoSavedJustNow');
-        if (seconds < 60) return t('bottomBar.autoSavedSecondsAgo', { count: seconds });
-        const minutes = Math.floor(seconds / 60);
-        return t('bottomBar.autoSavedMinutesAgo', { count: minutes });
+        return t('bottomBar.autoSaved', { time: relative(seconds, 'minute') });
     };
 
     const getLastSavedStatus = () => {
         if (!lastSavedAt) return t('bottomBar.lastSavedNone');
         const seconds = Math.floor((Date.now() - lastSavedAt) / 1000);
         if (seconds < 5) return t('bottomBar.lastSavedJustNow');
-        if (seconds < 60) return t('bottomBar.lastSavedSecondsAgo', { count: seconds });
-        const minutes = Math.floor(seconds / 60);
-        if (minutes < 60) return t('bottomBar.lastSavedMinutesAgo', { count: minutes });
-        const hours = Math.floor(minutes / 60);
-        if (hours < 24) return t('bottomBar.lastSavedHoursAgo', { count: hours });
-        const days = Math.floor(hours / 24);
-        return t('bottomBar.lastSavedDaysAgo', { count: days });
+        return t('bottomBar.lastSaved', { time: relative(seconds, 'day') });
     };
 
     const getAutoSaveCompactStatus = () => {
@@ -71,26 +73,14 @@ export const BottomBar: React.FC = () => {
         if (!lastAutoSaveAt) return t('bottomBar.autoSaveShortOn');
         const seconds = Math.floor((Date.now() - lastAutoSaveAt) / 1000);
         if (seconds < 5) return t('bottomBar.shortJustNow');
-        if (seconds < 60) return t('bottomBar.shortSecondsAgo', { count: seconds });
-        const minutes = Math.floor(seconds / 60);
-        if (minutes < 60) return t('bottomBar.shortMinutesAgo', { count: minutes });
-        const hours = Math.floor(minutes / 60);
-        if (hours < 24) return t('bottomBar.shortHoursAgo', { count: hours });
-        const days = Math.floor(hours / 24);
-        return t('bottomBar.shortDaysAgo', { count: days });
+        return t('bottomBar.autoSavedShort', { time: relative(seconds, 'minute') });
     };
 
     const getLastSavedCompactStatus = () => {
         if (!lastSavedAt) return t('bottomBar.lastSavedNotSaved');
         const seconds = Math.floor((Date.now() - lastSavedAt) / 1000);
         if (seconds < 5) return t('bottomBar.shortJustNow');
-        if (seconds < 60) return t('bottomBar.shortSecondsAgo', { count: seconds });
-        const minutes = Math.floor(seconds / 60);
-        if (minutes < 60) return t('bottomBar.shortMinutesAgo', { count: minutes });
-        const hours = Math.floor(minutes / 60);
-        if (hours < 24) return t('bottomBar.shortHoursAgo', { count: hours });
-        const days = Math.floor(hours / 24);
-        return t('bottomBar.shortDaysAgo', { count: days });
+        return t('bottomBar.lastSavedShort', { time: relative(seconds, 'day') });
     };
 
     const renderInstruction = () => {

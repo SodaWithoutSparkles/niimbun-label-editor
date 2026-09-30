@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Stage, Layer } from 'react-konva';
+import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import { ShapeRenderer } from './ShapeRenderer';
 import { TextEditorOverlay } from './TextEditorOverlay';
@@ -10,6 +11,7 @@ import { useDrawingTools } from './hooks/useDrawingTools';
 import { useTextEditor } from './hooks/useTextEditor';
 
 export const DrawingCanvas: React.FC<{ readOnly?: boolean }> = ({ readOnly = false }) => {
+    const { t } = useTranslation();
     // Store state
     const objects = useStore((state) => state.objects);
     const selectedIds = useStore((state) => state.selectedIds);
@@ -151,7 +153,7 @@ export const DrawingCanvas: React.FC<{ readOnly?: boolean }> = ({ readOnly = fal
     };
 
     const formatImageSourceLabel = (src: string) => {
-        if (src.startsWith('data:image/')) return 'Pasted image data';
+        if (src.startsWith('data:image/')) return t('canvas.pastedImageData');
         if (src.length > 50) return `${src.slice(0, 50)}…`;
         return src;
     };
@@ -195,9 +197,9 @@ export const DrawingCanvas: React.FC<{ readOnly?: boolean }> = ({ readOnly = fal
             // Inform the user and don't add a broken image to the canvas.
             addNotification({
                 type: 'error',
-                title: 'Image Load Failed',
-                message: 'Unable to load the image. This may be caused by CORS restrictions or the resource being unavailable. You can try copy and pasting the image directly instead.',
-                detail: `From: ${formatImageSourceLabel(src)}`
+                title: t('canvas.imageLoadFailedTitle'),
+                message: t('canvas.imageLoadFailedDetail'),
+                detail: t('canvas.imageSourcePrefix', { source: formatImageSourceLabel(src) })
             });
         };
         img.src = src;
@@ -411,7 +413,7 @@ export const DrawingCanvas: React.FC<{ readOnly?: boolean }> = ({ readOnly = fal
             {isDraggingImage && (
                 <div className="absolute inset-0 bg-blue-600/10 border-2 border-dashed border-blue-500 flex items-center justify-center pointer-events-none">
                     <div className="bg-white/90 px-6 py-3 rounded-lg shadow-lg text-blue-700 font-semibold">
-                        Drop to insert image
+                        {t('canvas.dropToInsert')}
                     </div>
                 </div>
             )}

@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand';
-import type { CanvasItem, SaveFile } from '../types';
+import type { CanvasItem, HistoryEntry, SaveFile } from '../types';
 
 export interface ColorPreset {
     stroke: string;
@@ -116,9 +116,9 @@ export interface AppState {
     setPickedColor: (color: string | null) => void;
 
     // Log History
-    history: string[];
+    history: HistoryEntry[];
     historyUndoCount: number;
-    addToHistory: (action: string) => void;
+    addToHistory: (action: HistoryEntry) => void;
 
     // Actions
     loadProject: (data: SaveFile) => void;

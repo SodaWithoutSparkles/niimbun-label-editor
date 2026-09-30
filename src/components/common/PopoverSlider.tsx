@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Minus, Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface PopoverSliderProps {
@@ -61,6 +62,7 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
     popoverClassName = '',
     popoverAlign = 'center'
 }) => {
+    const { t } = useTranslation();
     const [isOpen, setIsOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const [tempValue, setTempValue] = useState(value);
@@ -336,7 +338,7 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
                                     overflowY: presetsMaxRows || presetsScrollable ? 'auto' : undefined,
                                 }}
                                 role="list"
-                                aria-label="presets"
+                                aria-label={t('popoverSlider.presets')}
                             >
                                 {presets.map((p) => (
                                     <button

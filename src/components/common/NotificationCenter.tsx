@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import type { Notification } from '../../store/storeTypes';
 
@@ -10,6 +11,7 @@ const TYPE_STYLES: Record<string, { border: string; bg: string; text: string }> 
 };
 
 export const NotificationCenter: React.FC = () => {
+    const { t } = useTranslation();
     const notifications = useStore((state) => state.notifications);
     const removeNotification = useStore((state) => state.removeNotification);
     const timeoutsRef = useRef<Map<string, number>>(new Map());
@@ -66,7 +68,7 @@ export const NotificationCenter: React.FC = () => {
                             <button
                                 className="text-white/80 hover:text-white text-sm"
                                 onClick={() => removeNotification(n.id)}
-                                aria-label="Dismiss notification"
+                                aria-label={t('notification.dismiss')}
                             >
                                 ✕
                             </button>

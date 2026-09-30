@@ -13,7 +13,7 @@ export const createCanvasSlice: StoreSlice = (set) => ({
             : state.history;
         return {
             objects: [...state.objects, item],
-            history: [`Added ${item.type}`, ...trimmedHistory].slice(0, 50),
+            history: [{ key: 'history.added', params: { type: item.type } }, ...trimmedHistory].slice(0, 50),
             historyUndoCount: 0,
             past: [...state.past, state.objects],
             future: []
@@ -26,7 +26,7 @@ export const createCanvasSlice: StoreSlice = (set) => ({
             : state.history;
         return {
             objects: state.objects.map((item) => (item.id === id ? { ...item, ...updates } : item)) as CanvasItem[],
-            history: [`Updated ${target?.type ?? 'item'}`, ...trimmedHistory].slice(0, 50),
+            history: [{ key: 'history.updated', params: { type: target?.type ?? 'item' } }, ...trimmedHistory].slice(0, 50),
             historyUndoCount: 0,
             past: [...state.past, state.objects],
             future: []
@@ -40,7 +40,7 @@ export const createCanvasSlice: StoreSlice = (set) => ({
             : state.history;
         return {
             objects: state.objects.map((item) => (idSet.has(item.id) ? { ...item, ...updates } : item)) as CanvasItem[],
-            history: [`Updated ${ids.length} ${ids.length === 1 ? 'item' : 'items'}`, ...trimmedHistory].slice(0, 50),
+            history: [{ key: 'history.updatedCount', params: { count: ids.length } }, ...trimmedHistory].slice(0, 50),
             historyUndoCount: 0,
             past: [...state.past, state.objects],
             future: []
@@ -59,7 +59,7 @@ export const createCanvasSlice: StoreSlice = (set) => ({
                     ? { ...item, x: item.x + delta.x, y: item.y + delta.y }
                     : item
             )) as CanvasItem[],
-            history: [`Moved ${ids.length} ${ids.length === 1 ? 'item' : 'items'}`, ...trimmedHistory].slice(0, 50),
+            history: [{ key: 'history.moved', params: { count: ids.length } }, ...trimmedHistory].slice(0, 50),
             historyUndoCount: 0,
             past: [...state.past, state.objects],
             future: []
@@ -83,7 +83,7 @@ export const createCanvasSlice: StoreSlice = (set) => ({
             : state.history;
         return {
             past: [...state.past, snapshot],
-            history: ['Moved items', ...trimmedHistory].slice(0, 50),
+            history: [{ key: 'history.movedItems' }, ...trimmedHistory].slice(0, 50),
             historyUndoCount: 0,
             future: []
         };
@@ -95,7 +95,7 @@ export const createCanvasSlice: StoreSlice = (set) => ({
             : state.history;
         return {
             objects: state.objects.filter((item) => item.id !== id),
-            history: [`Deleted ${target?.type ?? 'item'}`, ...trimmedHistory].slice(0, 50),
+            history: [{ key: 'history.deleted', params: { type: target?.type ?? 'item' } }, ...trimmedHistory].slice(0, 50),
             historyUndoCount: 0,
             past: [...state.past, state.objects],
             future: []
@@ -112,7 +112,7 @@ export const createCanvasSlice: StoreSlice = (set) => ({
             selectedIds: [],
             colors: state.selectionColorSnapshot ?? state.colors,
             selectionColorSnapshot: null,
-            history: [`Deleted ${state.selectedIds.length} ${state.selectedIds.length === 1 ? 'item' : 'items'}`, ...trimmedHistory].slice(0, 50),
+            history: [{ key: 'history.deletedCount', params: { count: state.selectedIds.length } }, ...trimmedHistory].slice(0, 50),
             historyUndoCount: 0,
             past: [...state.past, state.objects],
             future: []
@@ -129,7 +129,7 @@ export const createCanvasSlice: StoreSlice = (set) => ({
             selectedIds: [],
             colors: state.selectionColorSnapshot ?? state.colors, // Restore global colors if we were selecting
             selectionColorSnapshot: null,
-            history: ['Deleted all items', ...trimmedHistory].slice(0, 50),
+            history: [{ key: 'history.deletedAll' }, ...trimmedHistory].slice(0, 50),
             historyUndoCount: 0,
             past: [...state.past, state.objects],
             future: [],
@@ -178,7 +178,7 @@ export const createCanvasSlice: StoreSlice = (set) => ({
             : state.history;
         return {
             objects: [...state.objects, ...newItems],
-            history: [`Cloned ${newItems.length} ${newItems.length === 1 ? 'item' : 'items'}`, ...trimmedHistory].slice(0, 50),
+            history: [{ key: 'history.cloned', params: { count: newItems.length } }, ...trimmedHistory].slice(0, 50),
             historyUndoCount: 0,
             past: [...state.past, state.objects],
             future: [],
@@ -210,7 +210,7 @@ export const createCanvasSlice: StoreSlice = (set) => ({
 
         return {
             objects: newItems,
-            history: [`Moved layer ${direction}`, ...trimmedHistory].slice(0, 50),
+            history: [{ key: direction === 'up' ? 'history.movedLayerUp' : 'history.movedLayerDown' }, ...trimmedHistory].slice(0, 50),
             historyUndoCount: 0,
             past: [...state.past, state.objects],
             future: []

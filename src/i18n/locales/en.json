@@ -13,22 +13,16 @@
     "autoSaveOff": "Auto-save off",
     "autoSaveOn": "Auto-save on",
     "autoSavedJustNow": "Auto-saved just now",
-    "autoSavedSecondsAgo": "Auto-saved {{count}}s ago",
-    "autoSavedMinutesAgo": "Auto-saved {{count}}m ago",
+    "autoSaved": "Auto-saved {{time}}",
+    "autoSavedShort": "{{time}}",
     "autoSaveShortOff": "Off",
     "autoSaveShortOn": "On",
     "lastSavedNone": "Last saved: —",
     "lastSavedNotSaved": "Not saved",
     "lastSavedJustNow": "Last saved: just now",
-    "lastSavedSecondsAgo": "Last saved: {{count}}s ago",
-    "lastSavedMinutesAgo": "Last saved: {{count}}m ago",
-    "lastSavedHoursAgo": "Last saved: {{count}}h ago",
-    "lastSavedDaysAgo": "Last saved: {{count}}d ago",
+    "lastSaved": "Last saved: {{time}}",
+    "lastSavedShort": "{{time}}",
     "shortJustNow": "Just now",
-    "shortSecondsAgo": "{{count}}s ago",
-    "shortMinutesAgo": "{{count}}m ago",
-    "shortHoursAgo": "{{count}}h ago",
-    "shortDaysAgo": "{{count}}d ago",
     "zoom": "Zoom:",
     "x": "X:",
     "y": "Y:",
@@ -61,10 +55,45 @@
   "header": {
     "confirmOverwriteCleared": "WARNING: You have cleared all objects during this session.\nSaving now will OVERWRITE your existing file on disk with these changes.\n\nIf you intended to start a new drawing based on this file, you should probably use 'Save As' instead to keep the old file intact.\n\nClick OK to overwrite the existing file.\nClick Cancel to abort (then use File > Save As).",
     "confirmSaveEmpty": "You are about to save an empty canvas to your existing file.\nThis will overwrite your previous work with no objects.\n\nClick OK to overwrite in-place.\nClick Cancel to abort.",
-    "promptImageUrl": "Paste an image URL"
+    "promptImageUrl": "Paste an image URL",
+    "projectNameAria": "Project name",
+    "renameProjectTitle": "Click to rename project"
   },
   "rightSidebar": {
-    "confirmClearAll": "WARNING: This will delete ALL objects on the canvas.\n\nAre you sure you want to clear everything?"
+    "confirmClearAll": "WARNING: This will delete ALL objects on the canvas.\n\nAre you sure you want to clear everything?",
+    "objectSettings": "Object Settings",
+    "history": "History",
+    "objects": "Objects",
+    "nSelected_one": "{{count}} selected",
+    "nSelected_other": "{{count}} selected",
+    "primary": "Primary",
+    "secondary": "Secondary",
+    "x": "X",
+    "y": "Y",
+    "rotation": "Rotation",
+    "opacity": "Opacity",
+    "strokeWidth": "Stroke Width",
+    "stroke": "Stroke",
+    "fill": "Fill",
+    "width": "Width",
+    "height": "Height",
+    "radiusX": "Radius X",
+    "radiusY": "Radius Y",
+    "innerRadius": "Inner Radius",
+    "outerRadius": "Outer Radius",
+    "pointerLength": "Pointer Length",
+    "pointerWidth": "Pointer Width",
+    "text": "Text",
+    "fontSize": "Font Size",
+    "fontFamily": "Font Family",
+    "fontWeight": "Font Weight",
+    "fontStyle": "Font Style",
+    "textAlign": "Text Align",
+    "textColor": "Text Color",
+    "noHistory": "No history",
+    "noObjects": "No objects",
+    "clearAll": "Clear All Objects",
+    "undone": "Undone"
   },
   "errors": {
     "saveFailed": "Failed to save project",
@@ -80,9 +109,12 @@
   },
   "help": {
     "title": "Help",
-    "close": "Close help",
     "intro": "Welcome to the drawing app. Use the left toolbar to add shapes (rectangle, ellipse, line, arrow, star, text, callout), pick colors, and draw on the canvas.",
     "panels": "The right panel lets you edit the selected object's properties, review the action history, and manage layers. Use the top menus to create, open, save, and export your project."
+  },
+  "helpMenu": {
+    "title": "Help",
+    "openHelp": "Open Help"
   },
   "export": {
     "title": "Export Preview",
@@ -152,6 +184,7 @@
     }
   },
   "toolSettings": {
+    "title": "{{tool}} Tool Settings",
     "lineWidth": "Line Width",
     "fontSize": "Font Size",
     "fontFamily": "Font Family",
@@ -180,5 +213,83 @@
       "right": "Right"
     },
     "textColor": "Color"
+  },
+  "editMenu": {
+    "title": "Edit",
+    "undo": "Undo",
+    "redo": "Redo",
+    "cloneObject": "Clone Object",
+    "deleteSelected": "Delete Selected",
+    "moveUp": "Move Up",
+    "moveDown": "Move Down",
+    "insertLocalImage": "Insert Local Image",
+    "insertRemoteImage": "Insert Remote Image"
+  },
+  "tools": {
+    "select": "Select",
+    "rectangle": "Rectangle",
+    "ellipse": "Ellipse",
+    "line": "Line",
+    "arrow": "Arrow",
+    "callout": "Text Box + Arrow",
+    "star": "Star",
+    "text": "Text"
+  },
+  "canvas": {
+    "typePlaceholder": "Type...",
+    "imageLoadFailedTitle": "Image Load Failed",
+    "imageLoadFailedDetail": "Unable to load the image. This may be caused by CORS restrictions or the resource being unavailable. You can try copy and pasting the image directly instead.",
+    "imageLoadFailedShort": "Unable to load the image. This may be caused by CORS restrictions or the resource being unavailable.",
+    "pastedImageData": "Pasted image data",
+    "imageSourcePrefix": "From: {{source}}",
+    "dropToInsert": "Drop to insert image",
+    "imageLoadError": "Image Load Error\n(CORS/404)",
+    "imageLoading": "Loading Image..."
+  },
+  "colorPicker": {
+    "color": "Color",
+    "pickFromCanvas": "Pick color from canvas",
+    "pickFromCanvasLabeled": "Pick {{label}} color from canvas",
+    "opacity": "Opacity: {{percent}}%",
+    "presets": "Presets:"
+  },
+  "dualColorPicker": {
+    "strokeColor": "Stroke Color",
+    "fillColor": "Fill Color",
+    "presetTitle": "Stroke: {{stroke}}, Fill: {{fill}}",
+    "addPreset": "Add current color as preset",
+    "stroke": "Stroke",
+    "fill": "Fill"
+  },
+  "popoverSlider": {
+    "presets": "presets"
+  },
+  "notification": {
+    "dismiss": "Dismiss notification"
+  },
+  "errorBoundary": {
+    "title": "Something went wrong."
+  },
+  "mainLayout": {
+    "loadingCanvas": "Loading canvas..."
+  },
+  "history": {
+    "added": "Added {{type}}",
+    "updated": "Updated {{type}}",
+    "updatedCount_one": "Updated {{count}} item",
+    "updatedCount_other": "Updated {{count}} items",
+    "moved_one": "Moved {{count}} item",
+    "moved_other": "Moved {{count}} items",
+    "movedItems": "Moved items",
+    "deleted": "Deleted {{type}}",
+    "deletedCount_one": "Deleted {{count}} item",
+    "deletedCount_other": "Deleted {{count}} items",
+    "deletedAll": "Deleted all items",
+    "cloned_one": "Cloned {{count}} item",
+    "cloned_other": "Cloned {{count}} items",
+    "movedLayerUp": "Moved layer up",
+    "movedLayerDown": "Moved layer down",
+    "loadedProject": "Loaded Project",
+    "newProject": "New Project"
   }
 }

@@ -25,7 +25,7 @@ export const createProjectSlice: StoreSlice = (set) => ({
             ...data.navigation,
             projectName: data.projectName ?? state.projectName,
             createdAt: data.createdAt ?? Date.now(),
-            history: ['Loaded Project'],
+            history: [{ key: 'history.loadedProject' }],
             historyUndoCount: 0,
             past: [],
             future: [],
@@ -47,7 +47,7 @@ export const createProjectSlice: StoreSlice = (set) => ({
         selectedIds: [],
         selectionColorSnapshot: null,
         hasPerformedClearAll: false,
-        history: ['New Project'],
+        history: [{ key: 'history.newProject' }],
         historyUndoCount: 0
     }),
 });

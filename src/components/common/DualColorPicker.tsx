@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Pipette, Plus } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 
@@ -59,7 +60,7 @@ interface DualColorPickerProps {
 }
 
 interface ColorSectionProps {
-    label: string;
+    labelKey: 'dualColorPicker.stroke' | 'dualColorPicker.fill';
     color: string;
     onChange: (color: string) => void;
     onPick: () => void;
@@ -67,12 +68,14 @@ interface ColorSectionProps {
 }
 
 const ColorSection: React.FC<ColorSectionProps> = ({
-    label,
+    labelKey,
     color,
     onChange,
     onPick,
     supportsAlpha = false
 }) => {
+    const { t } = useTranslation();
+    const label = t(labelKey);
     const initial = parseColorString(color);
     const [localColor, setLocalColor] = useState(initial.hex);
     const [alpha, setAlpha] = useState(initial.alpha);
@@ -124,7 +127,7 @@ const ColorSection: React.FC<ColorSectionProps> = ({
                 <button
                     onClick={onPick}
                     className="text-gray-400 hover:text-blue-400 p-1 rounded hover:bg-gray-700 transition-colors"
-                    title={`Pick ${label.toLowerCase()} color from canvas`}
+                    title={t('colorPicker.pickFromCanvasLabeled', { label: label.toLowerCase() })}
                 >
                     <Pipette size={14} />
                 </button>
@@ -171,7 +174,7 @@ const ColorSection: React.FC<ColorSectionProps> = ({
                 {supportsAlpha && (
                     <div>
                         <label className="text-xs text-gray-400 block mb-1">
-                            Opacity: {Math.round(alpha * 100)}%
+                            {t('colorPicker.opacity', { percent: Math.round(alpha * 100) })}
                         </label>
                         <input
                             type="range"
@@ -197,6 +200,7 @@ export const DualColorPicker: React.FC<DualColorPickerProps> = ({
     onActiveTypeChange,
     onPick
 }) => {
+    const { t } = useTranslation();
     const [isOpen, setIsOpen] = useState(false);
     const [editTarget, setEditTarget] = useState<'current' | 'preset'>('current');
     const pickerRef = useRef<HTMLDivElement>(null);
@@ -276,7 +280,7 @@ export const DualColorPicker: React.FC<DualColorPickerProps> = ({
                             onActiveTypeChange('stroke');
                             setIsOpen(true);
                         }}
-                        title="Stroke Color"
+                        title={t('dualColorPicker.strokeColor')}
                     />
 
                     {/* Fill Triangle (Bottom Right) */}
@@ -291,7 +295,7 @@ export const DualColorPicker: React.FC<DualColorPickerProps> = ({
                             onActiveTypeChange('fill');
                             setIsOpen(true);
                         }}
-                        title="Fill Color"
+                        title={t('dualColorPicker.fillColor')}
                     />
                 </div>
             </div>
@@ -313,7 +317,7 @@ export const DualColorPicker: React.FC<DualColorPickerProps> = ({
                                 selectColorPreset(i);
                             }
                         }}
-                        title={`Stroke: ${preset.stroke}, Fill: ${preset.fill}`}
+                        title={t('dualColorPicker.presetTitle', { stroke: preset.stroke, fill: preset.fill })}
                     >
                         {/* Transparency background */}
                         <div
@@ -350,7 +354,7 @@ export const DualColorPicker: React.FC<DualColorPickerProps> = ({
                             addColorPreset({ stroke: strokeColor, fill: fillColor });
                         }}
                         className="w-8 h-8 shrink-0 flex items-center justify-center rounded border border-gray-600 hover:border-green-400 text-gray-400 hover:text-green-400 bg-gray-800 transition-colors"
-                        title="Add current color as preset"
+                        title={t('dualColorPicker.addPreset')}
                     >
                         <Plus size={16} />
                     </button>
@@ -361,7 +365,7 @@ export const DualColorPicker: React.FC<DualColorPickerProps> = ({
             {isOpen && (
                 <div className="absolute top-0 left-full ml-4 bg-gray-800 border border-gray-600 rounded-md shadow-xl p-3 z-50 min-w-[200px]">
                     <ColorSection
-                        label="Stroke"
+                        labelKey="dualColorPicker.stroke"
                         color={displayStrokeColor}
                         onChange={(c) => handleColorChange('stroke', c)}
                         onPick={() => {
@@ -374,7 +378,7 @@ export const DualColorPicker: React.FC<DualColorPickerProps> = ({
                     <div className="h-px bg-gray-600 my-3"></div>
 
                     <ColorSection
-                        label="Fill"
+                        labelKey="dualColorPicker.fill"
                         color={displayFillColor}
                         onChange={(c) => handleColorChange('fill', c)}
                         onPick={() => {

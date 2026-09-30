@@ -418,14 +418,14 @@ export const Header: React.FC = () => {
                         }}
                         className="bg-gray-800 border border-gray-600 text-gray-100 text-sm px-2 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-[240px]"
                         autoFocus
-                        aria-label="Project name"
+                        aria-label={t('header.projectNameAria')}
                     />
                 ) : (
                     <button
                         type="button"
                         onClick={() => setIsEditingName(true)}
                         className="px-3 py-1 rounded text-gray-200 hover:bg-gray-800 transition-colors truncate max-w-full"
-                        title="Click to rename project"
+                        title={t('header.renameProjectTitle')}
                     >
                         {projectName}
                     </button>

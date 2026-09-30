@@ -58,12 +58,13 @@ const captureKey = (e: React.KeyboardEvent<HTMLInputElement>, onChange: (value: 
 
 /** Read-only capture field: the next non-modifier keypress is persisted. */
 const ShortcutInput: React.FC<ShortcutInputProps> = ({ value, onChange, label }) => {
+    const { t } = useTranslation();
     return (
         <SettingRow label={label}>
             <Input
                 className="w-28 text-xs"
                 readOnly
-                value={formatKey(value)}
+                value={formatKey(value, t)}
                 onChange={() => {}}
                 onKeyDown={(e) => captureKey(e, onChange)}
             />
@@ -183,7 +184,7 @@ export const ShortcutsSection: React.FC = () => {
                         <Input
                             className="w-24 text-xs"
                             readOnly
-                            value={formatKey(keyboardShortcuts.textSave.key)}
+                            value={formatKey(keyboardShortcuts.textSave.key, t)}
                             onChange={() => {}}
                             onKeyDown={(e) =>
                                 captureKey(e, (value) =>

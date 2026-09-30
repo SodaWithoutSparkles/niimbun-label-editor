@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 
 interface TextEditorOverlayProps {
     editingText: {
@@ -37,6 +38,7 @@ export const TextEditorOverlay: React.FC<TextEditorOverlayProps> = ({
     saveKey,
     saveModifier
 }) => {
+    const { t } = useTranslation();
     const isSaveModifierPressed = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         switch (saveModifier) {
             case 'ctrl':
@@ -70,7 +72,7 @@ export const TextEditorOverlay: React.FC<TextEditorOverlayProps> = ({
                 }
             }}
             autoFocus
-            placeholder="Type..."
+            placeholder={t('canvas.typePlaceholder')}
             style={{
                 position: 'absolute',
                 left: editingText.x,

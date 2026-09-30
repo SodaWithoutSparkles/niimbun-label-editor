@@ -1,9 +1,11 @@
 import React from 'react';
+import type { ParseKeys } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import { Layers, History, Sliders, Trash2 } from 'lucide-react';
 import { ColorPicker } from '../common/ColorPicker';
 import { confirm } from '../common/dialogs';
+import { TOOL_LABEL_KEYS, type ToolLabelKey } from './toolLabels';
 
 export const RightSidebar: React.FC = () => {
     const { t } = useTranslation();
@@ -37,15 +39,20 @@ export const RightSidebar: React.FC = () => {
         return Number.isNaN(parsed) ? fallback : parsed;
     };
 
+    const toolLabel = (type: string): string => {
+        const key = (TOOL_LABEL_KEYS as Record<string, ToolLabelKey | undefined>)[type];
+        return key ? t(key) : type;
+    };
+
     return (
         <div className="w-64 bg-gray-800 border-l border-gray-700 flex flex-col text-gray-300 z-20">
             {/* Top Half: Object Settings OR History */}
             <div className="flex-1 flex flex-col border-b border-gray-700 min-h-0">
                 <div className="bg-gray-900 px-3 py-1 text-xs font-semibold uppercase tracking-wider flex items-center">
                     {hasSelection ? (
-                        <><Sliders size={12} className="mr-2" /> Object Settings</>
+                        <><Sliders size={12} className="mr-2" /> {t('rightSidebar.objectSettings')}</>
                     ) : (
-                        <><History size={12} className="mr-2" /> History</>
+                        <><History size={12} className="mr-2" /> {t('rightSidebar.history')}</>
                     )}
                 </div>
 
@@ -53,13 +60,13 @@ export const RightSidebar: React.FC = () => {
                     {hasSelection && selectedItem ? (
                         <div className="space-y-4 text-sm">
                             <div className="text-xs text-gray-400">
-                                {selectedIds.length > 1 ? `${selectedIds.length} selected` : selectedItem.type}
+                                {selectedIds.length > 1 ? t('rightSidebar.nSelected', { count: selectedIds.length }) : toolLabel(selectedItem.type)}
                             </div>
 
                             {isMultiSelect ? (
                                 <>
                                     <div className="flex items-center justify-between gap-3">
-                                        <span className="text-xs text-gray-400">Primary</span>
+                                        <span className="text-xs text-gray-400">{t('rightSidebar.primary')}</span>
                                         <ColorPicker
                                             color={colors.stroke}
                                             onChange={(color) => updateSelected({ stroke: color })}
@@ -67,7 +74,7 @@ export const RightSidebar: React.FC = () => {
                                         />
                                     </div>
                                     <div className="flex items-center justify-between gap-3">
-                                        <span className="text-xs text-gray-400">Secondary</span>
+                                        <span className="text-xs text-gray-400">{t('rightSidebar.secondary')}</span>
                                         <ColorPicker
                                             color={colors.fill}
                                             onChange={(color) => updateSelected({ fill: color })}
@@ -80,7 +87,7 @@ export const RightSidebar: React.FC = () => {
                                 <>
                                     <div className="grid grid-cols-2 gap-3">
                                         <label className="flex flex-col gap-1">
-                                            <span className="text-xs text-gray-400">X</span>
+                                            <span className="text-xs text-gray-400">{t('rightSidebar.x')}</span>
                                             <input
                                                 type="number"
                                                 value={selectedItem.x}
@@ -89,7 +96,7 @@ export const RightSidebar: React.FC = () => {
                                             />
                                         </label>
                                         <label className="flex flex-col gap-1">
-                                            <span className="text-xs text-gray-400">Y</span>
+                                            <span className="text-xs text-gray-400">{t('rightSidebar.y')}</span>
                                             <input
                                                 type="number"
                                                 value={selectedItem.y}
@@ -98,7 +105,7 @@ export const RightSidebar: React.FC = () => {
                                             />
                                         </label>
                                         <label className="flex flex-col gap-1">
-                                            <span className="text-xs text-gray-400">Rotation</span>
+                                            <span className="text-xs text-gray-400">{t('rightSidebar.rotation')}</span>
                                             <input
                                                 type="number"
                                                 value={selectedItem.rotation}
@@ -107,7 +114,7 @@ export const RightSidebar: React.FC = () => {
                                             />
                                         </label>
                                         <label className="flex flex-col gap-1">
-                                            <span className="text-xs text-gray-400">Opacity</span>
+                                            <span className="text-xs text-gray-400">{t('rightSidebar.opacity')}</span>
                                             <input
                                                 type="number"
                                                 min="0"
@@ -122,7 +129,7 @@ export const RightSidebar: React.FC = () => {
 
                                     {'strokeWidth' in selectedItem && (
                                         <label className="flex flex-col gap-1">
-                                            <span className="text-xs text-gray-400">Stroke Width</span>
+                                            <span className="text-xs text-gray-400">{t('rightSidebar.strokeWidth')}</span>
                                             <input
                                                 type="number"
                                                 min="0"
@@ -135,7 +142,7 @@ export const RightSidebar: React.FC = () => {
                                     )}
 
                                     <div className="flex items-center justify-between gap-3">
-                                        <span className="text-xs text-gray-400">Stroke</span>
+                                        <span className="text-xs text-gray-400">{t('rightSidebar.stroke')}</span>
                                         <ColorPicker
                                             color={selectedItem.stroke}
                                             onChange={(color) => updateSelected({ stroke: color })}
@@ -144,7 +151,7 @@ export const RightSidebar: React.FC = () => {
                                     </div>
 
                                     <div className="flex items-center justify-between gap-3">
-                                        <span className="text-xs text-gray-400">Fill</span>
+                                        <span className="text-xs text-gray-400">{t('rightSidebar.fill')}</span>
                                         <ColorPicker
                                             color={selectedItem.fill}
                                             onChange={(color) => updateSelected({ fill: color })}
@@ -156,7 +163,7 @@ export const RightSidebar: React.FC = () => {
                                     {(selectedItem.type === 'rectangle' || selectedItem.type === 'image' || selectedItem.type === 'text') && (
                                         <div className="grid grid-cols-2 gap-3">
                                             <label className="flex flex-col gap-1">
-                                                <span className="text-xs text-gray-400">Width</span>
+                                                <span className="text-xs text-gray-400">{t('rightSidebar.width')}</span>
                                                 <input
                                                     type="number"
                                                     min="1"
@@ -166,7 +173,7 @@ export const RightSidebar: React.FC = () => {
                                                 />
                                             </label>
                                             <label className="flex flex-col gap-1">
-                                                <span className="text-xs text-gray-400">Height</span>
+                                                <span className="text-xs text-gray-400">{t('rightSidebar.height')}</span>
                                                 <input
                                                     type="number"
                                                     min="1"
@@ -181,7 +188,7 @@ export const RightSidebar: React.FC = () => {
                                     {selectedItem.type === 'ellipse' && (
                                         <div className="grid grid-cols-2 gap-3">
                                             <label className="flex flex-col gap-1">
-                                                <span className="text-xs text-gray-400">Radius X</span>
+                                                <span className="text-xs text-gray-400">{t('rightSidebar.radiusX')}</span>
                                                 <input
                                                     type="number"
                                                     min="1"
@@ -191,7 +198,7 @@ export const RightSidebar: React.FC = () => {
                                                 />
                                             </label>
                                             <label className="flex flex-col gap-1">
-                                                <span className="text-xs text-gray-400">Radius Y</span>
+                                                <span className="text-xs text-gray-400">{t('rightSidebar.radiusY')}</span>
                                                 <input
                                                     type="number"
                                                     min="1"
@@ -206,7 +213,7 @@ export const RightSidebar: React.FC = () => {
                                     {selectedItem.type === 'star' && (
                                         <div className="grid grid-cols-2 gap-3">
                                             <label className="flex flex-col gap-1">
-                                                <span className="text-xs text-gray-400">Inner Radius</span>
+                                                <span className="text-xs text-gray-400">{t('rightSidebar.innerRadius')}</span>
                                                 <input
                                                     type="number"
                                                     min="1"
@@ -216,7 +223,7 @@ export const RightSidebar: React.FC = () => {
                                                 />
                                             </label>
                                             <label className="flex flex-col gap-1">
-                                                <span className="text-xs text-gray-400">Outer Radius</span>
+                                                <span className="text-xs text-gray-400">{t('rightSidebar.outerRadius')}</span>
                                                 <input
                                                     type="number"
                                                     min="1"
@@ -231,7 +238,7 @@ export const RightSidebar: React.FC = () => {
                                     {selectedItem.type === 'arrow' && (
                                         <div className="grid grid-cols-2 gap-3">
                                             <label className="flex flex-col gap-1">
-                                                <span className="text-xs text-gray-400">Pointer Length</span>
+                                                <span className="text-xs text-gray-400">{t('rightSidebar.pointerLength')}</span>
                                                 <input
                                                     type="number"
                                                     min="1"
@@ -241,7 +248,7 @@ export const RightSidebar: React.FC = () => {
                                                 />
                                             </label>
                                             <label className="flex flex-col gap-1">
-                                                <span className="text-xs text-gray-400">Pointer Width</span>
+                                                <span className="text-xs text-gray-400">{t('rightSidebar.pointerWidth')}</span>
                                                 <input
                                                     type="number"
                                                     min="1"
@@ -256,7 +263,7 @@ export const RightSidebar: React.FC = () => {
                                     {selectedItem.type === 'text' && (
                                         <div className="space-y-3">
                                             <label className="flex flex-col gap-1">
-                                                <span className="text-xs text-gray-400">Text</span>
+                                                <span className="text-xs text-gray-400">{t('rightSidebar.text')}</span>
                                                 <textarea
                                                     value={selectedItem.text}
                                                     onChange={(e) => updateSelected({ text: e.target.value })}
@@ -266,7 +273,7 @@ export const RightSidebar: React.FC = () => {
                                             </label>
                                             <div className="grid grid-cols-2 gap-3">
                                                 <label className="flex flex-col gap-1">
-                                                    <span className="text-xs text-gray-400">Font Size</span>
+                                                    <span className="text-xs text-gray-400">{t('rightSidebar.fontSize')}</span>
                                                     <input
                                                         type="number"
                                                         min="1"
@@ -276,7 +283,7 @@ export const RightSidebar: React.FC = () => {
                                                     />
                                                 </label>
                                                 <label className="flex flex-col gap-1">
-                                                    <span className="text-xs text-gray-400">Font Family</span>
+                                                    <span className="text-xs text-gray-400">{t('rightSidebar.fontFamily')}</span>
                                                     <input
                                                         type="text"
                                                         value={selectedItem.fontFamily}
@@ -287,42 +294,42 @@ export const RightSidebar: React.FC = () => {
                                             </div>
                                             <div className="grid grid-cols-2 gap-3">
                                                 <label className="flex flex-col gap-1">
-                                                    <span className="text-xs text-gray-400">Font Weight</span>
+                                                    <span className="text-xs text-gray-400">{t('rightSidebar.fontWeight')}</span>
                                                     <select
                                                         value={selectedItem.fontWeight ?? 'normal'}
                                                         onChange={(e) => updateSelected({ fontWeight: e.target.value as 'normal' | 'bold' })}
                                                         className="w-full px-2 py-1 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 focus:outline-none"
                                                     >
-                                                        <option value="normal">Normal</option>
-                                                        <option value="bold">Bold</option>
+                                                        <option value="normal">{t('toolSettings.fontWeightOptions.normal')}</option>
+                                                        <option value="bold">{t('toolSettings.fontWeightOptions.bold')}</option>
                                                     </select>
                                                 </label>
                                                 <label className="flex flex-col gap-1">
-                                                    <span className="text-xs text-gray-400">Font Style</span>
+                                                    <span className="text-xs text-gray-400">{t('rightSidebar.fontStyle')}</span>
                                                     <select
                                                         value={selectedItem.fontStyle ?? 'normal'}
                                                         onChange={(e) => updateSelected({ fontStyle: e.target.value as 'normal' | 'italic' })}
                                                         className="w-full px-2 py-1 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 focus:outline-none"
                                                     >
-                                                        <option value="normal">Normal</option>
-                                                        <option value="italic">Italic</option>
+                                                        <option value="normal">{t('toolSettings.fontStyleOptions.normal')}</option>
+                                                        <option value="italic">{t('toolSettings.fontStyleOptions.italic')}</option>
                                                     </select>
                                                 </label>
                                             </div>
                                             <label className="flex flex-col gap-1">
-                                                <span className="text-xs text-gray-400">Text Align</span>
+                                                <span className="text-xs text-gray-400">{t('rightSidebar.textAlign')}</span>
                                                 <select
                                                     value={selectedItem.align}
                                                     onChange={(e) => updateSelected({ align: e.target.value as 'left' | 'center' | 'right' })}
                                                     className="w-full px-2 py-1 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 focus:outline-none"
                                                 >
-                                                    <option value="left">Left</option>
-                                                    <option value="center">Center</option>
-                                                    <option value="right">Right</option>
+                                                    <option value="left">{t('toolSettings.textAlignOptions.left')}</option>
+                                                    <option value="center">{t('toolSettings.textAlignOptions.center')}</option>
+                                                    <option value="right">{t('toolSettings.textAlignOptions.right')}</option>
                                                 </select>
                                             </label>
                                             <div className="flex items-center justify-between gap-3">
-                                                <span className="text-xs text-gray-400">Text Color</span>
+                                                <span className="text-xs text-gray-400">{t('rightSidebar.textColor')}</span>
                                                 <ColorPicker
                                                     color={selectedItem.textColor ?? selectedItem.stroke}
                                                     onChange={(color) => updateSelected({ textColor: color })}
@@ -338,17 +345,22 @@ export const RightSidebar: React.FC = () => {
                         <ul className="space-y-1">
                             {history.map((action, i) => {
                                 const isShadowDeleted = i < historyUndoCount;
+                                const label = typeof action === 'string'
+                                    ? action
+                                    : t(action.key as ParseKeys, action.params && 'type' in action.params
+                                        ? { ...action.params, type: toolLabel(String(action.params.type)) }
+                                        : action.params);
                                 return (
                                     <li
                                         key={i}
                                         className={`text-sm px-2 py-1 rounded cursor-pointer truncate ${isShadowDeleted ? 'text-gray-500 line-through' : 'hover:bg-gray-700'}`}
-                                        title={isShadowDeleted ? 'Undone' : undefined}
+                                        title={isShadowDeleted ? t('rightSidebar.undone') : undefined}
                                     >
-                                        {action}
+                                        {label}
                                     </li>
                                 );
                             })}
-                            {history.length === 0 && <li className="text-gray-500 italic text-xs p-2">No history</li>}
+                            {history.length === 0 && <li className="text-gray-500 italic text-xs p-2">{t('rightSidebar.noHistory')}</li>}
                         </ul>
                     )}
                 </div>
@@ -358,13 +370,13 @@ export const RightSidebar: React.FC = () => {
             <div className="flex-1 flex flex-col min-h-0 bg-gray-800">
                 <div className="bg-gray-900 px-3 py-1 text-xs font-semibold uppercase tracking-wider flex items-center justify-between">
                     <div className="flex items-center">
-                        <Layers size={12} className="mr-2" /> Objects
+                        <Layers size={12} className="mr-2" /> {t('rightSidebar.objects')}
                     </div>
                     {objects.length > 0 && (
                         <button
                             type="button"
-                            aria-label="Clear All Objects"
-                            title="Clear All Objects"
+                            aria-label={t('rightSidebar.clearAll')}
+                            title={t('rightSidebar.clearAll')}
                             onClick={async () => {
                                 if (await confirm({ message: t('rightSidebar.confirmClearAll'), danger: true })) {
                                     deleteAllItems();
@@ -396,10 +408,10 @@ export const RightSidebar: React.FC = () => {
                                 }}
                             >
                                 <span className="opacity-50 mr-2 text-xs">#{objects.length - 1 - i}</span>
-                                <span className="capitalize">{item.type}</span>
+                                <span className="capitalize">{toolLabel(item.type)}</span>
                             </li>
                         ))}
-                        {objects.length === 0 && <li className="text-gray-500 italic text-xs p-2">No objects</li>}
+                        {objects.length === 0 && <li className="text-gray-500 italic text-xs p-2">{t('rightSidebar.noObjects')}</li>}
                     </ul>
                 </div>
             </div>

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Pipette } from 'lucide-react';
 
 interface ColorPickerProps {
@@ -57,6 +58,7 @@ const parseColorString = (value: string) => {
 };
 
 export const ColorPicker: React.FC<ColorPickerProps> = ({ color, onChange, supportsAlpha = false, onPick, menuAlign = 'left' }) => {
+    const { t } = useTranslation();
     const [isOpen, setIsOpen] = useState(false);
     const initial = parseColorString(color);
     const [localColor, setLocalColor] = useState(initial.hex);
@@ -151,7 +153,7 @@ export const ColorPicker: React.FC<ColorPickerProps> = ({ color, onChange, suppo
                     <div className="space-y-3">
                         <div>
                             <div className="flex justify-between items-center mb-1">
-                                <label className="text-xs text-gray-400 block">Color</label>
+                                <label className="text-xs text-gray-400 block">{t('colorPicker.color')}</label>
                                 {onPick && (
                                     <button
                                         onClick={() => {
@@ -159,7 +161,7 @@ export const ColorPicker: React.FC<ColorPickerProps> = ({ color, onChange, suppo
                                             setIsOpen(false);
                                         }}
                                         className="text-gray-400 hover:text-blue-400 p-1 rounded hover:bg-gray-700 transition-colors"
-                                        title="Pick color from canvas"
+                                        title={t('colorPicker.pickFromCanvas')}
                                     >
                                         <Pipette size={14} />
                                     </button>
@@ -207,7 +209,7 @@ export const ColorPicker: React.FC<ColorPickerProps> = ({ color, onChange, suppo
                         {supportsAlpha && (
                             <div>
                                 <label className="text-xs text-gray-400 block mb-1">
-                                    Opacity: {Math.round(alpha * 100)}%
+                                    {t('colorPicker.opacity', { percent: Math.round(alpha * 100) })}
                                 </label>
                                 <input
                                     type="range"
@@ -222,7 +224,7 @@ export const ColorPicker: React.FC<ColorPickerProps> = ({ color, onChange, suppo
                         )}
 
                         <div className="flex flex-wrap gap-1">
-                            <div className="text-xs text-gray-400 w-full mb-1">Presets:</div>
+                            <div className="text-xs text-gray-400 w-full mb-1">{t('colorPicker.presets')}</div>
                             {['#000000', '#FFFFFF', '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF'].map((preset) => (
                                 <div
                                     key={preset}
