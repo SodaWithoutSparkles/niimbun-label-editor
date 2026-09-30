@@ -24,8 +24,9 @@ export const createPreferencesSlice: StoreSlice = (set) => ({
     lastAutoSaveAt: null,
     setLastAutoSaveAt: (timestamp) => set({ lastAutoSaveAt: timestamp }),
 
-    exportTrigger: 0,
-    triggerExport: () => set((state) => ({ exportTrigger: state.exportTrigger + 1 })),
+    isExportModalOpen: false,
+    openExportModal: () => set({ isExportModalOpen: true }),
+    closeExportModal: () => set({ isExportModalOpen: false }),
 
     keyboardShortcuts: readJSON(STORAGE_KEYS.keyboardShortcuts, defaultKeyboardShortcuts),
     setModifyKey: (key) => set((state) => {

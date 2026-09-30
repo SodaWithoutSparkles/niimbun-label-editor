@@ -45,7 +45,7 @@ export const EditMenu: React.FC<EditMenuProps> = ({
                     <MenuItem label="Move Down" onClick={() => { onMoveSelectedLayer('down'); onCloseMenu(); }} shortcut="[" />
                     <div className="h-px bg-gray-700 my-1" />
                     <MenuItem label="Insert Local Image" onClick={() => { onInsertLocalImage(); onCloseMenu(); }} />
-                    <MenuItem label="Insert Remote Image" onClick={() => { onInsertRemoteImage(); onCloseMenu(); }} />
+                    <MenuItem label="Insert Remote Image" onClick={() => { void onInsertRemoteImage(); onCloseMenu(); }} />
                 </div>
             )}
         </div>

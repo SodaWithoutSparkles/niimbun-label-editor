@@ -131,8 +131,9 @@ export interface AppState {
     setLastAutoSaveAt: (timestamp: number | null) => void;
 
     // Export
-    exportTrigger: number;
-    triggerExport: () => void;
+    isExportModalOpen: boolean;
+    openExportModal: () => void;
+    closeExportModal: () => void;
 
     // Keyboard Shortcuts
     keyboardShortcuts: KeyboardShortcutConfig;

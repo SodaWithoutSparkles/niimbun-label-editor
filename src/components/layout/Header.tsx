@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import type { SaveFile } from '../../types';
 import { compressToBase64 } from '../../utils/compress';
@@ -10,8 +11,10 @@ import { EditMenu } from './header/EditMenu';
 import { OptionsMenu } from './header/OptionsMenu';
 import { HelpMenu } from './header/HelpMenu';
 import { HelpModal } from '../help/HelpModal';
+import { Modal, confirm, promptText } from '../common/dialogs';
 
 export const Header: React.FC = () => {
+    const { t } = useTranslation();
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
     const [showShortcutConfig, setShowShortcutConfig] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
@@ -43,7 +46,8 @@ export const Header: React.FC = () => {
     const autoSave = useStore(state => state.autoSave);
     const toggleAutoSave = useStore(state => state.toggleAutoSave);
     const setLastAutoSaveAt = useStore(state => state.setLastAutoSaveAt);
-    const triggerExport = useStore(state => state.triggerExport);
+    const openExportModal = useStore(state => state.openExportModal);
+    const addNotification = useStore(state => state.addNotification);
 
     // Safety check for overwriting
     const hasPerformedClearAll = useStore(state => state.hasPerformedClearAll);
@@ -137,23 +141,10 @@ export const Header: React.FC = () => {
                 // Hard to track "wasn't empty before" without more state, but generally saving 0 objects is rare.
                 // Safeguard 2: User wiped everything (Clear All) and is now saving in-place.
                 if (hasPerformedClearAll) {
-                    const confirmed = window.confirm(
-                        "WARNING: You have cleared all objects during this session.\n" +
-                        "Saving now will OVERWRITE your existing file on disk with these changes.\n\n" +
-                        "If you intended to start a new drawing based on this file, you should probably use 'Save As' instead to keep the old file intact.\n\n" +
-                        "Click OK to overwrite the existing file.\n" +
-                        "Click Cancel to abort (then use File > Save As)."
-                    );
-                    if (!confirmed) return;
+                    if (!(await confirm({ message: t('header.confirmOverwriteCleared') }))) return;
                 } else if (objects.length === 0) {
                     // Still warn on empty, just in case they deleted manually one by one
-                    const confirmed = window.confirm(
-                        "You are about to save an empty canvas to your existing file.\n" +
-                        "This will overwrite your previous work with no objects.\n\n" +
-                        "Click OK to overwrite in-place.\n" +
-                        "Click Cancel to abort."
-                    );
-                    if (!confirmed) return;
+                    if (!(await confirm({ message: t('header.confirmSaveEmpty') }))) return;
                 }
 
                 await writeSaveFileToHandle(fileHandle, saveFile);
@@ -178,7 +169,7 @@ export const Header: React.FC = () => {
             setActiveMenu(null);
         } catch (err) {
             console.error('Failed to save project', err);
-            alert('Failed to save project');
+            addNotification({ type: 'error', message: t('errors.saveFailed') });
         }
     };
 
@@ -188,7 +179,7 @@ export const Header: React.FC = () => {
             openSaveAsModal();
         } catch (err) {
             console.error('Failed to save project as', err);
-            alert('Failed to save project');
+            addNotification({ type: 'error', message: t('errors.saveFailed') });
         }
     };
 
@@ -223,7 +214,7 @@ export const Header: React.FC = () => {
             }
         } catch (err) {
             console.error('Failed to load project file', err);
-            alert('Failed to load project file');
+            addNotification({ type: 'error', message: t('errors.loadFailed') });
         }
 
         setActiveMenu(null);
@@ -253,7 +244,7 @@ export const Header: React.FC = () => {
             setActiveMenu(null);
         } catch (err) {
             console.error('Failed to open project file', err);
-            alert('Failed to open project file');
+            addNotification({ type: 'error', message: t('errors.openFailed') });
         }
     };
 
@@ -285,8 +276,8 @@ export const Header: React.FC = () => {
         if (imageInputRef.current) imageInputRef.current.value = '';
     };
 
-    const handleRemoteImageInsert = () => {
-        const url = prompt('Paste an image URL');
+    const handleRemoteImageInsert = async () => {
+        const url = await promptText({ message: t('header.promptImageUrl') });
         if (!url) return;
 
         addItem({
@@ -352,7 +343,7 @@ export const Header: React.FC = () => {
             setShowSaveAsModal(false);
         } catch (err) {
             console.error('Failed to save project', err);
-            alert('Failed to save project');
+            addNotification({ type: 'error', message: t('errors.saveFailed') });
         }
     };
 
@@ -395,7 +386,7 @@ export const Header: React.FC = () => {
                 onSave={handleSave}
                 onSaveAs={handleSaveAs}
                 onToggleAutoSave={toggleAutoSave}
-                onExport={triggerExport}
+                onExport={openExportModal}
             />
 
             <div className="absolute left-1/2 top-0 h-full -translate-x-1/2 flex items-center max-w-[480px] w-full justify-center px-4">
@@ -459,59 +450,50 @@ export const Header: React.FC = () => {
             {activeMenu && (
                 <div className="fixed inset-0 z-[-1]" onClick={() => setActiveMenu(null)} />
             )}
-            {showSaveAsModal && (
-                <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60">
-                    <div className="bg-gray-900 text-white rounded-lg shadow-2xl w-full max-w-2xl overflow-hidden border border-gray-700">
-                        <div className="px-6 py-4 border-b border-gray-700 flex justify-between items-center">
-                            <h2 className="text-lg font-semibold">Save Project As</h2>
-                            <button
-                                className="text-gray-300 hover:text-white transition-colors"
-                                onClick={() => setShowSaveAsModal(false)}
-                                aria-label="Close save as"
-                            >
-                                ✕
-                            </button>
-                        </div>
-
-                        <div className="p-6 space-y-4">
-                            <div className="space-y-2">
-                                <label className="text-sm text-gray-300">Project name</label>
-                                <input
-                                    value={saveAsProjectName}
-                                    onChange={(e) => setSaveAsProjectName(e.target.value)}
-                                    className="w-full bg-gray-800 border border-gray-700 text-gray-100 px-3 py-2 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                    placeholder="Project name"
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-sm text-gray-300">File name</label>
-                                <input
-                                    value={saveAsFileName}
-                                    onChange={(e) => setSaveAsFileName(e.target.value)}
-                                    className="w-full bg-gray-800 border border-gray-700 text-gray-100 px-3 py-2 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                    placeholder="filename.fsp"
-                                />
-                                <p className="text-xs text-gray-400">Use .fsp for compressed saves or .json for legacy format.</p>
-                            </div>
-                        </div>
-
-                        <div className="px-6 py-4 border-t border-gray-700 flex justify-end space-x-2">
-                            <button
-                                className="px-4 py-2 text-sm rounded bg-gray-700 hover:bg-gray-600"
-                                onClick={() => setShowSaveAsModal(false)}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-500"
-                                onClick={confirmSaveAs}
-                            >
-                                Save
-                            </button>
-                        </div>
+            <Modal
+                open={showSaveAsModal}
+                onClose={() => setShowSaveAsModal(false)}
+                title={t('saveAs.title')}
+                size="lg"
+                footer={(
+                    <>
+                        <button
+                            className="px-4 py-2 text-sm rounded bg-gray-700 hover:bg-gray-600"
+                            onClick={() => setShowSaveAsModal(false)}
+                        >
+                            {t('dialog.cancel')}
+                        </button>
+                        <button
+                            className="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-500"
+                            onClick={() => { void confirmSaveAs(); }}
+                        >
+                            {t('saveAs.save')}
+                        </button>
+                    </>
+                )}
+            >
+                <div className="space-y-4">
+                    <div className="space-y-2">
+                        <label className="text-sm text-gray-300">{t('saveAs.projectName')}</label>
+                        <input
+                            value={saveAsProjectName}
+                            onChange={(e) => setSaveAsProjectName(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-700 text-gray-100 px-3 py-2 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            placeholder={t('saveAs.projectNamePlaceholder')}
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-sm text-gray-300">{t('saveAs.fileName')}</label>
+                        <input
+                            value={saveAsFileName}
+                            onChange={(e) => setSaveAsFileName(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-700 text-gray-100 px-3 py-2 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            placeholder={t('saveAs.fileNamePlaceholder')}
+                        />
+                        <p className="text-xs text-gray-400">{t('saveAs.hint')}</p>
                     </div>
                 </div>
-            )}
+            </Modal>
             <ShortcutConfigModal
                 isOpen={showShortcutConfig}
                 onClose={() => setShowShortcutConfig(false)}

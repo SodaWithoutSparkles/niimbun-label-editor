@@ -1,9 +1,12 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import { Layers, History, Sliders, Trash2 } from 'lucide-react';
 import { ColorPicker } from '../common/ColorPicker';
+import { confirm } from '../common/dialogs';
 
 export const RightSidebar: React.FC = () => {
+    const { t } = useTranslation();
     const history = useStore((state) => state.history);
     const historyUndoCount = useStore((state) => state.historyUndoCount);
     const objects = useStore((state) => state.objects);
@@ -362,8 +365,8 @@ export const RightSidebar: React.FC = () => {
                             type="button"
                             aria-label="Clear All Objects"
                             title="Clear All Objects"
-                            onClick={() => {
-                                if (window.confirm("WARNING: This will delete ALL objects on the canvas.\n\nAre you sure you want to clear everything?")) {
+                            onClick={async () => {
+                                if (await confirm({ message: t('rightSidebar.confirmClearAll'), danger: true })) {
                                     deleteAllItems();
                                 }
                             }}

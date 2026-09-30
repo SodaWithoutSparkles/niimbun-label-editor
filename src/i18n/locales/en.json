@@ -52,5 +52,62 @@
     "callout": "Callout: Space to start arrow; {{modifier}} to straight arrow",
     "line": "Line: {{modifier}} to straight line",
     "arrow": "Arrow: Space to start arrow, {{modifier}} to straight arrow"
+  },
+  "dialog": {
+    "ok": "OK",
+    "cancel": "Cancel",
+    "close": "Close"
+  },
+  "header": {
+    "confirmOverwriteCleared": "WARNING: You have cleared all objects during this session.\nSaving now will OVERWRITE your existing file on disk with these changes.\n\nIf you intended to start a new drawing based on this file, you should probably use 'Save As' instead to keep the old file intact.\n\nClick OK to overwrite the existing file.\nClick Cancel to abort (then use File > Save As).",
+    "confirmSaveEmpty": "You are about to save an empty canvas to your existing file.\nThis will overwrite your previous work with no objects.\n\nClick OK to overwrite in-place.\nClick Cancel to abort.",
+    "promptImageUrl": "Paste an image URL"
+  },
+  "rightSidebar": {
+    "confirmClearAll": "WARNING: This will delete ALL objects on the canvas.\n\nAre you sure you want to clear everything?"
+  },
+  "errors": {
+    "saveFailed": "Failed to save project",
+    "loadFailed": "Failed to load project file",
+    "openFailed": "Failed to open project file"
+  },
+  "about": {
+    "title": "About",
+    "message": "Drawing App v0.1.0\nBuilt with React & Vite"
+  },
+  "help": {
+    "title": "Help",
+    "close": "Close help",
+    "intro": "Welcome to the drawing app. Use the left toolbar to add shapes (rectangle, ellipse, line, arrow, star, text, callout), pick colors, and draw on the canvas.",
+    "panels": "The right panel lets you edit the selected object's properties, review the action history, and manage layers. Use the top menus to create, open, save, and export your project."
+  },
+  "export": {
+    "title": "Export Preview",
+    "close": "Close",
+    "download": "Download",
+    "capturing": "Capturing preview... Large Canvas might take longer",
+    "capturingShort": "Capturing preview...",
+    "captureFailed": "Failed to capture canvas.",
+    "loading": "Loading...",
+    "zoomHint": "Zoom to fit before exporting for best results.",
+    "filename": "Filename",
+    "defaultFilename": "drawing-export",
+    "size": "Size",
+    "quality": "Quality",
+    "qualityHint": "JPG/WebP only",
+    "qualityHintPng": "PNG ignores quality",
+    "trim": "Trim empty space",
+    "trimShort": "Trim",
+    "trimHint": "Detects transparent areas and crops them out.",
+    "previewReady": "Preview ready • {{width}} × {{height}}px"
+  },
+  "saveAs": {
+    "title": "Save Project As",
+    "projectName": "Project name",
+    "projectNamePlaceholder": "Project name",
+    "fileName": "File name",
+    "fileNamePlaceholder": "filename.fsp",
+    "hint": "Use .fsp for compressed saves or .json for legacy format.",
+    "save": "Save"
   }
 }

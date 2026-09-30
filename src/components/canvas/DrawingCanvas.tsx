@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Stage, Layer } from 'react-konva';
 import { useStore } from '../../store/useStore';
 import { ShapeRenderer } from './ShapeRenderer';
 import { TextEditorOverlay } from './TextEditorOverlay';
-import { useCanvasExport } from './hooks/useCanvasExport';
+import { ExportModal } from './ExportModal';
 import { useCanvasNavigation } from './hooks/useCanvasNavigation';
 import { useCanvasDimensions } from './hooks/useCanvasDimensions';
 import { useDrawingTools } from './hooks/useDrawingTools';
@@ -26,7 +26,8 @@ export const DrawingCanvas: React.FC<{ readOnly?: boolean }> = ({ readOnly = fal
     const isDropperActive = useStore((state) => state.isDropperActive);
     const setDropperActive = useStore((state) => state.setDropperActive);
     const toolSettings = useStore((state) => state.toolSettings);
-    const exportTrigger = useStore((state) => state.exportTrigger);
+    const isExportModalOpen = useStore((state) => state.isExportModalOpen);
+    const closeExportModal = useStore((state) => state.closeExportModal);
     const keyboardShortcuts = useStore((state) => state.keyboardShortcuts);
     const setCanvasPosition = useStore((state) => state.setCanvasPosition);
     const homeViewTrigger = useStore((state) => state.homeViewTrigger);
@@ -35,7 +36,6 @@ export const DrawingCanvas: React.FC<{ readOnly?: boolean }> = ({ readOnly = fal
     // Refs
     const stageRef = useRef<any>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const trRef = useRef<any>(null);
     const groupDragSnapshotRef = useRef<typeof objects | null>(null);
     const dragCounterRef = useRef(0);
     const [isDraggingImage, setIsDraggingImage] = useState(false);
@@ -91,12 +91,6 @@ export const DrawingCanvas: React.FC<{ readOnly?: boolean }> = ({ readOnly = fal
         keyboardShortcuts.modifyKey,
         keyboardShortcuts.cancelKey
     );
-
-    const exportOptions = useMemo(() => ({
-        filename: projectName
-    }), [projectName]);
-
-    useCanvasExport(exportTrigger, stageRef, trRef, exportOptions);
 
     // Sync stagePos to store
     useEffect(() => {
@@ -421,6 +415,13 @@ export const DrawingCanvas: React.FC<{ readOnly?: boolean }> = ({ readOnly = fal
                     </div>
                 </div>
             )}
+
+            <ExportModal
+                open={isExportModalOpen}
+                onClose={closeExportModal}
+                stageRef={stageRef}
+                defaultFilename={projectName}
+            />
         </div>
     );
 };
