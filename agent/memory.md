@@ -15,6 +15,7 @@ Label editor for NIIMBOT thermal printers (React 19, TypeScript, Tailwind v4, zu
 ## Agent workflow
 
 - **Parallel fan-out with background subagents.** `subagent` supports `background: true`: it returns immediately with a `sessionID` and wakes the coordinator when the child finishes. Dispatch independent tasks in one turn in background mode, then continue other work — do not poll or sleep. Verify each: the wake-up notification carries the child's final text. Use `sessionID` to resume the same child (e.g. after a `needs-info`).
+- **Reviewer routing (owner instruction, 2026-10-03).** Use **`experimental-review` as the primary reviewer** — its model is a trial that may vanish, and it has repeatedly outperformed `review`/`review-alt` here (P2: it caught exit-criterion bugs the first pass missed). Keep `review-alt` as the fallback for when it disappears; `review-fast` still suffices for mechanical/narrow re-reviews. Re-check availability before the ~2026-10-10 window.
 
 
 ## Essentials

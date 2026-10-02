@@ -1,7 +1,7 @@
 # Phase 2 Action Plan — Document model + storage + gallery (M1+M2)
 
 **Run:** `agent/2026-09-29_label-editor-v1` · **Owner:** Coordinator · **Plan ref:** `plan.md` P2
-**Status:** READY (written 2026-10-03 after the niim.blue reference review)
+**Status:** DONE (implemented 2026-10-03; fix round 2 applied 2026-10-03). See `state.md` §Phase 2 for outcomes and deviations.
 **Prereq:** P1 done (`380be10`, `f2a2a69`, `24f565f`). Read this whole file before starting.
 
 ---
@@ -59,7 +59,7 @@ spare: polygon     [[0,0],[1300,0],[1300,3800],[1800,3800],[1800,7800],[0,7800]]
 
 ## 3. Validation — use what's there, do NOT add a validation lib
 
-Owner decision (2026-10-03): **no new dependency** (the plan parked zod for P2; the owner resolved it to "use existing patterns"). Follow the repo's hand-rolled precedent:
+Owner decision (2026-10-03, re-confirmed after a zod challenge): **no new dependency** (the plan parked zod for P2; the owner resolved it to "use existing patterns"). Rationale, kept for the record: zod is a general framework — you still author the schema, in a DSL instead of TS; the battle-tested reference ships zod 4 and still produced `writablePersisted`'s silent-reset-to-blank (`persistence.ts:20`) plus a zoo of `zodErrors` toasts across 5+ components — the exact anti-pattern §3 bans. Tests dominate cost either way (~40 cases), zod emits English messages that decision 40 then forces you to map to `t()` codes, and cross-field policy ("bad thumb → strip thumb, keep doc") survives as a hand-written pass under any approach. Follow the repo's hand-rolled precedent:
 
 - `src/store/preferenceValidation.ts` — narrow per-field validators returning a repaired value, plus `pickPersistedKeys`.
 - `src/store/legacyStorage.ts` — the migrate-then-delete-old-key shape.
@@ -69,6 +69,16 @@ Implement `src/core/doc/validate.ts` with small pure validators (`isHm`, `isRegi
 - **reject** structurally wrong documents with a typed result, e.g. `{ ok: true, doc } | { ok: false, errors: string[] }`,
 - **never throw** from a parse path (the caller decides), and **never silently reset to a blank doc** — that is niim.blue's anti-pattern (`persistence.ts` `writablePersisted`).
 - Migration seam: `migrate(raw: unknown): LabelDoc` keyed on `raw.version`, with a single `1 → 1` identity today, so P8's import can add cases without reshaping callers.
+
+**Revisit triggers — flip to zod only if one fires:**
+- `validate.ts` starts growing generic combinators (`isObject`, `union`, `arrayOf` helpers) — that IS re-implementing zod; stop and adopt.
+- A **3rd** complex schema appears (template doc P6, trust records) and hand-rolled duplication becomes real.
+- Schema churn per phase makes `types.ts` ↔ `validate.ts` drift actual (a rename ships in one and not the other).
+- More than one person edits the schema regularly.
+
+If a trigger fires: exact-pin zod as a runtime dep, `schema.ts` becomes the source of truth with types re-exported (edit the §2 "copy verbatim" note accordingly), `safeParse` as a structural gate + an **explicit repair pass — never `.catch()` everywhere**, issues mapped to stable i18n codes, not message strings.
+
+Drift mitigation without zod (do this now, it's cheap): type-level assertion in tests (`parsed satisfies LabelDoc`) so the validator and the frozen type block can't diverge silently.
 
 **Test the validator hard** — corrupt docs, missing fields, float hm, out-of-range dpi, bad thumb, unknown version. This is the single highest-value test surface in P2.
 
@@ -100,11 +110,22 @@ Rules:
 
 ---
 
-## 5. Gallery + create dialog (UI)
+## 5. Gallery + create dialog + shell (UI)
+
+**Reference:** `references/niimbot_official/screenshots/gallery.png` — annotated by owner 2026-10-03 (reading confirmed 2026-10-03). It is the *gallery feel* source, **not** a layout to copy 1:1. Owner-confirmed reading:
+
+- Red X over `NIIMBOT 精臣` → **no third-party branding**.
+- Magenta box + arrow on `資料來源 / 設定 / 幫助` → **Settings + Help stay in the top header** (existing `OptionsMenu` / `HelpMenu`); **Data Source (= our CSV store) moves into the left nav sidebar**.
+- Red box on `最近使用 / 紙張管理 / 範本` → the **nav sidebar group**: Recent / Paper management / Templates, plus `＋ New label` CTA.
+- Red circle on `列印完成` ↔ bottom bar → **connection status stays a chip top-right, AND the same status is duplicated as a small "Connected" indicator bottom-left inside the status bar** (`BottomBar`). (Owner corrected this annotation: it is a *duplicate*, not a move.)
+- Red X over the NIIMBOT round icon + OS window controls → drop that chrome (irrelevant to us).
+- Card anatomy to keep: `{date, thumbnail, name, size, quick-print}` grid.
 
 - **Gallery:** grid of cards. Card art resolution order (decision 37): local IDB thumb → `meta.thumb` → generated placeholder (backing outline + region-union silhouette + name). **Never execute templates, never fetch.** A pseudo-card is fine for P2 (a real render is P4).
+- **Shell / view mode:** the gallery is a home surface distinct from the editor. Add a **minimal `view: 'gallery' | 'editor'` seam** (navigation slice or the new doc/UI slice — justify in the receipt); `MainLayout` renders the nav sidebar + gallery grid when `gallery`, the existing tool palette + canvas when `editor`. Default `gallery` on load, so "reopen after reload" is demonstrable. Keep it reversible; do **not** entangle it with the doc model.
+- **Nav sidebar:** group `Recent / Paper management / Templates` + `Data source (CSV)` + `＋ New label` CTA, all through `t()`. Only `Recent` (label list) has real data in P2; the rest may render an empty/placeholder state — do **not** build CSV parse/templates/trust (P6).
 - **Create dialog:** use the shared `Modal` + `dialogService` and the form kit (`Input`/`Select`/`Toggle`/`SettingRow`). Preset picker incl. `ftagSpare-25x78`; custom size + a **minimal** regions editor (list of regions with numeric fields; polygon maybe read-only/JSON for now — do not gold-plate). Every string through `t()` (decision 40), dynamic keys via the literal-map pattern.
-- **Connection chip** top-right (gallery + editor) — status only; it consumes `PrinterTransport.onStatus` (P1). For P2 a `MockTransport`/disconnected state is enough.
+- **Connection status:** top-right chip (gallery + editor) **and** the bottom-left `Connected`/`Disconnected` duplicate in `BottomBar` — both status-only; consume `PrinterTransport.onStatus` (P1). For P2 a `MockTransport`/disconnected state is enough.
 - **Roll/dpi mismatch warning is P3.** The adapter already reports `rollWidthHm/rollHeightHm/dpi`; do not build the warning UI now.
 - Use `cn()`, respect `<React.StrictMode>` idempotency, and the global-listener guard on `dialog[open]` (see `memory.md`).
 
@@ -145,7 +166,7 @@ Run independent streams in **background subagents** (see `memory.md` → Agent w
 | --- | --- | --- |
 | A | `src/core/doc/{types,validate,derive,factory,serialize}.ts` + tests (incl. `newLabelId`, F-tag preset, integer-scan, thumb rejection) | — |
 | B | `bun add idb` + `src/data/{db,labelRepo,resourceRepo,csvRepo,thumbRepo}.ts` + injected-fake tests + localStorage→IDB migration | A's types |
-| C | Gallery UI + create dialog + connection chip (uses B's repo, shared Modal/form kit, `t()`) | A, B |
+| C | Gallery grid + shell (`view` mode; nav sidebar = Recent/Paper management/Templates + CSV + New-label CTA) + create dialog + connection chip top-right + bottom-left `Connected` in `BottomBar` (uses B's repo, shared Modal/form kit, `t()`) | A, B |
 
 A first, then B and C can overlap (C needs B's repo interface — define it early). Keep streams non-overlapping by file.
 
@@ -155,7 +176,8 @@ src/core/doc/types.ts        src/core/doc/validate.ts     src/core/doc/derive.ts
 src/core/doc/factory.ts      src/core/doc/serialize.ts    src/core/doc/*.test.ts
 src/data/db.ts               src/data/labelRepo.ts        src/data/resourceRepo.ts
 src/data/csvRepo.ts          src/data/thumbRepo.ts        src/data/*.test.ts
-src/components/gallery/…     src/components/labels/CreateLabelDialog.tsx
+src/components/gallery/…     src/components/layout/NavSidebar.tsx
+src/components/labels/CreateLabelDialog.tsx
 src/components/common/ConnectionChip.tsx
 src/store/slices/docSlice.ts (or a dedicated store — decide and justify)
 ```
@@ -165,7 +187,7 @@ src/store/slices/docSlice.ts (or a dedicated store — decide and justify)
 ## 9. Gate (all must pass)
 
 1. `bun run test:run` green; `bun x tsc --noEmit` clean; `bun run build` green.
-2. **Exit criterion demonstrated:** create an F-tag label → it persists in IDB → **reload the page → it is still there and opens**. Show the evidence (test or a browser check via `ab`; browsers headed, never headless).
+2. **Exit criterion demonstrated:** create an F-tag label (via the gallery `＋ New label` CTA) → it persists in IDB → **reload the page → it is still there in the `Recent` gallery and opens**. Show the evidence (test or a browser check via `ab`; browsers headed, never headless).
 3. Review: `review-alt` (primary; region-blocked fallback) + optionally `experimental-review` as a second opinion. Paste shell evidence. Address all `[must-fix]`; ≤2 fix rounds, then escalate to the user.
 4. Update `state.md` + this action plan; escalate project-relevant lessons to `agent/memory.md` / `agent/memory/*.md` (e.g. a `memory/storage-idb.md` if the IDB patterns are worth keeping).
 5. Semantic commit (`feat(doc): …` / `feat(storage): …`; split by stream if it reads better).
