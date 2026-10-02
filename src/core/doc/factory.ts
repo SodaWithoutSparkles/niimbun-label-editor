@@ -29,27 +29,33 @@ export interface LabelPreset {
 
 /**
  * F-tag spare preset regions (plan §F-tag preset), backing 2500×7800 hm.
- * The `flag`/`tail`/`spare` names are descriptive comments only — regions carry
+ * The label is the **union** of three rounded rectangles:
+ *   - `flag`: the full-width upper block (one region, 0..2500 × 0..3800);
+ *   - `tail`: the lower-left block (0..1975 × 3400..7800);
+ *   - `tab`: the full-height right column (1575..2175 × 0..7800).
+ * `regions` is consumed only as `union(regions)` (decision 25), so this is an
+ * implementation detail: the union outline is the intended silhouette — a
+ * 25×78 backing with the lower-right notch cut out and the tab column printed.
+ *
+ * The neighbours **overlap** (tail starts at y 3400, before the flag's 3800
+ * edge, and is 1975 wide, past the tab's 1575 edge). This is required, not
+ * cosmetic: an abutting `roundedRect` pair each rounds its own corner, so where
+ * two regions merely touch, each loses the same corner half-disc and the union
+ * outline gets a notch punched into it. Overlapping by ≥ 2r covers the seam, so
+ * every interior corner that is not meant to be there disappears. The flag was
+ * likewise merged from two abutting halves into one region — two halves can
+ * never union without a notch at their shared edge.
+ *
+ * The `flag`/`tail`/`tab` names are descriptive comments only — regions carry
  * no role/id (decision 25).
  */
 export const ftagSpareRegions = (): Region[] => [
-    // flag
-    { kind: 'roundedRect', x: 1400, y: 0, w: 1100, h: 3800, r: 200 },
-    // tail
-    { kind: 'rect', x: 1900, y: 3800, w: 600, h: 4000 },
-    // spare
-    {
-        kind: 'polygon',
-        points: [
-            [0, 0],
-            [1300, 0],
-            [1300, 3800],
-            [1800, 3800],
-            [1800, 7800],
-            [0, 7800],
-        ],
-        closed: true,
-    },
+    // flag: the upper block, one region (splitting it punches a top-edge notch)
+    { kind: 'roundedRect', x: 0, y: 0, w: 2500, h: 3800, r: 200 },
+    // tail: lower-left block; overlaps the flag and the tab by ≥ 2r
+    { kind: 'roundedRect', x: 0, y: 3400, w: 1975, h: 4400, r: 200 },
+    // tab: full height, over the flag's right corner and the tail's right edge
+    { kind: 'roundedRect', x: 1575, y: 0, w: 600, h: 7800, r: 200 },
 ];
 
 export const LABEL_PRESETS: Record<LabelPresetId, LabelPreset> = {

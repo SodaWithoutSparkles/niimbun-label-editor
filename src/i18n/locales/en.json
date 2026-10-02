@@ -313,15 +313,15 @@
     "name": "Name",
     "namePlaceholder": "Label name",
     "preset": "Preset",
-    "width": "Width (mm)",
-    "height": "Height (mm)",
+    "width": "Total width (mm)",
+    "height": "Total height (mm)",
     "dpi": "DPI",
     "regions": "Regions",
     "addRegion": "Add region",
     "removeRegion": "Remove region",
     "noRegions": "No regions.",
     "polygonReadonly": "Polygon points are read-only.",
-    "invalidSize": "Enter a positive width and height",
+    "invalidSize": "Enter a positive total width and height (mm)",
     "create": "Create"
   },
   "regionKinds": {

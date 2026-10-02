@@ -11,6 +11,7 @@ import {
     regionUnionBounds,
 } from './derive';
 import type { Node } from './types';
+import { LABEL_PRESETS } from './factory';
 
 const makeNode = (over: Record<string, unknown>): Node =>
     ({
@@ -166,15 +167,9 @@ describe('regionBounds / regionUnionBounds', () => {
     });
 
     it('reproduces the F-tag preset union', () => {
-        const bounds = regionUnionBounds([
-            { kind: 'roundedRect', x: 1400, y: 0, w: 1100, h: 3800, r: 200 },
-            { kind: 'rect', x: 1900, y: 3800, w: 600, h: 4000 },
-            {
-                kind: 'polygon',
-                points: [[0, 0], [1300, 0], [1300, 3800], [1800, 3800], [1800, 7800], [0, 7800]],
-                closed: true,
-            },
-        ]);
+        // Read the real preset, not a private copy of the region numbers: a
+        // hardcoded copy could pass while the shipped geometry regressed.
+        const bounds = regionUnionBounds(LABEL_PRESETS['ftagSpare-25x78'].regions);
         expect(bounds).toEqual({ x: 0, y: 0, w: 2500, h: 7800 });
         expect(Number.isInteger(bounds?.x) && Number.isInteger(bounds?.w)).toBe(true);
     });
