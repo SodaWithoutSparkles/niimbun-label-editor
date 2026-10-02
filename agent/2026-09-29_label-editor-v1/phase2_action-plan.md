@@ -42,7 +42,7 @@ Copy the type block from `plan.md` §Data model **verbatim** into `src/core/doc/
 - **`version: 1`** is a literal. This is a fresh schema, not the chat's v2.
 - **`AssetRef` has 4 provenances from day one** (`inline`/`remote`/`local`/`external`). This is a **deliberate differentiator** (plan decision 42) — do not trim it to `inline` only, even though niim.blue inlines everything. Validate all four; use `local` for anything the user imports into our IDB.
 - **`FontRef.source` is `system | imported`** — there is no `embedded`/`remote` variant (decision 36).
-- **`regions` is consumed only as `union(regions)`** (decision 25). Do not add roles/ids/zone labels. The F-tag's `flag`/`tail`/`spare` are comment names, not fields.
+- **`regions` is consumed only as `union(regions)`** (decision 25). Do not add roles/ids/zone labels. The F-tag's `flag`/`tail`/`tab` are comment names, not fields. **Regions may overlap on purpose** (see §2 note): the union clip must use **nonzero winding** in P4 — even-odd would punch holes in every overlap band.
 - **`meta.thumb` is raster-only** and optional: validate mime ∈ {png,jpeg,webp}, longest side ≤ 512, decoded bytes ≤ 64 KB, else **reject the thumb, keep the doc**. It is cosmetic and may be stale.
 - **`label.dpi`** clamp 100–1200 (rounded int) on validation. Common 203/300.
 - **Derived semantics are never stored** (`effectiveVisible`, `effectiveLocked`, `effectiveTransform`, children-from-`parentId`). Provide pure helper functions in `src/core/doc/derive.ts` + tests; do **not** cache them on nodes.
@@ -50,10 +50,22 @@ Copy the type block from `plan.md` §Data model **verbatim** into `src/core/doc/
 
 ### F-tag preset (must reproduce exactly, backing 2500×7800 hm)
 ```
-flag : roundedRect x1400 y0 w1100 h3800 r200
-tail : rect        x1900 y3800 w600 h4000
-spare: polygon     [[0,0],[1300,0],[1300,3800],[1800,3800],[1800,7800],[0,7800]]
+flag : roundedRect x0    y0    w2500 h3800 r200
+tail : roundedRect x0    y3400 w1975 h4400 r200
+tab  : roundedRect x1575 y0    w600  h7800 r200
 ```
+
+> **Corrected by the owner, 2026-10-03.** The original 4-region geometry
+> (`flag` split into two 1250-wide halves + `tail x0 y3800 w1575 h4000`) does
+> **not tile**: abutting `roundedRect` corners each round their own corner, so
+> each shared seam lost a corner half-disc and the `union(regions)` clip had
+> notches punched into it (probes `(1250,0)`, `(0,3800)`, `(1575,7800)`, and
+> the flag seam were outside the union). Fixed to 3 overlapping regions: the
+> flag is one region; the tail starts at `y3400` and is `w1975` so it overlaps
+> the flag and tab by ≥ 2r. `y + h = 7800` and the tab column x∈[1575,2175]
+> are unchanged, so the silhouette intent (25×78, lower-right notch OUT, tab
+> full height) is preserved. The 4→3 region count is a correctness requirement,
+> not a preference. See `src/core/doc/factory.ts` `ftagSpareRegions()`.
 
 ---
 

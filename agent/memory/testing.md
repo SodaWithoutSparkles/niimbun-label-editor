@@ -26,6 +26,14 @@ via `mergeConfig`). Explicit `import { describe, it, expect } from 'vitest'` —
   (`showPopover`/`hidePopover`, `:popover-open`, top-layer ordering) — neither
   engine implements it; `<dialog>` `cancel`/Escape semantics, top-layer stacking,
   real focus trap/inert, Konva canvas rendering, layout/CSS, `getBoundingClientRect`.
+- **`CompressionStream`/`DecompressionStream` backpressure is browser-only.**
+  In a real browser the writable side stalls unless the readable side is being
+  consumed, so `await writer.close()` before attaching a reader deadlocks (the
+  write promise never settles). happy-dom/Node do NOT reproduce it. **Always
+  attach `new Response(stream.readable)…` BEFORE writing.** P2 shipped a
+  `repo.save` that hung on this and passed 242 headless tests; only the headed
+  check caught it. Regression: `src/utils/compress.test.ts` uses a
+  backpressure-faithful `CompressionStream` fake.
 
 ## Gotcha
 

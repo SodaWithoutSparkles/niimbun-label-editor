@@ -169,13 +169,22 @@ interface LabelDoc {
 - children derived from `parentId`; never stored separately.
 
 **F-tag preset** (`ftagSpare-25x78`, backing 2500×7800 hm):
-- `flag`: roundedRect x1400 y0 w1100 h3800 r200
-- `tail`: rect x1900 y3800 w600 h4000
-- `spare`: polygon [[0,0],[1300,0],[1300,3800],[1800,3800],[1800,7800],[0,7800]]
+- `flag`: roundedRect x0 y0 w2500 h3800 r200
+- `tail`: roundedRect x0 y3400 w1975 h4400 r200
+- `tab`: roundedRect x1575 y0 w600 h7800 r200
+
+> **Corrected by the owner, 2026-10-03:** the preset is now a 3-region union
+> (was 4). Abutting `roundedRect`s lose a corner half-disc at every shared seam,
+> punching notches into the `union(regions)` clip. The fix: the flag is one
+> region (two halves can never tile), and the tail overlaps its neighbours by
+> ≥ 2r (`y3400`, `w1975`). Silhouette intent unchanged: 25×78, lower-right notch
+> OUT, tab column x∈[1575,2175] IN. See `src/core/doc/factory.ts` `ftagSpareRegions()`.
 
 **v1 node set:** text, image, shape (line, rectangle, ellipse, polygon), qr, barcode, group. QR/barcode payloads are `ContentSource` (templatable).
 
-**Region semantics:** `regions` is consumed only as `union(regions)` — a printable-area clip. Regions carry no role, id, or zone label; `flag`/`tail`/`spare` in the preset are just descriptive comment names for three physical areas of one printable union. No object is ever assigned to a region.
+**Region semantics:** `regions` is consumed only as `union(regions)` — a printable-area clip. Regions carry no role, id, or zone label; `flag`/`tail`/`tab` in the preset are just descriptive comment names for three physical areas of one printable union. No object is ever assigned to a region.
+
+> **⚠ P4 clip requirement — union MUST use NONZERO winding (added 2026-10-03).** Region rectangles may now **overlap on purpose** (the F-tag preset's tail overlaps the flag and tab by ≥ 2r to cover shared rounded corners). Under even-odd (default `fill` in some APIs / `ctx.clip('evenodd')`) every overlap band becomes a **hole**, re-creating the exact clip defect the 2026-10-03 geometry fix removed. The P4 renderer **must** clip with nonzero winding (e.g. canvas `ctx.clip()` default is nonzero — do NOT pass `'evenodd'`; SVG `fill-rule="nonzero"`), or equivalently merge regions into a single path before clipping. Pin this with a P4 test: overlapping regions must produce no interior holes.
 
 ## Storage
 
