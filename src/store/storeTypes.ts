@@ -3,7 +3,7 @@ import type { CanvasItem, HistoryEntry, SaveFile } from '../types';
 import type { SupportedLanguage } from '../i18n/languages';
 import type { hm } from '../core/hm';
 import type { LabelDoc, Region } from '../core/doc/types';
-import type { LabelPresetId } from '../core/doc/factory';
+import type { LabelPresetId } from '../core/doc/label-presets';
 import type { LabelRepo, LabelSummary } from '../data/labelRepo';
 import type { PrinterStatus } from '../print/transport';
 

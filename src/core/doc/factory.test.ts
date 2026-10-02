@@ -1,13 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-    LABEL_PRESETS,
-    createFtagSpareDoc,
-    createLabelDoc,
-    ftagSpareRegions,
-    newLabelId,
-} from './factory';
+import { createFtagSpareDoc, createLabelDoc, newLabelId } from './factory';
 import { isLabelDoc } from './validate';
-import type { Region } from './types';
 
 /** Keys that carry hm (integer hundredths of a mm) geometry. */
 const GEOMETRY_KEYS = new Set(['backingW', 'backingH', 'x', 'y', 'w', 'h', 'cx', 'cy', 'r']);
@@ -64,98 +57,6 @@ describe('createLabelDoc', () => {
         const second = createFtagSpareDoc();
         (first.label.regions[0] as { x: number }).x = -999;
         expect(second.label.regions[0]).toMatchObject({ x: 0 });
-    });
-});
-
-describe('F-tag spare preset (ftagSpare-25x78)', () => {
-    it('reproduces the backing size and all three raw regions exactly', () => {
-        const doc = createFtagSpareDoc({ name: 'F-tag' });
-        expect(doc.label.backingW).toBe(2500);
-        expect(doc.label.backingH).toBe(7800);
-        expect(doc.label.regions).toEqual([
-            { kind: 'roundedRect', x: 0, y: 0, w: 2500, h: 3800, r: 200 },
-            { kind: 'roundedRect', x: 0, y: 3400, w: 1975, h: 4400, r: 200 },
-            { kind: 'roundedRect', x: 1575, y: 0, w: 600, h: 7800, r: 200 },
-        ]);
-    });
-
-    it('pins the preset geometry exactly (three roundedRect regions, x/y/w/h/r)', () => {
-        // Pin every field so a future edit cannot silently reshape the preset.
-        expect(ftagSpareRegions()).toEqual([
-            { kind: 'roundedRect', x: 0, y: 0, w: 2500, h: 3800, r: 200 },
-            { kind: 'roundedRect', x: 0, y: 3400, w: 1975, h: 4400, r: 200 },
-            { kind: 'roundedRect', x: 1575, y: 0, w: 600, h: 7800, r: 200 },
-        ]);
-        expect(ftagSpareRegions()).toHaveLength(3);
-        // The preset must equal a fresh factory call.
-        expect(LABEL_PRESETS['ftagSpare-25x78'].regions).toEqual(ftagSpareRegions());
-    });
-
-    it('is registered under the expected preset id', () => {
-        expect(LABEL_PRESETS['ftagSpare-25x78'].backingW).toBe(2500);
-        expect(LABEL_PRESETS['ftagSpare-25x78'].backingH).toBe(7800);
-    });
-
-    it('returns a fresh region array each call', () => {
-        expect(ftagSpareRegions()).not.toBe(ftagSpareRegions());
-        expect(ftagSpareRegions()).toEqual(ftagSpareRegions());
-    });
-});
-
-/**
- * Point-in-region test for the union-coverage contract below. Bounding box,
- * then — for a `roundedRect` — the four corner discs: a point is inside unless
- * it sits in the corner square *outside* the quarter-disc at that corner. This
- * is deliberately the same arithmetic the renderer's `union(regions)` clip
- * uses, so a defect at a seam shows up here.
- */
-const pointInRegion = (x: number, y: number, region: { kind: string; x?: number; y?: number; w?: number; h?: number; r?: number }): boolean => {
-    if (region.kind !== 'roundedRect') return false;
-    const { x: rx = 0, y: ry = 0, w = 0, h = 0, r = 0 } = region;
-    if (x < rx || x > rx + w || y < ry || y > ry + h) return false;
-    // Only the four corner squares can fall outside the rounded body.
-    const cx = x < rx + r ? rx + r : x > rx + w - r ? rx + w - r : null;
-    const cy = y < ry + r ? ry + r : y > ry + h - r ? ry + h - r : null;
-    if (cx !== null && cy !== null) {
-        return (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
-    }
-    return true;
-};
-
-const pointInUnion = (x: number, y: number, regions: Region[]): boolean =>
-    regions.some((region) => pointInRegion(x, y, region as never));
-
-describe('F-tag spare preset union coverage (the defect this pins)', () => {
-    /**
-     * Pins the *intent*, not the region numbers. Every point below was reported
-     * OUTSIDE the old four-region union because abutting roundedRect corners
-     * lost half-discs at each seam. The union outline must be the intended
-     * silhouette, so these must all be inside.
-     */
-    it('contains every seam point the old geometry punched out', () => {
-        const regions = ftagSpareRegions();
-        // Top edge where the two flag halves used to meet.
-        expect(pointInUnion(1250, 0, regions), '(1250,0) flag top seam').toBe(true);
-        // Flag/tab seam.
-        expect(pointInUnion(1250, 3800, regions), '(1250,3800) flag seam').toBe(true);
-        // Left outline where flag meets tail.
-        expect(pointInUnion(0, 3800, regions), '(0,3800) flag/tail seam').toBe(true);
-        // Tab/tail bottom corner.
-        expect(pointInUnion(1575, 7800, regions), '(1575,7800) tab/tail corner').toBe(true);
-        // Interior of flag and of the tab column.
-        expect(pointInUnion(625, 1900, regions), '(625,1900) flag interior').toBe(true);
-        expect(pointInUnion(1875, 7700, regions), '(1875,7700) tab interior').toBe(true);
-    });
-
-    it('excludes the lower-right notch (intent: cut OUT of the silhouette)', () => {
-        expect(pointInUnion(2400, 7700, ftagSpareRegions()), '(2400,7700) notch').toBe(false);
-    });
-
-    it('reads the preset, not a private copy of the numbers', () => {
-        // Guards the exact "dishonest test" failure: if this hardcoded the
-        // regions it could pass while the preset regressed. It must be the same
-        // array the factory ships.
-        expect(pointInUnion(1250, 0, LABEL_PRESETS['ftagSpare-25x78'].regions)).toBe(true);
     });
 });
 

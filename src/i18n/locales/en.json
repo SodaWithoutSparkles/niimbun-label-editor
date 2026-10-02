@@ -341,7 +341,10 @@
   },
   "presets": {
     "custom": "Custom size",
-    "ftagSpare-25x78": "F-tag spare 25×78"
+    "ftagSpare-25x78": "F-tag spare 25×78",
+    "rounded30x20": "Rounded 30×20 (r 2)",
+    "stacked50x15": "2× Rounded 50×15 (50×30)",
+    "rounded50x30": "Rounded 50×30 (r 2)"
   },
   "history": {
     "added": "Added {{type}}",

@@ -11,7 +11,7 @@ import {
     regionUnionBounds,
 } from './derive';
 import type { Node } from './types';
-import { LABEL_PRESETS } from './factory';
+import { LABEL_PRESETS } from './label-presets';
 
 const makeNode = (over: Record<string, unknown>): Node =>
     ({

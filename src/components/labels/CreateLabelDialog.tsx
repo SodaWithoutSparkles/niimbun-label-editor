@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, Trash2 } from 'lucide-react';
 import { hmToMm, mmToHm } from '../../core/hm';
-import { LABEL_PRESETS, type LabelPresetId } from '../../core/doc/factory';
+import { LABEL_PRESETS, type LabelPresetId } from '../../core/doc/label-presets';
 import type { Region } from '../../core/doc/types';
 import type { CreateLabelSpec } from '../../store/storeTypes';
 import { useStore } from '../../store/useStore';
@@ -11,6 +11,9 @@ import { Input, Select, SettingRow } from '../common/forms';
 
 const PRESET_LABEL_KEYS = {
     'ftagSpare-25x78': 'presets.ftagSpare-25x78',
+    rounded30x20: 'presets.rounded30x20',
+    stacked50x15: 'presets.stacked50x15',
+    rounded50x30: 'presets.rounded50x30',
     custom: 'presets.custom',
 } as const;
 

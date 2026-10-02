@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAppStore } from './useStore';
 import { createMemoryAdapter } from '../data/db';
 import { createLabelRepo } from '../data/labelRepo';
-import { LABEL_PRESETS } from '../core/doc/factory';
+import { LABEL_PRESETS } from '../core/doc/label-presets';
 import type { Region } from '../core/doc/types';
 
 /** Minimal in-memory Storage, mirroring `projectSlice.test.ts`. */
