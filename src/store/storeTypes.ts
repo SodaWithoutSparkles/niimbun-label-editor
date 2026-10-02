@@ -1,6 +1,22 @@
 import type { StateCreator } from 'zustand';
 import type { CanvasItem, HistoryEntry, SaveFile } from '../types';
 import type { SupportedLanguage } from '../i18n/languages';
+import type { hm } from '../core/hm';
+import type { LabelDoc, Region } from '../core/doc/types';
+import type { LabelPresetId } from '../core/doc/factory';
+import type { LabelRepo, LabelSummary } from '../data/labelRepo';
+import type { PrinterStatus } from '../print/transport';
+
+/** Input for the `createLabel` store action — forwarded to `createLabelDoc`. */
+export interface CreateLabelSpec {
+    name?: string;
+    preset?: LabelPresetId;
+    backingW?: hm;
+    backingH?: hm;
+    dpi?: number;
+    regions?: Region[];
+    printDirection?: LabelDoc['label']['printDirection'];
+}
 
 export interface ColorPreset {
     stroke: string;
@@ -164,6 +180,24 @@ export interface AppState {
     setCanvasPosition: (pos: { x: number; y: number; scale: number }) => void;
     homeViewTrigger: number;
     triggerHomeView: () => void;
+
+    // Document library / shell (docSlice) — never persisted
+    view: 'gallery' | 'editor';
+    setView: (view: AppState['view']) => void;
+    currentDoc: LabelDoc | null;
+    gallery: LabelSummary[];
+    galleryLoading: boolean;
+    /** Storage boot failed; distinct from a genuinely empty library. */
+    storageError: boolean;
+    labelRepo: LabelRepo | null;
+    setLabelRepo: (repo: LabelRepo | null) => void;
+    refreshGallery: () => Promise<void>;
+    createLabel: (spec: CreateLabelSpec) => Promise<LabelDoc | null>;
+    openLabel: (id: string) => Promise<LabelDoc | null>;
+    deleteLabel: (id: string) => Promise<void>;
+    printerStatus: PrinterStatus;
+    setPrinterStatus: (status: PrinterStatus) => void;
+    initPersistence: () => Promise<void>;
 }
 
 export type StoreSlice = StateCreator<AppState, [], [], Partial<AppState>>;

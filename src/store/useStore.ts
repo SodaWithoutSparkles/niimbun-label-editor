@@ -9,6 +9,7 @@ import { createProjectSlice } from './slices/projectSlice';
 import { createSettingsSlice } from './slices/settingsSlice';
 import { createToolsSlice } from './slices/toolsSlice';
 import { createNavigationSlice } from './slices/navigationSlice';
+import { createDocSlice } from './slices/docSlice';
 import {
     defaultAutoSave,
     defaultColors,
@@ -115,6 +116,7 @@ export const createAppStore = (storage?: Storage) => {
                     ...createPreferencesSlice(set, get, api),
                     ...createSettingsSlice(set, get, api),
                     ...createNavigationSlice(set, get, api),
+                    ...createDocSlice(set, get, api),
                 };
                 if (legacy.autoSave !== undefined) state.autoSave = legacy.autoSave;
                 if (legacy.keyboardShortcuts !== undefined) state.keyboardShortcuts = legacy.keyboardShortcuts;

@@ -34,6 +34,21 @@ export const KeyboardShortcuts = () => {
                 return;
             }
 
+            // The canvas-mutating shortcuts below only make sense in the editor.
+            // On the gallery they would silently mutate the hidden canvas and
+            // `preventDefault()` browser navigation (e.g. Backspace). Settings
+            // (`Ctrl/Cmd+,`) stays global.
+            const isEditor = useStore.getState().view === 'editor';
+
+            // Ctrl/Cmd + , - Open Settings (global, both gallery and editor)
+            if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+                e.preventDefault();
+                openSettings();
+                return;
+            }
+
+            if (!isEditor) return;
+
             // Ctrl/Cmd + Z - Undo
             if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
                 e.preventDefault();
@@ -61,14 +76,6 @@ export const KeyboardShortcuts = () => {
                     e.preventDefault();
                     selectAllItems();
                 }
-                return;
-            }
-
-            // Ctrl/Cmd + , - Open Settings
-            // (`,` is not a tool shortcut: tool keys are s q w e a c 1 t i)
-            if ((e.ctrlKey || e.metaKey) && e.key === ',') {
-                e.preventDefault();
-                openSettings();
                 return;
             }
 

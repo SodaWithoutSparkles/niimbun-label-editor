@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import type { SaveFile } from '../../types';
-import { compressToBase64 } from '../../utils/compress';
 import { createDefaultProjectName } from '../../utils/projectName';
 import { sanitizeFilename, ensureSaveExtension, buildDefaultSaveName, parseTimestamp, parseSaveFile, writeSaveFileToHandle, downloadSaveFile } from '../../utils/saveProject';
 import { FileMenu } from './header/FileMenu';
@@ -12,6 +11,7 @@ import { HelpMenu } from './header/HelpMenu';
 import { HelpModal } from '../help/HelpModal';
 import { SettingsModal } from '../settings/SettingsModal';
 import { Modal, confirm, promptText } from '../common/dialogs';
+import { ConnectionChip } from '../common/ConnectionChip';
 import i18n from '../../i18n';
 
 export const Header: React.FC = () => {
@@ -45,7 +45,6 @@ export const Header: React.FC = () => {
     const lastSavedAt = useStore(state => state.lastSavedAt);
     const autoSave = useStore(state => state.autoSave);
     const toggleAutoSave = useStore(state => state.toggleAutoSave);
-    const setLastAutoSaveAt = useStore(state => state.setLastAutoSaveAt);
     const openExportModal = useStore(state => state.openExportModal);
     const addNotification = useStore(state => state.addNotification);
 
@@ -54,7 +53,6 @@ export const Header: React.FC = () => {
 
     // Store state getters for save - fetch individually to prevent re-render loops
     const objects = useStore(state => state.objects);
-    const version = useStore(state => state.version);
 
     const language = useStore(state => state.language);
     const isSettingsOpen = useStore(state => state.isSettingsOpen);
@@ -117,23 +115,9 @@ export const Header: React.FC = () => {
         }
     }, [language]);
 
-    // Auto-save effect
-    useEffect(() => {
-        if (autoSave) {
-            const timer = setTimeout(async () => {
-                const saveData = buildSaveFile();
-                try {
-                    const base64 = await compressToBase64(JSON.stringify(saveData));
-                    localStorage.setItem('autosave_project', base64);
-                    setLastAutoSaveAt(Date.now());
-                    console.log('Auto-saved (compressed)'); // Optional confirmation
-                } catch (err) {
-                    console.error('Failed to compress autosave', err);
-                }
-            }, 5000); // Auto-save 5s debounce
-            return () => clearTimeout(timer);
-        }
-    }, [objects, version, projectName, saveFileName, autoSave]);
+    // The template's `autosave_project` localStorage write was removed: it saved
+    // the old canvas `SaveFile` (write-only, unreadable) and is superseded by
+    // P3's IDB autosave. See `agent/2026-09-29_label-editor-v1/state.md`.
 
 
     const lastSavedProjectNameRef = useRef(projectName);
@@ -489,6 +473,11 @@ export const Header: React.FC = () => {
                 onCloseMenu={() => setActiveMenu(null)}
                 onShowHelp={() => setShowHelp(true)}
             />
+
+            {/* Connection status stays top-right in both gallery and editor. */}
+            <div className="ml-auto pl-3">
+                <ConnectionChip />
+            </div>
 
             {/* Click backdrop to close menu */}
             {activeMenu && (

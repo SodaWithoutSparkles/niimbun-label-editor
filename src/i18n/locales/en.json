@@ -98,7 +98,8 @@
   "errors": {
     "saveFailed": "Failed to save project",
     "loadFailed": "Failed to load project file",
-    "openFailed": "Failed to open project file"
+    "openFailed": "Failed to open project file",
+    "invalidStoredRecord": "labels: invalid stored record"
   },
   "about": {
     "title": "About",
@@ -275,6 +276,72 @@
   },
   "mainLayout": {
     "loadingCanvas": "Loading canvas..."
+  },
+  "nav": {
+    "recent": "Recent",
+    "paperManagement": "Paper management",
+    "templates": "Templates",
+    "dataSource": "Data source (CSV)",
+    "newLabel": "New label",
+    "comingSoon": "Coming soon",
+    "emptyRecent": "No labels yet",
+    "backToGallery": "Gallery",
+    "backToGalleryTitle": "Back to gallery"
+  },
+  "gallery": {
+    "loading": "Loading labels…",
+    "emptyTitle": "No labels yet",
+    "emptyHint": "Create your first label to get started.",
+    "storageUnavailableTitle": "Label storage unavailable",
+    "storageUnavailableHint": "The browser could not open the label database. Your saved labels are not shown. Reload the page to retry.",
+    "quickPrint": "Quick print",
+    "quickPrintUnavailable": "Printing is not available yet",
+    "updatedTitle": "Last updated",
+    "size": "{{w}} × {{h}} mm",
+    "openLabel": "Open {{name}}",
+    "openFailed": "Could not open label — the saved data is invalid.",
+    "readErrors": "{{count}} labels could not be read",
+    "deleteFailed": "Could not delete the label."
+  },
+  "connection": {
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "statusAria": "Printer connection status"
+  },
+  "createLabel": {
+    "title": "New label",
+    "name": "Name",
+    "namePlaceholder": "Label name",
+    "preset": "Preset",
+    "width": "Width (mm)",
+    "height": "Height (mm)",
+    "dpi": "DPI",
+    "regions": "Regions",
+    "addRegion": "Add region",
+    "removeRegion": "Remove region",
+    "noRegions": "No regions.",
+    "polygonReadonly": "Polygon points are read-only.",
+    "invalidSize": "Enter a positive width and height",
+    "create": "Create"
+  },
+  "regionKinds": {
+    "rect": "Rectangle",
+    "roundedRect": "Rounded rectangle",
+    "circle": "Circle",
+    "polygon": "Polygon"
+  },
+  "regionFields": {
+    "x": "X",
+    "y": "Y",
+    "w": "W",
+    "h": "H",
+    "r": "R",
+    "cx": "CX",
+    "cy": "CY"
+  },
+  "presets": {
+    "custom": "Custom size",
+    "ftagSpare-25x78": "F-tag spare 25×78"
   },
   "history": {
     "added": "Added {{type}}",

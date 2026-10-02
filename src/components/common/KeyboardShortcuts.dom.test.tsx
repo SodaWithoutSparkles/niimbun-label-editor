@@ -57,11 +57,13 @@ describe('KeyboardShortcuts dialog guards', () => {
     let dialog: HTMLDialogElement;
 
     beforeEach(() => {
-        // Seed a deletable selection and a known settings state.
+        // Seed a deletable selection and a known settings state. `view` is
+        // `editor` so the canvas-mutating shortcuts are live.
         useStore.setState({
             objects: [makeShape('shape-1')],
             selectedIds: ['shape-1'],
             isSettingsOpen: false,
+            view: 'editor',
         });
         render(<KeyboardShortcuts />);
     });
@@ -90,6 +92,22 @@ describe('KeyboardShortcuts dialog guards', () => {
 
         press({ key: ',', ctrlKey: true });
         expect(useStore.getState().isSettingsOpen).toBe(false);
+    });
+
+    it('does not mutate the canvas from the gallery, but Ctrl+, stays global', () => {
+        useStore.setState({ view: 'gallery', objects: [makeShape('shape-2')], selectedIds: ['shape-2'] });
+
+        const deleteEvent = new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true });
+        window.dispatchEvent(deleteEvent);
+        expect(useStore.getState().objects).toHaveLength(1);
+        expect(deleteEvent.defaultPrevented).toBe(false);
+
+        const undoEvent = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true });
+        window.dispatchEvent(undoEvent);
+        expect(undoEvent.defaultPrevented).toBe(false);
+
+        press({ key: ',', ctrlKey: true });
+        expect(useStore.getState().isSettingsOpen).toBe(true);
     });
 });
 

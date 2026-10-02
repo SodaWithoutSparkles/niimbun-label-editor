@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
-import { Home } from 'lucide-react';
+import { Home, ArrowLeft } from 'lucide-react';
 import clsx from 'clsx';
 import { formatKey } from '../../utils/formatKey';
 import { toolLabel } from './toolLabels';
@@ -17,6 +17,10 @@ export const BottomBar: React.FC = () => {
     const canvasPosition = useStore((state) => state.canvasPosition);
     const triggerHomeView = useStore((state) => state.triggerHomeView);
     const language = useStore((state) => state.language);
+    const view = useStore((state) => state.view);
+    const setView = useStore((state) => state.setView);
+    const printerStatus = useStore((state) => state.printerStatus);
+    const printerConnected = printerStatus.state === 'connected' || printerStatus.state === 'printing';
 
     // One formatter per language, reused across every call. `numeric: 'always'`
     // (the default) keeps the older "3 seconds ago" wording rather than the
@@ -125,6 +129,24 @@ export const BottomBar: React.FC = () => {
     return (
         <div className="h-8 bg-gray-900 border-t border-gray-700 flex items-center justify-between px-3 text-xs text-gray-300 select-none z-30">
             <div className="flex items-center space-x-2">
+                {/* Duplicate of the top-right connection chip: bottom-left, same status. */}
+                <div
+                    role="status"
+                    aria-label={t('connection.statusAria')}
+                    className={clsx(
+                        "flex items-center space-x-1.5 px-2 py-0.5 rounded border",
+                        printerConnected
+                            ? "border-emerald-700 bg-emerald-900/40 text-emerald-100"
+                            : "border-gray-600 bg-gray-800 text-gray-400"
+                    )}
+                    title={printerConnected ? t('connection.connected') : t('connection.disconnected')}
+                >
+                    <span className={clsx("h-2 w-2 rounded-full", printerConnected ? "bg-emerald-400" : "bg-gray-500")} />
+                    {!isCompact && (
+                        <span>{printerConnected ? t('connection.connected') : t('connection.disconnected')}</span>
+                    )}
+                </div>
+
                 <div className="px-2 py-0.5 rounded border border-emerald-700 bg-emerald-900/40 text-emerald-100">
                     {isCompact ? (
                         <span className="font-medium">{toolLabel(activeTool, t)}</span>
@@ -181,6 +203,16 @@ export const BottomBar: React.FC = () => {
             </div>
 
             <div className="flex items-center space-x-2 h-full py-1">
+                {view === 'editor' && (
+                    <button
+                        onClick={() => setView('gallery')}
+                        className="px-3 h-full flex items-center rounded transition-colors space-x-2 bg-gray-800 hover:bg-gray-700 text-gray-300"
+                        title={t('nav.backToGalleryTitle')}
+                    >
+                        <ArrowLeft size={14} />
+                        {!isCompact && <span>{t('nav.backToGallery')}</span>}
+                    </button>
+                )}
                 <button
                     onClick={triggerHomeView}
                     className="px-3 h-full flex items-center rounded transition-colors space-x-2 bg-gray-800 hover:bg-gray-700 text-gray-300"
