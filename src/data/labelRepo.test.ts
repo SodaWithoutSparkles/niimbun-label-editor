@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import '../i18n';
+import { StreamReadingResponse } from '../test/streamResponse';
 import { createFtagSpareDoc } from '../core/doc/factory';
 import type { LabelDoc } from '../core/doc/types';
 import { createMemoryAdapter } from './db';
@@ -42,6 +43,9 @@ const pngBlob = (bytes: number[]): Blob =>
 describe('createLabelRepo', () => {
     beforeEach(() => {
         vi.stubGlobal('DecompressionStream', ArrayBufferTolerantDecompressionStream);
+        // happy-dom's Response cannot read a compression readable; use a direct
+        // stream reader so `compress.ts`'s Response promise never rejects unhandled.
+        vi.stubGlobal('Response', StreamReadingResponse);
     });
 
     it('save → list → get round-trips a document', async () => {

@@ -14,6 +14,10 @@ export const compress = async (
     // deadlocks in a real browser (the write promise never settles). Attaching
     // the consumer first keeps the pipe flowing. The read is awaited at the end.
     const compressed = new Response(cs.readable).arrayBuffer();
+    // A corrupt/abandoned read (e.g. `parseDoc` bailing on a bad gzip body)
+    // would otherwise surface as an unhandled rejection. This does not change
+    // behaviour: the promise still rejects where it is awaited below.
+    void compressed.catch(() => {});
 
     // Use a writer to write the data to the stream's writable side
     const writer = cs.writable.getWriter();
@@ -34,6 +38,9 @@ export const decompress = async (
     // Start reading BEFORE writing, for the same backpressure/deadlock reason as
     // `compress` above. Decode the streamed bytes back into a string.
     const decompressed = new Response(ds.readable).text();
+    // Same no-op catch as `compress`: never let an abandoned read become an
+    // unhandled rejection; the awaited promise below still rejects normally.
+    void decompressed.catch(() => {});
 
     // Use a writer to write the compressed data
     const writer = ds.writable.getWriter();

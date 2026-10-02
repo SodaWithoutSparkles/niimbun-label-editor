@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { compress } from '../../utils/compress';
+import { StreamReadingResponse } from '../../test/streamResponse';
 import { createFtagSpareDoc } from './factory';
 import { parseDoc, serializeDoc } from './serialize';
 import type { LabelDoc } from './types';
@@ -43,6 +44,9 @@ const isGzip = (buffer: ArrayBuffer): boolean => {
 describe('serializeDoc / parseDoc', () => {
     beforeEach(() => {
         vi.stubGlobal('DecompressionStream', ArrayBufferTolerantDecompressionStream);
+        // happy-dom's Response cannot read a compression readable; use a direct
+        // stream reader so `compress.ts`'s Response promise never rejects unhandled.
+        vi.stubGlobal('Response', StreamReadingResponse);
     });
 
     it('serializes to gzip bytes', async () => {
@@ -108,6 +112,9 @@ describe('serializeDoc / parseDoc', () => {
 describe('parseDoc error handling (never throws)', () => {
     beforeEach(() => {
         vi.stubGlobal('DecompressionStream', ArrayBufferTolerantDecompressionStream);
+        // happy-dom's Response cannot read a compression readable; use a direct
+        // stream reader so `compress.ts`'s Response promise never rejects unhandled.
+        vi.stubGlobal('Response', StreamReadingResponse);
     });
 
     it('returns an error result for malformed JSON', async () => {
@@ -139,6 +146,9 @@ describe('parseDoc error handling (never throws)', () => {
 describe('serializeDoc thumb handling', () => {
     beforeEach(() => {
         vi.stubGlobal('DecompressionStream', ArrayBufferTolerantDecompressionStream);
+        // happy-dom's Response cannot read a compression readable; use a direct
+        // stream reader so `compress.ts`'s Response promise never rejects unhandled.
+        vi.stubGlobal('Response', StreamReadingResponse);
     });
 
     it('strips an unsafe thumb on parse while keeping the document', async () => {
