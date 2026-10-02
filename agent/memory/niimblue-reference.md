@@ -44,15 +44,24 @@ Our plan is **≈2–3× oversized vs. what the reference needed to ship the sam
 - Collecting all page images before printing (unbounded).
 - No layer tree / no reorder / only front-back buttons — fine for them, not for us.
 
-## Over-scope to challenge (second-opinion verdict — decide, don't drift)
+## Differentiation — our deliberate over-scope (owner decision 2026-10-03)
 
-No reference precedent; each is net-new. Justify explicitly or defer:
-1. **JS template engine + worker + trust gate + IDB trust store + globals.** Ref has *zero* JS execution — a regex interpolator (`canvas_preprocess.ts`). Our trust/worker/globals triad is a deliberate capability extension, not reference-validated. Keep the CSV interpolation core of P6 first; make the JS/trust layer separable and non-blocking.
-2. **`GlobalSpec` / `expiresAt` prefetch.** Zero precedent, speculative. Keep as a type slot at most; don't let it drive P6/P8.
-3. **Per-object dither masks.** Ref ships one global mode. Complexity is real; keep only if a concrete use case demands it.
-4. **AssetRef × 4 provenances + sha256 + `alt`.** Ref inlines everything with no identity beyond a name string. `remote` adds a fetch path our threat model doesn't cover. Consider `inline` (+ `external` for CSV) first; defer fingerprint/alt.
-5. **Scaffolding rule (decision 22)** contradicts our own scope-creep risk. Keep only the seams the very next phase needs.
-6. **Node-tree drag-to-reparent.** Ref proves a flat list works; keep the tree *view*, defer reparenting.
+**These have no reference precedent ON PURPOSE. They are the product, not waste.** The owner's directive: *"We are not trying to be the 2nd niim.blue, we want to have more and be better. Those per-object rendering rules and template engine are what set us apart."*
+
+So: do NOT trim these to match the reference. Keep them, and treat "the reference doesn't do this" as evidence of differentiation — never as a reason to cut. The right move is to make each one **separable**, so it can't block the plain CSV/killer-workflow path, and to build it deliberately rather than accrete it by accident.
+
+Confirmed keepers (intentional beyond-reference capability):
+1. **JS template engine + worker + frozen ctx + 250 ms timeout + trust gate/IDB trust store** — programmable trusted templates. Ref has zero JS execution (regex interpolation only). This is a headline differentiator.
+2. **Per-object dither/quantizer policy masks** — overlapping objects dither as final pixels with per-type policy (text/qr/barcode → threshold; image → FS). Ref ships one global mode. This is a headline differentiator.
+3. **Globals (`GlobalSpec` / `expiresAt`) prefetch-once-per-job, deep-cloned into the worker** — enables templates that read external data without fetching per-row. Net-new; keep the seam.
+4. **AssetRef × 4 provenances + sha256 fingerprint + `name`/`alt`** — portable, identifiable, verifiable assets (zip handover, missing-asset replacement). Ref inlines base64 with name-only identity. Keep.
+5. **`union(regions)` clip + F-tag regions + node tree with `parentId`** — general geometry vs. their decorative shapes. Already a differentiator; keep.
+6. **`ColorSpace` abstraction (`Mono` now; RedBlack/RedGrayscale post-v1)** and full scaffolding seams — keep.
+
+Guardrail that still applies: **each differentiator ships as an isolated, testable unit behind its interface**, and the CSV→bind→preview→print killer workflow must never depend on it. E.g. a document with no template sources is never gated by the trust engine; quantizer masks degrade to a single global pass when no object carries a policy hint.
+
+The "over-scope to challenge" framing below was the reviewer's recommendation. **Superseded by this decision** — read it as "plan the sequencing carefully", not "cut".
+
 
 ## Under-scope we should add (ref has it, we listed it weakly or not at all)
 
