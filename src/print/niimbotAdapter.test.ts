@@ -214,7 +214,7 @@ describe('NiimbotTransport orchestration', () => {
     expect(defaults).toMatchObject({ density: 3, labelType: 1 });
   });
 
-  it('omits unset option keys so library defaults survive the merge', async () => {
+  it('defaults pageColor and omits unset option keys so library defaults survive the merge', async () => {
     const fake = makeFakeClient({ taskType: 'B1' });
     const transport = await connectedTransport(fake);
 
@@ -224,13 +224,15 @@ describe('NiimbotTransport orchestration', () => {
       totalPages: 1,
       statusPollIntervalMs: 100,
       statusTimeoutMs: 8000,
+      // Always explicit: validatePage rejects a page whose color differs, and
+      // the encoded pages are SingleColor (reference app does the same).
+      pageColor: PageColorType.SingleColor,
     });
     expect(bare).not.toHaveProperty('density');
     expect(bare).not.toHaveProperty('labelType');
-    expect(bare).not.toHaveProperty('pageColor');
 
     await transport.print(
-      jobOf([1], { density: 4, labelType: 2, pageColor: PageColorType.SingleColor }),
+      jobOf([1], { density: 4, labelType: 2, pageColor: PageColorType.DoubleColor }),
     );
     const [, full] = fake.newPrintTask.mock.calls[1];
     expect(full).toEqual({
@@ -239,7 +241,7 @@ describe('NiimbotTransport orchestration', () => {
       statusTimeoutMs: 8000,
       density: 4,
       labelType: 2,
-      pageColor: PageColorType.SingleColor,
+      pageColor: PageColorType.DoubleColor,
     });
   });
 

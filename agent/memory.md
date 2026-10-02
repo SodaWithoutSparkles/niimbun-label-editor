@@ -1,7 +1,6 @@
-# Repo Memory — ui-template
+# Repo Memory — label-editor
 
-Generic React + Vite UI template (React 19, TypeScript, Tailwind v4, zustand, Konva demo app).
-**GENERIC ONLY.** This repo is cherry-picked upstream; never add product-specific names, features, or strings.
+Label editor for NIIMBOT thermal printers (React 19, TypeScript, Tailwind v4, zustand, Konva), built on the generic ui-template base. Authoritative plan: [`agent/2026-09-29_label-editor-v1/plan.md`](2026-09-29_label-editor-v1/plan.md) (phases P1–P8). Base template is upstream; template fixes land here as cherry-picks — after the P1–P3 strip, cherry-picks into stripped areas will conflict; resolve manually, product wins.
 
 ## Area files
 
@@ -10,10 +9,12 @@ Generic React + Vite UI template (React 19, TypeScript, Tailwind v4, zustand, Ko
 - [`settings-store.md`](memory/settings-store.md) — persisted zustand store: `partialize`, legacy-key migration order, storage-value validation.
 - [`store-and-slices.md`](memory/store-and-slices.md) — flat-slice pattern; move fields without renaming keys.
 - [`testing.md`](memory/testing.md) — Vitest + happy-dom setup, `bun run test`, what must stay a browser test.
+- [`print-transport.md`](memory/print-transport.md) — `src/core` headless hm math; frozen `PrinterTransport` contract (`src/print`); niimbluelib 0.47.0 verified print flow + adapter gotchas.
 
 ## Essentials
 
-- **Package manager:** `bun` (binary path in global memory). `bun.lock` is tracked; `package-lock.json` is stale — never npm.
+- **Product strings go through i18n** (plan decision 40): all label-editor UI strings via `t()` with typed keys; dynamic keys via the literal-map pattern (see `i18n.md`).
+- **Package manager:** `bun` (binary path in global memory). `bun.lock` is tracked; there is no package-lock.json — never npm.
 - **Tests:** `bun run test` (Vitest, in-process). Never `bun test` — that is Bun's own runner. See [`memory/testing.md`](memory/testing.md).
 - **Global window listeners must guard on an open modal.** Native `inert` does NOT stop `keydown`/`paste` from bubbling to `window` through a top-layer `<dialog>`. Any global `keydown`/`paste`/`drop` handler must bail with `if (document.querySelector('dialog[open]')) return;` or it will mutate the canvas behind a modal (and `Ctrl+,` will stack dialogs).
 - **Build:** `bun run build` = `tsc && vite build`. Repo may be on drvfs (slow) — prefer `tsc` over full rebuilds.

@@ -1,4 +1,4 @@
-import { instantiateClient, ResolutionClass } from '@mmote/niimbluelib';
+import { instantiateClient, ResolutionClass, PageColorType } from '@mmote/niimbluelib';
 import type {
   CombinedRfidInfo,
   LabelType,
@@ -161,10 +161,13 @@ export class NiimbotTransport implements PrinterTransport {
       // Build options with only defined keys: newPrintTask spreads these over
       // the library defaults, so an explicit `undefined` would overwrite them
       // (e.g. pageColor -> validatePage throws on the first real page).
+      // pageColor defaults to SingleColor explicitly — the reference app always
+      // sets it, and validatePage rejects any page whose color differs.
       const taskOptions: Partial<PrintOptions> = {
         totalPages: job.totalPages,
         statusPollIntervalMs: 100,
         statusTimeoutMs: 8000,
+        pageColor: job.pageColor ?? PageColorType.SingleColor,
       };
       const density = job.density ?? this.options.density;
       if (density !== undefined) {
@@ -173,9 +176,6 @@ export class NiimbotTransport implements PrinterTransport {
       const labelType = job.labelType ?? this.options.labelType;
       if (labelType !== undefined) {
         taskOptions.labelType = labelType;
-      }
-      if (job.pageColor !== undefined) {
-        taskOptions.pageColor = job.pageColor;
       }
 
       const task = client.protocol.newPrintTask(taskType, taskOptions);
@@ -259,6 +259,21 @@ export class NiimbotTransport implements PrinterTransport {
       throw new Error('Not connected');
     }
     return this.client;
+  }
+
+  /** Detected printer model + the print task chosen for it (diagnostics/smoke). */
+  getDetected(): { model?: string; taskType?: string; dpi?: number; printheadPixels?: number } {
+    const client = this.client;
+    if (!client) {
+      return {};
+    }
+    const meta = client.getModelMetadata();
+    return {
+      model: meta?.model,
+      taskType: client.getPrintTaskType(),
+      dpi: dpiOf(client.getPrinterInfo()),
+      printheadPixels: meta?.printheadPixels,
+    };
   }
 
   private wire(client: NiimbotAbstractClient): void {
