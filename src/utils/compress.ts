@@ -8,13 +8,20 @@ export const compress = async (
     // Create a new CompressionStream instance
     const cs = new CompressionStream(encoding);
 
+    // Start draining the readable side BEFORE writing. `CompressionStream`
+    // applies backpressure to `writer.write` while its readable side has no
+    // consumer, so awaiting `write`/`close` first and reading afterwards
+    // deadlocks in a real browser (the write promise never settles). Attaching
+    // the consumer first keeps the pipe flowing. The read is awaited at the end.
+    const compressed = new Response(cs.readable).arrayBuffer();
+
     // Use a writer to write the data to the stream's writable side
     const writer = cs.writable.getWriter();
     await writer.write(byteArray);
     await writer.close();
 
     // Read the compressed data from the readable side into an ArrayBuffer
-    return new Response(cs.readable).arrayBuffer();
+    return compressed;
 };
 
 export const decompress = async (
@@ -24,15 +31,17 @@ export const decompress = async (
     // Create a new DecompressionStream instance
     const ds = new DecompressionStream(encoding);
 
+    // Start reading BEFORE writing, for the same backpressure/deadlock reason as
+    // `compress` above. Decode the streamed bytes back into a string.
+    const decompressed = new Response(ds.readable).text();
+
     // Use a writer to write the compressed data
     const writer = ds.writable.getWriter();
     await writer.write(byteArray);
     await writer.close();
 
     // Read the decompressed data and decode it back to a string
-    const decompressedResponse = new Response(ds.readable);
-    const decompressedBlob = await decompressedResponse.blob();
-    return decompressedBlob.text();
+    return decompressed;
 };
 
 // Helpers for storing compressed data as base64 strings (useful for localStorage)
