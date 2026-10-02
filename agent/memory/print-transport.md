@@ -17,7 +17,9 @@ Foundation for talking to NIIMBOT printers. Added in P1 (commit `380be10`).
 
 Real device: **NIIMBOT B1 Pro** (`B1 Pro-(serial redacted)`), 300 dpi, printhead **567 dots**, roll **50 × 24 mm** gap labels, battery 80.
 
-Observed on a real 3-page job:
+**"HELLO WORLD" printed, centred, unclipped, correct orientation** on a 50×24 mm label (owner-confirmed). 1 page × 1 copy, `printEnd` cut cleanly.
+
+Observed on a real 3-page job (first run):
 ```
 detected {"model":"B1_PRO","taskType":"D110M_V4","dpi":300,"printheadPixels":567}
 progress {"page":1..3,"pagesTotal":3,...}
@@ -25,8 +27,26 @@ print done {"pagesPrinted":3}
 ```
 - The library resolves `B1_PRO` → task `D110M_V4` automatically (`D110M_V4` is named after the first real-world model its author got working; `modelPrintTasks.D110M_V4` includes `B1_PRO`). Trust `getPrintTaskType()`; do not hardcode.
 - `printPage` sends `printStatus` (oneWay) → `setPageSize13b` → bitmap rows → `pageEnd`. B1_PRO ≈ D110M_V4 hardware.
-- Progress `page`/`pagesTotal` came through **not swapped**; the B21L2B normalizer correctly didn't fire. `pageFeedProgress` stays 0 during `waitForFinished` on this model (fine).
 - The adapter must pass `pageColor` explicitly (`SingleColor`); the reference app does. Encoded pages are `SingleColor`.
+
+### ⚠ Progress `page` is inconsistent on D110M_V4 (P7 must handle)
+
+Observed event order on a 1-page job:
+```
+progress {"page":1,"pagesTotal":1,...}   // niimbluelib's initial emit (1-based)
+progress {"page":0,"pagesTotal":1,...}   // status-poll path reports 0-based
+progress {"page":1,"pagesTotal":1,100}   // final (1-based)
+```
+`page` goes **1 → 0 → 1**: the status-poll path (`waitUntilPrintFinishedByStatusPoll`) reports a **0-based** `page` while the library's own first/last emit is 1-based. `pagesTotal` is stable. Do NOT build a monotonic progress bar directly on `page` — clamp it monotonic, or derive progress from `(pagePrintProgress + pageFeedProgress)` as niim.blue does. Also `pageFeedProgress` stays 0 throughout on this model. Add a P7 test/guard; unverified whether `page` is also non-monotonic across multi-page jobs.
+
+### First-run harness bugs (fixed; the adapter was always correct)
+
+1. Fake `'check'` leading row → silently dropped (`enableCheckLine` off) → blank/stalled first page.
+2. All rows sent as `'pixels'` → no `printEmptyRow` for blanks → slow, looked stuck.
+3. Cols not padded to ×8, wrong bit order, wrong centering scale.
+
+The working smoke page does it right: 5×7 font, auto-scale, centre, `cols` padded to ×8, MSB-first, fully-white rows → `'void'` (no row data), identical rows collapse into `repeat`. Encoded result: `cols=568 rows=384 rowsData=8 (void=2, pixels=6)`.
+
 
 ## Print options — reference (niim.blue `PrintPreview.svelte`)
 
