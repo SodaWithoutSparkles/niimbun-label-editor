@@ -101,6 +101,12 @@ export const PromptDialog: React.FC<PromptDialogProps> = ({
                                 e.stopPropagation();
                                 handleSubmit();
                             } else if (e.key === 'Escape') {
+                                // Match Modal's keydown handler: preventDefault
+                                // cancels the UA default action (which fires
+                                // `cancel` and would re-enter onClose), and
+                                // stopPropagation keeps it away from
+                                // window-level Escape handlers.
+                                e.preventDefault();
                                 e.stopPropagation();
                                 onCancel();
                             }

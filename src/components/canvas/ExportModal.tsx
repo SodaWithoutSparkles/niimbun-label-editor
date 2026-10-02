@@ -9,6 +9,7 @@ import { captureStageData } from './hooks/export/capture';
 import type { StageCapture } from './hooks/export/capture';
 import { downloadDataUrl } from './hooks/export/download';
 import { computeTrimBoundsFromDataUrl } from './hooks/export/utils';
+import { sanitizeFilename } from '../../utils/saveProject';
 
 type ExportExtension = 'png' | 'jpg' | 'webp';
 
@@ -270,7 +271,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         const mime = MIME_BY_EXT[ext];
         const exportQuality = ext === 'png' ? undefined : quality;
         const previewDataUrl = canvas.toDataURL(mime, exportQuality);
-        const name = filename.trim() || fallbackName;
+        const name = sanitizeFilename(filename.trim() || fallbackName);
         downloadDataUrl(previewDataUrl, `${name}.${ext}`);
     };
 
@@ -347,6 +348,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                                 placeholder={t('export.defaultFilename')}
                             />
                             <Select
+                                aria-label={t('export.format')}
                                 value={ext}
                                 onChange={(value) => setExt(value as ExportExtension)}
                                 options={EXT_OPTIONS}

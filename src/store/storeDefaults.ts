@@ -1,8 +1,9 @@
+import type { SupportedLanguage } from '../i18n/languages';
 import type { AppState, ColorPreset, KeyboardShortcutConfig } from './storeTypes';
 
 export const defaultAutoSave = true;
 
-export const defaultLanguage = 'en';
+export const defaultLanguage: SupportedLanguage = 'en';
 
 export const defaultKeyboardShortcuts: KeyboardShortcutConfig = {
     modifyKey: 'ctrl',

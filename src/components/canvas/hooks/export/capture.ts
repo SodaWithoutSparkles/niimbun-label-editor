@@ -2,8 +2,6 @@ import type Konva from 'konva';
 
 export interface StageCapture {
     dataUrl: string;
-    width: number;
-    height: number;
 }
 
 /**
@@ -33,13 +31,9 @@ export const captureStageData = (
 
     try {
         const dataUrl = stage.toDataURL({ pixelRatio });
-        const width = stage.width() * pixelRatio;
-        const height = stage.height() * pixelRatio;
 
         return {
-            dataUrl,
-            width,
-            height
+            dataUrl
         };
     } finally {
         // Always restore the exact prior selection, even when toDataURL throws

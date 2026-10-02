@@ -10,8 +10,8 @@ export const compress = async (
 
     // Use a writer to write the data to the stream's writable side
     const writer = cs.writable.getWriter();
-    writer.write(byteArray);
-    writer.close();
+    await writer.write(byteArray);
+    await writer.close();
 
     // Read the compressed data from the readable side into an ArrayBuffer
     return new Response(cs.readable).arrayBuffer();
@@ -26,8 +26,8 @@ export const decompress = async (
 
     // Use a writer to write the compressed data
     const writer = ds.writable.getWriter();
-    writer.write(byteArray);
-    writer.close();
+    await writer.write(byteArray);
+    await writer.close();
 
     // Read the decompressed data and decode it back to a string
     const decompressedResponse = new Response(ds.readable);

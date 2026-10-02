@@ -1,3 +1,4 @@
+import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n/languages';
 import type {
     AppState,
     ColorPreset,
@@ -127,6 +128,14 @@ export const normalizeBoolean = (value: unknown): boolean | undefined =>
     typeof value === 'boolean' ? value : undefined;
 
 /**
+ * Returns a supported locale, or `undefined` when the value is missing or is
+ * not one of `SUPPORTED_LANGUAGES`. Guards against unsupported BCP-47 tags
+ * reaching `Intl.RelativeTimeFormat`.
+ */
+export const normalizeLanguage = (value: unknown): SupportedLanguage | undefined =>
+    isOneOf(value, SUPPORTED_LANGUAGES) ? value : undefined;
+
+/**
  * Validates the `ui_settings` payload and returns a complete
  * `PersistedSettings`, filling anything absent or malformed from `defaults`.
  */
@@ -145,7 +154,7 @@ export const validatePersistedSettings = (
             normalizeToolSettings(persisted.toolSettings, defaults.toolSettings) ??
             defaults.toolSettings,
         colors: normalizeColors(persisted.colors, defaults.colors) ?? defaults.colors,
-        language: isString(persisted.language) ? persisted.language : defaults.language,
+        language: normalizeLanguage(persisted.language) ?? defaults.language,
     };
 };
 

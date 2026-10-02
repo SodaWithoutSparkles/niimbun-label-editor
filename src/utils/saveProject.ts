@@ -62,6 +62,12 @@ export const downloadSaveFile = async (filename: string, saveFile: SaveFile) => 
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
+    // Firefox/Safari historically require the anchor to be connected to the
+    // document for `download` to fire. Append, click, then remove immediately
+    // (and keep it non-visual) so nothing flashes in the DOM.
+    a.style.display = 'none';
+    document.body.appendChild(a);
     a.click();
+    a.remove();
     URL.revokeObjectURL(url);
 };

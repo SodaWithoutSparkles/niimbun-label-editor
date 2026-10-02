@@ -4,6 +4,7 @@ import { useStore } from '../../store/useStore';
 import { Home } from 'lucide-react';
 import clsx from 'clsx';
 import { formatKey } from '../../utils/formatKey';
+import { toolLabel } from './toolLabels';
 
 export const BottomBar: React.FC = () => {
     const { t } = useTranslation();
@@ -20,11 +21,23 @@ export const BottomBar: React.FC = () => {
     // One formatter per language, reused across every call. `numeric: 'always'`
     // (the default) keeps the older "3 seconds ago" wording rather than the
     // "yesterday"/"now" that `numeric: 'auto'` would produce.
-    const rtf = useMemo(() => new Intl.RelativeTimeFormat(language, { numeric: 'always' }), [language]);
+    //
+    // Construction is defensive: even though the store validates `language`
+    // against the supported allow-list on rehydration, a bad BCP-47 tag must
+    // never blank the bar. If `Intl.RelativeTimeFormat` rejects the value, fall
+    // back to English.
+    const rtf = useMemo(() => {
+        try {
+            return new Intl.RelativeTimeFormat(language, { numeric: 'always' });
+        } catch {
+            return new Intl.RelativeTimeFormat('en', { numeric: 'always' });
+        }
+    }, [language]);
 
     // Pick the largest unit whose value is >= 1, mirroring the old ladder.
-    // `maxUnit` caps the tier: auto-save never goes past minutes, last-saved
-    // goes up to days.
+    // `maxUnit` caps the tier. Every caller uses `'day'` so the compact and full
+    // layouts cannot disagree (e.g. "180 minutes ago" vs "3 hours ago") for the
+    // same fact.
     const relative = (seconds: number, maxUnit: 'minute' | 'day'): string => {
         if (seconds < 60) return rtf.format(-seconds, 'second');
         const minutes = Math.floor(seconds / 60);
@@ -58,7 +71,7 @@ export const BottomBar: React.FC = () => {
         if (!lastAutoSaveAt) return t('bottomBar.autoSaveOn');
         const seconds = Math.floor((Date.now() - lastAutoSaveAt) / 1000);
         if (seconds < 5) return t('bottomBar.autoSavedJustNow');
-        return t('bottomBar.autoSaved', { time: relative(seconds, 'minute') });
+        return t('bottomBar.autoSaved', { time: relative(seconds, 'day') });
     };
 
     const getLastSavedStatus = () => {
@@ -73,7 +86,7 @@ export const BottomBar: React.FC = () => {
         if (!lastAutoSaveAt) return t('bottomBar.autoSaveShortOn');
         const seconds = Math.floor((Date.now() - lastAutoSaveAt) / 1000);
         if (seconds < 5) return t('bottomBar.shortJustNow');
-        return t('bottomBar.autoSavedShort', { time: relative(seconds, 'minute') });
+        return t('bottomBar.autoSavedShort', { time: relative(seconds, 'day') });
     };
 
     const getLastSavedCompactStatus = () => {
@@ -114,10 +127,10 @@ export const BottomBar: React.FC = () => {
             <div className="flex items-center space-x-2">
                 <div className="px-2 py-0.5 rounded border border-emerald-700 bg-emerald-900/40 text-emerald-100">
                     {isCompact ? (
-                        <span className="font-medium capitalize">{activeTool}</span>
+                        <span className="font-medium">{toolLabel(activeTool, t)}</span>
                     ) : (
                         <>
-                            {t('bottomBar.tool')} <span className="text-white font-medium capitalize">{activeTool}</span>
+                            {t('bottomBar.tool')} <span className="text-white font-medium">{toolLabel(activeTool, t)}</span>
                         </>
                     )}
                 </div>

@@ -275,6 +275,10 @@ export const DrawingCanvas: React.FC<{ readOnly?: boolean }> = ({ readOnly = fal
 
     useEffect(() => {
         const handlePaste = (e: ClipboardEvent) => {
+            // A dialog's focus trap/inertness does not stop `paste` bubbling to
+            // window, so leave the paste to the dialog (e.g. a filename input)
+            // instead of mutating the canvas behind it.
+            if (document.querySelector('dialog[open]')) return;
             if (readOnly) return;
             const items = Array.from(e.clipboardData?.items || []);
             const imageItem = items.find(item => item.kind === 'file' && item.type.startsWith('image/'));

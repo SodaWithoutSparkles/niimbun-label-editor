@@ -16,7 +16,7 @@ import {
     defaultLanguage,
     defaultToolSettings,
 } from './storeDefaults';
-import { clearLegacyPreferences, readLegacyPreferences } from './legacyStorage';
+import { clearLegacyPreferencesIfMigrated, readLegacyPreferences } from './legacyStorage';
 import {
     pickPersistedKeys,
     type PersistedSettings,
@@ -51,13 +51,24 @@ const persistedDefaults: PersistedSettings = {
  * Methods are bound to the real storage explicitly so `this` is never lost —
  * `localStorage.getItem` must be called with `localStorage` as receiver.
  */
+/**
+ * Records the outcome of the last `setItem` through the safe wrapper. `persist`
+ * swallows write failures, but the legacy migration must know whether the new
+ * `ui_settings` write actually landed before it deletes the old keys — deleting
+ * them after a failed write would erase the only copy of the preferences.
+ * Reset before a flush, read after it.
+ */
+const safeStorageLastWrite = { ok: false };
+
 const createSafeStorage = (storage: Storage): Storage => ({
     getItem: (key: string) => storage.getItem(key),
     setItem(key: string, value: string) {
         try {
             storage.setItem(key, value);
+            safeStorageLastWrite.ok = true;
         } catch {
             // quota exceeded / private mode: preferences just don't persist
+            safeStorageLastWrite.ok = false;
         }
     },
     removeItem: (key: string) => storage.removeItem(key),
@@ -143,13 +154,18 @@ export const createAppStore = (storage?: Storage) => {
     const finishMigration = () => {
         // A throwing `setItem` (quota exceeded / private mode) must never take
         // the app down: the old `storage.ts` swallowed storage errors, and a
-        // failed preference write is not worth a boot failure. Swallow and go on.
+        // failed preference write is not worth a boot failure. But a swallowed
+        // failure must ALSO stop the legacy keys from being deleted: doing both
+        // erases the migrated preferences. `safeStorageLastWrite` records
+        // whether the flush actually landed so the clear can be gated on it.
         try {
+            safeStorageLastWrite.ok = false;
             store.setState({});
-            if (storage) clearLegacyPreferences(storage);
         } catch {
-            // ignore storage errors
+            // unexpected flush failure — treat as an unsuccessful write
         }
+        // Only delete the legacy keys when the new settings were written.
+        if (storage) clearLegacyPreferencesIfMigrated(storage, safeStorageLastWrite.ok);
     };
 
     // `persist` does not install `api.persist` when it had no storage (it returns

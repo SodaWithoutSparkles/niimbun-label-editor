@@ -315,6 +315,37 @@ export const Header: React.FC = () => {
         setActiveMenu(activeMenu === menu ? null : menu);
     };
 
+    // Close the open header dropdown on Escape, and consume the event so it
+    // does not also reach the window-level Escape handlers (canvas cancel).
+    // Uses capture so it runs before those window listeners regardless of order.
+    // When a modal is open, don't consume Escape (let the Modal handle it) and
+    // drop the menu so it isn't left rendered behind the backdrop.
+    useEffect(() => {
+        if (!activeMenu) return;
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return;
+            if (document.querySelector('dialog[open]')) {
+                setActiveMenu(null);
+                return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            setActiveMenu(null);
+        };
+        window.addEventListener('keydown', handleKeyDown, true);
+        // A modal can open while the menu is up (e.g. Ctrl+, opens Settings)
+        // without any Escape press; drop the menu so it isn't rendered behind
+        // the backdrop. Watch `[open]` attribute flips on dialogs.
+        const observer = new MutationObserver(() => {
+            if (document.querySelector('dialog[open]')) setActiveMenu(null);
+        });
+        observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['open'] });
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown, true);
+            observer.disconnect();
+        };
+    }, [activeMenu]);
+
     const openSaveAsModal = () => {
         const suggestedName = saveFileName || buildDefaultSaveName(projectName);
         setSaveAsProjectName(projectName || createDefaultProjectName());

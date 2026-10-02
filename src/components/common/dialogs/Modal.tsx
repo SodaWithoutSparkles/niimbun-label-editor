@@ -47,29 +47,111 @@ export const Modal: React.FC<ModalProps> = ({
     // Where the pointer went down: a text-selection drag can start inside the
     // dialog and end on the backdrop, which must not count as a backdrop click.
     const pressedBackdropRef = useRef(false);
+    // The element focused when the dialog opened, so focus can be restored on
+    // close (native <dialog> does not do this reliably in every setup).
+    const openerRef = useRef<HTMLElement | null>(null);
     const titleId = useId();
     const { t } = useTranslation();
+
+    // Tracks a microtask-deferred unmount restore. Cancelled when the effect is
+    // set up again so StrictMode's mount/cleanup replay does not steal focus.
+    const unmountRestoreRef = useRef<{ cancelled: boolean } | null>(null);
 
     useEffect(() => {
         const dialog = dialogRef.current;
         if (!dialog) return;
+        // A replayed setup means the host is mounted again (StrictMode), or the
+        // dialog merely re-opened: supersede any pending unmount restore.
+        if (unmountRestoreRef.current) unmountRestoreRef.current.cancelled = true;
         // Idempotent guards: StrictMode runs effects twice.
-        if (open && !dialog.open) dialog.showModal();
-        else if (!open && dialog.open) dialog.close();
+        if (open && !dialog.open) {
+            // Capture the opener only when there is none recorded, so the
+            // StrictMode setup replay does not overwrite it with the dialog's
+            // own (now focused) first descendant.
+            if (openerRef.current === null) {
+                openerRef.current =
+                    document.activeElement instanceof HTMLElement ? document.activeElement : null;
+            }
+            dialog.showModal();
+        } else if (!open && dialog.open) {
+            dialog.close();
+        }
+
+        // The dialog can unmount while still open (the promise dialogs are
+        // rendered with `open` hardcoded true and unmounted by DialogHost). The
+        // open->false effect below then never runs, so restore the opener here
+        // on genuine unmount. Defer by a microtask and cancel in the re-setup
+        // above, so a StrictMode replay (cleanup then immediate re-run) does not
+        // pull focus back out of the still-open dialog.
+        return () => {
+            if (!open) return;
+            const token = { cancelled: false };
+            unmountRestoreRef.current = token;
+            queueMicrotask(() => {
+                if (token.cancelled) return;
+                const opener = openerRef.current;
+                openerRef.current = null;
+                if (!opener || !opener.isConnected) return;
+                // Do not fight a native restore that landed somewhere real.
+                const active = document.activeElement;
+                if (active && active !== document.body) return;
+                try {
+                    opener.focus();
+                } catch {
+                    // Opener became unfocusable before the dialog unmounted.
+                }
+            });
+        };
     }, [open]);
+
+    // Restore focus to the opener on close. Native <dialog> is supposed to do
+    // this, but the portal + React unmount ordering leaves focus on <body>.
+    // Runs only while closed, so it fires once per real open->close transition.
+    useEffect(() => {
+        if (open) return;
+        const opener = openerRef.current;
+        openerRef.current = null;
+        if (!opener || !opener.isConnected) return;
+        // Do not fight the native restore: only act if focus escaped to body.
+        const active = document.activeElement;
+        if (active && active !== document.body) return;
+        try {
+            opener.focus();
+        } catch {
+            // Opener became unfocusable between open and close -- nothing to do.
+        }
+    }, [open]);
+
+    const requestClose = () => {
+        const dialog = dialogRef.current;
+        // Closing the dialog synchronously here lets the browser's native
+        // Escape default action run afterwards and pop the *next* stacked
+        // <dialog>. preventDefault() on this keydown cancels that default
+        // action, so only the top dialog closes.
+        if (dialog?.open) dialog.close();
+        onClose();
+    };
 
     const dialog = (
         <dialog
             ref={dialogRef}
-            onCancel={onClose}
+            // For a real Escape-generated `cancel`, cancel the native close too;
+            // otherwise the browser proceeds to close a lower stacked dialog.
+            onCancel={(e) => {
+                e.preventDefault();
+                onClose();
+            }}
             // Native Escape handling is unreliable (and unfocused-input cases
             // vary by browser), so close explicitly on any Escape inside the
-            // dialog. stopPropagation keeps the press from also reaching the
-            // window-level listeners that use Escape as a canvas cancel key.
+            // dialog. preventDefault stops the browser's native default action
+            // (which would close the next dialog down the stack); stopPropagation
+            // keeps the press from also reaching the window-level listeners that
+            // use Escape as a canvas cancel key.
             onKeyDown={(e) => {
                 if (e.key !== 'Escape') return;
+                e.preventDefault();
                 e.stopPropagation();
-                onClose();
+                requestClose();
             }}
             // Clicks land on the dialog itself only when they hit the backdrop,
             // but the press must have started there too.

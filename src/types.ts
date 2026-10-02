@@ -88,7 +88,8 @@ export type HistoryEntry = { key: string; params?: Record<string, unknown> } | s
 
 // The Project Save File Format — a generic serialization of the app's slices.
 // It intentionally contains NO domain-specific data.
-export interface SaveFile {    version: string;
+export interface SaveFile {
+    version: string;
     projectName?: string;
     // Optional preferred filename chosen by the user during Save As (helps with autosave recovery)
     saveFileName?: string;

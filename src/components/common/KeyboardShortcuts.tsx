@@ -17,6 +17,13 @@ export const KeyboardShortcuts = () => {
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            // A keydown targeted at a control inside the top-layer <dialog> still
+            // bubbles to window, so `inert` does not stop these global shortcuts.
+            // While any modal dialog is open, bail out entirely: Delete/undo/
+            // layer-reorder/tool-switch must not mutate the canvas behind the
+            // modal, and Ctrl+, must not stack a Settings dialog on top.
+            if (document.querySelector('dialog[open]')) return;
+
             // Ignore if typing in an input field
             const target = e.target as HTMLElement;
             if (

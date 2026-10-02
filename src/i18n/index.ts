@@ -2,6 +2,11 @@ import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import { useStore } from '../store/useStore';
 import en from './locales/en.json';
+import type { SupportedLanguage } from './languages';
+// Re-export the locale constant/type from the zero-import leaf module. Consumers
+// may import from here, but anything in the store layer must import from
+// `./languages` directly to keep the boot cycle broken.
+export { SUPPORTED_LANGUAGES, type SupportedLanguage } from './languages';
 
 export const defaultNS = 'translation';
 
@@ -9,7 +14,19 @@ export const defaultNS = 'translation';
 // is synchronous at creation, so `getState().language` here already reflects the
 // persisted value. Some environments predate zustand's sync rehydrate, so guard
 // with optional access and fall back to i18n's own detection.
-const persistedLanguage = useStore.getState?.().language;
+//
+// This runs at module evaluation. During the `i18n → useStore → …` cycle this
+// module can be evaluated *before* `useStore`'s binding is initialised, so a
+// bare reference would throw a TDZ `ReferenceError` and white-screen boot.
+// Reading through a guarded thunk and treating any failure as "no persisted
+// language" keeps the common path working without ever dereferencing an
+// uninitialised binding.
+let persistedLanguage: SupportedLanguage | undefined;
+try {
+    persistedLanguage = useStore?.getState?.().language;
+} catch {
+    // `useStore` not initialised yet (module cycle) — fall back to 'en'.
+}
 
 // Development-only guard for missing keys. Typed keys already turn a missing
 // key into a `tsc` error at literal call sites, but types cannot see dynamic

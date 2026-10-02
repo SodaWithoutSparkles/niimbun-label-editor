@@ -1,5 +1,6 @@
 import type { StateCreator } from 'zustand';
 import type { CanvasItem, HistoryEntry, SaveFile } from '../types';
+import type { SupportedLanguage } from '../i18n/languages';
 
 export interface ColorPreset {
     stroke: string;
@@ -143,8 +144,8 @@ export interface AppState {
     setToolShortcut: (tool: keyof KeyboardShortcutConfig['tools'], key: string) => void;
 
     // Settings / Preferences
-    language: string;
-    setLanguage: (language: string) => void;
+    language: SupportedLanguage;
+    setLanguage: (language: SupportedLanguage) => void;
     resetSettings: () => void;
 
     // Settings window (shared so the global Ctrl/Cmd+, binding can open it)

@@ -126,6 +126,7 @@
     "loading": "Loading...",
     "zoomHint": "Zoom to fit before exporting for best results.",
     "filename": "Filename",
+    "format": "File format",
     "defaultFilename": "drawing-export",
     "size": "Size",
     "quality": "Quality",
@@ -233,7 +234,9 @@
     "arrow": "Arrow",
     "callout": "Text Box + Arrow",
     "star": "Star",
-    "text": "Text"
+    "text": "Text",
+    "image": "Image",
+    "polygon": "Polygon"
   },
   "canvas": {
     "typePlaceholder": "Type...",

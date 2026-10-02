@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import { X } from 'lucide-react';
 import { ColorPicker } from './ColorPicker';
-import { TOOL_LABEL_KEYS } from '../layout/toolLabels';
+import { toolLabel } from '../layout/toolLabels';
 
 export const ToolSettingsModal: React.FC = () => {
     const { t } = useTranslation();
@@ -57,7 +57,7 @@ export const ToolSettingsModal: React.FC = () => {
         >
             <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold text-gray-100 capitalize">
-                    {t('toolSettings.title', { tool: t(TOOL_LABEL_KEYS[activeTool]) })}
+                    {t('toolSettings.title', { tool: toolLabel(activeTool, t) })}
                 </h2>
                 <button
                     onClick={() => setShowToolSettings(false)}

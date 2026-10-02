@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useId, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import { Input, Select, SettingRow } from '../common/forms';
@@ -13,6 +13,15 @@ interface ToolsSectionProps {
  */
 export const ToolsSection: React.FC<ToolsSectionProps> = ({ tab }) => {
     const { t } = useTranslation();
+    const ids = {
+        lineWidth: useId(),
+        fontSize: useId(),
+        fontFamily: useId(),
+        fontWeight: useId(),
+        fontStyle: useId(),
+        textAlign: useId(),
+        textColor: useId(),
+    };
     const toolSettings = useStore((state) => state.toolSettings);
     const setToolSettings = useStore((state) => state.setToolSettings);
 
@@ -56,8 +65,9 @@ export const ToolsSection: React.FC<ToolsSectionProps> = ({ tab }) => {
     if (tab === 'shape') {
         return (
             <div>
-                <SettingRow label={t('toolSettings.lineWidth')}>
+                <SettingRow label={t('toolSettings.lineWidth')} htmlFor={ids.lineWidth}>
                     <Input
+                        id={ids.lineWidth}
                         className="w-20"
                         type="number"
                         min={1}
@@ -81,8 +91,9 @@ export const ToolsSection: React.FC<ToolsSectionProps> = ({ tab }) => {
 
     return (
         <div>
-            <SettingRow label={t('toolSettings.fontSize')}>
+            <SettingRow label={t('toolSettings.fontSize')} htmlFor={ids.fontSize}>
                 <Input
+                    id={ids.fontSize}
                     className="w-20"
                     type="number"
                     min={8}
@@ -98,15 +109,17 @@ export const ToolsSection: React.FC<ToolsSectionProps> = ({ tab }) => {
                     }}
                 />
             </SettingRow>
-            <SettingRow label={t('toolSettings.fontFamily')}>
+            <SettingRow label={t('toolSettings.fontFamily')} htmlFor={ids.fontFamily}>
                 <Select
+                    id={ids.fontFamily}
                     value={toolSettings.fontFamily}
                     onChange={(value) => setToolSettings({ fontFamily: value })}
                     options={fontFamilyOptions}
                 />
             </SettingRow>
-            <SettingRow label={t('toolSettings.fontWeight')}>
+            <SettingRow label={t('toolSettings.fontWeight')} htmlFor={ids.fontWeight}>
                 <Select
+                    id={ids.fontWeight}
                     value={toolSettings.fontWeight}
                     onChange={(value) =>
                         setToolSettings({ fontWeight: value as 'normal' | 'bold' })
@@ -114,8 +127,9 @@ export const ToolsSection: React.FC<ToolsSectionProps> = ({ tab }) => {
                     options={fontWeightOptions}
                 />
             </SettingRow>
-            <SettingRow label={t('toolSettings.fontStyle')}>
+            <SettingRow label={t('toolSettings.fontStyle')} htmlFor={ids.fontStyle}>
                 <Select
+                    id={ids.fontStyle}
                     value={toolSettings.fontStyle}
                     onChange={(value) =>
                         setToolSettings({ fontStyle: value as 'normal' | 'italic' })
@@ -123,8 +137,9 @@ export const ToolsSection: React.FC<ToolsSectionProps> = ({ tab }) => {
                     options={fontStyleOptions}
                 />
             </SettingRow>
-            <SettingRow label={t('toolSettings.textAlign')}>
+            <SettingRow label={t('toolSettings.textAlign')} htmlFor={ids.textAlign}>
                 <Select
+                    id={ids.textAlign}
                     value={toolSettings.textAlign}
                     onChange={(value) =>
                         setToolSettings({ textAlign: value as 'left' | 'center' | 'right' })
@@ -132,8 +147,9 @@ export const ToolsSection: React.FC<ToolsSectionProps> = ({ tab }) => {
                     options={textAlignOptions}
                 />
             </SettingRow>
-            <SettingRow label={t('toolSettings.textColor')}>
+            <SettingRow label={t('toolSettings.textColor')} htmlFor={ids.textColor}>
                 <Input
+                    id={ids.textColor}
                     className="h-8 w-12 p-0.5"
                     type="color"
                     value={toolSettings.textColor}

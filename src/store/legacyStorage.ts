@@ -120,3 +120,21 @@ export const clearLegacyPreferences = (storage: Storage): void => {
         }
     }
 };
+
+/**
+ * Clears the legacy keys only when the new `ui_settings` write is confirmed to
+ * have succeeded. A quota-exceeded / private-mode `setItem` is swallowed by the
+ * safe storage, so without this check the migration could fail to write the new
+ * blob *and* still delete the old keys — losing the only copy of the
+ * preferences. On failure the legacy keys are kept for the next load.
+ *
+ * Returns `true` when the legacy keys were cleared.
+ */
+export const clearLegacyPreferencesIfMigrated = (
+    storage: Storage,
+    newSettingsWritten: boolean,
+): boolean => {
+    if (!newSettingsWritten) return false;
+    clearLegacyPreferences(storage);
+    return true;
+};

@@ -5,7 +5,7 @@ import { useStore } from '../../store/useStore';
 import { Layers, History, Sliders, Trash2 } from 'lucide-react';
 import { ColorPicker } from '../common/ColorPicker';
 import { confirm } from '../common/dialogs';
-import { TOOL_LABEL_KEYS, type ToolLabelKey } from './toolLabels';
+import { toolLabel } from './toolLabels';
 
 export const RightSidebar: React.FC = () => {
     const { t } = useTranslation();
@@ -39,11 +39,6 @@ export const RightSidebar: React.FC = () => {
         return Number.isNaN(parsed) ? fallback : parsed;
     };
 
-    const toolLabel = (type: string): string => {
-        const key = (TOOL_LABEL_KEYS as Record<string, ToolLabelKey | undefined>)[type];
-        return key ? t(key) : type;
-    };
-
     return (
         <div className="w-64 bg-gray-800 border-l border-gray-700 flex flex-col text-gray-300 z-20">
             {/* Top Half: Object Settings OR History */}
@@ -60,7 +55,7 @@ export const RightSidebar: React.FC = () => {
                     {hasSelection && selectedItem ? (
                         <div className="space-y-4 text-sm">
                             <div className="text-xs text-gray-400">
-                                {selectedIds.length > 1 ? t('rightSidebar.nSelected', { count: selectedIds.length }) : toolLabel(selectedItem.type)}
+                                {selectedIds.length > 1 ? t('rightSidebar.nSelected', { count: selectedIds.length }) : toolLabel(selectedItem.type, t)}
                             </div>
 
                             {isMultiSelect ? (
@@ -348,7 +343,7 @@ export const RightSidebar: React.FC = () => {
                                 const label = typeof action === 'string'
                                     ? action
                                     : t(action.key as ParseKeys, action.params && 'type' in action.params
-                                        ? { ...action.params, type: toolLabel(String(action.params.type)) }
+                                        ? { ...action.params, type: toolLabel(String(action.params.type), t) }
                                         : action.params);
                                 return (
                                     <li
@@ -408,7 +403,7 @@ export const RightSidebar: React.FC = () => {
                                 }}
                             >
                                 <span className="opacity-50 mr-2 text-xs">#{objects.length - 1 - i}</span>
-                                <span className="capitalize">{toolLabel(item.type)}</span>
+                                <span className="capitalize">{toolLabel(item.type, t)}</span>
                             </li>
                         ))}
                         {objects.length === 0 && <li className="text-gray-500 italic text-xs p-2">{t('rightSidebar.noObjects')}</li>}

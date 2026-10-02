@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useId, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import type { ModifierKey, TextSaveModifier } from '../../store/storeTypes';
@@ -59,9 +59,11 @@ const captureKey = (e: React.KeyboardEvent<HTMLInputElement>, onChange: (value: 
 /** Read-only capture field: the next non-modifier keypress is persisted. */
 const ShortcutInput: React.FC<ShortcutInputProps> = ({ value, onChange, label }) => {
     const { t } = useTranslation();
+    const id = useId();
     return (
-        <SettingRow label={label}>
+        <SettingRow label={label} htmlFor={id}>
             <Input
+                id={id}
                 className="w-28 text-xs"
                 readOnly
                 value={formatKey(value, t)}
@@ -78,6 +80,9 @@ const ShortcutInput: React.FC<ShortcutInputProps> = ({ value, onChange, label })
  */
 export const ShortcutsSection: React.FC = () => {
     const { t } = useTranslation();
+    const constrainId = useId();
+    const textSaveModifierId = useId();
+    const textSaveKeyId = useId();
     const keyboardShortcuts = useStore((state) => state.keyboardShortcuts);
     const setModifyKey = useStore((state) => state.setModifyKey);
     const setCancelKey = useStore((state) => state.setCancelKey);
@@ -100,8 +105,9 @@ export const ShortcutsSection: React.FC = () => {
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-400 mb-3">
                     {t('settings.shortcuts.drawingModifiers')}
                 </h3>
-                <SettingRow label={t('settings.shortcuts.constrain')}>
+                <SettingRow label={t('settings.shortcuts.constrain')} htmlFor={constrainId}>
                     <Select
+                        id={constrainId}
                         value={keyboardShortcuts.modifyKey}
                         onChange={(value) => setModifyKey(value as ModifierKey)}
                         options={modifierOptions.filter((option) => option.value !== 'none')}
@@ -169,9 +175,10 @@ export const ShortcutsSection: React.FC = () => {
                     value={keyboardShortcuts.cancelKey}
                     onChange={(value) => setCancelKey(value)}
                 />
-                <SettingRow label={t('settings.shortcuts.saveText')}>
+                <SettingRow label={t('settings.shortcuts.saveText')} htmlFor={textSaveModifierId}>
                     <div className="flex items-center gap-2">
                         <Select
+                            id={textSaveModifierId}
                             value={keyboardShortcuts.textSave.modifier}
                             onChange={(value) =>
                                 setTextSaveShortcut(
@@ -182,6 +189,8 @@ export const ShortcutsSection: React.FC = () => {
                             options={modifierOptions}
                         />
                         <Input
+                            id={textSaveKeyId}
+                            aria-label={t('settings.shortcuts.saveText')}
                             className="w-24 text-xs"
                             readOnly
                             value={formatKey(keyboardShortcuts.textSave.key, t)}
