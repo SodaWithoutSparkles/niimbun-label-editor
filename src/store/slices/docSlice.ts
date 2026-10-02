@@ -3,6 +3,7 @@ import { createLabelDoc } from '../../core/doc/factory';
 import { isLabelDoc } from '../../core/doc/validate';
 import { createIdbAdapter } from '../../data/db';
 import { createLabelRepo } from '../../data/labelRepo';
+import type { LabelDoc } from '../../core/doc/types';
 import type { PrinterStatus } from '../../print/transport';
 import type { StoreSlice } from '../storeTypes';
 
@@ -86,16 +87,29 @@ export const createDocSlice: StoreSlice = (set, get) => {
             if (!repo) return null;
             // Fence at the boundary: refuse to persist a structurally invalid doc.
             // (Reused by import/duplicate in P8.) `isLabelDoc` never throws.
-            const built = createLabelDoc(spec);
-            const result = isLabelDoc(built);
-            if (!result.ok) return null;
-            const doc = result.doc;
+            //
+            // This action is contractually non-throwing: the factory/validator run
+            // synchronously (a throw there would reject the caller's `await` and,
+            // before the dialog's try/finally, left its `saving` flag stuck), and
+            // `repo.save` can reject on a real IDB transaction. Every failure
+            // becomes `null` so the caller surfaces one visible error path.
+            let doc: LabelDoc;
             try {
+                const built = createLabelDoc(spec);
+                const result = isLabelDoc(built);
+                if (!result.ok) return null;
+                doc = result.doc;
                 await repo.save(doc);
             } catch {
                 return null;
             }
-            await get().refreshGallery();
+            // The doc is saved; a gallery-refresh failure must not turn a
+            // successful create into a reported failure.
+            try {
+                await get().refreshGallery();
+            } catch {
+                // `refreshGallery` owns its error surface; never reject here.
+            }
             return doc;
         },
 

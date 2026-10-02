@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAppStore } from './useStore';
 import { createMemoryAdapter } from '../data/db';
 import { createLabelRepo } from '../data/labelRepo';
+import { LABEL_PRESETS } from '../core/doc/factory';
+import type { Region } from '../core/doc/types';
 
 /** Minimal in-memory Storage, mirroring `projectSlice.test.ts`. */
 const makeStorage = (): Storage => {
@@ -175,5 +177,55 @@ describe('docSlice — create → reload → reopen', () => {
         // …and the failure is surfaced as an error notification.
         const notifications = store.getState().notifications;
         expect(notifications.some((n) => n.type === 'error')).toBe(true);
+    });
+
+    it("persists the dialog's exact submit spec through createLabel (regions + preset)", async () => {
+        const adapter = createMemoryAdapter();
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo(createLabelRepo(adapter));
+
+        // Exactly what `CreateLabelDialog.handleSubmit` builds for the F-tag
+        // default: it always passes `regions`, and the preset (not backingW/H).
+        const preset = LABEL_PRESETS['ftagSpare-25x78'];
+        const spec = {
+            name: 'F-tag spare 25×78',
+            preset: 'ftagSpare-25x78' as const,
+            dpi: 300,
+            regions: preset.regions.map((region) => structuredClone(region)),
+        };
+
+        const doc = await store.getState().createLabel(spec);
+        expect(doc).not.toBeNull();
+        expect(store.getState().gallery).toHaveLength(1);
+
+        // Prove it actually hit the repo (persisted), not just built in memory.
+        const stored = await store.getState().labelRepo!.get(doc!.meta.id);
+        expect(stored).not.toBeNull();
+        expect(stored!.label.regions).toHaveLength(3);
+        expect(stored!.label.backingW).toBe(2500);
+        expect(stored!.label.backingH).toBe(7800);
+    });
+
+    it('never rejects: a throwing factory resolves to null instead', async () => {
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo(createLabelRepo(createMemoryAdapter()));
+
+        // A malformed region makes the synchronous factory throw before the
+        // old try/catch, which used to reject the caller (and strand the
+        // dialog's `saving` flag). The action must absorb it.
+        const badRegions = [{ kind: 'polygon' }] as unknown as Region[];
+        await expect(store.getState().createLabel({ regions: badRegions })).resolves.toBeNull();
+        expect(store.getState().gallery).toHaveLength(0);
+    });
+
+    it('never rejects: a failing repo.save resolves to null instead', async () => {
+        const store = createAppStore(makeStorage());
+        const repo = createLabelRepo(createMemoryAdapter());
+        vi.spyOn(repo, 'save').mockRejectedValueOnce(new Error('idb transaction aborted'));
+        store.getState().setLabelRepo(repo);
+
+        await expect(
+            store.getState().createLabel({ preset: 'ftagSpare-25x78' }),
+        ).resolves.toBeNull();
     });
 });

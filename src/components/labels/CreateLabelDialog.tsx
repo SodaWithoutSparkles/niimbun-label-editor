@@ -200,8 +200,17 @@ export const CreateLabelDialog: React.FC<CreateLabelDialogProps> = ({ open, onCl
 
         setSaving(true);
         setError(null);
-        const doc = await createLabel(spec);
-        setSaving(false);
+        let doc: Awaited<ReturnType<typeof createLabel>> = null;
+        try {
+            doc = await createLabel(spec);
+        } catch {
+            // `createLabel` is contractually non-throwing, but a future change (or
+            // a rejection from an injected repo) must never leave the button
+            // stuck on `saving`. Fall through to the visible error branch below.
+            doc = null;
+        } finally {
+            setSaving(false);
+        }
         if (!doc) {
             setError(t('errors.saveFailed'));
             return;
