@@ -50,41 +50,57 @@ const persistedDefaults: PersistedSettings = {
  *
  * Methods are bound to the real storage explicitly so `this` is never lost —
  * `localStorage.getItem` must be called with `localStorage` as receiver.
+ *
+ * Returns the wrapper together with *its own* last-write flag, so the flag can
+ * be unit-tested per instance. Exported for the same reason `createAppStore` is.
  */
-/**
- * Records the outcome of the last `setItem` through the safe wrapper. `persist`
- * swallows write failures, but the legacy migration must know whether the new
- * `ui_settings` write actually landed before it deletes the old keys — deleting
- * them after a failed write would erase the only copy of the preferences.
- * Reset before a flush, read after it.
- */
-const safeStorageLastWrite = { ok: false };
+export const createSafeStorage = (storage: Storage): { storage: Storage; lastWrite: { ok: boolean } } => {
+    /**
+     * Records the outcome of the last `setItem` through *this* wrapper. `persist`
+     * swallows write failures, but the legacy migration must know whether the new
+     * `ui_settings` write actually landed before it deletes the old keys — deleting
+     * them after a failed write would erase the only copy of the preferences.
+     * Reset before a flush, read after it.
+     *
+     * Per instance, never at module scope: `createAppStore` builds independent
+     * stores, and one shared flag would let a store's flush result gate another
+     * store's legacy-key deletion.
+     */
+    const lastWrite = { ok: false };
 
-const createSafeStorage = (storage: Storage): Storage => ({
-    getItem: (key: string) => storage.getItem(key),
-    setItem(key: string, value: string) {
-        try {
-            storage.setItem(key, value);
-            safeStorageLastWrite.ok = true;
-        } catch {
-            // quota exceeded / private mode: preferences just don't persist
-            safeStorageLastWrite.ok = false;
-        }
-    },
-    removeItem: (key: string) => storage.removeItem(key),
-    clear: () => storage.clear(),
-    key: (index: number) => storage.key(index),
-    get length() {
-        return storage.length;
-    },
-});
+    return {
+        lastWrite,
+        storage: {
+            getItem: (key: string) => storage.getItem(key),
+            setItem(key: string, value: string) {
+                try {
+                    storage.setItem(key, value);
+                    lastWrite.ok = true;
+                } catch {
+                    // quota exceeded / private mode: preferences just don't persist
+                    lastWrite.ok = false;
+                }
+            },
+            removeItem: (key: string) => storage.removeItem(key),
+            clear: () => storage.clear(),
+            key: (index: number) => storage.key(index),
+            get length() {
+                return storage.length;
+            },
+        },
+    };
+};
 
 /**
  * Builds a store bound to `storage`. Exported so the legacy migration can be
  * exercised headlessly against a fake `Storage`; the app uses `useStore`.
  */
 export const createAppStore = (storage?: Storage) => {
-    const safeStorage = storage ? createSafeStorage(storage) : undefined;
+    const safe = storage ? createSafeStorage(storage) : undefined;
+    const safeStorage = safe?.storage;
+    // The last-write flag belongs to this store's wrapper, so two stores built
+    // here never read each other's write result.
+    const safeStorageLastWrite = safe?.lastWrite;
     const store = create<AppState>()(
         persist<AppState, [], [], PersistedSettings>(
             (set, get, api) => {
@@ -159,13 +175,15 @@ export const createAppStore = (storage?: Storage) => {
         // erases the migrated preferences. `safeStorageLastWrite` records
         // whether the flush actually landed so the clear can be gated on it.
         try {
-            safeStorageLastWrite.ok = false;
+            if (safeStorageLastWrite) safeStorageLastWrite.ok = false;
             store.setState({});
         } catch {
             // unexpected flush failure — treat as an unsuccessful write
         }
         // Only delete the legacy keys when the new settings were written.
-        if (storage) clearLegacyPreferencesIfMigrated(storage, safeStorageLastWrite.ok);
+        if (storage && safeStorageLastWrite) {
+            clearLegacyPreferencesIfMigrated(storage, safeStorageLastWrite.ok);
+        }
     };
 
     // `persist` does not install `api.persist` when it had no storage (it returns

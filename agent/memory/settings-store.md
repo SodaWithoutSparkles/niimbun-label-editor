@@ -34,3 +34,5 @@ Pure, injectable `readLegacyPreferences(storage)` / `clearLegacyPreferences(stor
 ## Storage robustness (`createSafeStorage`)
 
 `persist` funnels every write through `storage.setItem`; a quota-exceeded / private-mode throw would escape an ordinary interaction. The wrapper **swallows only `setItem`** writes. Reads (`getItem`/`length`/`key`) must surface — never silently become "no preferences". `resolveStorage()` tolerates environments where merely touching `window.localStorage` throws (`SecurityError`), returning `undefined` → zustand's degraded no-storage path.
+
+`createSafeStorage(storage)` returns `{ storage, lastWrite }` and is **exported**. The last-write flag lives in the call's closure, never at module scope: `createAppStore` builds independent stores (tests do it per test), and one shared flag would let store A's flush result gate store B's legacy-key deletion. Only the unit test on `lastWrite` catches this — a behavioural interleaving test cannot, because `setItem`'s own `catch` always overwrites the flag before `finishMigration` reads it.
