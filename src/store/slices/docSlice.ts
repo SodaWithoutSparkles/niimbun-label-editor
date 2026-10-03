@@ -45,7 +45,13 @@ export const createDocSlice: StoreSlice = (set, get) => {
     return {
         // Shell view mode. `gallery` on reload — never persisted.
         view: 'gallery',
-        setView: (view) => set({ view }),
+        setView: (view) => {
+            // Leaving the editor must not drop a pending autosave: flush it
+            // before the view changes (the timer would otherwise fire with
+            // `view !== 'editor'` and silently discard the edit).
+            if (get().view === 'editor' && view !== 'editor') get().flushAutosave();
+            set({ view });
+        },
 
         // Document library
         currentDoc: null,
@@ -118,6 +124,12 @@ export const createDocSlice: StoreSlice = (set, get) => {
             if (!repo) return null;
             const doc = await repo.get(id);
             if (!doc) return null;
+            // Doc-switch boundary: flush any pending autosave for the doc we are
+            // leaving (so its last edit is not dropped), then drop its undo
+            // history and transient baseline (so undo/redo can never apply doc
+            // A's snapshots to doc B).
+            get().flushAutosave();
+            get().clearDocHistory();
             set({ currentDoc: doc, view: 'editor' });
             return doc;
         },
@@ -125,6 +137,14 @@ export const createDocSlice: StoreSlice = (set, get) => {
         deleteLabel: async (id) => {
             const repo = get().labelRepo;
             if (!repo) return;
+            const closingCurrent = get().currentDoc?.meta.id === id;
+            if (closingCurrent) {
+                // The open doc is being removed: flush its pending save first
+                // (harmless if it was already saved), then discard history that
+                // can no longer be meaningfully undone.
+                get().flushAutosave();
+                get().clearDocHistory();
+            }
             try {
                 await repo.remove(id);
             } catch {

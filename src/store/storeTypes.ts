@@ -2,7 +2,8 @@ import type { StateCreator } from 'zustand';
 import type { CanvasItem, HistoryEntry, SaveFile } from '../types';
 import type { SupportedLanguage } from '../i18n/languages';
 import type { hm } from '../core/hm';
-import type { LabelDoc, Region } from '../core/doc/types';
+import type { LabelDoc, Node, Region } from '../core/doc/types';
+import type { ResizeOptions, Size } from '../core/doc/geometry';
 import type { LabelPresetId } from '../core/doc/label-presets';
 import type { LabelRepo, LabelSummary } from '../data/labelRepo';
 import type { PrinterStatus } from '../print/transport';
@@ -17,6 +18,21 @@ export interface CreateLabelSpec {
     regions?: Region[];
     printDirection?: LabelDoc['label']['printDirection'];
 }
+
+/**
+ * `Omit` that distributes over a union, so `Omit<Node, K>` keeps each member's
+ * discriminant-specific fields (`text`, `shape`, `data`, `imageId`) instead of
+ * collapsing to the shared `BaseNode` keys.
+ */
+type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
+
+/**
+ * Patch accepted by `updateNode`/`updateNodeTransient`. `id`, `parentId` and
+ * `type` are deliberately excluded: `id` is the stable key, and `parentId`/`type`
+ * are owned by `reparentNode`/`addNode`, whose cycle and parent-type guards a
+ * patch must not be able to bypass.
+ */
+export type NodePatch = Partial<DistributiveOmit<Node, 'id' | 'parentId' | 'type'>>;
 
 export interface ColorPreset {
     stroke: string;
@@ -198,6 +214,60 @@ export interface AppState {
     printerStatus: PrinterStatus;
     setPrinterStatus: (status: PrinterStatus) => void;
     initPersistence: () => Promise<void>;
+
+    // Editor document operations (editorSlice) — undo history never persisted.
+    // Named `docPast`/`docFuture` to avoid colliding with canvasSlice's
+    // `past`/`future` (legacy drawing model).
+    docPast: LabelDoc[];
+    docFuture: LabelDoc[];
+    /** Debounced autosave delay; injectable for tests. */
+    docAutosaveDelayMs: number;
+    setDocAutosaveDelay: (ms: number) => void;
+    /** Adds a node with a fresh id; returns the new id, or null with no doc. */
+    addNode: (node: Node) => string | null;
+    updateNode: (id: string, patch: NodePatch) => void;
+    /** Gesture seam: applies `patch` to `currentDoc` without history, `updatedAt`
+     * or autosave. Pair N calls with one `commitDoc` for a single undo entry.
+     */
+    updateNodeTransient: (id: string, patch: NodePatch) => void;
+    /**
+     * Resize `id` to `target` via the core `resizeNodeGeometry` rule, as a single
+     * committed op (one undo entry, rounded hm, `updatedAt` stamped).
+     */
+    resizeNode: (id: string, target: Size, opts?: ResizeOptions) => void;
+    /** Ends a transient gesture: one `docPast` entry, clears `docFuture`, stamps `updatedAt`. */
+    commitDoc: () => void;
+    /** Abandons any in-progress transient gesture without touching history. */
+    resetTransient: () => void;
+    /**
+     * Clears `docPast`/`docFuture` and the transient baseline. Called at the
+     * doc-switch boundary so history from one document can never be applied to
+     * another.
+     */
+    clearDocHistory: () => void;
+    /**
+     * Flushes a pending autosave immediately, saving the doc captured when the
+     * debounce was scheduled. Called at the doc/view boundary so switching
+     * views or documents cannot drop the last edit.
+     */
+    flushAutosave: () => void;
+    removeNode: (id: string) => void;
+    /** Deep-clones the node subtree with fresh ids; returns the clone's root id. */
+    cloneNode: (id: string) => string | null;
+    reparentNode: (id: string, parentId: string | null, index: number) => void;
+    moveNodeZ: (id: string, dir: 'up' | 'down') => void;
+    groupNodes: (ids: string[]) => string | null;
+    ungroupNode: (id: string) => void;
+    undoDoc: () => void;
+    redoDoc: () => void;
+
+    // Document-editor selection (selectionSlice). Distinct from canvasSlice's
+    // `selectedIds` (legacy drawing model) so both coexist until the P3 strip.
+    selectedNodeIds: string[];
+    selectNode: (id: string | null) => void;
+    toggleSelectNode: (id: string) => void;
+    selectNodes: (ids: string[]) => void;
+    clearNodeSelection: () => void;
 }
 
 export type StoreSlice = StateCreator<AppState, [], [], Partial<AppState>>;
