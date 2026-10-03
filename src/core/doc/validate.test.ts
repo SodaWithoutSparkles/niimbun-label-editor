@@ -230,14 +230,36 @@ describe('isNode — geometry fields (P3 §13)', () => {
         expect(negative?.type === 'shape' && negative.cornerRadius).toBe(0);
     });
 
-    it('requires points for line/polygon and defaults polygon.closed', () => {
+    it('accepts points for line/polygon, defaults polygon.closed, drops size', () => {
         const line = isNode(baseNode({ shape: 'line', points: [[1.2, 2.8], [3, 4]] }));
         expect(line).toMatchObject({ shape: 'line', points: [[1, 3], [3, 4]], closed: false });
         const poly = isNode(baseNode({ shape: 'polygon', points: [[0, 0], [10, 0], [10, 10]] }));
         expect(poly).toMatchObject({ shape: 'polygon', closed: true });
-        expect(isNode(baseNode({ shape: 'line' }))).toBeUndefined();
+        // `points` is authoritative: a stale size alongside them is dropped.
+        const withSize = isNode(
+            baseNode({ shape: 'line', points: [[0, 0], [1, 1]], size: { w: 50, h: 50 } }),
+        );
+        expect(withSize?.size).toBeUndefined();
+        // Malformed points still reject the node.
         expect(isNode(baseNode({ shape: 'polygon', points: [[1]] }))).toBeUndefined();
         expect(isNode(baseNode({ shape: 'polygon', points: [['x', 1]] }))).toBeUndefined();
+    });
+
+    it('repairs a point-less line/polygon from size instead of rejecting (fix 10)', () => {
+        const repairs: string[] = [];
+        const repaired = isNode(
+            baseNode({ shape: 'line', size: { w: 200, h: 100 } }),
+            repairs,
+        );
+        expect(repaired).toMatchObject({ shape: 'line', points: [[0, 0], [200, 100]] });
+        expect(repaired?.size).toBeUndefined();
+        expect(repairs.join(' ')).toContain('missing points synthesised from size');
+
+        // Without points or size there is no geometry to stand in: drop just the
+        // node (not the whole document).
+        const dropRepairs: string[] = [];
+        expect(isNode(baseNode({ shape: 'polygon' }), dropRepairs)).toBeUndefined();
+        expect(dropRepairs.join(' ')).toContain('node dropped');
     });
 });
 

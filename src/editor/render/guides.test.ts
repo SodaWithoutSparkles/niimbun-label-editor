@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createFtagSpareDoc, createLabelDoc } from '../../core/doc/factory';
-import { FTAG_SCORE_BOTTOM_HM, FTAG_SCORE_TOP_HM, FTAG_SCORE_X_HM, resolveGuides } from './guides';
+import { resolveGuides } from './guides';
 import type { LabelDoc } from '../../core/doc/types';
 
 const withPresetId = (presetId: string | undefined): LabelDoc => {
@@ -19,12 +19,10 @@ describe('resolveGuides — presetId → F-tag score line', () => {
         expect(guides).toHaveLength(1);
         const [guide] = guides;
         expect(guide?.kind).toBe('score');
-        expect(guide?.line).toEqual({
-            x1: FTAG_SCORE_X_HM,
-            y1: FTAG_SCORE_TOP_HM,
-            x2: FTAG_SCORE_X_HM,
-            y2: FTAG_SCORE_BOTTOM_HM,
-        });
+        // Literal values (not the exported constants) so a constant bump is
+        // caught: vertical segment at x=1250, y=0…3800.
+        expect(guide?.line).toEqual({ x1: 1250, y1: 0, x2: 1250, y2: 3800 });
+        expect(guide?.line.x1).toBe(guide?.line.x2);
     });
 
     it('derives the guide from meta.presetId, not label geometry', () => {

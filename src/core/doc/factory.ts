@@ -24,6 +24,9 @@ const DEFAULT_BACKING_H = 3000;
 /** Integer hm, or 0 when the caller passed a non-finite number. */
 const safeRoundHm = (value: number): hm => (Number.isFinite(value) ? roundHm(value) : 0);
 
+/** Integer hm clamped at 0 (matches `validate`/`geometry` negative-size discipline). */
+const nonNegativeHm = (value: number): hm => Math.max(0, safeRoundHm(value));
+
 /**
  * Round the hm geometry of a caller-supplied region. `createLabelDoc` accepts
  * `regions` from UI code; a float hm would otherwise be persisted verbatim
@@ -72,9 +75,9 @@ const roundTransform = (transform: Transform): Transform => ({
 export const roundNode = (node: Node): Node => {
     const base = { ...node, transform: roundTransform(node.transform) };
     if (node.size !== undefined) {
-        base.size = { w: safeRoundHm(node.size.w), h: safeRoundHm(node.size.h) };
+        base.size = { w: nonNegativeHm(node.size.w), h: nonNegativeHm(node.size.h) };
     }
-    if (node.strokeWidth !== undefined) base.strokeWidth = safeRoundHm(node.strokeWidth);
+    if (node.strokeWidth !== undefined) base.strokeWidth = nonNegativeHm(node.strokeWidth);
     if (node.type === 'text') {
         const rounded = base as typeof node;
         if (node.fontSize !== undefined) rounded.fontSize = Math.max(1, safeRoundHm(node.fontSize));
@@ -82,7 +85,7 @@ export const roundNode = (node: Node): Node => {
     }
     if (node.type === 'shape') {
         const rounded = base as typeof node;
-        if (node.cornerRadius !== undefined) rounded.cornerRadius = safeRoundHm(node.cornerRadius);
+        if (node.cornerRadius !== undefined) rounded.cornerRadius = nonNegativeHm(node.cornerRadius);
         if (node.points !== undefined) {
             rounded.points = node.points.map(([x, y]) => [safeRoundHm(x), safeRoundHm(y)]);
         }

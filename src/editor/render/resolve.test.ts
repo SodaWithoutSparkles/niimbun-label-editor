@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { LabelDoc, Node } from '../../core/doc/types';
-import { createLabelDoc } from '../../core/doc/factory';
+import { createFtagSpareDoc, createLabelDoc } from '../../core/doc/factory';
 import type { ResolvedNode } from './resolve';
-import { DEFAULT_EMPTY_TEXT, resolve, resolveContent } from './resolve';
+import { DEFAULT_EMPTY_TEXT, DEFAULT_CONTENT_SIZE, DEFAULT_FONT_SIZE, resolve, resolveContent } from './resolve';
 import { resolveGuides } from './guides';
 
 /** Attach the render layer's optional geometry to a raw node (schema elides it). */
@@ -199,5 +199,77 @@ describe('resolveContent — no template execution', () => {
 describe('resolveGuides — seam', () => {
     it('returns [] when the document records no preset', () => {
         expect(resolveGuides(smallDoc())).toEqual([]);
+    });
+
+    it('guides are not regions: the score line is absent from label.regions', () => {
+        const doc = createFtagSpareDoc();
+        const guides = resolveGuides(doc);
+        expect(guides).toHaveLength(1);
+        // A guide is an annotation, never a clip/print region: no region's
+        // geometry matches the vertical score segment.
+        const { x1, y1, x2, y2 } = guides[0]!.line;
+        for (const region of doc.label.regions) {
+            if (region.kind === 'rect' || region.kind === 'roundedRect') {
+                const isVerticalSegment =
+                    region.x === x1 && region.x + region.w === x2 && region.y === y1 && region.y + region.h === y2;
+                expect(isVerticalSegment).toBe(false);
+            }
+        }
+        // The F-tag's regions are its die-cut shapes, not the guide.
+        expect(doc.label.regions.length).toBeGreaterThan(0);
+        expect(doc.label.regions.every((r) => r.kind === 'roundedRect')).toBe(true);
+    });
+});
+
+describe('resolve — geometry fallbacks', () => {
+    it('resolves a node without size via DEFAULT_CONTENT_SIZE', () => {
+        const doc = createLabelDoc({
+            id: 'doc-fallback',
+            now: 1_700_000_000,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 1000, h: 1000 }],
+            nodes: [
+                node({
+                    id: 't1',
+                    parentId: null,
+                    type: 'text',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    text: { kind: 'static', value: 'hi' },
+                }),
+            ],
+        });
+        const resolved = resolve(doc)[0];
+        expect(resolved?.type).toBe('text');
+        if (resolved?.type === 'text') {
+            expect(resolved.w).toBe(DEFAULT_CONTENT_SIZE);
+            expect(resolved.h).toBe(DEFAULT_CONTENT_SIZE);
+            expect(resolved.fontSize).toBe(DEFAULT_FONT_SIZE);
+        }
+    });
+
+    it('resolves a P2-era line/polygon without points to empty geometry', () => {
+        const doc = createLabelDoc({
+            id: 'doc-p2',
+            now: 1_700_000_000,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 1000, h: 1000 }],
+            nodes: [
+                node({
+                    id: 'l1',
+                    parentId: null,
+                    type: 'shape',
+                    shape: 'line',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                }),
+            ],
+        });
+        const resolved = resolve(doc)[0];
+        expect(resolved?.type).toBe('line');
+        if (resolved?.type === 'line') {
+            expect(resolved.points).toEqual([]);
+            expect(resolved.bounds).toEqual({ x: 0, y: 0, w: 0, h: 0 });
+        }
     });
 });

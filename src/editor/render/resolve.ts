@@ -9,7 +9,7 @@ import {
     nodeLookup,
 } from '../../core/doc/derive';
 import type { ContentSource, LabelDoc, Node, TextNode } from '../../core/doc/types';
-import { nodeSize } from '../../core/doc/geometry';
+import { DEFAULT_FONT_SIZE, nodeSize } from '../../core/doc/geometry';
 
 /**
  * Editor render path — resolve a `LabelDoc` into a static scene graph.
@@ -31,9 +31,7 @@ import { nodeSize } from '../../core/doc/geometry';
 export type ResolvedNodeType = 'group' | 'text' | 'line' | 'rectangle' | 'ellipse' | 'polygon';
 export type TextAlign = TextNode['align'] & ('left' | 'center' | 'right');
 
-export { DEFAULT_CONTENT_SIZE } from '../../core/doc/geometry';
-/** Default text size, in hm (3 mm). */
-export const DEFAULT_FONT_SIZE: hm = 300;
+export { DEFAULT_CONTENT_SIZE, DEFAULT_FONT_SIZE } from '../../core/doc/geometry';
 export const DEFAULT_FONT_FAMILY = 'sans-serif';
 export const DEFAULT_EMPTY_TEXT = '{empty}';
 
@@ -267,14 +265,17 @@ export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[]
                     }
                     case 'ellipse': {
                         const { w, h } = nodeSize(node);
-                        const rx = w / 2;
-                        const ry = h / 2;
+                        // Odd hm widths give a fractional half-axis; round it so the
+                        // resolved rx/ry are integers. Bounds use the full box, not
+                        // 2×rx, so they never lose the odd millimetre.
+                        const rx = Math.round(w / 2);
+                        const ry = Math.round(h / 2);
                         return {
                             ...base,
                             type: 'ellipse',
                             rx,
                             ry,
-                            bounds: transformedBounds(rectCorners(-rx, -ry, rx * 2, ry * 2), base.transform),
+                            bounds: transformedBounds(rectCorners(-rx, -ry, w, h), base.transform),
                         };
                     }
                     case 'line':

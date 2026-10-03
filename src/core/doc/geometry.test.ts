@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ImageNode, Node, ShapeNode, TextNode } from './types';
-import { resizeNodeGeometry, sizeFactors, uniformFactor } from './geometry';
+import { clampFontSize, resizeNodeGeometry, sizeFactors, uniformFactor } from './geometry';
 
 const textNode = (over: Partial<TextNode> = {}): TextNode => ({
     id: 't',
@@ -95,6 +95,19 @@ describe('resizeNodeGeometry — aspect vs free', () => {
         expect(scaled.size).toEqual({ w: 4000, h: 2000 });
         expect((scaled as TextNode).fontSize).toBe(1200);
     });
+
+    it('text aspect-preserving seeds the default fontSize when absent', () => {
+        const text = textNode({ fontSize: undefined });
+        const scaled = resizeNodeGeometry(text, { w: 2000, h: 1000 }, { preserveAspect: true });
+        // Uniform factor = max(2, 2) = 2; seed = DEFAULT_FONT_SIZE (300) → 600.
+        expect((scaled as TextNode).fontSize).toBe(600);
+    });
+
+    it('aspect-lock one-axis shrink is a no-op (the identity factor wins)', () => {
+        const image = imageNode({ size: { w: 100, h: 50 } });
+        // Shrink x only: rawX = 0.5, rawY = 1 → uniform = max = 1 (unchanged).
+        expect(resizeNodeGeometry(image, { w: 50, h: 50 }).size).toEqual({ w: 100, h: 50 });
+    });
 });
 
 describe('resizeNodeGeometry — uniform-dependent fields', () => {
@@ -117,7 +130,8 @@ describe('resizeNodeGeometry — uniform-dependent fields', () => {
 });
 
 describe('resizeNodeGeometry — line/polygon points', () => {
-    it('scales each point by (sx, sy)', () => {
+    it('scales each point by (sx, sy) relative to the points extent', () => {
+        // Points extent is 100×100; target 2000×1000 → sx=20, sy=10 (free).
         const line = shapeNode('line', { points: [[0, 0], [100, 100]], size: { w: 100, h: 100 } });
         const resized = resizeNodeGeometry(line, { w: 2000, h: 1000 }, { preserveAspect: false });
         expect((resized as ShapeNode).points).toEqual([[0, 0], [2000, 1000]]);
@@ -125,12 +139,33 @@ describe('resizeNodeGeometry — line/polygon points', () => {
         expect(resized.size).toEqual({ w: 100, h: 100 });
     });
 
-    it('polygon preserves aspect by default and rounds scaled points', () => {
-        const poly = shapeNode('polygon', { points: [[10, 20], [30, 40]], closed: true });
-        const resized = resizeNodeGeometry(poly, { w: 1000, h: 1000 });
-        // free-by-default? polygon is not in the aspect set → free.
-        expect((resized as ShapeNode).points).toEqual([[10, 20], [30, 40]]);
+    it('scales a non-square polygon by its own extent, not size/DEFAULT (fix 2)', () => {
+        // Real extent: w=30, h=10. Target aspect differs from DEFAULT_CONTENT_SIZE
+        // and from `size`, so only real-extent scaling gives these numbers.
+        const poly = shapeNode('polygon', {
+            points: [[0, 0], [30, 10]],
+            size: { w: 1000, h: 1000 },
+            closed: true,
+        });
+        const resized = resizeNodeGeometry(poly, { w: 300, h: 50 }, { preserveAspect: false });
+        // sx = 300/30 = 10, sy = 50/10 = 5 → [[0,0],[300,50]].
+        expect((resized as ShapeNode).points).toEqual([[0, 0], [300, 50]]);
         expect((resized as ShapeNode).closed).toBe(true);
+    });
+
+    it('line/polygon free-resize scales proportionally to real extent (fix 4)', () => {
+        const poly = shapeNode('polygon', { points: [[10, 20], [30, 40]], closed: true });
+        // Empty points? No: extent 20×20; target 1000×500 → free → sx=50, sy=25.
+        const resized = resizeNodeGeometry(poly, { w: 1000, h: 500 }, { preserveAspect: false });
+        expect((resized as ShapeNode).points).toEqual([[500, 500], [1500, 1000]]);
+        expect((resized as ShapeNode).closed).toBe(true);
+    });
+
+    it('a point-less line falls back to its size as the base extent (fix 10 seed)', () => {
+        const line = shapeNode('line', { size: { w: 200, h: 100 } });
+        const resized = resizeNodeGeometry(line, { w: 400, h: 400 }, { preserveAspect: false });
+        // No points → scaling cannot invent geometry, so points stay [].
+        expect((resized as ShapeNode).points).toEqual([]);
     });
 });
 
@@ -142,11 +177,20 @@ describe('resizeNodeGeometry — rounding and clamps', () => {
         expect(Number.isInteger(resized.size!.w)).toBe(true);
     });
 
-    it('clamps size.w/h at 0 and fontSize at > 0', () => {
+    it('clamps size.w/h at 0 (free resize)', () => {
         const text = textNode();
         const resized = resizeNodeGeometry(text, { w: -50, h: 0 }, { preserveAspect: false });
         expect(resized.size).toEqual({ w: 0, h: 0 });
-        expect((resized as TextNode).fontSize).toBeGreaterThan(0);
+    });
+
+    it('clampFontSize rounds first, then keeps the result strictly positive', () => {
+        // A tiny positive value rounds to 0 and must become 1, not 0.
+        expect(clampFontSize(0.4)).toBe(1);
+        expect(clampFontSize(0)).toBe(1);
+        expect(clampFontSize(-5)).toBe(1);
+        expect(clampFontSize(0.5)).toBe(1);
+        expect(clampFontSize(300)).toBe(300);
+        expect(clampFontSize(123.4)).toBe(123);
     });
 
     it('never mutates the input node', () => {

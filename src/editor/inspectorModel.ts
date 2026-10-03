@@ -15,9 +15,10 @@ import type { Node, NodeType } from '../core/doc/types';
  *     selection → `UNIVERSAL_FIELDS` only. There is deliberately no per-field
  *     mixed-value display (parked).
  *
- * Geometry/font props are read by the render path as optional node extras
- * (`resolve.ts` `NodeGeometryExtras`) because `LabelDoc` v1 elides them; the
- * descriptors below are the formal names for those fields.
+ * Geometry/font props are real, optional `LabelDoc` v1 node fields (`size`,
+ * `fontSize`, `points`, `cornerRadius`, `strokeWidth`); the descriptors below
+ * are the formal names the panel edits. Per-type descriptors stay split by scope
+ * so a shape and a text node never advertise each other's props.
  */
 
 export type FieldScope =
@@ -71,6 +72,7 @@ export const UNIVERSAL_FIELDS: readonly FieldDescriptor[] = [
 ];
 
 export const TEXT_FIELDS: readonly FieldDescriptor[] = [
+    { key: 'size', scope: 'text', kind: 'number', wired: true },
     { key: 'fontFamily', scope: 'text', kind: 'string', wired: true },
     { key: 'fontSize', scope: 'text', kind: 'number', wired: true },
     { key: 'fontWeight', scope: 'text', kind: 'select', wired: true, options: ['normal', 'bold'] },
@@ -82,6 +84,10 @@ export const TEXT_FIELDS: readonly FieldDescriptor[] = [
 
 export const SHAPE_FIELDS: readonly FieldDescriptor[] = [
     { key: 'shape', scope: 'shape', kind: 'select', wired: true, options: ['line', 'rectangle', 'ellipse', 'polygon'] },
+    { key: 'size', scope: 'shape', kind: 'number', wired: true },
+    { key: 'points', scope: 'shape', kind: 'stub', wired: false },
+    { key: 'closed', scope: 'shape', kind: 'boolean', wired: true },
+    { key: 'cornerRadius', scope: 'shape', kind: 'number', wired: true },
     { key: 'stroke', scope: 'shape', kind: 'color', wired: true },
     { key: 'fill', scope: 'shape', kind: 'color', wired: true },
     { key: 'strokeWidth', scope: 'shape', kind: 'number', wired: true },

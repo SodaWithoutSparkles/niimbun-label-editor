@@ -285,7 +285,35 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
             switch (value.shape) {
                 case 'line':
                 case 'polygon': {
-                    if (!Array.isArray(value.points)) return undefined;
+                    // `points` is authoritative for a line/polygon: a stale `size`
+                    // alongside it is dropped rather than carried (nit).
+                    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                    const { size: _omittedSize, ...baseWithoutSize } = base;
+                    void _omittedSize;
+                    if (!Array.isArray(value.points)) {
+                        // Point-less shape. Do NOT reject the whole document: a
+                        // pre-geometry (P2-era) line/polygon is otherwise valid.
+                        // Repair by synthesising a box outline from `size` when
+                        // present; without `size` there is no geometry to stand in,
+                        // so drop just this node (the collection helper records it).
+                        if (base.size === undefined) {
+                            repairs?.push(
+                                `${value.type}.${value.shape}: no points or size — node dropped`,
+                            );
+                            return undefined;
+                        }
+                        const { w, h } = base.size;
+                        repairs?.push(
+                            `${value.type}.${value.shape}: missing points synthesised from size`,
+                        );
+                        return {
+                            ...baseWithoutSize,
+                            type: 'shape',
+                            shape: value.shape,
+                            points: [[0, 0], [w, h]],
+                            closed: value.shape === 'polygon',
+                        };
+                    }
                     const points: [hm, hm][] = [];
                     for (const point of value.points) {
                         if (!Array.isArray(point) || point.length < 2) return undefined;
@@ -295,7 +323,7 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
                         points.push([x, y]);
                     }
                     return {
-                        ...base,
+                        ...baseWithoutSize,
                         type: 'shape',
                         shape: value.shape,
                         points,
