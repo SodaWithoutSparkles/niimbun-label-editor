@@ -10,6 +10,22 @@
 > Do not delegate to `ui-designer` and do not invent visual design. Where UI is needed, this plan names
 > the **seam** and waits for the owner's design.
 
+> **Owner UI direction (2026-10-04) — shuts down the drawing-app defaults:**
+> - **Expect a screenshot or crude mspaint drawing as the UI spec.** Treat it as the design: read it, restate
+>   the structure/geometry back, ask about ambiguities, implement to fit. Never redesign it.
+> - **The full-screen pannable canvas is overkill.** Labels are small (25×78 mm; realistically ≤ ~100×150 mm).
+>   The canvas is a **bounded, fit-to-viewport stage** — zoom is a view control, not an infinite pan. It does
+>   **not** get the biggest share of the window.
+> - **Keep the object/layer stack.** The node tree over `parentId` is real and needed (plan line 247).
+> - **Shrink the left tool rail.** The drawing app's 8-tool toolbar is for a sketchpad; the label editor needs
+>   few tools (text, shape, image, QR/barcode, group). The freed space goes to config.
+> - **Reserve space for object-specific config** — mirror/flip, content source (templating), quantizer hint,
+>   visibility/lock/transform. This is where the editor exceeds the template. Likely shell: narrow left rail +
+>   bounded centre canvas + **right side stack (object list on top, selected-object config below)**.
+> - **Guardrail:** don't let the right panel become a dumping ground. P3 wires only config P3 can act on
+>   (transform, visible/locked, z-order, static content, shape/text props). **Templating + trust are P6** and
+>   **quantizer policy is P4** — those fields land as the panels' *data model* now, wired when their phase lands.
+
 ---
 
 ## 0. Orient first (do not skip)
@@ -29,11 +45,11 @@
 P3 makes a label **editable and reloadable**. Deliver the engine and the document operations, plus thin
 seams for the owner's UI:
 
-1. **Editor viewport engine** (headless-testable): world ↔ screen transform, zoom/pan, hit-testing, snapping math.
+1. **Editor viewport engine** (headless-testable): world ↔ screen transform, **bounded** zoom/pan over a fit-to-viewport stage, hit-testing, snapping math.
 2. **Document operations** on `docSlice`: add/remove node, update node props, reparent/reorder, group/ungroup, clone, delete, z-order — all pure and undoable.
 3. **Undo/redo**: snapshot-based on the document slice, capped, never serialized (plan line 249).
 4. **Editor render path**: resolve `LabelDoc` → Konva nodes for the **editor viewport** only. Region overlay + keep-out warnings (data + class hooks, not styling).
-5. **Node tree + inspector data layer**: the operations and selectors the panels need. Panel *presentation* is the owner's.
+5. **Node tree + inspector data layer**: the operations and selectors the panels need — including the config fields the owner wants reserved (mirror/flip, visibility/lock, transform, content source, quantizer hint). Panel *presentation* is the owner's.
 6. **Strip the dead template editor** (plan line 280) — this is scheduled P1–P3 work and is still outstanding.
 
 **Explicitly out of scope:** all visual/layout design; the print/render pipeline + quantizers (P4); templates/trust/CSV (P6); asset import UI (P5). **Do not design UI.**
@@ -46,7 +62,9 @@ seams for the owner's UI:
 
 - `useDrawingTools` + shapeHelpers draw state machines; callout/star/arrow tools; drawing `toolSettings`.
 - Color-preset model (`ColorPreset` / `colorsSlice` / `DualColorPicker`) — *unless the owner's design reuses it.*
-- `ExportModal` **UI** (keep the pure export helpers in `hooks/export/{capture,download,utils}.ts` — P8 needs them).
+- **Keep (adapt), do not rebuild:** `Toggle`/`SettingRow` form kit, `PopoverSlider` (currently unused — the inspector revives it), `ColorPicker` (minimal). The **object/layer stack panel is kept** (owner 2026-10-04).
+- **Tool rail is reduced, not kept as-is:** the drawing app's 8-tool toolbar is overkill. Keep only what a label editor needs (text, shape, image, QR/barcode, group). **Which tools and where is the owner's design** — provide the tool registry, not the layout.
+- **`ExportModal` UI**: strip (pure export helpers in `hooks/export/{capture,download,utils}.ts` stay for P8).
 - `SaveFile` drawing coupling (`SaveFile` type + `buildSaveFile`) — superseded by `LabelDoc`.
 - Dead `polygon` `CanvasItem` type — superseded by the real `Region`/node polygon.
 - **`localStorage` autosave** — already removed from `Header.tsx` in P2; confirm nothing else writes `autosave_project`.
@@ -61,9 +79,10 @@ seams for the owner's UI:
 
 - `worldToScreen(hm, viewport)` / `screenToWorld(px, viewport)` — pure, integer-disciplined (hm stays int; screen px may be float).
 - Viewport state `{ x, y, zoom }` — **never stored in the document** (plan line 245).
+- **Bounded stage, not an infinite pan (owner 2026-10-04):** the label is small, so the backing is rendered **fit to the available canvas area** and zoom is a view control. Pan is clamped so the label can never be lost off-screen. Do **not** build free-form infinite panning; do not give the canvas the largest share of the window.
 - Snapping: to backing edges, region edges, and sibling node bounds; grid snap optional via config. Pure functions returning candidate deltas.
 - Hit-testing against transformed node bounds (`effectiveTransform` from `derive.ts`).
-- **Tests (unit):** round-trip `screenToWorld(worldToScreen(p)) === p` within tolerance; zoom-independence of hit-testing; snap candidates.
+- **Tests (unit):** round-trip `screenToWorld(worldToScreen(p)) === p` within tolerance; zoom-independence of hit-testing; snap candidates; **pan clamping** keeps the backing within bounds at every zoom.
 
 ---
 
@@ -94,10 +113,15 @@ Extend `docSlice` (or add `editorSlice` if cleaner — justify in the receipt) w
 
 ## 6. Panels — data layer only (no design)
 
-Provide what the node tree + inspector will consume; **the owner designs the panels.**
+Provide what the owner's panels will consume; **the owner designs the panels and their layout.**
+
+Owner's intended shell (2026-10-04): **narrow left tool rail + bounded centre canvas + right side stack** (object/layer list on top, **selected-object config below**). The right side is where object-specific config is reserved.
 
 - **Tree:** selectors for hierarchy (children from `parentId`), z-order, selection state, and the mutation actions to reorder/reparent.
-- **Inspector:** a typed **field model** per node type (transform, visible/locked, content source picker, quantizer hint) plus the update actions. Presentation via the existing form kit is the owner's call.
+- **Inspector — reserve the config fields the owner named:** mirror/flip, visibility/lock, transform, content source (static now; CSV/template are P6), quantizer hint (field now; P4 wires it).
+  - **P3 wires only what P3 can act on:** transform, visible/locked, z-order, static content, shape/text props.
+  - **Templating + trust = P6; quantizer policy = P4.** Ship those as the **typed field model** so the panel can render a disabled/stub state, but do not implement their engines here.
+  - **Per-object vs per-region:** flip/mirror is per-object now. **Per-region mirroring** was flagged by the owner as a future *editor-configuration* feature (regions stay pure geometry, addressed by index — see `agent/memory/niimblue-reference.md`); don't add region schema fields for it.
 - **Cross-cutting:** every op must remain correct if the owner changes panel structure — keep operations out of components.
 
 ---
@@ -143,7 +167,8 @@ The P2 create bug passed 242 headless tests and was only caught headed. **Run th
 
 ## 10. Open questions for the owner (answer before start)
 
-1. **UI design** — the owner is designing it; this plan waits. *What is needed from the engine before you can design?* (e.g. does the design assume a fixed canvas size, a specific zoom model, a preset panel width?)
+0. **UI spec incoming.** The owner will hand over a **screenshot or crude mspaint drawing** of the intended UI. When it arrives: read it, restate the structure back (panels, regions, controls), ask about ambiguities, then implement the engine/panels to fit. **Never redesign it.** Do not start UI-facing work until the spec exists.
+1. **What does the engine need to expose before you can design the UI?** (e.g. fixed canvas size, zoom model, panel widths, the tool list.) Answer shapes what lands first.
 2. **`react-konva`** — may we add it, or do you want plain `konva` + manual binding? (Dependency approval required.)
 3. **Color presets** — does your design reuse the template's `DualColorPicker`/`colorsSlice`, or is it stripped? (Affects §2.)
 4. **Selection model** — multi-select + transform box expected in v1, or single-select first?
