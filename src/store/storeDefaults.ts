@@ -5,6 +5,16 @@ export const defaultAutoSave = true;
 
 export const defaultLanguage: SupportedLanguage = 'en';
 
+/**
+ * Screen-density calibration (ui-spec.md §6/§11). CSS px per inch used by the
+ * `real` zoom estimate. A machine/screen property, never document data. 96 is
+ * the CSS reference PPI; browsers cannot report the true value.
+ */
+export const DEFAULT_SCREEN_DPI = 96;
+
+export const SCREEN_DPI_MIN = 24;
+export const SCREEN_DPI_MAX = 400;
+
 export const defaultKeyboardShortcuts: KeyboardShortcutConfig = {
     modifyKey: 'ctrl',
     cancelKey: 'Escape',

@@ -12,7 +12,9 @@ import { createNavigationSlice } from './slices/navigationSlice';
 import { createDocSlice } from './slices/docSlice';
 import { createEditorSlice } from './slices/editorSlice';
 import { createSelectionSlice } from './slices/selectionSlice';
+import { createViewSlice } from './slices/viewSlice';
 import {
+    DEFAULT_SCREEN_DPI,
     defaultAutoSave,
     defaultColors,
     defaultKeyboardShortcuts,
@@ -32,6 +34,7 @@ const persistedDefaults: PersistedSettings = {
     toolSettings: defaultToolSettings,
     colors: defaultColors,
     language: defaultLanguage,
+    screenDpi: DEFAULT_SCREEN_DPI,
 };
 
 /**
@@ -121,6 +124,7 @@ export const createAppStore = (storage?: Storage) => {
                     ...createDocSlice(set, get, api),
                     ...createEditorSlice(set, get, api),
                     ...createSelectionSlice(set, get, api),
+                    ...createViewSlice(set, get, api),
                 };
                 if (legacy.autoSave !== undefined) state.autoSave = legacy.autoSave;
                 if (legacy.keyboardShortcuts !== undefined) state.keyboardShortcuts = legacy.keyboardShortcuts;
@@ -148,6 +152,7 @@ export const createAppStore = (storage?: Storage) => {
                     toolSettings: s.toolSettings,
                     colors: s.colors,
                     language: s.language,
+                    screenDpi: s.screenDpi,
                 }),
                 migrate: (persisted) => persisted as PersistedSettings,
                 // `persist`'s default merge is a *shallow* spread over the seed,

@@ -1,0 +1,154 @@
+import React, { useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Eye, EyeOff, Lock, Unlock, Type, Square, Image as ImageIcon, Boxes, QrCode, Barcode } from 'lucide-react';
+import { useStore } from '../../store/useStore';
+import { cn } from '../../utils/cn';
+import { treeRows, type TreeRow } from '../../editor/selectors';
+import type { NodeType } from '../../core/doc/types';
+
+/**
+ * Object / layers panel (ui-spec.md §7) — right column, row B. Photoshop-style
+ * list from `selectors.treeRows`; top of the list is the front-most node.
+ *
+ * Per-row eye + lock toggle the node's **own** flags; inherited state dims the
+ * row (`effectiveVisible` / `effectiveLocked`). Selection mirrors the canvas and
+ * supports multi-select. Drag-and-drop reparents/reorders via `reparentNode`
+ * (its cycle guard rejects illegal drops).
+ */
+
+const TYPE_ICONS = {
+    group: Boxes,
+    text: Type,
+    image: ImageIcon,
+    shape: Square,
+    qr: QrCode,
+    barcode: Barcode,
+} as const satisfies Record<NodeType, typeof Type>;
+
+export const LayersPanel: React.FC = () => {
+    const { t } = useTranslation();
+    const doc = useStore((state) => state.currentDoc);
+    const selectedNodeIds = useStore((state) => state.selectedNodeIds);
+    const selectNode = useStore((state) => state.selectNode);
+    const toggleSelectNode = useStore((state) => state.toggleSelectNode);
+    const updateNode = useStore((state) => state.updateNode);
+    const reparentNode = useStore((state) => state.reparentNode);
+    const [dropTarget, setDropTarget] = useState<string | null>(null);
+    const dragId = useRef<string | null>(null);
+
+    const rows = useMemo(() => (doc ? [...treeRows(doc)].reverse() : []), [doc]);
+
+    if (!doc) return null;
+
+    const onRowPointerDown = (event: React.PointerEvent, id: string) => {
+        if (event.shiftKey || event.ctrlKey || event.metaKey) toggleSelectNode(id);
+        else selectNode(id);
+    };
+
+    const onDrop = (row: TreeRow, before: boolean) => {
+        const id = dragId.current;
+        dragId.current = null;
+        setDropTarget(null);
+        if (!id || id === row.id || !doc) return;
+        const rowNode = doc.nodes.find((node) => node.id === row.id);
+        if (!rowNode) return;
+        const parentId = rowNode.parentId;
+        const siblings = doc.nodes.filter((node) => node.parentId === parentId);
+        const index = siblings.findIndex((node) => node.id === row.id);
+        const target =
+            row.type === 'group' && !before
+                ? { parentId: row.id, index: Number.MAX_SAFE_INTEGER }
+                : { parentId, index: before ? index : index + 1 };
+        reparentNode(id, target.parentId, target.index);
+    };
+
+    return (
+        <div className="flex min-h-0 flex-1 flex-col bg-gray-800">
+            <div className="bg-gray-900 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-gray-300">
+                {t('editor.layers.title')}
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-1">
+                {rows.length === 0 && (
+                    <p className="p-2 text-xs italic text-gray-500">{t('editor.layers.noObjects')}</p>
+                )}
+                <ul className="space-y-0.5">
+                    {rows.map((row) => {
+                        const Icon = TYPE_ICONS[row.type];
+                        const selected = selectedNodeIds.includes(row.id);
+                        const inheritedHidden = !row.effectiveVisible && row.visible;
+                        const inheritedLocked = !row.effectiveLocked && !row.locked;
+                        const dimmed = !row.effectiveVisible || (row.effectiveLocked && !row.locked);
+                        return (
+                            <li
+                                key={row.id}
+                                draggable
+                                onDragStart={() => {
+                                    dragId.current = row.id;
+                                }}
+                                onDragOver={(event) => {
+                                    event.preventDefault();
+                                    setDropTarget(row.id);
+                                }}
+                                onDragLeave={() => setDropTarget((current) => (current === row.id ? null : current))}
+                                onDrop={(event) => {
+                                    event.preventDefault();
+                                    const rect = event.currentTarget.getBoundingClientRect();
+                                    onDrop(row, event.clientY < rect.top + rect.height / 2);
+                                }}
+                                onPointerDown={(event) => onRowPointerDown(event, row.id)}
+                                aria-selected={selected}
+                                title={inheritedHidden ? t('editor.layers.inheritedHidden') : inheritedLocked ? t('editor.layers.inheritedLocked') : row.name}
+                                className={cn(
+                                    'group flex cursor-pointer items-center gap-1 rounded px-1 py-1 text-sm',
+                                    selected ? 'bg-blue-900 text-white' : 'text-gray-300 hover:bg-gray-700',
+                                    dropTarget === row.id && 'ring-1 ring-blue-400',
+                                    dimmed && 'opacity-50',
+                                )}
+                                style={{ paddingLeft: 4 + row.depth * 12 }}
+                            >
+                                <button
+                                    type="button"
+                                    aria-label={row.visible ? t('editor.layers.hide') : t('editor.layers.show')}
+                                    title={row.visible ? t('editor.layers.hide') : t('editor.layers.show')}
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        updateNode(row.id, { visible: !row.visible });
+                                    }}
+                                    className="shrink-0 text-gray-400 hover:text-white"
+                                >
+                                    {row.visible ? <Eye size={13} /> : <EyeOff size={13} />}
+                                </button>
+                                <button
+                                    type="button"
+                                    aria-label={row.locked ? t('editor.layers.unlock') : t('editor.layers.lock')}
+                                    title={row.locked ? t('editor.layers.unlock') : t('editor.layers.lock')}
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        updateNode(row.id, { locked: !row.locked });
+                                    }}
+                                    className="shrink-0 text-gray-400 hover:text-white"
+                                >
+                                    {row.locked ? <Lock size={13} /> : <Unlock size={13} />}
+                                </button>
+                                <Icon size={13} className="shrink-0 text-gray-500" />
+                                <span className="truncate">{row.name ?? t(typeLabelKey(row.type))}</span>
+                            </li>
+                        );
+                    })}
+                </ul>
+            </div>
+        </div>
+    );
+};
+
+/** Literal map so dynamic node-type keys keep i18next's typed-key union. */
+export const TYPE_LABEL_KEYS = {
+    group: 'editor.layers.group',
+    text: 'editor.insert.text',
+    image: 'editor.insert.image',
+    shape: 'editor.insert.shape',
+    qr: 'editor.insert.qr',
+    barcode: 'editor.insert.barcode',
+} as const satisfies Record<NodeType, string>;
+
+const typeLabelKey = (type: NodeType) => TYPE_LABEL_KEYS[type];

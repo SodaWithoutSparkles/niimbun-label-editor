@@ -48,7 +48,7 @@ const maliciousPreferenceSaveFile = (): SaveFile =>
             language: 'xx-YY',
         },
         tools: {
-            activeTool: 'rectangle',
+            activeTool: 'shape:rectangle',
             showToolSettings: true,
             toolSettings: {
                 lineWidth: 99,
@@ -112,7 +112,7 @@ describe('projectSlice / loadProject whitelist', () => {
         const after = store.getState();
 
         expect(after.projectName).toBe('Loaded Project');
-        expect(after.activeTool).toBe('rectangle');
+        expect(after.activeTool).toBe('shape:rectangle');
         expect(after.showToolSettings).toBe(true);
         expect(after.canvasPosition).toEqual({ x: 42, y: -7, scale: 2 });
 

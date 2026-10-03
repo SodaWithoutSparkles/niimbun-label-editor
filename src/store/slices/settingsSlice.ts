@@ -1,5 +1,8 @@
 import type { StoreSlice } from '../storeTypes';
 import {
+    DEFAULT_SCREEN_DPI,
+    SCREEN_DPI_MAX,
+    SCREEN_DPI_MIN,
     defaultAutoSave,
     defaultColors,
     defaultKeyboardShortcuts,
@@ -57,6 +60,13 @@ export const createSettingsSlice: StoreSlice = (set) => ({
     language: defaultLanguage,
     setLanguage: (language) => set({ language }),
 
+    // Screen-DPI calibration (§6 `real` zoom, §11 setting). Persisted with the
+    // other global settings; never document data.
+    screenDpi: DEFAULT_SCREEN_DPI,
+    setScreenDpi: (screenDpi) => set({
+        screenDpi: Math.min(SCREEN_DPI_MAX, Math.max(SCREEN_DPI_MIN, Math.round(screenDpi))),
+    }),
+
     // Settings-window open state lives in the store (not `Header` local state)
     // so the global Ctrl/Cmd+, handler can open it without prop-drilling.
     isSettingsOpen: false,
@@ -69,5 +79,6 @@ export const createSettingsSlice: StoreSlice = (set) => ({
         toolSettings: defaultToolSettings,
         colors: defaultColors,
         language: defaultLanguage,
+        screenDpi: DEFAULT_SCREEN_DPI,
     }),
 });

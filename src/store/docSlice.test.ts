@@ -115,6 +115,11 @@ describe('docSlice — create → reload → reopen', () => {
         expect(opened!.meta.name).toBe('F-tag spare');
         expect(store2.getState().view).toBe('editor');
         expect(store2.getState().currentDoc?.meta.id).toBe(id);
+        // Default view orientation (§6): the F-tag is portrait (25×78), so the
+        // long axis is put horizontal. View-only — the doc is unchanged.
+        expect(store2.getState().viewRotation).toBe(90);
+        expect(store2.getState().currentDoc?.label.backingW).toBe(2500);
+        expect(store2.getState().currentDoc?.label.backingH).toBe(7800);
     });
 
     it('deletes a label and removes it from Recent', async () => {

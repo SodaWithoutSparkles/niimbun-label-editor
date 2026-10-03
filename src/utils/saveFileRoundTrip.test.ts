@@ -84,7 +84,7 @@ const writerSaveFile = (): SaveFile => ({
         pickedColor: null,
     },
     tools: {
-        activeTool: 'rectangle',
+        activeTool: 'shape:rectangle',
         toolSettings: defaultToolSettings,
         showToolSettings: true,
     },
@@ -119,7 +119,7 @@ describe('buildSaveBlob <-> parseSaveFile <-> loadProject round-trip', () => {
         // Whitelisted project/canvas fields survive the writer -> reader -> load path.
         expect(after.projectName).toBe('Round Trip');
         expect(after.objects).toEqual(saveFile.canvas.objects);
-        expect(after.activeTool).toBe('rectangle');
+        expect(after.activeTool).toBe('shape:rectangle');
         expect(after.showToolSettings).toBe(true);
         expect(after.canvasPosition).toEqual({ x: 10, y: -5, scale: 1.5 });
 
@@ -146,7 +146,7 @@ describe('buildSaveBlob <-> parseSaveFile <-> loadProject round-trip', () => {
         // Whitelisted project/canvas fields survive the writer -> gzip -> reader path.
         expect(after.projectName).toBe('Round Trip');
         expect(after.objects).toEqual(saveFile.canvas.objects);
-        expect(after.activeTool).toBe('rectangle');
+        expect(after.activeTool).toBe('shape:rectangle');
         expect(after.showToolSettings).toBe(true);
         expect(after.canvasPosition).toEqual({ x: 10, y: -5, scale: 1.5 });
 

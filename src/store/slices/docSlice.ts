@@ -130,6 +130,12 @@ export const createDocSlice: StoreSlice = (set, get) => {
             // A's snapshots to doc B).
             get().flushAutosave();
             get().clearDocHistory();
+            // Default view orientation for this document (view-only, §6). Done
+            // here — the single doc-open boundary — so it never re-fires from a
+            // render or resize. Re-arm the auto-pick first so a manual toggle
+            // from the previous document does not leak into this one.
+            get().resetViewOrientation();
+            get().applyDefaultViewOrientation(doc.label.backingW, doc.label.backingH);
             set({ currentDoc: doc, view: 'editor' });
             return doc;
         },

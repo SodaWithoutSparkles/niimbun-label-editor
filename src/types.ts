@@ -96,7 +96,15 @@ export interface SaveFile {
     createdAt?: number;
     canvas: Pick<AppState, 'objects' | 'past' | 'future' | 'selectedIds' | 'hasPerformedClearAll'>;
     colors: Pick<AppState, 'colors' | 'colorPresets' | 'selectedPresetIndex' | 'isDropperActive' | 'pickedColor'>;
-    tools: Pick<AppState, 'activeTool' | 'toolSettings' | 'showToolSettings'>;
+    tools: {
+        /**
+         * Legacy drawing-tool id from the pre-P3 save format. Kept loose (`string`)
+         * so old files still load; `loadProject` only whitelists the field.
+         */
+        activeTool: string;
+        toolSettings: AppState['toolSettings'];
+        showToolSettings: boolean;
+    };
     preferences: Pick<AppState, 'history' | 'historyUndoCount' | 'autoSave' | 'keyboardShortcuts'>;
     navigation: Pick<AppState, 'canvasPosition'>;
     timestamp?: Date | string;

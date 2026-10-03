@@ -1,6 +1,8 @@
 import type { StateCreator } from 'zustand';
 import type { CanvasItem, HistoryEntry, SaveFile } from '../types';
 import type { SupportedLanguage } from '../i18n/languages';
+import type { InsertAction } from './slices/toolsSlice';
+import type { ZoomMode } from './slices/viewSlice';
 import type { hm } from '../core/hm';
 import type { LabelDoc, Node, Region } from '../core/doc/types';
 import type { ResizeOptions, Size } from '../core/doc/geometry';
@@ -115,9 +117,14 @@ export interface AppState {
     cloneSelected: () => void;
     moveSelectedLayer: (direction: 'up' | 'down') => void;
 
-    // Tool State
-    activeTool: 'select' | 'rectangle' | 'ellipse' | 'line' | 'star' | 'arrow' | 'text' | 'callout';
-    setActiveTool: (tool: AppState['activeTool']) => void;
+    // Tool State (Editor insert rail — one-shot armed actions; see toolsSlice)
+    activeTool: InsertAction;
+    setActiveTool: (tool: InsertAction) => void;
+    /** Return to the resting select state (after place, or Esc). */
+    clearActiveTool: () => void;
+    /** Legacy template popup state (stripped in W6); kept for old components. */
+    showToolSettings: boolean;
+    setShowToolSettings: (show: boolean) => void;
     toolSettings: {
         lineWidth: number;
         fontSize: number;
@@ -128,8 +135,6 @@ export interface AppState {
         textColor: string;
     };
     setToolSettings: (settings: Partial<AppState['toolSettings']>) => void;
-    showToolSettings: boolean;
-    setShowToolSettings: (show: boolean) => void;
 
     // Color State
     colors: { stroke: string; fill: string; active: 'stroke' | 'fill' };
@@ -178,6 +183,9 @@ export interface AppState {
     // Settings / Preferences
     language: SupportedLanguage;
     setLanguage: (language: SupportedLanguage) => void;
+    /** Screen-density calibration (CSS px per inch) for `real` zoom. */
+    screenDpi: number;
+    setScreenDpi: (dpi: number) => void;
     resetSettings: () => void;
 
     // Settings window (shared so the global Ctrl/Cmd+, binding can open it)
@@ -226,6 +234,8 @@ export interface AppState {
     /** Adds a node with a fresh id; returns the new id, or null with no doc. */
     addNode: (node: Node) => string | null;
     updateNode: (id: string, patch: NodePatch) => void;
+    /** Set the preview sample row (`doc.data.sampleRowIndex`) as one undo entry. */
+    setSampleRowIndex: (index: number) => void;
     /** Gesture seam: applies `patch` to `currentDoc` without history, `updatedAt`
      * or autosave. Pair N calls with one `commitDoc` for a single undo entry.
      */
@@ -268,6 +278,29 @@ export interface AppState {
     toggleSelectNode: (id: string) => void;
     selectNodes: (ids: string[]) => void;
     clearNodeSelection: () => void;
+
+    // Editor view state (viewSlice) — view-only, never persisted, never doc data.
+    gridVisible: boolean;
+    toggleGrid: () => void;
+    snapEnabled: boolean;
+    toggleSnap: () => void;
+    rulersVisible: boolean;
+    toggleRulers: () => void;
+    viewRotation: 0 | 90;
+    /** True once the user manually toggled view rotation. */
+    viewRotationUserSet: boolean;
+    toggleViewRotation: () => void;
+    /** Doc-open default orientation: long axis horizontal. View-only. */
+    applyDefaultViewOrientation: (backingW: number, backingH: number) => void;
+    /** Re-arm the auto-pick before it runs at a doc-open boundary. */
+    resetViewOrientation: () => void;
+    zoomMode: ZoomMode;
+    manualZoom: number;
+    setZoomMode: (mode: ZoomMode) => void;
+    setManualZoom: (zoom: number) => void;
+    /** Resolved CSS px per hm, kept in sync by the Preview. */
+    effectiveZoom: number;
+    setEffectiveZoom: (zoom: number) => void;
 }
 
 export type StoreSlice = StateCreator<AppState, [], [], Partial<AppState>>;

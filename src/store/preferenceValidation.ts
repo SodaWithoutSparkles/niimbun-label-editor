@@ -1,4 +1,5 @@
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n/languages';
+import { SCREEN_DPI_MAX, SCREEN_DPI_MIN } from './storeDefaults';
 import type {
     AppState,
     ColorPreset,
@@ -10,7 +11,7 @@ import type {
 /** The only state that belongs in localStorage. Everything else is runtime. */
 export type PersistedSettings = Pick<
     AppState,
-    'autoSave' | 'keyboardShortcuts' | 'toolSettings' | 'colors' | 'language'
+    'autoSave' | 'keyboardShortcuts' | 'toolSettings' | 'colors' | 'language' | 'screenDpi'
 >;
 
 /**
@@ -136,6 +137,20 @@ export const normalizeLanguage = (value: unknown): SupportedLanguage | undefined
     isOneOf(value, SUPPORTED_LANGUAGES) ? value : undefined;
 
 /**
+ * Returns a finite screen-DPI calibration clamped to a sane range, or
+ * `undefined` when the persisted value is unusable. Keeps a corrupt blob from
+ * reaching `realZoom` as `0`/`NaN`.
+ */
+export const normalizeScreenDpi = (
+    value: unknown,
+    min: number,
+    max: number,
+): number | undefined => {
+    if (!isFiniteNumber(value)) return undefined;
+    return Math.min(max, Math.max(min, Math.round(value)));
+};
+
+/**
  * Validates the `ui_settings` payload and returns a complete
  * `PersistedSettings`, filling anything absent or malformed from `defaults`.
  */
@@ -155,6 +170,9 @@ export const validatePersistedSettings = (
             defaults.toolSettings,
         colors: normalizeColors(persisted.colors, defaults.colors) ?? defaults.colors,
         language: normalizeLanguage(persisted.language) ?? defaults.language,
+        screenDpi:
+            normalizeScreenDpi(persisted.screenDpi, SCREEN_DPI_MIN, SCREEN_DPI_MAX) ??
+            defaults.screenDpi,
     };
 };
 
@@ -177,6 +195,7 @@ export const pickPersistedKeys = (
     if ('toolSettings' in persisted) picked.toolSettings = repaired.toolSettings;
     if ('colors' in persisted) picked.colors = repaired.colors;
     if ('language' in persisted) picked.language = repaired.language;
+    if ('screenDpi' in persisted) picked.screenDpi = repaired.screenDpi;
     return picked;
 };
 

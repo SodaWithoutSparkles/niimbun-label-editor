@@ -11,6 +11,8 @@ interface EditMenuProps {
     onCloneSelected: () => void;
     onDeleteSelected: () => void;
     onMoveSelectedLayer: (direction: 'up' | 'down') => void;
+    onGroup?: () => void;
+    onUngroup?: () => void;
     onInsertLocalImage: () => void;
     onInsertRemoteImage: () => void;
 }
@@ -24,6 +26,8 @@ export const EditMenu: React.FC<EditMenuProps> = ({
     onCloneSelected,
     onDeleteSelected,
     onMoveSelectedLayer,
+    onGroup,
+    onUngroup,
     onInsertLocalImage,
     onInsertRemoteImage
 }) => {
@@ -43,6 +47,8 @@ export const EditMenu: React.FC<EditMenuProps> = ({
                     <div className="h-px bg-gray-700 my-1" />
                     <MenuItem label={t('editMenu.cloneObject')} onClick={() => { onCloneSelected(); onCloseMenu(); }} shortcut="Ctrl+D" />
                     <MenuItem label={t('editMenu.deleteSelected')} onClick={() => { onDeleteSelected(); onCloseMenu(); }} shortcut="Del" />
+                    <MenuItem label={t('editMenu.group')} onClick={() => { onGroup?.(); onCloseMenu(); }} shortcut="Ctrl+G" />
+                    <MenuItem label={t('editMenu.ungroup')} onClick={() => { onUngroup?.(); onCloseMenu(); }} shortcut="Ctrl+Shift+G" />
                     <MenuItem label={t('editMenu.moveUp')} onClick={() => { onMoveSelectedLayer('up'); onCloseMenu(); }} shortcut="]" />
                     <MenuItem label={t('editMenu.moveDown')} onClick={() => { onMoveSelectedLayer('down'); onCloseMenu(); }} shortcut="[" />
                     <div className="h-px bg-gray-700 my-1" />

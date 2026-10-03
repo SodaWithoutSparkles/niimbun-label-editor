@@ -7,6 +7,7 @@ import { DualColorPicker } from '../common/DualColorPicker';
 import { ToolSettingsModal } from '../common/ToolSettingsModal';
 import { formatKey } from '../../utils/formatKey';
 import { TOOL_LABEL_KEYS } from './toolLabels';
+import type { InsertAction } from '../../store/slices/toolsSlice';
 
 export const LeftSidebar: React.FC = () => {
     const { t } = useTranslation();
@@ -35,7 +36,7 @@ export const LeftSidebar: React.FC = () => {
                 <div key={tool.id} className="relative w-full flex justify-center">
                     <button
                         onClick={() => {
-                            setActiveTool(tool.id);
+                            setActiveTool(tool.id as unknown as InsertAction);
                             setDropperActive(false);
                         }}
                         className={clsx(

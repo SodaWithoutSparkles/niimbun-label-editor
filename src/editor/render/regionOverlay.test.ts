@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { LabelDoc, Node, Region } from '../../core/doc/types';
 import { createFtagSpareDoc, createLabelDoc } from '../../core/doc/factory';
 import { regionUnionBounds } from '../../core/doc/derive';
-import { nodesIntersectNonPrintable, pointInRegion, pointInUnion, resolveRegionOverlay } from './regionOverlay';
+import {
+    nodesIntersectNonPrintable,
+    pointInRegion,
+    pointInUnion,
+    regionUnionPath,
+    resolveRegionOverlay,
+    type UnionSubpath,
+} from './regionOverlay';
 
 const node = (value: Record<string, unknown>): Node => value as unknown as Node;
 
@@ -57,6 +64,84 @@ describe('resolveRegionOverlay', () => {
 
     it('returns undefined union bounds when there is no region', () => {
         expect(resolveRegionOverlay(docWith([], [])).unionBounds).toBeUndefined();
+    });
+});
+
+describe('regionUnionPath — silhouette subpaths', () => {
+    it('returns a single closed rect subpath for one rect', () => {
+        expect(regionUnionPath([{ kind: 'rect', x: 0, y: 0, w: 1000, h: 500 }])).toEqual([
+            { kind: 'rect', x: 0, y: 0, w: 1000, h: 500 },
+        ]);
+    });
+
+    it('returns one subpath per overlapping rounded rect (union, not difference)', () => {
+        const regions: Region[] = [
+            { kind: 'roundedRect', x: 0, y: 0, w: 1000, h: 1000, r: 200 },
+            { kind: 'roundedRect', x: 500, y: 0, w: 1000, h: 1000, r: 200 },
+        ];
+        const paths = regionUnionPath(regions);
+        // Both contours survive: a single nonzero fill unions them, so the
+        // overlap band (500..1000) is wound +2 and never becomes a hole.
+        expect(paths).toHaveLength(2);
+        expect(paths[0]).toMatchObject({ kind: 'roundedRect', r: 200 });
+        expect(paths[1]).toMatchObject({ kind: 'roundedRect', x: 500 });
+        // Deterministic and input order preserving.
+        expect(regionUnionPath(regions)).toEqual(paths);
+    });
+
+    it('covers every region kind', () => {
+        const kinds = regionUnionPath([
+            { kind: 'rect', x: 0, y: 0, w: 10, h: 10 },
+            { kind: 'roundedRect', x: 0, y: 0, w: 10, h: 10, r: 2 },
+            { kind: 'circle', cx: 5, cy: 5, r: 3 },
+            { kind: 'polygon', points: [[0, 0], [10, 0], [5, 10]], closed: true },
+        ]).map((path) => path.kind);
+        expect(kinds).toEqual(['rect', 'roundedRect', 'circle', 'polygon']);
+    });
+
+    it('drops a degenerate polygon (fewer than 3 points)', () => {
+        expect(regionUnionPath([{ kind: 'polygon', points: [[0, 0], [1, 1]], closed: true }])).toEqual([]);
+    });
+
+    it('reads the F-tag preset: 3 subpaths and the expected union bounds', () => {
+        const doc = createFtagSpareDoc({ nodes: [] });
+        const regions = doc.label.regions;
+        const paths = regionUnionPath(regions);
+        expect(paths).toHaveLength(3);
+        expect(paths.every((path) => path.kind === 'roundedRect')).toBe(true);
+
+        // The `flag` block is full width, so the union bounding box spans the
+        // whole backing; the lower-right notch is inside the box, not at its edge.
+        const bounds = regionUnionBounds(regions);
+        expect(bounds).toEqual({ x: 0, y: 0, w: 2500, h: 7800 });
+
+        // Every contour lies inside the backing...
+        const box = (path: UnionSubpath) => {
+            switch (path.kind) {
+                case 'rect':
+                    return { minX: path.x, minY: path.y, maxX: path.x + path.w, maxY: path.y + path.h };
+                case 'roundedRect':
+                    return { minX: path.x, minY: path.y, maxX: path.x + path.w, maxY: path.y + path.h };
+                case 'circle':
+                    return { minX: path.cx - path.r, minY: path.cy - path.r, maxX: path.cx + path.r, maxY: path.cy + path.r };
+                case 'polygon': {
+                    const xs = path.points.map(([x]) => x);
+                    const ys = path.points.map(([, y]) => y);
+                    return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
+                }
+            }
+        };
+        for (const path of paths) {
+            const b = box(path);
+            expect(b.minX).toBeGreaterThanOrEqual(0);
+            expect(b.minY).toBeGreaterThanOrEqual(0);
+            expect(b.maxX).toBeLessThanOrEqual(2500);
+            expect(b.maxY).toBeLessThanOrEqual(7800);
+        }
+
+        // ...and the tail column stops at 2225, leaving the notch to its right.
+        const tail = paths[2];
+        expect(tail).toMatchObject({ kind: 'roundedRect', x: 1500, w: 725 });
     });
 });
 

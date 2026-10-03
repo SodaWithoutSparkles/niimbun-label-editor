@@ -5,7 +5,7 @@ import type { ShapeType } from '../../types';
  * typed-key union intact. Keyed on `ShapeType` so every displayed shape type is
  * covered and none can fall back to its lowercase enum value.
  */
-export const TOOL_LABEL_KEYS = {
+const BASE_LABEL_KEYS = {
     select: 'tools.select',
     rectangle: 'tools.rectangle',
     ellipse: 'tools.ellipse',
@@ -17,6 +17,20 @@ export const TOOL_LABEL_KEYS = {
     image: 'tools.image',
     polygon: 'tools.polygon',
 } as const satisfies Record<ShapeType | 'select' | 'callout', string>;
+
+/**
+ * One-shot insert-rail shape actions (ui-spec.md §4). Kept beside the shape
+ * catalogue so a label resolved from `activeTool` always finds a real key,
+ * never the raw `shape:x`.
+ */
+const SHAPE_ACTION_LABEL_KEYS = {
+    'shape:line': 'tools.line',
+    'shape:rectangle': 'tools.rectangle',
+    'shape:ellipse': 'tools.ellipse',
+    'shape:polygon': 'tools.polygon',
+} as const satisfies Record<string, string>;
+
+export const TOOL_LABEL_KEYS = { ...BASE_LABEL_KEYS, ...SHAPE_ACTION_LABEL_KEYS };
 
 export type ToolLabelKey = (typeof TOOL_LABEL_KEYS)[keyof typeof TOOL_LABEL_KEYS];
 

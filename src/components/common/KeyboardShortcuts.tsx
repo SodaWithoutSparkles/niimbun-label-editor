@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useStore } from '../../store/useStore';
+import type { InsertAction as AppStateInsertAction } from '../../store/slices/toolsSlice';
 
 export const KeyboardShortcuts = () => {
     const undo = useStore((state) => state.undo);
@@ -112,7 +113,7 @@ export const KeyboardShortcuts = () => {
                 const tool = toolByKey.get(key);
                 if (tool) {
                     e.preventDefault();
-                    setActiveTool(tool);
+                    setActiveTool(tool as unknown as AppStateInsertAction);
                     setDropperActive(false);
                     return;
                 }

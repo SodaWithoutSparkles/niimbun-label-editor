@@ -1,6 +1,7 @@
 import { CURRENT_VERSION } from '../../types';
 import type { SaveFile } from '../../types';
 import type { AppState, StoreSlice } from '../storeTypes';
+import { normalizeInsertAction } from './toolsSlice';
 import { createDefaultProjectName } from '../../utils/projectName';
 
 /**
@@ -27,7 +28,7 @@ type ProjectFields = Pick<
 
 const pickProjectFields = (data: SaveFile, state: AppState): ProjectFields => ({
     objects: data.canvas?.objects ?? state.objects,
-    activeTool: data.tools?.activeTool ?? state.activeTool,
+    activeTool: normalizeInsertAction(data.tools?.activeTool ?? state.activeTool),
     showToolSettings: data.tools?.showToolSettings ?? state.showToolSettings,
     isDropperActive: data.colors?.isDropperActive ?? state.isDropperActive,
     pickedColor: data.colors?.pickedColor ?? state.pickedColor,

@@ -283,6 +283,17 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             commit(next, doc);
         },
 
+        setSampleRowIndex: (index) => {
+            const doc = get().currentDoc;
+            if (!doc) return;
+            const clamped = Math.max(0, Math.round(index));
+            // A no-op change must not create an undo entry (mirrors commitDoc).
+            if (clamped === doc.data.sampleRowIndex) return;
+            const next = cloneDoc(doc);
+            next.data.sampleRowIndex = clamped;
+            commit(next, doc);
+        },
+
         resizeNode: (id, target, opts) => {
             const doc = get().currentDoc;
             if (!doc) return;

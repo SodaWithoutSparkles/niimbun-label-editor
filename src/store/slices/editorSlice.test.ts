@@ -4,6 +4,7 @@ import { createLabelDoc } from '../../core/doc/factory';
 import type { LabelDoc, Node } from '../../core/doc/types';
 import type { LabelRepo } from '../../data/labelRepo';
 import type { NodePatch } from '../storeTypes';
+import { transformEndPatch } from '../../editor/transformGesture';
 import { CLONE_OFFSET_HM, DOC_HISTORY_CAP } from './editorSlice';
 
 /** Minimal in-memory Storage, mirroring the other store tests. */
@@ -279,6 +280,60 @@ describe('editorSlice — document operations', () => {
 
     it('commitDoc is a no-op without a transient gesture', () => {
         const store = setupStore(makeDoc([textNode('a')]));
+        store.getState().commitDoc();
+        expect(store.getState().docPast).toHaveLength(0);
+    });
+
+    it('a resize+rotate transform gesture commits exactly one undo entry (must-fix #3)', () => {
+        const rect: Node = {
+            id: 's',
+            parentId: null,
+            type: 'shape',
+            shape: 'rectangle',
+            visible: true,
+            locked: false,
+            transform: { x: 10, y: 10, rotDeg: 0, scaleX: 1, scaleY: 1 },
+            size: { w: 100, h: 50 },
+        };
+        const store = setupStore(makeDoc([rect]));
+        const source = store.getState().currentDoc!.nodes[0]!;
+
+        // The Preview applies the combined patch transiently then commits once.
+        store.getState().updateNodeTransient(
+            's',
+            transformEndPatch(source, { w: 300, h: 150 }, false, 25),
+        );
+        store.getState().commitDoc();
+
+        const node = store.getState().currentDoc!.nodes[0]!;
+        expect(node.size).toEqual({ w: 300, h: 150 });
+        expect(node.transform.rotDeg).toBe(25);
+        expect(node.transform.scaleX).toBe(1);
+        expect(store.getState().docPast).toHaveLength(1);
+
+        store.getState().undoDoc();
+        expect(store.getState().currentDoc!.nodes[0]!.size).toEqual({ w: 100, h: 50 });
+        expect(store.getState().currentDoc!.nodes[0]!.transform.rotDeg).toBe(0);
+    });
+
+    it('a no-op handle click adds no undo entry (must-fix #3)', () => {
+        const rect: Node = {
+            id: 's',
+            parentId: null,
+            type: 'shape',
+            shape: 'rectangle',
+            visible: true,
+            locked: false,
+            transform: { x: 10, y: 10, rotDeg: 0, scaleX: 1, scaleY: 1 },
+            size: { w: 100, h: 50 },
+        };
+        const store = setupStore(makeDoc([rect]));
+        const source = store.getState().currentDoc!.nodes[0]!;
+        // Geometry unchanged: the patch equals the baseline.
+        store.getState().updateNodeTransient(
+            's',
+            transformEndPatch(source, { w: 100, h: 50 }, false, 0),
+        );
         store.getState().commitDoc();
         expect(store.getState().docPast).toHaveLength(0);
     });

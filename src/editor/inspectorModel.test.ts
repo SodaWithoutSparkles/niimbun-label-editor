@@ -43,8 +43,35 @@ const keys = (fields: readonly { key: string }[]): string[] => fields.map((f) =>
 
 describe('inspectorModel — field descriptors', () => {
     it('exposes the transform fields expected by the Object tab', () => {
-        expect(keys(TRANSFORM_FIELDS)).toEqual(['x', 'y', 'rotDeg', 'scaleX', 'scaleY']);
+        expect(keys(TRANSFORM_FIELDS)).toEqual(['x', 'y', 'sizeW', 'sizeH', 'rotDeg', 'scaleX', 'scaleY']);
         expect(TRANSFORM_FIELDS.every((f) => f.wired)).toBe(true);
+    });
+
+    it('honestly marks fields the renderer cannot act on as unwired', () => {
+        // The resolver ignores these props, so advertising them as wired would
+        // let a user edit a field nothing reads (should-fix #13).
+        const unactionable = ['fontWeight', 'letterSpacing', 'direction', 'fill', 'stroke', 'strokeWidth', 'cornerRadius'];
+        for (const key of unactionable) {
+            const field = [...TEXT_FIELDS, ...SHAPE_FIELDS].find((f) => f.key === key);
+            expect(field?.wired, key).toBe(false);
+        }
+        // The ones the renderer *does* read stay wired.
+        for (const key of ['fontFamily', 'fontSize', 'fontStyle', 'align', 'closed', 'shape']) {
+            const field = [...TEXT_FIELDS, ...SHAPE_FIELDS].find((f) => f.key === key);
+            expect(field?.wired, key).toBe(true);
+        }
+    });
+
+    it('tags every unwired field with the engine that owns it', () => {
+        for (const field of IMAGE_FIELDS) expect(field.reason).toBe('image');
+        for (const field of QR_FIELDS) expect(field.reason).toBe('qr');
+        for (const field of BARCODE_FIELDS) expect(field.reason).toBe('barcode');
+        for (const field of RESERVED_FIELDS) {
+            expect(['trust', 'quantizer', 'content']).toContain(field.reason);
+        }
+        // Quantizer is P4; trust is P6.
+        expect(RESERVED_FIELDS.find((f) => f.key === 'quantizerHint')?.reason).toBe('quantizer');
+        expect(RESERVED_FIELDS.find((f) => f.key === 'templateTrust')?.reason).toBe('trust');
     });
 
     it('typeFields returns the type-specific props per node type', () => {

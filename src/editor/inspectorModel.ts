@@ -7,7 +7,8 @@ import type { Node, NodeType } from '../core/doc/types';
  *
  * Two markers matter:
  *   - `wired` — `true` when P3 can actually act on the field; `false` is a
- *     reserved stub the panel renders disabled (P4 quantizer, P6 templating /
+ *     reserved stub the panel renders disabled, with a `reason` naming which
+ *     engine owns it (P4 quantizer/QR/barcode, P5 image, P6 templating /
  *     trust). Shipping the field now keeps the panel's shape stable while the
  *     engine lands later.
  *   - `scope` — which selection mode the field belongs to. Bulk mode
@@ -40,6 +41,12 @@ export type FieldKind =
     | 'contentSource'
     | 'stub';
 
+/**
+ * Why a `wired: false` field is disabled, so the panel can show the *right*
+ * reason instead of one blanket message. `null` for wired fields.
+ */
+export type FieldReason = 'quantizer' | 'trust' | 'image' | 'qr' | 'barcode' | 'content';
+
 export interface FieldDescriptor {
     /** Stable field id — the node prop it edits, or a reserved key. */
     key: string;
@@ -49,16 +56,25 @@ export interface FieldDescriptor {
     wired: boolean;
     /** Allowed values for `kind: 'select'`. */
     options?: readonly string[];
+    /** Why the field is disabled. Required only when `wired: false`. */
+    reason?: FieldReason;
 }
 
 /** Per-node transform (`PopoverSlider` fields in the Object tab). */
 export const TRANSFORM_FIELDS: readonly FieldDescriptor[] = [
     { key: 'x', scope: 'transform', kind: 'number', wired: true },
     { key: 'y', scope: 'transform', kind: 'number', wired: true },
+    { key: 'sizeW', scope: 'transform', kind: 'number', wired: true },
+    { key: 'sizeH', scope: 'transform', kind: 'number', wired: true },
     { key: 'rotDeg', scope: 'transform', kind: 'number', wired: true },
     { key: 'scaleX', scope: 'transform', kind: 'number', wired: true },
     { key: 'scaleY', scope: 'transform', kind: 'number', wired: true },
 ];
+
+/** Transform fields with no size box — groups carry no resizable geometry. */
+export const GROUP_TRANSFORM_FIELDS: readonly FieldDescriptor[] = TRANSFORM_FIELDS.filter(
+    (field) => field.key !== 'sizeW' && field.key !== 'sizeH',
+);
 
 /**
  * Props shared by every node type — the only fields shown for a **mixed**
@@ -72,46 +88,58 @@ export const UNIVERSAL_FIELDS: readonly FieldDescriptor[] = [
 ];
 
 export const TEXT_FIELDS: readonly FieldDescriptor[] = [
-    { key: 'size', scope: 'text', kind: 'number', wired: true },
+    // `size` is a `{w, h}` box, not a scalar; the Object tab edits it as the two
+    // numeric `sizeW`/`sizeH` transform fields, so this aggregate stays a stub.
+    { key: 'size', scope: 'text', kind: 'stub', wired: false, reason: 'content' },
     { key: 'fontFamily', scope: 'text', kind: 'string', wired: true },
     { key: 'fontSize', scope: 'text', kind: 'number', wired: true },
-    { key: 'fontWeight', scope: 'text', kind: 'select', wired: true, options: ['normal', 'bold'] },
+    // The renderer reads `fontStyle` but ignores weight/spacing/direction, so
+    // advertising them as wired would let a user edit a field nothing acts on.
+    { key: 'fontWeight', scope: 'text', kind: 'select', wired: false, options: ['normal', 'bold'], reason: 'content' },
     { key: 'fontStyle', scope: 'text', kind: 'select', wired: true, options: ['normal', 'italic'] },
     { key: 'align', scope: 'text', kind: 'select', wired: true, options: ['left', 'center', 'right'] },
-    { key: 'letterSpacing', scope: 'text', kind: 'number', wired: true },
-    { key: 'direction', scope: 'text', kind: 'select', wired: true, options: ['ltr', 'rtl'] },
+    { key: 'letterSpacing', scope: 'text', kind: 'number', wired: false, reason: 'content' },
+    { key: 'direction', scope: 'text', kind: 'select', wired: false, options: ['ltr', 'rtl'], reason: 'content' },
 ];
 
 export const SHAPE_FIELDS: readonly FieldDescriptor[] = [
     { key: 'shape', scope: 'shape', kind: 'select', wired: true, options: ['line', 'rectangle', 'ellipse', 'polygon'] },
-    { key: 'size', scope: 'shape', kind: 'number', wired: true },
-    { key: 'points', scope: 'shape', kind: 'stub', wired: false },
+    // `size` is a `{w, h}` box (see TEXT_FIELDS); edited via sizeW/sizeH.
+    { key: 'size', scope: 'shape', kind: 'stub', wired: false, reason: 'content' },
+    { key: 'points', scope: 'shape', kind: 'stub', wired: false, reason: 'content' },
     { key: 'closed', scope: 'shape', kind: 'boolean', wired: true },
-    { key: 'cornerRadius', scope: 'shape', kind: 'number', wired: true },
-    { key: 'stroke', scope: 'shape', kind: 'color', wired: true },
-    { key: 'fill', scope: 'shape', kind: 'color', wired: true },
-    { key: 'strokeWidth', scope: 'shape', kind: 'number', wired: true },
+    // The resolver draws rectangles without a corner radius, so this is a stub
+    // until the shape renderer honours it (#13).
+    { key: 'cornerRadius', scope: 'shape', kind: 'number', wired: false, reason: 'content' },
+    // The resolver draws shapes with fixed stroke/fill constants and never reads
+    // these node props, so they are honestly unwired until the renderer honours
+    // them (P4/P5 style pass).
+    { key: 'stroke', scope: 'shape', kind: 'color', wired: false, reason: 'content' },
+    { key: 'fill', scope: 'shape', kind: 'color', wired: false, reason: 'content' },
+    { key: 'strokeWidth', scope: 'shape', kind: 'number', wired: false, reason: 'content' },
 ];
+
+
 
 /** Image engine is P5 — typed stubs, all disabled. */
 export const IMAGE_FIELDS: readonly FieldDescriptor[] = [
-    { key: 'imageId', scope: 'image', kind: 'stub', wired: false },
-    { key: 'resolution', scope: 'image', kind: 'stub', wired: false },
-    { key: 'fit', scope: 'image', kind: 'stub', wired: false },
+    { key: 'imageId', scope: 'image', kind: 'stub', wired: false, reason: 'image' },
+    { key: 'resolution', scope: 'image', kind: 'stub', wired: false, reason: 'image' },
+    { key: 'fit', scope: 'image', kind: 'stub', wired: false, reason: 'image' },
 ];
 
 /** QR engine is P4 — typed stubs, all disabled. */
 export const QR_FIELDS: readonly FieldDescriptor[] = [
-    { key: 'data', scope: 'qr', kind: 'contentSource', wired: false },
-    { key: 'errorCorrection', scope: 'qr', kind: 'stub', wired: false },
-    { key: 'size', scope: 'qr', kind: 'stub', wired: false },
+    { key: 'data', scope: 'qr', kind: 'contentSource', wired: false, reason: 'qr' },
+    { key: 'errorCorrection', scope: 'qr', kind: 'stub', wired: false, reason: 'qr' },
+    { key: 'size', scope: 'qr', kind: 'stub', wired: false, reason: 'qr' },
 ];
 
 /** Barcode engine is P4 — typed stubs, all disabled. */
 export const BARCODE_FIELDS: readonly FieldDescriptor[] = [
-    { key: 'data', scope: 'barcode', kind: 'contentSource', wired: false },
-    { key: 'symbology', scope: 'barcode', kind: 'stub', wired: false },
-    { key: 'size', scope: 'barcode', kind: 'stub', wired: false },
+    { key: 'data', scope: 'barcode', kind: 'contentSource', wired: false, reason: 'barcode' },
+    { key: 'symbology', scope: 'barcode', kind: 'stub', wired: false, reason: 'barcode' },
+    { key: 'size', scope: 'barcode', kind: 'stub', wired: false, reason: 'barcode' },
 ];
 
 /**
@@ -122,9 +150,12 @@ export const BARCODE_FIELDS: readonly FieldDescriptor[] = [
  *   - `templateTrust`  — trust store is P6
  */
 export const RESERVED_FIELDS: readonly FieldDescriptor[] = [
-    { key: 'contentSource', scope: 'reserved', kind: 'contentSource', wired: false },
-    { key: 'quantizerHint', scope: 'reserved', kind: 'stub', wired: false },
-    { key: 'templateTrust', scope: 'reserved', kind: 'stub', wired: false },
+    // Content-source switching (CSV/template) ships with templating in P6.
+    { key: 'contentSource', scope: 'reserved', kind: 'contentSource', wired: false, reason: 'content' },
+    // Quantizer policy is P4.
+    { key: 'quantizerHint', scope: 'reserved', kind: 'stub', wired: false, reason: 'quantizer' },
+    // Template trust store is P6.
+    { key: 'templateTrust', scope: 'reserved', kind: 'stub', wired: false, reason: 'trust' },
 ];
 
 /** Type-specific fields, keyed by node type. Groups carry none. */
@@ -158,7 +189,7 @@ export const typeFields = (type: NodeType): readonly FieldDescriptor[] => TYPE_F
  */
 export const fieldsForNodeType = (type: NodeType): FieldDescriptor[] =>
     dedupeByKey([
-        ...TRANSFORM_FIELDS,
+        ...(type === 'group' ? GROUP_TRANSFORM_FIELDS : TRANSFORM_FIELDS),
         ...TYPE_FIELDS[type],
         ...UNIVERSAL_FIELDS,
         ...(type === 'group' ? [] : RESERVED_FIELDS),
@@ -200,7 +231,11 @@ export const bulkFieldModel = (selected: readonly Node[]): BulkFieldModel => {
         return {
             mode: 'same-type',
             types,
-            fields: dedupeByKey([...TRANSFORM_FIELDS, ...TYPE_FIELDS[type], ...UNIVERSAL_FIELDS]),
+            fields: dedupeByKey([
+                ...(type === 'group' ? GROUP_TRANSFORM_FIELDS : TRANSFORM_FIELDS),
+                ...TYPE_FIELDS[type],
+                ...UNIVERSAL_FIELDS,
+            ]),
         };
     }
 

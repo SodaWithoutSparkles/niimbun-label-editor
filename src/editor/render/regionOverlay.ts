@@ -1,5 +1,6 @@
 import type { Bounds } from '../../core/doc/derive';
 import { effectiveTransform, nodeLookup, regionUnionBounds } from '../../core/doc/derive';
+import type { hm } from '../../core/hm';
 import type { LabelDoc, Region } from '../../core/doc/types';
 import { nodeLocalPoints, transformedBounds } from './resolve';
 
@@ -19,6 +20,48 @@ export interface RegionOverlay {
     /** Bounding rect of the union, or `undefined` when there is no drawable region. */
     unionBounds: Bounds | undefined;
 }
+
+/** One closed contour of the union silhouette, in `hm`. */
+export type UnionSubpath =
+    | { kind: 'rect'; x: hm; y: hm; w: hm; h: hm }
+    | { kind: 'roundedRect'; x: hm; y: hm; w: hm; h: hm; r: hm }
+    | { kind: 'circle'; cx: hm; cy: hm; r: hm }
+    | { kind: 'polygon'; points: [hm, hm][] };
+
+/**
+ * Outline of `union(regions)` as closed subpaths — the label silhouette.
+ *
+ * Returns one subpath per region, in document order. Filling them together with
+ * the default **nonzero** winding gives a single white union with **no internal
+ * seams**: every region is wound the same (clockwise in the y-down hm space, see
+ * `UNION_DIRECTION`), so overlap bands have winding +1/+2 (never 0) and are
+ * never punched into holes, while the lower-right notch stays empty. A later
+ * contour never has opposite orientation, so `canvas` needs no even-odd trick.
+ *
+ * Pure: no React, no Konva, no mutation of the input. Drops drawable-less
+ * regions (a polygon with fewer than 3 points) exactly like `regionUnionBounds`.
+ */
+export const regionUnionPath = (regions: readonly Region[]): UnionSubpath[] => {
+    const paths: UnionSubpath[] = [];
+    for (const region of regions) {
+        switch (region.kind) {
+            case 'rect':
+                paths.push({ kind: 'rect', x: region.x, y: region.y, w: region.w, h: region.h });
+                break;
+            case 'roundedRect':
+                paths.push({ kind: 'roundedRect', x: region.x, y: region.y, w: region.w, h: region.h, r: region.r });
+                break;
+            case 'circle':
+                paths.push({ kind: 'circle', cx: region.cx, cy: region.cy, r: region.r });
+                break;
+            case 'polygon':
+                if (region.points.length < 3) break;
+                paths.push({ kind: 'polygon', points: region.points });
+                break;
+        }
+    }
+    return paths;
+};
 
 /** Region union geometry for the editor overlay. Data only — no styling. */
 export const resolveRegionOverlay = (doc: LabelDoc): RegionOverlay => ({

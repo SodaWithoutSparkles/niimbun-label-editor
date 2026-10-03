@@ -105,20 +105,14 @@ export const BottomBar: React.FC = () => {
         if (activeTool === 'select') {
             return t('toolHints.select', { modifier: modifierKeyLabel });
         }
-        if (activeTool === 'rectangle') {
+        if (activeTool === 'shape:rectangle') {
             return t('toolHints.rectangle', { modifier: modifierKeyLabel });
         }
-        if (activeTool === 'ellipse') {
+        if (activeTool === 'shape:ellipse') {
             return t('toolHints.ellipse', { modifier: modifierKeyLabel });
         }
-        if (activeTool === 'callout') {
-            return t('toolHints.callout', { modifier: modifierKeyLabel });
-        }
-        if (activeTool === 'line') {
+        if (activeTool === 'shape:line') {
             return t('toolHints.line', { modifier: modifierKeyLabel });
-        }
-        if (activeTool === 'arrow') {
-            return t('toolHints.arrow', { modifier: modifierKeyLabel });
         }
 
         return null;

@@ -10,6 +10,7 @@ import {
     type PersistedSettings,
 } from './preferenceValidation';
 import {
+    DEFAULT_SCREEN_DPI,
     defaultAutoSave,
     defaultColors,
     defaultKeyboardShortcuts,
@@ -108,6 +109,7 @@ const defaults: PersistedSettings = {
     toolSettings: defaultToolSettings,
     colors: defaultColors,
     language: defaultLanguage,
+    screenDpi: DEFAULT_SCREEN_DPI,
 };
 
 describe('validatePersistedSettings', () => {

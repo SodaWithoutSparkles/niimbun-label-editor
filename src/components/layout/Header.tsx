@@ -54,6 +54,40 @@ export const Header: React.FC = () => {
     // Store state getters for save - fetch individually to prevent re-render loops
     const objects = useStore(state => state.objects);
 
+    // Editor-view edit commands (ui-spec.md §3): the Edit menu targets the
+    // document selection when the editor is open, and the legacy canvas model
+    // otherwise. Shortcuts in `EditorKeyboardShortcuts` mirror these.
+    const view = useStore(state => state.view);
+    const selectedNodeIds = useStore(state => state.selectedNodeIds);
+    const undoDoc = useStore(state => state.undoDoc);
+    const redoDoc = useStore(state => state.redoDoc);
+    const cloneNode = useStore(state => state.cloneNode);
+    const removeNode = useStore(state => state.removeNode);
+    const moveNodeZ = useStore(state => state.moveNodeZ);
+    const groupNodes = useStore(state => state.groupNodes);
+    const ungroupNode = useStore(state => state.ungroupNode);
+    const isEditor = view === 'editor';
+    const editUndo = () => (isEditor ? undoDoc() : undo());
+    const editRedo = () => (isEditor ? redoDoc() : redo());
+    const editClone = () => {
+        if (isEditor) selectedNodeIds.forEach((id) => cloneNode(id));
+        else cloneSelected();
+    };
+    const editDelete = () => {
+        if (isEditor) selectedNodeIds.forEach((id) => removeNode(id));
+        else deleteSelected();
+    };
+    const editMoveLayer = (direction: 'up' | 'down') => {
+        if (isEditor) selectedNodeIds.forEach((id) => moveNodeZ(id, direction));
+        else moveSelectedLayer(direction);
+    };
+    const editGroup = () => {
+        if (isEditor) groupNodes([...selectedNodeIds]);
+    };
+    const editUngroup = () => {
+        if (isEditor) selectedNodeIds.forEach((id) => ungroupNode(id));
+    };
+
     const language = useStore(state => state.language);
     const isSettingsOpen = useStore(state => state.isSettingsOpen);
     const openSettings = useStore(state => state.openSettings);
@@ -451,11 +485,13 @@ export const Header: React.FC = () => {
                 activeMenu={activeMenu}
                 onToggle={toggleMenu}
                 onCloseMenu={() => setActiveMenu(null)}
-                onUndo={undo}
-                onRedo={redo}
-                onCloneSelected={cloneSelected}
-                onDeleteSelected={deleteSelected}
-                onMoveSelectedLayer={moveSelectedLayer}
+                onUndo={editUndo}
+                onRedo={editRedo}
+                onCloneSelected={editClone}
+                onDeleteSelected={editDelete}
+                onMoveSelectedLayer={editMoveLayer}
+                onGroup={editGroup}
+                onUngroup={editUngroup}
                 onInsertLocalImage={() => imageInputRef.current?.click()}
                 onInsertRemoteImage={handleRemoteImageInsert}
             />

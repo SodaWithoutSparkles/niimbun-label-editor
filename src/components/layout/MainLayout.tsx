@@ -1,18 +1,18 @@
-import React, { Suspense, lazy, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
+import React, { useEffect } from 'react';
 import { useStore } from '../../store/useStore';
 import { Header } from './Header';
-import { LeftSidebar } from './LeftSidebar';
-import { RightSidebar } from './RightSidebar';
 import { BottomBar } from './BottomBar';
 import { NavSidebar } from './NavSidebar';
 import { GalleryView } from '../gallery/GalleryView';
+import { EditorShell } from '../editor/EditorShell';
 
-const DrawingCanvas = lazy(() => import('../canvas/DrawingCanvas').then((m) => ({ default: m.DrawingCanvas })));
-const KeyboardShortcuts = lazy(() => import('../common/KeyboardShortcuts').then((m) => ({ default: m.KeyboardShortcuts })));
-
+/**
+ * App shell. Header + status bar are shared; the gallery keeps
+ * `NavSidebar` + `GalleryView`, while the editor renders the P3 `EditorShell`
+ * (ui-spec.md §2). The template's `LeftSidebar` / `RightSidebar` /
+ * `DrawingCanvas` are no longer referenced from either path (stripped in W6).
+ */
 export const MainLayout: React.FC = () => {
-    const { t } = useTranslation();
     const view = useStore((state) => state.view);
     const initPersistence = useStore((state) => state.initPersistence);
 
@@ -24,41 +24,21 @@ export const MainLayout: React.FC = () => {
 
     return (
         <div className="flex flex-col h-screen w-screen overflow-hidden bg-gray-900">
-            <Suspense fallback={null}>
-                <KeyboardShortcuts />
-            </Suspense>
             {/* 1. Top Header (shared by gallery + editor) */}
             <Header />
 
-            {/* 2. Middle Section — gallery home surface or the editor */}
-            <div className="flex-1 flex overflow-hidden relative">
-                {view === 'gallery' ? (
-                    <>
-                        <NavSidebar />
-                        <GalleryView />
-                    </>
-                ) : (
-                    <>
-                        {/* Left Toolbar */}
-                        <LeftSidebar />
+            {/* 2. Middle Section — gallery home surface or the editor shell */}
+            {view === 'gallery' ? (
+                <div className="flex-1 flex overflow-hidden relative">
+                    <NavSidebar />
+                    <GalleryView />
+                </div>
+            ) : (
+                <EditorShell />
+            )}
 
-                        {/* Center Canvas Area */}
-                        <div className="flex-1 bg-gray-500 relative overflow-hidden flex flex-col">
-                            <div className="flex-1 relative bg-gray-200">
-                                <Suspense fallback={<div className="h-full w-full flex items-center justify-center text-gray-700">{t('mainLayout.loadingCanvas')}</div>}>
-                                    <DrawingCanvas />
-                                </Suspense>
-                            </div>
-                        </div>
-
-                        {/* Right Panels */}
-                        <RightSidebar />
-                    </>
-                )}
-            </div>
-
-            {/* 3. Bottom Status Bar (shared) */}
-            <BottomBar />
+            {/* 3. Bottom Status Bar (gallery only; the editor shell owns its own) */}
+            {view === 'gallery' && <BottomBar />}
         </div>
     );
 };
