@@ -1,0 +1,150 @@
+# Phase 3 Action Plan — Editor core (M2/M3)
+
+**Run:** `agent/2026-09-29_label-editor-v1` · **Owner:** Coordinator · **Plan ref:** `plan.md` P3
+**Status:** DRAFT for owner review (written 2026-10-04). **Do not start until the owner has designed the UI.**
+**Prereq:** P2 done (`40a7331`…`b0a55f3` + owner preset commit `97d1720`). Read this whole file before starting.
+
+> **Owner constraint (2026-10-04): the owner designs the UI/layout first.** This plan therefore covers the
+> **engine, document operations, and wiring** — the parts that exist regardless of how the editor looks.
+> It deliberately does **not** specify layout, panel placement, toolbars, colors, or component structure.
+> Do not delegate to `ui-designer` and do not invent visual design. Where UI is needed, this plan names
+> the **seam** and waits for the owner's design.
+
+---
+
+## 0. Orient first (do not skip)
+
+1. This file.
+2. `agent/2026-09-29_label-editor-v1/state.md` — P2 outcome, deviations, and the two carry-overs that matter here (§5 below).
+3. `agent/memory.md` → `agent/memory/store-and-slices.md` (how the editor slice should fit), `agent/memory/testing.md` (browser-only list — **canvas rendering is in it**), `agent/memory/print-transport.md` (only if touching `src/print`).
+4. Plan sections: **Editor / UI architecture** (lines ~244–252), **Phases P3 row** (line 292), **Reuse / strip map** (276–282), **Decisions log** (esp. 5, 9, 20/26, 39).
+5. Existing code you build on: `src/core/doc/*` (types/derive/factory), `src/store/slices/docSlice.ts`, `src/components/canvas/*` (the template's Konva editor — **to be stripped/adapted, see §2**), `src/components/layout/MainLayout.tsx`.
+
+**Reference clone (craft only, never copy the model):** `references/niimblue/src/components/LabelDesigner.svelte`, `src/utils/undo_redo.ts`, `src/fabric-object/custom_canvas.ts`. Our model differs by design (flat `nodes[]` + `parentId`, integer hm); use these for *interaction* details only.
+
+---
+
+## 1. Scope (frozen)
+
+P3 makes a label **editable and reloadable**. Deliver the engine and the document operations, plus thin
+seams for the owner's UI:
+
+1. **Editor viewport engine** (headless-testable): world ↔ screen transform, zoom/pan, hit-testing, snapping math.
+2. **Document operations** on `docSlice`: add/remove node, update node props, reparent/reorder, group/ungroup, clone, delete, z-order — all pure and undoable.
+3. **Undo/redo**: snapshot-based on the document slice, capped, never serialized (plan line 249).
+4. **Editor render path**: resolve `LabelDoc` → Konva nodes for the **editor viewport** only. Region overlay + keep-out warnings (data + class hooks, not styling).
+5. **Node tree + inspector data layer**: the operations and selectors the panels need. Panel *presentation* is the owner's.
+6. **Strip the dead template editor** (plan line 280) — this is scheduled P1–P3 work and is still outstanding.
+
+**Explicitly out of scope:** all visual/layout design; the print/render pipeline + quantizers (P4); templates/trust/CSV (P6); asset import UI (P5). **Do not design UI.**
+
+---
+
+## 2. Strip the dead template editor (do this early)
+
+`plan.md:280` lists the strip list and notes **none of it is stripped yet**. P3 owns removing the drawing-app leftovers so the editor is not carrying two models:
+
+- `useDrawingTools` + shapeHelpers draw state machines; callout/star/arrow tools; drawing `toolSettings`.
+- Color-preset model (`ColorPreset` / `colorsSlice` / `DualColorPicker`) — *unless the owner's design reuses it.*
+- `ExportModal` **UI** (keep the pure export helpers in `hooks/export/{capture,download,utils}.ts` — P8 needs them).
+- `SaveFile` drawing coupling (`SaveFile` type + `buildSaveFile`) — superseded by `LabelDoc`.
+- Dead `polygon` `CanvasItem` type — superseded by the real `Region`/node polygon.
+- **`localStorage` autosave** — already removed from `Header.tsx` in P2; confirm nothing else writes `autosave_project`.
+
+**Gate:** after stripping, `bun run test:run` + `bun run build` stay green and the gallery is unaffected.
+
+---
+
+## 3. Editor viewport engine (`src/editor/`, headless)
+
+`src/core/` must stay React-free; put the viewport **math** in `src/core/` (or a new `src/core/viewport.ts`) and keep the React binding thin.
+
+- `worldToScreen(hm, viewport)` / `screenToWorld(px, viewport)` — pure, integer-disciplined (hm stays int; screen px may be float).
+- Viewport state `{ x, y, zoom }` — **never stored in the document** (plan line 245).
+- Snapping: to backing edges, region edges, and sibling node bounds; grid snap optional via config. Pure functions returning candidate deltas.
+- Hit-testing against transformed node bounds (`effectiveTransform` from `derive.ts`).
+- **Tests (unit):** round-trip `screenToWorld(worldToScreen(p)) === p` within tolerance; zoom-independence of hit-testing; snap candidates.
+
+---
+
+## 4. Document operations + undo (`docSlice`)
+
+Extend `docSlice` (or add `editorSlice` if cleaner — justify in the receipt) with **pure operations over `LabelDoc`**:
+
+- `addNode(node)`, `updateNode(id, patch)`, `removeNode(id)`, `cloneNode(id)`, `reparentNode(id, parentId, index)`, `moveNodeZ(id, dir)`, `groupNodes(ids)`, `ungroupNode(id)`.
+- Every op: operate on a **structured clone** of the doc, **never mutate the stored doc**, set `meta.updatedAt` (epoch seconds), and push one undo entry.
+- **Node ids:** `newLabelId()`-style fresh ids (decision 39); clone/reparent must never duplicate an id.
+- **Undo/redo:** snapshot the doc slice, capped (~20, matching the template's cap), truncate on branch, **never serialized** into `.lbl.json.gz`.
+- **Autosave → IDB** (the P2 carry-over): debounce the editor's doc changes into `labelRepo.save`. This closes P2's "autosave not yet moved to IDB" deviation.
+- **Tests (unit):** each op (incl. group/ungroup, reparent cycles rejected), id uniqueness after clone, undo/redo sequences, autosave debounce writes to an injected memory repo.
+
+---
+
+## 5. Editor render path (`src/editor/render/`)
+
+- `resolve(doc)` → a resolved node list (static text/line/rect/ellipse/polygon/groups). **No template execution** (that is P6).
+- `createKonvaNode(resolvedNode)` factory — **plain Konva, offscreen**, shared with P4 (plan line 211). P3 wires it for the **editor viewport** only; do **not** build the rasterize→clip→quantize path (P4).
+- **Region overlay:** expose region union geometry (reuse `regionUnionBounds`; **respect the nonzero-winding requirement** recorded in `plan.md`/`phase2_action-plan.md`). Non-printable area is *data*; how it looks is the owner's design.
+- **Keep-out warnings:** a pure predicate `nodesIntersectNonPrintable(doc)` returning the offending node ids for the UI to badge.
+- **Score-line / guide overlay seam (owner 2026-10-04):** the F-tag has a **semi-cut score line** (grey dashed, fold-in-half guide). It is **not** a `Region`, never clips, never prints. Provide a seam so the editor can *show* non-printable guides: a `guides` concept on the resolved/editor view (not in `union(regions)`, not in the doc's region list). Keep it data-only — how it looks is the owner's design. Do **not** model it as a region and do **not** let it affect the clip.
+- **Carry-over from P2:** `regionUnionBounds` currently has **no production consumer** — P4 rendering wants union bounds denormalized. If P3 needs them for the overlay, denormalize into `LabelSummary`/the editor's resolved form and record it.
+- **Tests:** resolve snapshots (deterministic), keep-out predicate truth table. `plan.md:38` — the editor raster is a **viewport projection** and is *never* pixel-compared to the print raster; do not write golden-pixel tests here (those are P4).
+
+---
+
+## 6. Panels — data layer only (no design)
+
+Provide what the node tree + inspector will consume; **the owner designs the panels.**
+
+- **Tree:** selectors for hierarchy (children from `parentId`), z-order, selection state, and the mutation actions to reorder/reparent.
+- **Inspector:** a typed **field model** per node type (transform, visible/locked, content source picker, quantizer hint) plus the update actions. Presentation via the existing form kit is the owner's call.
+- **Cross-cutting:** every op must remain correct if the owner changes panel structure — keep operations out of components.
+
+---
+
+## 7. Rules
+
+- `src/core/` and `src/editor/` engine modules: **zero React imports** (invariant: headless engine). Keep the React binding in components.
+- **Integer `hm` discipline** everywhere; the doc only stores ints (see P2's integer-scan test).
+- **No new dependencies** without the owner's explicit approval (`react-konva` may be needed — **ask first**; `konva` alone may suffice if the owner wants minimal).
+- `tsc` strict; tests typechecked. **Never run tests/build through `bunx`/`npx`** (new AGENTS.md rule) — use `bun run test:run`, `bun run build`, `node node_modules/typescript/bin/tsc --noEmit`.
+- Canvas/pointer interaction is **browser-only** (`memory/testing.md`): unit-test the math, verify interaction headed.
+- Every product string through `t()` (decision 40). Global `keydown`/`paste`/`drop` handlers bail on `dialog[open]`.
+- **Do not design UI.** If a decision is visual, stop and ask the owner.
+
+---
+
+## 8. Gate
+
+1. `bun run test:run` green · `bun run build` green · `node node_modules/typescript/bin/tsc --noEmit` clean.
+2. Exit criterion demonstrated: **open the F-tag label from the gallery → add text + a shape → move/transform → undo/redo → reload → it persists.**
+3. Review: `experimental-review` (primary while available) + one narrow re-check; fix rounds ≤2.
+4. Update `state.md` + this plan; escalate project lessons to `agent/memory/*`.
+5. Semantic commit(s), split by area (`feat(editor): …`, `refactor(editor): strip …`).
+
+### Browser check (required — P2 taught us this)
+The P2 create bug passed 242 headless tests and was only caught headed. **Run the editor flow in a real browser** (Windows-bun dev server + `ab`) before claiming done — canvas rendering, pointer interaction, and drag are all in the browser-only list.
+
+---
+
+## 9. Report (phase receipt)
+
+```
+## Phase 3 — {summary}
+- done: [what shipped]
+- tests: [result]
+- reviewed: [by whom, verdict]
+- browser: [what was verified headed]
+- committed: [hashes]
+- next: [P4 ready | escalation]
+```
+
+---
+
+## 10. Open questions for the owner (answer before start)
+
+1. **UI design** — the owner is designing it; this plan waits. *What is needed from the engine before you can design?* (e.g. does the design assume a fixed canvas size, a specific zoom model, a preset panel width?)
+2. **`react-konva`** — may we add it, or do you want plain `konva` + manual binding? (Dependency approval required.)
+3. **Color presets** — does your design reuse the template's `DualColorPicker`/`colorsSlice`, or is it stripped? (Affects §2.)
+4. **Selection model** — multi-select + transform box expected in v1, or single-select first?
+5. **F-tag geometry** — resolved 2026-10-04: the measured 3-region shape **stays**; the `(1500,3800)` inner-corner bite is a **deliberate accepted approximation** (the real tag's rounded corner + red spare tuck-under is overkill to reproduce), and the grey score line is **not** geometry (see §5 guide seam). The editor must not assume the preset stays static, but do not "repair" the bite.

@@ -20,6 +20,17 @@ import type { LabelPreset } from './types';
  * touch without overlap, so the outer corner point of such a seam sits outside
  * both blocks — see the union-coverage tests, which pin this outline as measured.
  *
+ * **Two deliberate non-fixes (owner decision 2026-10-04), do not "repair":**
+ *   1. **The `(1500, 3800)` inner corner bite is intentional.** In real life the
+ *      blue F-tag has a big rounded inner corner there; the red spare tucks under
+ *      it. Reproducing that corner exactly needs high-res polygons, which is
+ *      overkill for a ~2 mm area — so the abutting rects are left as measured and
+ *      the small bite is accepted. Do NOT overlap the regions or add a polygon.
+ *   2. **The grey dashed semi-cut / score line (fold-half guide) is NOT geometry.**
+ *      It is a physical fold score; it never clips or prints. A future editor may
+ *      show it as a non-printable guide overlay (P3 seam, see the P3 action plan);
+ *      it is never a `Region` and never contributes to `union(regions)`.
+ *
  * The `flag`/`spare`/`tail` names are descriptive comments only — regions carry
  * no role/id (decision 25).
  */
