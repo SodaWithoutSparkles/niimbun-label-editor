@@ -3,7 +3,20 @@ import { createFtagSpareDoc, createLabelDoc, newLabelId } from './factory';
 import { isLabelDoc } from './validate';
 
 /** Keys that carry hm (integer hundredths of a mm) geometry. */
-const GEOMETRY_KEYS = new Set(['backingW', 'backingH', 'x', 'y', 'w', 'h', 'cx', 'cy', 'r']);
+const GEOMETRY_KEYS = new Set([
+    'backingW',
+    'backingH',
+    'x',
+    'y',
+    'w',
+    'h',
+    'cx',
+    'cy',
+    'r',
+    'fontSize',
+    'cornerRadius',
+    'strokeWidth',
+]);
 
 const assertIntegerGeometry = (value: unknown, path = 'doc'): void => {
     if (Array.isArray(value)) {
@@ -57,6 +70,62 @@ describe('createLabelDoc', () => {
         const second = createFtagSpareDoc();
         (first.label.regions[0] as { x: number }).x = -999;
         expect(second.label.regions[0]).toMatchObject({ x: 0 });
+    });
+
+    it('records meta.presetId when created from a preset', () => {
+        expect(createFtagSpareDoc().meta.presetId).toBe('ftagSpare-25x78');
+        expect(createLabelDoc({ preset: 'rounded30x20' }).meta.presetId).toBe('rounded30x20');
+        expect(createLabelDoc().meta.presetId).toBeUndefined();
+    });
+
+    it('rounds caller-supplied node geometry (size/fontSize/cornerRadius/points/strokeWidth)', () => {
+        const doc = createLabelDoc({
+            nodes: [
+                {
+                    id: 't1',
+                    parentId: null,
+                    type: 'text',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    text: { kind: 'static', value: 'a' },
+                    size: { w: 10.4, h: 20.6 },
+                    fontSize: 300.5,
+                },
+                {
+                    id: 's1',
+                    parentId: null,
+                    type: 'shape',
+                    shape: 'rectangle',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    size: { w: 100.2, h: 50.7 },
+                    cornerRadius: 5.5,
+                    strokeWidth: 2.5,
+                },
+                {
+                    id: 'p1',
+                    parentId: null,
+                    type: 'shape',
+                    shape: 'polygon',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    points: [[1.1, 2.2], [3.3, 4.4]],
+                    closed: true,
+                },
+            ],
+        });
+        expect(doc.nodes[0]).toMatchObject({ size: { w: 10, h: 21 }, fontSize: 301 });
+        expect(doc.nodes[1]).toMatchObject({
+            size: { w: 100, h: 51 },
+            cornerRadius: 6,
+            strokeWidth: 3,
+        });
+        expect(doc.nodes[2]).toMatchObject({ points: [[1, 2], [3, 4]] });
+        assertIntegerGeometry(doc);
+        expect(isLabelDoc(doc).ok).toBe(true);
     });
 });
 

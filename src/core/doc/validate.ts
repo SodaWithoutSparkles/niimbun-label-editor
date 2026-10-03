@@ -12,6 +12,7 @@ import type {
     NodeType,
     Region,
     ShapeKind,
+    TextNode,
     Transform,
 } from './types';
 
@@ -55,6 +56,9 @@ const PRINT_DIRECTIONS: readonly LabelDoc['label']['printDirection'][] = [
 const DPI_MIN = 100;
 const DPI_MAX = 1200;
 const DPI_DEFAULT = 300;
+
+const TEXT_ALIGNS: readonly NonNullable<TextNode['align']>[] = ['left', 'center', 'right'];
+const TEXT_DIRECTIONS: readonly NonNullable<TextNode['direction']>[] = ['ltr', 'rtl'];
 
 /** Integer hundredths of a mm. Floats are coerced to the nearest integer. */
 export const isHm = (value: unknown): hm | undefined =>
@@ -197,6 +201,37 @@ const toTransform = (value: unknown, repairs?: string[]): Transform => {
     };
 };
 
+/**
+ * Optional node size: `{ w, h }` with integer hm and `w/h ≥ 0`. A present but
+ * malformed size is dropped (absent) rather than failing the document — the
+ * fields are optional/aditive, and older docs simply lack them.
+ */
+const toNodeSize = (value: unknown, repairs?: string[]): { w: hm; h: hm } | undefined => {
+    if (!isRecord(value)) return undefined;
+    const w = isHm(value.w);
+    const h = isHm(value.h);
+    if (w === undefined || h === undefined) return undefined;
+    const clamped = { w: Math.max(0, w), h: Math.max(0, h) };
+    if (clamped.w !== w || clamped.h !== h) {
+        repairs?.push('node.size: negative size clamped to 0');
+    }
+    return clamped;
+};
+
+/** Optional non-negative hm (size / radius / stroke). A bad value is dropped. */
+const toOptionalHm = (value: unknown): hm | undefined => {
+    if (value === undefined) return undefined;
+    const n = isHm(value);
+    return n === undefined ? undefined : Math.max(0, n);
+};
+
+/** Optional `fontSize`: integer hm, strictly `> 0`; a bad value is dropped. */
+const toFontSize = (value: unknown): hm | undefined => {
+    if (value === undefined) return undefined;
+    const n = isHm(value);
+    return n === undefined || n <= 0 ? undefined : n;
+};
+
 export const isNode = (value: unknown, repairs?: string[]): Node | undefined => {
     if (!isRecord(value)) return undefined;
     if (!isString(value.id) || value.id.length === 0) return undefined;
@@ -217,24 +252,69 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
         locked: typeof value.locked === 'boolean' ? value.locked : false,
         transform: toTransform(value.transform, repairs),
     };
+    const size = toNodeSize(value.size, repairs);
+    if (size !== undefined) base.size = size;
+    const strokeWidth = toOptionalHm(value.strokeWidth);
+    if (strokeWidth !== undefined) base.strokeWidth = strokeWidth;
 
     switch (value.type) {
         case 'group':
             return { ...base, type: 'group' };
-        case 'text':
-            return {
+        case 'text': {
+            const node: TextNode = {
                 ...base,
                 type: 'text',
                 text: toContentSource(value.text) ?? { kind: 'static', value: '' },
             };
+            const fontSize = toFontSize(value.fontSize);
+            if (fontSize !== undefined) node.fontSize = fontSize;
+            if (isString(value.fontFamily)) node.fontFamily = value.fontFamily;
+            if (isString(value.fontStyle)) node.fontStyle = value.fontStyle;
+            if (isOneOf(value.align, TEXT_ALIGNS)) node.align = value.align;
+            if (isFiniteNumber(value.letterSpacing)) node.letterSpacing = value.letterSpacing;
+            if (isFiniteNumber(value.lineHeight)) node.lineHeight = value.lineHeight;
+            if (isOneOf(value.direction, TEXT_DIRECTIONS)) node.direction = value.direction;
+            return node;
+        }
         case 'image':
             return isString(value.imageId)
                 ? { ...base, type: 'image', imageId: value.imageId }
                 : undefined;
-        case 'shape':
-            return isOneOf(value.shape, SHAPE_KINDS)
-                ? { ...base, type: 'shape', shape: value.shape }
-                : undefined;
+        case 'shape': {
+            if (!isOneOf(value.shape, SHAPE_KINDS)) return undefined;
+            switch (value.shape) {
+                case 'line':
+                case 'polygon': {
+                    if (!Array.isArray(value.points)) return undefined;
+                    const points: [hm, hm][] = [];
+                    for (const point of value.points) {
+                        if (!Array.isArray(point) || point.length < 2) return undefined;
+                        const x = isHm(point[0]);
+                        const y = isHm(point[1]);
+                        if (x === undefined || y === undefined) return undefined;
+                        points.push([x, y]);
+                    }
+                    return {
+                        ...base,
+                        type: 'shape',
+                        shape: value.shape,
+                        points,
+                        closed: value.closed === true || (value.closed === undefined && value.shape === 'polygon'),
+                    };
+                }
+                case 'rectangle': {
+                    const node: Node = { ...base, type: 'shape', shape: 'rectangle' };
+                    const cornerRadius = toOptionalHm(value.cornerRadius);
+                    if (cornerRadius !== undefined) {
+                        node.cornerRadius = cornerRadius;
+                    }
+                    return node;
+                }
+                case 'ellipse':
+                    return { ...base, type: 'shape', shape: 'ellipse' };
+            }
+            return undefined;
+        }
         case 'qr':
             return {
                 ...base,
@@ -533,6 +613,7 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
         : undefined;
     if (updatedAt === undefined) errors.push('meta.updatedAt: must be a finite epoch-seconds number');
     const thumb = toThumb(metaRaw.thumb);
+    const presetId = isString(metaRaw.presetId) ? metaRaw.presetId : undefined;
 
     if (!isRecord(raw.label)) return { ok: false, errors: [...errors, 'label: must be an object'] };
     const labelRaw = raw.label;
@@ -597,6 +678,7 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
                 createdAt: createdAt!,
                 updatedAt: updatedAt!,
                 ...(thumb ? { thumb } : {}),
+                ...(presetId !== undefined ? { presetId } : {}),
             },
             label: {
                 backingW: backingW!,

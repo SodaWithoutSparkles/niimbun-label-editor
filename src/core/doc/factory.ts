@@ -64,7 +64,32 @@ const roundTransform = (transform: Transform): Transform => ({
     scaleY: transform.scaleY,
 });
 
-const roundNode = (node: Node): Node => ({ ...node, transform: roundTransform(node.transform) });
+/**
+ * Round the hm geometry a caller attached to a node: the transform, the optional
+ * `size`, `fontSize`, `cornerRadius`, `strokeWidth`, and any `points` vertices.
+ * Non-hm numeric props (letterSpacing, lineHeight, rotation, scale) pass through.
+ */
+export const roundNode = (node: Node): Node => {
+    const base = { ...node, transform: roundTransform(node.transform) };
+    if (node.size !== undefined) {
+        base.size = { w: safeRoundHm(node.size.w), h: safeRoundHm(node.size.h) };
+    }
+    if (node.strokeWidth !== undefined) base.strokeWidth = safeRoundHm(node.strokeWidth);
+    if (node.type === 'text') {
+        const rounded = base as typeof node;
+        if (node.fontSize !== undefined) rounded.fontSize = Math.max(1, safeRoundHm(node.fontSize));
+        return rounded;
+    }
+    if (node.type === 'shape') {
+        const rounded = base as typeof node;
+        if (node.cornerRadius !== undefined) rounded.cornerRadius = safeRoundHm(node.cornerRadius);
+        if (node.points !== undefined) {
+            rounded.points = node.points.map(([x, y]) => [safeRoundHm(x), safeRoundHm(y)]);
+        }
+        return rounded;
+    }
+    return base;
+};
 
 export interface CreateLabelDocOptions {
     id?: string;
@@ -92,6 +117,7 @@ export const createLabelDoc = (options: CreateLabelDocOptions = {}): LabelDoc =>
             name: options.name ?? preset?.name ?? '',
             createdAt: now,
             updatedAt: now,
+            ...(preset ? { presetId: preset.id } : {}),
         },
         label: {
             backingW: roundHm(options.backingW ?? preset?.backingW ?? DEFAULT_BACKING_W),

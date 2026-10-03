@@ -171,6 +171,76 @@ describe('isAssetRef', () => {
     });
 });
 
+describe('isNode — geometry fields (P3 §13)', () => {
+    it('accepts optional size and rounds/clamps it', () => {
+        const node = isNode(baseNode({ size: { w: 10.4, h: 20.6 } }));
+        expect(node?.size).toEqual({ w: 10, h: 21 });
+        // Negative size is clamped to 0 with a repair.
+        const repairs: string[] = [];
+        const clamped = isNode(baseNode({ size: { w: -5, h: 10 } }), repairs);
+        expect(clamped?.size).toEqual({ w: 0, h: 10 });
+        expect(repairs.join(' ')).toContain('node.size');
+    });
+
+    it('drops a malformed size instead of failing the node', () => {
+        expect(isNode(baseNode({ size: 'big' }))?.size).toBeUndefined();
+        expect(isNode(baseNode({ size: { w: 10 } }))?.size).toBeUndefined();
+    });
+
+    it('accepts text font fields; fontSize must be > 0', () => {
+        const node = isNode(
+            baseNode({
+                type: 'text',
+                shape: undefined,
+                text: 'hi',
+                size: { w: 100, h: 50 },
+                fontSize: 320.4,
+                fontFamily: 'Inter',
+                fontStyle: 'italic',
+                align: 'center',
+                letterSpacing: 1.5,
+                lineHeight: 1.2,
+                direction: 'rtl',
+            }),
+        );
+        expect(node).toMatchObject({
+            type: 'text',
+            fontSize: 320,
+            fontFamily: 'Inter',
+            fontStyle: 'italic',
+            align: 'center',
+            letterSpacing: 1.5,
+            lineHeight: 1.2,
+            direction: 'rtl',
+        });
+        // fontSize ≤ 0 / non-integer is dropped, not rejected.
+        const fontSize = (n: ReturnType<typeof isNode>) =>
+            n?.type === 'text' ? n.fontSize : undefined;
+        expect(fontSize(isNode(baseNode({ type: 'text', shape: undefined, fontSize: 0 })))).toBeUndefined();
+        expect(fontSize(isNode(baseNode({ type: 'text', shape: undefined, fontSize: -10 })))).toBeUndefined();
+        // A bad align defaults to absent.
+        const align = (n: ReturnType<typeof isNode>) => (n?.type === 'text' ? n.align : undefined);
+        expect(align(isNode(baseNode({ type: 'text', shape: undefined, align: 'middle' })))).toBeUndefined();
+    });
+
+    it('accepts rectangle cornerRadius and scales it as hm ≥ 0', () => {
+        const node = isNode(baseNode({ shape: 'rectangle', cornerRadius: 5.5, size: { w: 10, h: 10 } }));
+        expect(node?.type === 'shape' && node.cornerRadius).toBe(6);
+        const negative = isNode(baseNode({ shape: 'rectangle', cornerRadius: -3 }));
+        expect(negative?.type === 'shape' && negative.cornerRadius).toBe(0);
+    });
+
+    it('requires points for line/polygon and defaults polygon.closed', () => {
+        const line = isNode(baseNode({ shape: 'line', points: [[1.2, 2.8], [3, 4]] }));
+        expect(line).toMatchObject({ shape: 'line', points: [[1, 3], [3, 4]], closed: false });
+        const poly = isNode(baseNode({ shape: 'polygon', points: [[0, 0], [10, 0], [10, 10]] }));
+        expect(poly).toMatchObject({ shape: 'polygon', closed: true });
+        expect(isNode(baseNode({ shape: 'line' }))).toBeUndefined();
+        expect(isNode(baseNode({ shape: 'polygon', points: [[1]] }))).toBeUndefined();
+        expect(isNode(baseNode({ shape: 'polygon', points: [['x', 1]] }))).toBeUndefined();
+    });
+});
+
 describe('isNode', () => {
     it('accepts every node kind', () => {
         expect(isNode(baseNode())?.type).toBe('shape');
@@ -272,6 +342,22 @@ describe('isLabelDoc — acceptance and repair', () => {
         if (!result.ok) return;
         expect(result.doc.meta.createdAt).toBe(10);
         expect(result.doc.meta.updatedAt).toBe(11);
+    });
+
+    it('keeps a string meta.presetId and drops a non-string one', () => {
+        const ok = isLabelDoc(
+            validRaw({ meta: { id: 'd', name: 'n', createdAt: 1, updatedAt: 1, presetId: 'ftagSpare-25x78' } }),
+        );
+        expect(ok.ok).toBe(true);
+        if (!ok.ok) return;
+        expect(ok.doc.meta.presetId).toBe('ftagSpare-25x78');
+
+        const dropped = isLabelDoc(
+            validRaw({ meta: { id: 'd', name: 'n', createdAt: 1, updatedAt: 1, presetId: 7 } }),
+        );
+        expect(dropped.ok).toBe(true);
+        if (!dropped.ok) return;
+        expect(dropped.doc.meta.presetId).toBeUndefined();
     });
 
     it('accepts every AssetRef provenance and FontRef source inside resources', () => {

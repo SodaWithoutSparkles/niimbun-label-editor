@@ -20,6 +20,15 @@ export type Region =
 
 export type NodeType = 'group' | 'text' | 'image' | 'shape' | 'qr' | 'barcode';
 
+/** Local bounding box in hm (integer hundredths of a mm). */
+export interface NodeSize {
+    w: hm;
+    h: hm;
+}
+
+export type TextAlign = 'left' | 'center' | 'right';
+export type TextDirection = 'ltr' | 'rtl';
+
 export interface BaseNode {
     id: string;
     parentId: string | null; // null = root; array order = z-order
@@ -28,6 +37,14 @@ export interface BaseNode {
     visible: boolean;
     locked: boolean;
     transform: { x: hm; y: hm; rotDeg: number; scaleX: number; scaleY: number };
+    /**
+     * Local bounding box. Present for text / image / shape(rect|ellipse) / qr /
+     * barcode; line & polygon carry `points` instead. Optional so documents
+     * written before geometry existed remain valid (backward compatible).
+     */
+    size?: NodeSize;
+    /** Stroke width in hm (shapes). Optional; scales uniformly on resize. */
+    strokeWidth?: number;
 } // + type-specific fields (text props, shape kind, image resource ref, qr payload…)
 
 /** The composed transform shape. Derived type; never stored on a node. */
@@ -44,6 +61,17 @@ export interface GroupNode extends BaseNode {
 export interface TextNode extends BaseNode {
     type: 'text';
     text: ContentSource;
+    /**
+     * Font size in hm. Optional for backward compatibility; the render path and
+     * the validator fall back to `DEFAULT_FONT_SIZE`.
+     */
+    fontSize?: hm;
+    fontFamily?: string;
+    fontStyle?: string;
+    align?: TextAlign;
+    letterSpacing?: number;
+    lineHeight?: number;
+    direction?: TextDirection;
 }
 export interface ImageNode extends BaseNode {
     type: 'image';
@@ -52,6 +80,12 @@ export interface ImageNode extends BaseNode {
 export interface ShapeNode extends BaseNode {
     type: 'shape';
     shape: ShapeKind;
+    /** Rectangle corner radius in hm. */
+    cornerRadius?: hm;
+    /** Line/polygon vertices in hm. */
+    points?: [hm, hm][];
+    /** Polygon close flag. */
+    closed?: boolean;
 }
 export interface QrNode extends BaseNode {
     type: 'qr';
@@ -139,6 +173,8 @@ export interface LabelDoc {
         // longest side, ≤ 64 KB decoded — reject otherwise. Auto updates on
         // save/export. Not user overridable.
         thumb?: { mediaType: string; dataUrl: string; at: number };
+        /** Originating preset id. Drives non-printing guide derivation. */
+        presetId?: string;
     };
     label: {
         backingW: hm;
