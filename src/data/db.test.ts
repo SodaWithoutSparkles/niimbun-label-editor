@@ -32,11 +32,28 @@ describe('createMemoryAdapter', () => {
         expect(await adapter.getAll('labels')).toEqual([{ y: 2 }]);
     });
 
+    it('seeds the trust store', async () => {
+        const adapter = createMemoryAdapter({ trust: { 'doc-1': 'always' } });
+        expect(await adapter.get('trust', 'doc-1')).toBe('always');
+        expect(await adapter.keys('trust')).toEqual(['doc-1']);
+    });
+
+    it('includes trust in STORE_NAMES', () => {
+        expect(STORE_NAMES).toContain('trust');
+    });
+
     it('preserves reference identity of values (no copy)', async () => {
         const adapter = createMemoryAdapter();
         const value = new Uint8Array([1, 2, 3]);
         await adapter.put('labels', 'a', value);
         expect(await adapter.get('labels', 'a')).toBe(value);
+    });
+
+    it('exposes a no-op close() so callers can release uniformly', () => {
+        const adapter = createMemoryAdapter();
+        expect(adapter.close).toBeTypeOf('function');
+        adapter.close?.();
+        expect(adapter.close?.()).toBeUndefined();
     });
 });
 
@@ -55,15 +72,17 @@ describe('runUpgrade (P6 bump-friendly, non-destructive guarantee)', () => {
     };
 
     it('creates only the missing stores and never recreates existing ones', () => {
-        // Simulates a future version bump where `labels`/`resources` already
-        // exist and only a new store is missing.
-        const db = makeDatabase(['labels', 'resources']);
+        // Simulates a v1 → v2 bump: the four v1 stores already exist and only
+        // the new `trust` store is missing.
+        const db = makeDatabase(['labels', 'resources', 'csvs', 'thumbs']);
 
         runUpgrade(db);
 
-        expect(db.created).toEqual(['csvs', 'thumbs']);
+        expect(db.created).toEqual(['trust']);
         expect(db.created).not.toContain('labels');
         expect(db.created).not.toContain('resources');
+        expect(db.created).not.toContain('csvs');
+        expect(db.created).not.toContain('thumbs');
     });
 
     it('creates every store on a fresh database', () => {

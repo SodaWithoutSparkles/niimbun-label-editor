@@ -141,6 +141,29 @@
       "label": "Tools",
       "shapeTab": "Shape",
       "textTab": "Text"
+    },
+    "trust": {
+      "label": "Template trust",
+      "description": "Documents with template code are disabled until you allow them. Decisions are stored on this device only, never in the document.",
+      "loading": "Loading trust decisions…",
+      "loadError": "Could not read stored trust decisions.",
+      "actionError": "Could not update trust decisions. Try again.",
+      "empty": "No stored template trust decisions.",
+      "ask": "Ask each time",
+      "always": "Always allow",
+      "never": "Never allow",
+      "revoke": "Revoke",
+      "resetAll": "Reset all",
+      "resetConfirm": "Revoke all stored template trust decisions?"
+    }
+  },
+  "trust": {
+    "prompt": {
+      "title": "Run templates?",
+      "message": "\"{{name}}\" contains template code. Templates run as trusted code on this device.",
+      "messageNoName": "This label contains template code. Templates run as trusted code on this device.",
+      "allow": "Allow this session",
+      "deny": "Deny this session"
     }
   },
   "toolSettings": {
@@ -366,7 +389,7 @@
       "object": "Object",
       "dataSource": "Data source",
       "js": "JS",
-      "jsDisabled": "JavaScript sources are disabled until trust settings ship.",
+      "jsDisabled": "JavaScript sources are disabled for this document.",
       "noSelection": "Select an object to edit it.",
       "bulkTitle_one": "{{count}} object selected",
       "bulkTitle_other": "{{count}} objects selected",
@@ -392,7 +415,7 @@
         "stucki": "Stucki",
         "atkinson": "Atkinson"
       },
-      "trustDisabled": "Template trust settings arrive in a later phase.",
+      "trustDisabled": "Templates are disabled for this document.",
       "imageDisabled": "Image options arrive with the image engine in a later phase.",
       "qrDisabled": "QR options arrive with the QR engine in a later phase.",
       "barcodeDisabled": "Barcode options arrive with the barcode engine in a later phase.",

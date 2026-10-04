@@ -4,7 +4,7 @@ import { ensureLegacyMigrated } from './migrate';
 /**
  * IndexedDB layer for `labeleditor.v1`.
  *
- * The four stores are keyed out-of-line (the key is passed to `put`/`get`
+ * The stores are keyed out-of-line (the key is passed to `put`/`get`
  * explicitly, so no `keyPath`). Values are opaque here; each repo module owns
  * the shape that lives in its store.
  *
@@ -12,16 +12,24 @@ import { ensureLegacyMigrated } from './migrate';
  *   - per-record `put`, never delete-all-then-rewrite,
  *   - bulk operations collect per-record errors (`{ ok, errors }`) instead of
  *     blanking the gallery,
- *   - the `trust` store is deliberately absent (P6); keep the DB version bump
- *     friendly so P6 can add it in a non-destructive upgrade.
+ *   - version bumps add stores through `runUpgrade`'s `contains` guard, so an
+ *     existing database is never recreated and existing records survive.
  */
 
-export type StoreName = 'labels' | 'resources' | 'csvs' | 'thumbs';
+export type StoreName = 'labels' | 'resources' | 'csvs' | 'thumbs' | 'trust';
 
 export const DB_NAME = 'labeleditor.v1';
-export const DB_VERSION = 1;
+// v2 added the `trust` store (P6). The upgrade is additive: `runUpgrade` only
+// creates stores that do not already exist, so v1 data is preserved.
+export const DB_VERSION = 2;
 
-export const STORE_NAMES: readonly StoreName[] = ['labels', 'resources', 'csvs', 'thumbs'];
+export const STORE_NAMES: readonly StoreName[] = [
+    'labels',
+    'resources',
+    'csvs',
+    'thumbs',
+    'trust',
+];
 
 /** One failing record in a bulk operation, tagged with the record it belongs to. */
 export interface BulkError {
@@ -42,6 +50,12 @@ export interface StorageAdapter {
     put(store: StoreName, key: string, value: unknown): Promise<void>;
     delete(store: StoreName, key: string): Promise<void>;
     clear(store: StoreName): Promise<void>;
+    /**
+     * Release the underlying connection. Optional: the shared boot adapter is
+     * process-lifetime and never closes; an adapter opened for a transient scope
+     * (e.g. Settings) must close it on unmount.
+     */
+    close?(): void;
 }
 
 interface LabelEditorDB extends DBSchema {
@@ -49,6 +63,7 @@ interface LabelEditorDB extends DBSchema {
     resources: { key: string; value: unknown };
     csvs: { key: string; value: unknown };
     thumbs: { key: string; value: Blob };
+    trust: { key: string; value: unknown };
 }
 
 const createAdapterFromDb = (db: IDBPDatabase<LabelEditorDB>): StorageAdapter => {
@@ -83,6 +98,7 @@ const createAdapterFromDb = (db: IDBPDatabase<LabelEditorDB>): StorageAdapter =>
         },
         delete: (store, key) => db.delete(store, key),
         clear: (store) => db.clear(store),
+        close: () => db.close(),
     };
 };
 
@@ -121,6 +137,9 @@ export const createIdbAdapter = async (): Promise<StorageAdapter> => {
     const blocked = new Promise<never>((_, reject) => {
         rejectBlocked = reject;
     });
+    // Captured so the `blocking` callback can close this connection before the
+    // race below has resolved.
+    let current: IDBPDatabase<LabelEditorDB> | null = null;
 
     const open = openDB<LabelEditorDB>(DB_NAME, DB_VERSION, {
         upgrade(database) {
@@ -130,8 +149,10 @@ export const createIdbAdapter = async (): Promise<StorageAdapter> => {
             rejectBlocked(new Error('labeleditor.v1: upgrade blocked by another tab'));
         },
         blocking() {
-            // Another tab wants to upgrade; this tab's connection is stale. The
-            // idb library closes it for us, so nothing to do here.
+            // Another tab wants to upgrade. idb does NOT auto-close a connection
+            // when a `blocking` callback is supplied, so close this stale
+            // connection ourselves; otherwise the other tab's openDB stays blocked.
+            current?.close();
         },
     });
     // `blocked` can fire before `open` resolves; race so either path rejects.
@@ -145,6 +166,7 @@ export const createIdbAdapter = async (): Promise<StorageAdapter> => {
             ),
         ),
     ]);
+    current = db;
     return createAdapterFromDb(db);
 };
 
@@ -161,6 +183,7 @@ export const createMemoryAdapter = (
         resources: new Map(),
         csvs: new Map(),
         thumbs: new Map(),
+        trust: new Map(),
     };
 
     if (initial) {
@@ -191,6 +214,9 @@ export const createMemoryAdapter = (
         },
         async clear(store) {
             stores[store].clear();
+        },
+        close: () => {
+            // Nothing to release; kept so callers can close uniformly.
         },
     };
 };
