@@ -1,5 +1,10 @@
 import type { hm } from '../hm';
 import { QUANTIZERS, type QuantizerId } from '../render/quantize';
+import {
+    BARCODE_SYMBOLOGIES,
+    IMAGE_FITS,
+    QR_ERROR_CORRECTIONS,
+} from './objects';
 import type {
     AssetRef,
     BaseNode,
@@ -7,10 +12,13 @@ import type {
     ContentSource,
     FontRef,
     GlobalSpec,
+    ImageNode,
     ImageRef,
     LabelDoc,
     Node,
     NodeType,
+    QrNode,
+    BarcodeNode,
     Region,
     ShapeKind,
     TextNode,
@@ -273,6 +281,24 @@ const toQuantizerHint = (value: unknown, repairs?: string[]): QuantizerId | unde
     return undefined;
 };
 
+/**
+ * Optional string-enum value. A missing (`undefined`) optional returns
+ * `undefined` silently; a present-but-invalid value is dropped (absent) and
+ * recorded as a repair rather than failing the document — an absent optional
+ * always means "use the default", which is a safe fallback.
+ */
+const toOptionalEnum = <T extends string>(
+    value: unknown,
+    allowed: readonly T[],
+    repairs: string[] | undefined,
+    message: string,
+): T | undefined => {
+    if (value === undefined) return undefined;
+    if (isOneOf(value, allowed)) return value;
+    repairs?.push(message);
+    return undefined;
+};
+
 export const isNode = (value: unknown, repairs?: string[]): Node | undefined => {
     if (!isRecord(value)) return undefined;
     if (!isString(value.id) || value.id.length === 0) return undefined;
@@ -313,16 +339,25 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
             if (fontSize !== undefined) node.fontSize = fontSize;
             if (isString(value.fontFamily)) node.fontFamily = value.fontFamily;
             if (isString(value.fontStyle)) node.fontStyle = value.fontStyle;
+            if (isString(value.fontId)) node.fontId = value.fontId;
             if (isOneOf(value.align, TEXT_ALIGNS)) node.align = value.align;
             if (isFiniteNumber(value.letterSpacing)) node.letterSpacing = value.letterSpacing;
             if (isFiniteNumber(value.lineHeight)) node.lineHeight = value.lineHeight;
             if (isOneOf(value.direction, TEXT_DIRECTIONS)) node.direction = value.direction;
             return node;
         }
-        case 'image':
-            return isString(value.imageId)
-                ? { ...base, type: 'image', imageId: value.imageId }
-                : undefined;
+        case 'image': {
+            if (!isString(value.imageId)) return undefined;
+            const node: ImageNode = { ...base, type: 'image', imageId: value.imageId };
+            const fit = toOptionalEnum(
+                value.fit,
+                IMAGE_FITS,
+                repairs,
+                'node.fit: unknown fit dropped',
+            );
+            if (fit !== undefined) node.fit = fit;
+            return node;
+        }
         case 'shape': {
             if (!isOneOf(value.shape, SHAPE_KINDS)) return undefined;
             switch (value.shape) {
@@ -386,18 +421,36 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
             }
             return undefined;
         }
-        case 'qr':
-            return {
+        case 'qr': {
+            const node: QrNode = {
                 ...base,
                 type: 'qr',
                 data: toContentSource(value.data) ?? { kind: 'static', value: '' },
             };
-        case 'barcode':
-            return {
+            const errorCorrection = toOptionalEnum(
+                value.errorCorrection,
+                QR_ERROR_CORRECTIONS,
+                repairs,
+                'node.qr.errorCorrection: unknown level dropped',
+            );
+            if (errorCorrection !== undefined) node.errorCorrection = errorCorrection;
+            return node;
+        }
+        case 'barcode': {
+            const node: BarcodeNode = {
                 ...base,
                 type: 'barcode',
                 data: toContentSource(value.data) ?? { kind: 'static', value: '' },
             };
+            const symbology = toOptionalEnum(
+                value.symbology,
+                BARCODE_SYMBOLOGIES,
+                repairs,
+                'node.barcode.symbology: unknown symbology dropped',
+            );
+            if (symbology !== undefined) node.symbology = symbology;
+            return node;
+        }
     }
 };
 

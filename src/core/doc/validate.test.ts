@@ -314,6 +314,82 @@ describe('isNode — quantizerHint (P4)', () => {
     });
 });
 
+describe('isNode — P5 object options', () => {
+    it('round-trips a text fontId and drops a non-string one', () => {
+        const kept = isNode(
+            baseNode({ type: 'text', shape: undefined, text: 'hi', fontId: 'font-7' }),
+        );
+        expect(kept?.type === 'text' && kept.fontId).toBe('font-7');
+
+        const dropped = isNode(
+            baseNode({ type: 'text', shape: undefined, text: 'hi', fontId: 7 }),
+        );
+        expect(dropped?.type === 'text' && dropped.fontId).toBeUndefined();
+    });
+
+    it('keeps a valid image fit and drops an unknown one with a repair', () => {
+        const kept = isNode(baseNode({ type: 'image', shape: undefined, imageId: 'i', fit: 'cover' }));
+        expect(kept?.type === 'image' && kept.fit).toBe('cover');
+
+        const repairs: string[] = [];
+        const dropped = isNode(
+            baseNode({ type: 'image', shape: undefined, imageId: 'i', fit: 'bogus' }),
+            repairs,
+        );
+        expect(dropped?.type === 'image' && dropped.fit).toBeUndefined();
+        expect(repairs.join(' ')).toContain('node.fit: unknown fit dropped');
+    });
+
+    it('keeps a valid qr errorCorrection and drops an unknown one with a repair', () => {
+        const kept = isNode(
+            baseNode({ type: 'qr', shape: undefined, data: 'x', errorCorrection: 'H' }),
+        );
+        expect(kept?.type === 'qr' && kept.errorCorrection).toBe('H');
+
+        const repairs: string[] = [];
+        const dropped = isNode(
+            baseNode({ type: 'qr', shape: undefined, data: 'x', errorCorrection: 'X' }),
+            repairs,
+        );
+        expect(dropped?.type === 'qr' && dropped.errorCorrection).toBeUndefined();
+        expect(repairs.join(' ')).toContain('node.qr.errorCorrection: unknown level dropped');
+    });
+
+    it('keeps a valid barcode symbology and drops an unknown one with a repair', () => {
+        const kept = isNode(
+            baseNode({ type: 'barcode', shape: undefined, data: 'x', symbology: 'ean13' }),
+        );
+        expect(kept?.type === 'barcode' && kept.symbology).toBe('ean13');
+
+        const repairs: string[] = [];
+        const dropped = isNode(
+            baseNode({ type: 'barcode', shape: undefined, data: 'x', symbology: 'nope' }),
+            repairs,
+        );
+        expect(dropped?.type === 'barcode' && dropped.symbology).toBeUndefined();
+        expect(repairs.join(' ')).toContain('node.barcode.symbology: unknown symbology dropped');
+    });
+
+    it('round-trips the new optionals through isLabelDoc', () => {
+        const result = isLabelDoc(
+            validRaw({
+                nodes: [
+                    baseNode({ id: 'a', type: 'text', shape: undefined, text: 't', fontId: 'f1' }),
+                    baseNode({ id: 'b', type: 'image', shape: undefined, imageId: 'i1', fit: 'contain' }),
+                    baseNode({ id: 'c', type: 'qr', shape: undefined, data: 'q', errorCorrection: 'M' }),
+                    baseNode({ id: 'd', type: 'barcode', shape: undefined, data: 'b', symbology: 'code128' }),
+                ],
+            }),
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.nodes[0]?.type === 'text' && result.doc.nodes[0].fontId).toBe('f1');
+        expect(result.doc.nodes[1]?.type === 'image' && result.doc.nodes[1].fit).toBe('contain');
+        expect(result.doc.nodes[2]?.type === 'qr' && result.doc.nodes[2].errorCorrection).toBe('M');
+        expect(result.doc.nodes[3]?.type === 'barcode' && result.doc.nodes[3].symbology).toBe('code128');
+    });
+});
+
 describe('isNode', () => {
     it('accepts every node kind', () => {
         expect(isNode(baseNode())?.type).toBe('shape');

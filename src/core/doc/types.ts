@@ -1,5 +1,6 @@
 import type { hm } from '../hm';
 import type { QuantizerId } from '../render/quantize';
+import type { BarcodeSymbology, ImageFit, QrErrorCorrection } from './objects';
 
 /**
  * LabelDoc v1 — the document contract.
@@ -75,6 +76,8 @@ export interface TextNode extends BaseNode {
     fontSize?: hm;
     fontFamily?: string;
     fontStyle?: string;
+    /** Links to `FontRef.fontId`; `fontFamily` remains the resolved family string. */
+    fontId?: string;
     align?: TextAlign;
     letterSpacing?: number;
     lineHeight?: number;
@@ -83,6 +86,8 @@ export interface TextNode extends BaseNode {
 export interface ImageNode extends BaseNode {
     type: 'image';
     imageId: string;
+    /** Fit within the node box; the resolution cap is derived, never stored. */
+    fit?: ImageFit;
 }
 export interface ShapeNode extends BaseNode {
     type: 'shape';
@@ -97,10 +102,12 @@ export interface ShapeNode extends BaseNode {
 export interface QrNode extends BaseNode {
     type: 'qr';
     data: ContentSource;
+    errorCorrection?: QrErrorCorrection;
 }
 export interface BarcodeNode extends BaseNode {
     type: 'barcode';
     data: ContentSource;
+    symbology?: BarcodeSymbology;
 }
 
 export type Node = GroupNode | TextNode | ImageNode | ShapeNode | QrNode | BarcodeNode;
