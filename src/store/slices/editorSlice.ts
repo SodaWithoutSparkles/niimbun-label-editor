@@ -1,5 +1,6 @@
 import { newLabelId, roundNode } from '../../core/doc/factory';
 import { resizeNodeGeometry } from '../../core/doc/geometry';
+import { effectiveTransform, IDENTITY_MAT2D, nodeLookup, worldPreservingTransform, type Mat2D } from '../../core/doc/derive';
 import { roundHm } from '../../core/hm';
 import type { GroupNode, LabelDoc, Node } from '../../core/doc/types';
 import type { NodePatch, StoreSlice } from '../storeTypes';
@@ -63,6 +64,33 @@ const isValidParent = (nodes: readonly Node[], parentId: string | null): boolean
     if (parentId === null) return true;
     const parent = nodes.find((entry) => entry.id === parentId);
     return parent !== undefined && parent.type === 'group';
+};
+
+/** World matrix of a parent id (identity at the root / for a missing parent). */
+const parentWorldMatrix = (
+    parentId: string | null,
+    byId: ReadonlyMap<string, Node>,
+): Mat2D => {
+    if (parentId === null) return IDENTITY_MAT2D;
+    const parent = byId.get(parentId);
+    return parent ? effectiveTransform(parent, byId) : IDENTITY_MAT2D;
+};
+
+/**
+ * Rewrite `node.transform` so its world placement is unchanged when it moves
+ * from `oldParentId` to `newParentId` (must-fix #4). Without this a reparent
+ * under a translated/rotated group makes the content jump by the delta of the
+ * two effective parent transforms.
+ */
+const preserveWorldTransform = (
+    node: Node,
+    oldParentId: string | null,
+    newParentId: string | null,
+    byId: ReadonlyMap<string, Node>,
+): void => {
+    const oldParent = parentWorldMatrix(oldParentId, byId);
+    const newParent = parentWorldMatrix(newParentId, byId);
+    node.transform = worldPreservingTransform(node.transform, oldParent, newParent);
 };
 
 /**
@@ -162,16 +190,19 @@ export const createEditorSlice: StoreSlice = (set, get) => {
 
     /**
      * Persist `doc` through the repo if the current preferences allow a
-     * background save. Never throws: a failed autosave is invisible by design
+     * background save. Never rejects: a failed autosave is invisible by design
      * (the explicit save path owns user-visible errors), and `Promise.resolve()`
-     * also catches a *synchronous* throw from `save`.
+     * also catches a *synchronous* throw from `save`. Returns when the write has
+     * settled, so a caller that needs deterministic ordering can await it.
      */
-    const saveDoc = (doc: LabelDoc, repo: NonNullable<ReturnType<typeof get>['labelRepo']>): void => {
-        void Promise.resolve()
+    const saveDoc = (
+        doc: LabelDoc,
+        repo: NonNullable<ReturnType<typeof get>['labelRepo']>,
+    ): Promise<void> =>
+        Promise.resolve()
             .then(() => repo.save(doc))
             .then(() => get().setLastAutoSaveAt(Date.now()))
             .catch(() => undefined);
-    };
 
     /** Cancel any pending debounce and forget its captured doc. */
     const cancelAutosave = (): void => {
@@ -203,26 +234,30 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             if (state.view !== 'editor') return;
             const repo = state.labelRepo;
             if (!repo) return;
-            saveDoc(pending, repo);
+            void saveDoc(pending, repo);
         }, get().docAutosaveDelayMs);
     };
 
     /**
      * Flush a pending autosave immediately (if one is scheduled), saving the doc
-     * captured at schedule time. Called on the view/doc boundary so leaving the
-     * editor cannot drop the last edit. The write is independent of `view` (a
-     * switch to the gallery must still persist), but still honours `autoSave`
-     * and the presence of a repo.
+     * captured at schedule time, and resolve once it has settled. Called on the
+     * view/doc boundary so leaving the editor cannot drop the last edit. The
+     * write is independent of `view` (a switch to the gallery must still
+     * persist), but still honours `autoSave` and the presence of a repo.
+     *
+     * Returning a promise is load-bearing for `saveCurrentLabel`: it must
+     * **await** the older pending write before its own (newer) save, or the
+     * deferred autosave lands last and clobbers the explicit save (must-fix #8).
      */
-    const flushAutosave = (): void => {
+    const flushAutosave = (): Promise<void> => {
         const pending = pendingAutosaveDoc;
         cancelAutosave();
-        if (!pending) return;
+        if (!pending) return Promise.resolve();
         const state = get();
-        if (!state.autoSave) return;
+        if (!state.autoSave) return Promise.resolve();
         const repo = state.labelRepo;
-        if (!repo) return;
-        saveDoc(pending, repo);
+        if (!repo) return Promise.resolve();
+        return saveDoc(pending, repo);
     };
 
     /**
@@ -373,7 +408,7 @@ export const createEditorSlice: StoreSlice = (set, get) => {
         },
 
         flushAutosave: () => {
-            flushAutosave();
+            return flushAutosave();
         },
 
         removeNode: (id) => {
@@ -416,6 +451,11 @@ export const createEditorSlice: StoreSlice = (set, get) => {
 
             const next = cloneDoc(doc);
             const moved = next.nodes.find((entry) => entry.id === id)!;
+            // Preserve the node's world placement across the parent change
+            // (must-fix #4): fold the delta between the old and new effective
+            // parent transforms into its local transform. `byId` is read before
+            // the parentId flip, so the old parent chain is intact.
+            preserveWorldTransform(moved, moved.parentId, parentId, nodeLookup(next.nodes));
             moved.parentId = parentId;
             // Drop the node, then reinsert it among its new siblings at the
             // requested index so array order keeps encoding sibling z-order.
@@ -496,7 +536,18 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             // Filter by id (not parentId): the children's parentId is reassigned
             // below, so a parentId filter would stop matching them.
             const childIds = new Set(children.map((child) => child.id));
-            for (const child of children) child.parentId = groupNode.parentId;
+            // Preserve each child's world placement: the group's transform is
+            // folded out and the group's parent transform folded in (must-fix
+            // #4), so ungrouping a moved/rotated group leaves content in place.
+            // `byId` is built before any parentId changes.
+            const byId = nodeLookup(next.nodes);
+            const groupWorld = effectiveTransform(groupNode, byId);
+            const newParentWorld = parentWorldMatrix(groupNode.parentId, byId);
+            for (const child of children) {
+                const local = worldPreservingTransform(child.transform, groupWorld, newParentWorld);
+                child.transform = local;
+                child.parentId = groupNode.parentId;
+            }
             // Splice the children into the group's own z slot, preserving their
             // relative order and dropping the group entry.
             const at = next.nodes.findIndex((entry) => entry.id === id);

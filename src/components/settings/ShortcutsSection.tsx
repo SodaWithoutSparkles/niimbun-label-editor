@@ -140,29 +140,9 @@ export const ShortcutsSection: React.FC = () => {
                     onChange={(value) => setToolShortcut('line', value)}
                 />
                 <ShortcutInput
-                    label={t('settings.shortcuts.arrow')}
-                    value={keyboardShortcuts.tools.arrow}
-                    onChange={(value) => setToolShortcut('arrow', value)}
-                />
-                <ShortcutInput
-                    label={t('settings.shortcuts.callout')}
-                    value={keyboardShortcuts.tools.callout}
-                    onChange={(value) => setToolShortcut('callout', value)}
-                />
-                <ShortcutInput
-                    label={t('settings.shortcuts.star')}
-                    value={keyboardShortcuts.tools.star}
-                    onChange={(value) => setToolShortcut('star', value)}
-                />
-                <ShortcutInput
                     label={t('settings.shortcuts.text')}
                     value={keyboardShortcuts.tools.text}
                     onChange={(value) => setToolShortcut('text', value)}
-                />
-                <ShortcutInput
-                    label={t('settings.shortcuts.dropper')}
-                    value={keyboardShortcuts.tools.dropper}
-                    onChange={(value) => setToolShortcut('dropper', value)}
                 />
             </div>
 

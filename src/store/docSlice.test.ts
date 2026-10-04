@@ -338,4 +338,42 @@ describe('docSlice — saveCurrentLabel', () => {
         // The explicit save still ran.
         expect(save).toHaveBeenCalled();
     });
+
+    it('awaits the pending autosave before the explicit save (deterministic ordering, must-fix #8)', async () => {
+        vi.useFakeTimers();
+        const store = createAppStore(makeStorage());
+        const repo = createLabelRepo(createMemoryAdapter());
+        const save = vi.spyOn(repo, 'save').mockResolvedValue(undefined);
+        store.getState().setLabelRepo(repo);
+        store.getState().setDocAutosaveDelay(1_000_000);
+        store.setState({ currentDoc: makeDoc(), view: 'editor', autoSave: true });
+
+        store.getState().addNode(textNode('a')); // schedules the pending autosave
+        await store.getState().saveCurrentLabel();
+
+        expect(save).toHaveBeenCalledTimes(2);
+        const [first, second] = save.mock.invocationCallOrder;
+        // The pending (older) autosave settles BEFORE the newer explicit save;
+        // the deferred ordering used to invert this so the older doc landed last.
+        expect(first!).toBeLessThan(second!);
+    });
+
+    it('awaits the pending autosave before removing the label (must-fix #8)', async () => {
+        vi.useFakeTimers();
+        const store = createAppStore(makeStorage());
+        const repo = createLabelRepo(createMemoryAdapter());
+        const save = vi.spyOn(repo, 'save').mockResolvedValue(undefined);
+        const remove = vi.spyOn(repo, 'remove').mockResolvedValue(undefined);
+        store.getState().setLabelRepo(repo);
+        store.getState().setDocAutosaveDelay(1_000_000);
+        store.setState({ currentDoc: makeDoc([textNode('a')]), view: 'editor', autoSave: true });
+
+        store.getState().addNode(textNode('b')); // schedules the pending autosave
+        await store.getState().deleteLabel('doc-1');
+
+        // The save must land before the remove, or the deferred write would
+        // recreate the just-deleted label.
+        expect(save.mock.invocationCallOrder[0]!).toBeLessThan(remove.mock.invocationCallOrder[0]!);
+        expect(store.getState().currentDoc).toBeNull();
+    });
 });

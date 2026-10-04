@@ -6,13 +6,15 @@ import { useStore } from '../../store/useStore';
 import { cn } from '../../utils/cn';
 import { resolve, flattenResolved } from '../../editor/render/resolve';
 import type { ResolvedNode } from '../../editor/render/resolve';
+import type { Node } from '../../core/doc/types';
 import { matrixToKonvaAttrs } from '../../editor/render/konvaFactory';
-import { movePatch, transformEndPatch, preserveAspectFor, dragOriginOf, type DragOrigin } from '../../editor/transformGesture';
-import { preservesAspectByDefault } from '../../core/doc/geometry';
-import { localMatrix, type Mat2D } from '../../core/doc/derive';
+import { movePatch, transformEndPatch, preserveAspectFor, transformerTargetSize, dragOriginOf, type DragOrigin } from '../../editor/transformGesture';
+import { nodeSize, pointsExtent, preservesAspectByDefault, DEFAULT_CONTENT_SIZE, type Size } from '../../core/doc/geometry';
+import { type Mat2D } from '../../core/doc/derive';
 import { resolveGuides } from '../../editor/render/guides';
 import { nodesIntersectNonPrintable } from '../../editor/render/regionOverlay';
 import {
+    clampPan,
     hitTestWorld,
     screenToWorld,
     screenToHm,
@@ -25,7 +27,6 @@ import {
 import { resolveZoom, centeredViewport, zoomAt } from '../../editor/viewportController';
 import { createNodeForInsert } from '../../editor/insertActions';
 import { selectionAfterClick, nodesInMarquee } from '../../editor/selectionModel';
-import { DEFAULT_CONTENT_SIZE } from '../../core/doc/geometry';
 import { GRID_STEP_HM } from './gridConstants';
 import { ResolvedShape } from './ResolvedShape';
 import { Overlays, type SnapGuideLine } from './Overlays';
@@ -56,6 +57,8 @@ interface DragState {
     startWorld: Point;
     /** Full origin transform per node so a move preserves rot/scale (must-fix #4). */
     origins: Map<string, DragOrigin>;
+    /** World bounds per dragged node captured at drag start, for snapping. */
+    bounds: Map<string, ViewRect>;
 }
 
 const matrixForViewport = (viewport: Viewport): Mat2D => {
@@ -64,6 +67,17 @@ const matrixForViewport = (viewport: Viewport): Mat2D => {
     }
     return { a: viewport.zoom, b: 0, c: 0, d: viewport.zoom, e: viewport.x, f: viewport.y };
 };
+
+/**
+ * A node's real local extent before a Transformer gesture (must-fix #2): the
+ * `size` box for boxed content, and the point cloud's bounding box for
+ * line/polygon. `Konva.Line.width()` is `undefined`, so using it directly left
+ * point shapes resizing against a fixed default box.
+ */
+const nodeBaseExtent = (node: Node): Size =>
+    node.type === 'shape' && (node.shape === 'line' || node.shape === 'polygon')
+        ? pointsExtent(node.points ?? [])
+        : nodeSize(node);
 
 export const PreviewStage: React.FC = () => {
     const { t } = useTranslation();
@@ -77,7 +91,7 @@ export const PreviewStage: React.FC = () => {
     const addNode = useStore((state) => state.addNode);
     const updateNodeTransient = useStore((state) => state.updateNodeTransient);
     const commitDoc = useStore((state) => state.commitDoc);
-    const resetTransient = useStore((state) => state.resetTransient);
+    const flushAutosave = useStore((state) => state.flushAutosave);
 
     const gridVisible = useStore((state) => state.gridVisible);
     const snapEnabled = useStore((state) => state.snapEnabled);
@@ -93,6 +107,8 @@ export const PreviewStage: React.FC = () => {
     const layerRef = useRef<Konva.Layer>(null);
     const transformerRef = useRef<Konva.Transformer>(null);
     const nodeRefs = useRef(new Map<string, Konva.Node>());
+    /** Latest resolved world bounds, read by drag start without re-binding. */
+    const nodeBoundsRef = useRef<Map<string, ViewRect>>(new Map());
     const [size, setSize] = useState({ w: 0, h: 0 });
     const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1, rotation: 0 });
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
@@ -151,11 +167,15 @@ export const PreviewStage: React.FC = () => {
     );
     const guides = useMemo(() => (doc ? resolveGuides(doc) : []), [doc]);
     const keepOutIds = useMemo(() => (doc ? nodesIntersectNonPrintable(doc) : []), [doc]);
-    const keepOutBounds = useMemo(() => {
+    /** World bounds per resolved node — used for keep-out badges and drag snap. */
+    const nodeBoundsById = useMemo(() => {
         const map = new Map<string, ViewRect>();
         for (const node of flatResolved) map.set(node.id, node.bounds);
         return map;
     }, [flatResolved]);
+    const keepOutBounds = nodeBoundsById;
+    // Keep the latest bounds reachable from `beginDrag` without a stale closure.
+    nodeBoundsRef.current = nodeBoundsById;
 
     // Reset stale refs on each document change.
     useEffect(() => {
@@ -199,12 +219,15 @@ export const PreviewStage: React.FC = () => {
     const beginDrag = useCallback(
         (world: Point, ids: readonly string[]) => {
             const origins = new Map<string, DragOrigin>();
+            const bounds = new Map<string, ViewRect>();
             if (!doc) return;
             for (const id of ids) {
                 const node = doc.nodes.find((entry) => entry.id === id);
                 if (node) origins.set(id, dragOriginOf(node));
+                const box = nodeBoundsRef.current.get(id);
+                if (box) bounds.set(id, box);
             }
-            dragRef.current = { startWorld: world, origins };
+            dragRef.current = { startWorld: world, origins, bounds };
         },
         [doc],
     );
@@ -244,8 +267,10 @@ export const PreviewStage: React.FC = () => {
             if (hitId !== null) {
                 if (!additive && !selectedNodeIds.includes(hitId)) selectNode(hitId);
                 else selectNodes(nextSelection);
-                // A plain click on an already-selected node begins a move.
-                if (!additive) beginDrag(world, selectedNodeIds.includes(hitId) ? selectedNodeIds : [hitId]);
+                // A plain click begins a move of exactly the selection the user
+                // now sees (must-fix #11); using the pre-click list moved nodes
+                // that a collapsing click had just deselected.
+                if (!additive) beginDrag(world, nextSelection);
                 return;
             }
 
@@ -265,11 +290,20 @@ export const PreviewStage: React.FC = () => {
 
         const pan = panRef.current;
         if (pan) {
-            setViewport((current) => ({
-                ...current,
-                x: pan.startPan.x + (pointer.x - pan.startScreen.x),
-                y: pan.startPan.y + (pointer.y - pan.startScreen.y),
-            }));
+            // Clamp pan so the label can never leave the viewport (plan §3).
+            if (backing) {
+                setViewport((current) =>
+                    clampPan(
+                        {
+                            ...current,
+                            x: pan.startPan.x + (pointer.x - pan.startScreen.x),
+                            y: pan.startPan.y + (pointer.y - pan.startScreen.y),
+                        },
+                        backing,
+                        innerSize,
+                    ),
+                );
+            }
             return;
         }
 
@@ -285,17 +319,34 @@ export const PreviewStage: React.FC = () => {
             let dy = world.y - drag.startWorld.y;
 
             if (snapEnabled) {
-                const movingNodes = drag.origins.size;
-                const primary = selectedNodeIds.length === 1 ? selectedNodeIds[0] : null;
-                const movingBox: ViewRect = {
-                    x: primary ? (drag.origins.get(primary)?.x ?? 0) + dx : dx,
-                    y: primary ? (drag.origins.get(primary)?.y ?? 0) + dy : dy,
-                    w: DEFAULT_CONTENT_SIZE,
-                    h: DEFAULT_CONTENT_SIZE,
-                };
+                const movingIds = new Set(drag.origins.keys());
+                const primary = selectedNodeIds.length === 1 ? selectedNodeIds[0] : [...movingIds][0];
+                // Use the bounds captured at drag start: the resolved bounds
+                // recompute from the already-moved transient doc each render, so
+                // reading them live would double-count the drag delta.
+                const primaryBounds = primary ? drag.bounds.get(primary) : undefined;
+                const origin = primary ? drag.origins.get(primary) : undefined;
+                // The dragged node's real world bounds, shifted by the drag
+                // (must-fix #7); fall back to its transform origin only when no
+                // resolved bounds exist.
+                const movingBox: ViewRect = primaryBounds
+                    ? { x: primaryBounds.x + dx, y: primaryBounds.y + dy, w: primaryBounds.w, h: primaryBounds.h }
+                    : {
+                          x: (origin?.x ?? 0) + dx,
+                          y: (origin?.y ?? 0) + dy,
+                          w: DEFAULT_CONTENT_SIZE,
+                          h: DEFAULT_CONTENT_SIZE,
+                      };
+                // Sibling edges must be snapped to as well (must-fix #7), so
+                // pass every other resolved node's world bounds.
+                const siblings: ViewRect[] = [];
+                for (const [id, bounds] of nodeBoundsById) {
+                    if (!movingIds.has(id)) siblings.push(bounds);
+                }
                 const candidates = snapCandidates(movingBox, {
                     backing: backing!,
                     regions: doc.label.regions,
+                    siblings,
                     grid: GRID_STEP_HM,
                 });
                 const thresholdHm = SNAP_THRESHOLD_PX / viewport.zoom;
@@ -315,7 +366,6 @@ export const PreviewStage: React.FC = () => {
                     dy += bestY.delta;
                     lines.push({ axis: 'y', guide: bestY.guide, extent: doc.label.backingW });
                 }
-                void movingNodes;
                 setSnapLines(lines);
             }
 
@@ -323,7 +373,7 @@ export const PreviewStage: React.FC = () => {
                 updateNodeTransient(id, movePatch(origin, dx, dy));
             }
         }
-    }, [doc, marquee, viewport, snapEnabled, selectedNodeIds, backing, updateNodeTransient]);
+    }, [doc, marquee, viewport, snapEnabled, selectedNodeIds, backing, innerSize, nodeBoundsById, updateNodeTransient]);
 
     /**
      * Finalize any armed pointer gesture: release pan, drop snap guides and
@@ -331,10 +381,16 @@ export const PreviewStage: React.FC = () => {
      * baseline — so the stage handler and the window finalizer can both call it.
      * Deliberately does **not** run marquee math or touch selection (must-fix
      * #5): a release over the MFP/rail must not clear a fresh selection.
+     *
+     * A live Transformer gesture is deliberately left alone: Konva fires
+     * `transformend` from window `mouseup` **after** this `pointerup` finalizer,
+     * so `handleTransformEnd` owns the commit. Resetting the node's attrs here
+     * (or committing) would clobber the live geometry before that handler can
+     * read it — the transform no-op (must-fix #1).
      */
     const finalizeGesture = useCallback(() => {
         const hadGesture = panRef.current !== null || dragRef.current !== null || transformingRef.current;
-        const abortedTransform = transformingRef.current;
+        const wasTransforming = transformingRef.current;
         panRef.current = null;
         dragRef.current = null;
         transformingRef.current = false;
@@ -347,23 +403,19 @@ export const PreviewStage: React.FC = () => {
         setMarquee((current) => (current === null ? current : null));
         if (hadGesture) {
             // Re-sync the Transformer so a release outside the stage cannot leave
-            // a half-applied handle gesture on screen.
-            transformerRef.current?.forceUpdate();
-            layerRef.current?.batchDraw();
-        }
-        // A transform released outside the stage never fires `transformend`, so
-        // its live Konva scale/rotation is reset from the (unchanged) document.
-        if (abortedTransform && doc) {
-            for (const id of selectedNodeIds) {
-                const konvaNode = nodeRefs.current.get(id);
-                const source = doc.nodes.find((entry) => entry.id === id);
-                if (konvaNode && source) konvaNode.setAttrs(matrixToKonvaAttrs(localMatrix(source.transform)));
+            // a half-applied handle gesture on screen. Skipped for a live
+            // transform: `transformend` still has to read the live geometry.
+            if (!wasTransforming) {
+                transformerRef.current?.forceUpdate();
+                layerRef.current?.batchDraw();
             }
         }
         // Idempotent: no-ops when no transient baseline is open. Ends a move
         // gesture (dragRef) exactly once, even if released over the MFP/rail.
+        // A live transform has no transient baseline yet (the patch is applied
+        // in `handleTransformEnd`), so this is a no-op for it.
         commitDoc();
-    }, [commitDoc, doc, selectedNodeIds]);
+    }, [commitDoc]);
 
     // Window-level finalizer so a pointer released outside the stage content
     // (over the MFP/rail) still ends the gesture. Matched add/remove keeps
@@ -428,9 +480,18 @@ export const PreviewStage: React.FC = () => {
     /**
      * Batch a Transformer gesture into **one** undo entry (must-fix #3): apply
      * every selected node's resize + rotation transiently, then a single
-     * `commitDoc`. `preserveAspect` follows the plan default per node type and
-     * is inverted by a shift/alt press so the UI can opt out (ellipse/image/QR
-     * preserve; rect/line/polygon/text are free).
+     * `commitDoc`. The patch is derived from the **live Konva node** geometry —
+     * its actual scale/rotation after the gesture — not from the untouched doc
+     * (must-fix #1): Konva fires `transformend` after the window `pointerup`
+     * finalizer, so the doc is still the pre-gesture baseline here.
+     *
+     * The resize base is the node's real local extent (must-fix #2): `size` for
+     * boxed content, `points` bbox for line/polygon (`Konva.Line.width()` is
+     * `undefined`).
+     *
+     * `preserveAspect` follows the plan default per node type and is inverted by
+     * a shift/alt press so the UI can opt out (ellipse/image/QR preserve;
+     * rect/line/polygon/text are free).
      */
     const handleTransformEnd = useCallback(
         () => {
@@ -443,15 +504,22 @@ export const PreviewStage: React.FC = () => {
                 const konvaNode = nodeRefs.current.get(id);
                 const source = doc.nodes.find((entry) => entry.id === id);
                 if (!konvaNode || !source) continue;
-                const width = Math.abs(konvaNode.width() * konvaNode.scaleX()) || DEFAULT_CONTENT_SIZE;
-                const height = Math.abs(konvaNode.height() * konvaNode.scaleY()) || DEFAULT_CONTENT_SIZE;
+                // Read geometry from the live node: the Transformer mutates the
+                // Konva node's scale/rotation in place during a gesture, while
+                // the document stays at the pre-gesture baseline.
+                const base = nodeBaseExtent(source);
+                const target = transformerTargetSize(base, konvaNode.scaleX(), konvaNode.scaleY());
                 updateNodeTransient(
                     id,
                     transformEndPatch(
                         source,
-                        { w: Math.round(width), h: Math.round(height) },
+                        { w: Math.round(target.w), h: Math.round(target.h) },
                         preserveAspectFor(source, inverted),
-                        konvaNode.rotation(),
+                        {
+                            x: konvaNode.x(),
+                            y: konvaNode.y(),
+                            rotDeg: konvaNode.rotation(),
+                        },
                     ),
                 );
             }
@@ -460,9 +528,22 @@ export const PreviewStage: React.FC = () => {
         [doc, selectedNodeIds, updateNodeTransient, commitDoc],
     );
 
+    // A page reload/close inside the autosave debounce would otherwise drop the
+    // last edit; flush the pending write on `pagehide` (must-fix #8).
+    useEffect(() => {
+        const onPageHide = () => {
+            void flushAutosave();
+        };
+        window.addEventListener('pagehide', onPageHide);
+        return () => window.removeEventListener('pagehide', onPageHide);
+    }, [flushAutosave]);
+
     // Abandon a half-open transient gesture if the preview unmounts mid-gesture
-    // (view switch, doc close). The cleanup must not commit.
-    useEffect(() => () => resetTransient(), [resetTransient]);
+    // (view switch, doc close). The transient updates have already mutated
+    // `currentDoc`, so COMMIT (don't drop) so the edit stays undoable and is
+    // autosaved — matching `ObjectTab`'s unmount behaviour (should-fix #9).
+    // `commitDoc` no-ops if the baseline belongs to another doc.
+    useEffect(() => () => commitDoc(), [commitDoc]);
 
     // Track shift/alt so a transform gesture can opt in/out of aspect lock.
     useEffect(() => {
@@ -511,6 +592,18 @@ export const PreviewStage: React.FC = () => {
                 onPointerUp={handlePointerUp}
                 onWheel={handleWheel}
             >
+                {/* Background overlays (silhouette, grid, guides, keep-out) first,
+                    so label content and the Transformer paint on top of them. */}
+                <Overlays
+                    doc={doc}
+                    guides={guides}
+                    showGrid={gridVisible}
+                    gridStepHm={GRID_STEP_HM}
+                    snapLines={snapLines}
+                    keepOutIds={keepOutIds}
+                    keepOutBounds={keepOutBounds}
+                    layerAttrs={sceneAttrs}
+                />
                 <Layer ref={layerRef} {...sceneAttrs}>
                     {resolved.map((node) => (
                         <ResolvedShape
@@ -534,16 +627,6 @@ export const PreviewStage: React.FC = () => {
                         anchorSize={8}
                     />
                 </Layer>
-                <Overlays
-                    doc={doc}
-                    guides={guides}
-                    showGrid={gridVisible}
-                    gridStepHm={GRID_STEP_HM}
-                    snapLines={snapLines}
-                    keepOutIds={keepOutIds}
-                    keepOutBounds={keepOutBounds}
-                    layerAttrs={sceneAttrs}
-                />
             </Stage>
 
             {rulersVisible && <Rulers viewport={viewport} backingW={backing.backingW} backingH={backing.backingH} />}

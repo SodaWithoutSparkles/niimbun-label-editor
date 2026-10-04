@@ -102,8 +102,12 @@ describe('inspectorModel — single-selection field set', () => {
         expect(new Set(fieldKeys).size).toBe(fieldKeys.length);
         expect(fieldKeys).toContain('x');
         expect(fieldKeys).toContain('fontFamily');
-        expect(fieldKeys).toContain('visible');
+        expect(fieldKeys).toContain('text');
         expect(fieldKeys).toContain('contentSource');
+        // The layers panel owns visible/locked (ui-spec §7), so the Object tab
+        // must not advertise them (must-fix #9).
+        expect(fieldKeys).not.toContain('visible');
+        expect(fieldKeys).not.toContain('locked');
         // `align` appears in both text and universal sets but only once.
         expect(fieldKeys.filter((k) => k === 'align')).toHaveLength(1);
     });
@@ -134,7 +138,10 @@ describe('inspectorModel — bulk mode', () => {
         const fieldKeys = keys(model.fields);
         expect(fieldKeys).toContain('x');
         expect(fieldKeys).toContain('fontFamily');
-        expect(fieldKeys).toContain('visible');
+        expect(fieldKeys).toContain('align');
+        // visible/locked belong to the layers panel, not the Object tab.
+        expect(fieldKeys).not.toContain('visible');
+        expect(fieldKeys).not.toContain('locked');
         // reserved stubs are not part of bulk same-type mode
         expect(fieldKeys).not.toContain('contentSource');
     });
@@ -144,13 +151,13 @@ describe('inspectorModel — bulk mode', () => {
         expect(model.mode).toBe('mixed');
         expect(model.types).toEqual(['text', 'shape']);
         expect(model.fields).toEqual([...UNIVERSAL_FIELDS]);
-        expect(keys(model.fields)).toEqual(['visible', 'locked', 'align']);
+        expect(keys(model.fields)).toEqual(['align']);
     });
 
     it('three mixed types also collapse to universal props', () => {
         const model = bulkFieldModel([node('a', 'text'), node('b', 'shape'), node('c', 'qr')]);
         expect(model.mode).toBe('mixed');
-        expect(keys(model.fields)).toEqual(['visible', 'locked', 'align']);
+        expect(keys(model.fields)).toEqual(['align']);
     });
 
     it('reports duplicate-type order in first-seen order', () => {

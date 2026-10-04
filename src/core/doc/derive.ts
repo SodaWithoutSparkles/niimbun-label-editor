@@ -81,6 +81,61 @@ export const multiplyMat2D = (parent: Mat2D, child: Mat2D): Mat2D => ({
     f: parent.b * child.e + parent.d * child.f + parent.f,
 });
 
+/** Full inverse of an affine matrix; `null` when it is singular (zero determinant). */
+export const invertMat2D = (m: Mat2D): Mat2D | null => {
+    const det = m.a * m.d - m.b * m.c;
+    if (det === 0) return null;
+    const invDet = 1 / det;
+    return {
+        a: m.d * invDet,
+        b: -m.b * invDet,
+        c: -m.c * invDet,
+        d: m.a * invDet,
+        e: (m.c * m.f - m.d * m.e) * invDet,
+        f: (m.b * m.e - m.a * m.f) * invDet,
+    };
+};
+
+/**
+ * Decompose an affine matrix back into a stored `Transform` (x, y, rotDeg,
+ * scaleX, scaleY). A matrix carrying shear cannot be represented by this shape,
+ * so the shear term is dropped; that is acceptable here because reparenting
+ * between axis-aligned/rotated parents only ever produces scale + rotation.
+ * The x/y are rounded to integer hm (the document's discipline).
+ */
+const roundHmValue = (value: number): number => (Number.isFinite(value) ? Math.round(value) : 0);
+
+export const decomposeMat2D = (m: Mat2D): Transform => {
+    const scaleX = Math.hypot(m.a, m.b);
+    const determinant = m.a * m.d - m.b * m.c;
+    const scaleY = scaleX === 0 ? 1 : determinant / scaleX;
+    const rotDeg = (Math.atan2(m.b, m.a) * 180) / Math.PI;
+    return {
+        x: roundHmValue(m.e),
+        y: roundHmValue(m.f),
+        rotDeg,
+        scaleX: scaleX === 0 ? 1 : scaleX,
+        scaleY,
+    };
+};
+
+/**
+ * The local transform a node needs so its **world** transform is unchanged when
+ * it moves from `oldParent` to `newParent` (must-fix #4). Derives
+ * `newLocal = newParent⁻¹ × oldParent × oldLocal`, then decomposes it. Falls
+ * back to the original local transform if either parent matrix is singular.
+ */
+export const worldPreservingTransform = (
+    local: Transform,
+    oldParent: Mat2D,
+    newParent: Mat2D,
+): Transform => {
+    const inverseNew = invertMat2D(newParent);
+    if (!inverseNew) return local;
+    const composed = multiplyMat2D(inverseNew, multiplyMat2D(oldParent, localMatrix(local)));
+    return decomposeMat2D(composed);
+};
+
 /**
  * `parentTransform × localTransform`. A matrix, not a `Transform`: a non-uniform
  * scale under a rotation cannot be expressed as the stored {x,y,rot,scaleX,scaleY}

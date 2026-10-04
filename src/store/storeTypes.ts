@@ -1,5 +1,4 @@
 import type { StateCreator } from 'zustand';
-import type { HistoryEntry } from '../types';
 import type { SupportedLanguage } from '../i18n/languages';
 import type { InsertAction } from './slices/toolsSlice';
 import type { ZoomMode } from './slices/viewSlice';
@@ -36,11 +35,6 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : n
  */
 export type NodePatch = Partial<DistributiveOmit<Node, 'id' | 'parentId' | 'type'>>;
 
-export interface ColorPreset {
-    stroke: string;
-    fill: string;
-}
-
 export type ModifierKey = 'ctrl' | 'alt' | 'shift';
 export type TextSaveModifier = ModifierKey | 'none';
 
@@ -67,11 +61,7 @@ export interface KeyboardShortcutConfig {
         rectangle: string;
         ellipse: string;
         line: string;
-        arrow: string;
-        callout: string;
-        star: string;
         text: string;
-        dropper: string;
     };
 }
 
@@ -94,11 +84,6 @@ export interface AppState {
         textColor: string;
     };
     setToolSettings: (settings: Partial<AppState['toolSettings']>) => void;
-
-    // Log History
-    history: HistoryEntry[];
-    historyUndoCount: number;
-    addToHistory: (action: HistoryEntry) => void;
 
     // AutoSave
     autoSave: boolean;
@@ -186,10 +171,11 @@ export interface AppState {
     clearDocHistory: () => void;
     /**
      * Flushes a pending autosave immediately, saving the doc captured when the
-     * debounce was scheduled. Called at the doc/view boundary so switching
-     * views or documents cannot drop the last edit.
+     * debounce was scheduled, and resolves once the write has settled. Callers
+     * that need deterministic ordering (explicit save, delete) must `await` it;
+     * boundary callers may ignore the promise.
      */
-    flushAutosave: () => void;
+    flushAutosave: () => Promise<void>;
     removeNode: (id: string) => void;
     /** Deep-clones the node subtree with fresh ids; returns the clone's root id. */
     cloneNode: (id: string) => string | null;

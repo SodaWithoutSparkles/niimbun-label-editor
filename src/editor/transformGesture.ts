@@ -42,20 +42,33 @@ export const movePatch = (
 });
 
 /**
+ * The live geometry Konva's Transformer decomposed the gesture into. Konva
+ * mutates the node's own `x`/`y` (so a top/left anchor keeps the opposite
+ * corner fixed) and its `rotation`; all three must be committed or the node
+ * jumps on release (must-fix #6).
+ */
+export interface LiveTransform {
+    x: number;
+    y: number;
+    rotDeg: number;
+}
+
+/**
  * Patch that combines a free/aspect-locked resize with the node's final
- * rotation, as one op. Resize bakes into `size`/`points`/`strokeWidth`/
- * `fontSize`/`cornerRadius`; the transform's scale resets to 1 and carries the
- * new `rotDeg`.
+ * position + rotation, as one op. Resize bakes into `size`/`points`/
+ * `strokeWidth`/`fontSize`/`cornerRadius`; the transform takes the **live**
+ * decomposed x/y/rotDeg and resets the scale to 1 (the live Transformer scale
+ * is baked into geometry, not persisted).
  */
 export const transformEndPatch = (
     node: Node,
     target: Size,
     preserveAspect: boolean,
-    rotation: number,
+    live: LiveTransform,
 ): NodePatch => {
     const resized = resizeNodeGeometry(node, target, { preserveAspect });
-    // `resizeNodeGeometry` returns a new node; take its geometry fields and
-    // reset the transform scale (the live Transformer scale is not persisted).
+    // `resizeNodeGeometry` returns a new node; take its geometry fields and fold
+    // in the live transform (translation included — dropping x/y was the jump).
     const { size, points, cornerRadius, strokeWidth, fontSize } = resized as Node & {
         size?: Size;
         points?: [number, number][];
@@ -69,9 +82,26 @@ export const transformEndPatch = (
         ...(cornerRadius !== undefined ? { cornerRadius } : {}),
         ...(strokeWidth !== undefined ? { strokeWidth } : {}),
         ...(fontSize !== undefined ? { fontSize } : {}),
-        transform: { ...node.transform, rotDeg: rotation, scaleX: 1, scaleY: 1 },
+        transform: {
+            x: Math.round(live.x),
+            y: Math.round(live.y),
+            rotDeg: live.rotDeg,
+            scaleX: 1,
+            scaleY: 1,
+        },
     } as NodePatch;
 };
+
+/**
+ * Resize target for a Transformer gesture (must-fix #2): the node's real base
+ * extent scaled by the live Konva scale. `Konva.Line`/polygon have no
+ * `width()`/`height()`, so the caller must pass `pointsExtent` as the base
+ * rather than reading the node's box. `scaleX`/`scaleY` of 0 fall back to 1.
+ */
+export const transformerTargetSize = (base: Size, scaleX: number, scaleY: number): Size => ({
+    w: base.w * (Math.abs(scaleX) || 1),
+    h: base.h * (Math.abs(scaleY) || 1),
+});
 
 /**
  * Whether a transform gesture should preserve aspect. The plan default is

@@ -76,7 +76,10 @@ export const LayersPanel: React.FC = () => {
                         const Icon = TYPE_ICONS[row.type];
                         const selected = selectedNodeIds.includes(row.id);
                         const inheritedHidden = !row.effectiveVisible && row.visible;
-                        const inheritedLocked = !row.effectiveLocked && !row.locked;
+                        // A row is inherited-locked only when an ANCESTOR is
+                        // locked while the row's own flag is off. The previous
+                        // `!row.effectiveLocked && !row.locked` was inverted.
+                        const inheritedLocked = row.effectiveLocked && !row.locked;
                         const dimmed = !row.effectiveVisible || (row.effectiveLocked && !row.locked);
                         return (
                             <li

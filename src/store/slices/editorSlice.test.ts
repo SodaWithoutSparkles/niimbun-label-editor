@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAppStore } from '../useStore';
 import { createLabelDoc } from '../../core/doc/factory';
+import { effectiveTransform, nodeLookup } from '../../core/doc/derive';
 import type { LabelDoc, Node } from '../../core/doc/types';
 import type { LabelRepo } from '../../data/labelRepo';
 import type { NodePatch } from '../storeTypes';
@@ -299,21 +300,26 @@ describe('editorSlice — document operations', () => {
         const source = store.getState().currentDoc!.nodes[0]!;
 
         // The Preview applies the combined patch transiently then commits once.
+        // Live x/y includes the anchor fit from a top/left resize/rotate.
         store.getState().updateNodeTransient(
             's',
-            transformEndPatch(source, { w: 300, h: 150 }, false, 25),
+            transformEndPatch(source, { w: 300, h: 150 }, false, { x: 40, y: 30, rotDeg: 25 }),
         );
         store.getState().commitDoc();
 
         const node = store.getState().currentDoc!.nodes[0]!;
         expect(node.size).toEqual({ w: 300, h: 150 });
         expect(node.transform.rotDeg).toBe(25);
+        // The gesture translation is committed, not dropped (must-fix #6).
+        expect(node.transform.x).toBe(40);
+        expect(node.transform.y).toBe(30);
         expect(node.transform.scaleX).toBe(1);
         expect(store.getState().docPast).toHaveLength(1);
 
         store.getState().undoDoc();
         expect(store.getState().currentDoc!.nodes[0]!.size).toEqual({ w: 100, h: 50 });
         expect(store.getState().currentDoc!.nodes[0]!.transform.rotDeg).toBe(0);
+        expect(store.getState().currentDoc!.nodes[0]!.transform.x).toBe(10);
     });
 
     it('a no-op handle click adds no undo entry (must-fix #3)', () => {
@@ -332,7 +338,7 @@ describe('editorSlice — document operations', () => {
         // Geometry unchanged: the patch equals the baseline.
         store.getState().updateNodeTransient(
             's',
-            transformEndPatch(source, { w: 100, h: 50 }, false, 0),
+            transformEndPatch(source, { w: 100, h: 50 }, false, { x: 10, y: 10, rotDeg: 0 }),
         );
         store.getState().commitDoc();
         expect(store.getState().docPast).toHaveLength(0);
@@ -965,5 +971,85 @@ describe('editorSlice — autosave', () => {
         await vi.advanceTimersByTimeAsync(1000);
 
         expect(save).not.toHaveBeenCalled();
+    });
+});
+
+const worldOf = (nodes: readonly Node[], id: string) => {
+    const byId = nodeLookup(nodes);
+    return effectiveTransform(byId.get(id)!, byId);
+};
+
+describe('editorSlice — reparent/ungroup preserve world transform (must-fix #4)', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
+    it('reparent under a translated group keeps the node world position', () => {
+        const group = groupNode('g');
+        group.transform = { x: 1000, y: 200, rotDeg: 0, scaleX: 1, scaleY: 1 };
+        const a = textNode('a');
+        a.transform = { x: 100, y: 100, rotDeg: 0, scaleX: 1, scaleY: 1 };
+
+        const store = setupStore(makeDoc([group, a]));
+        store.getState().reparentNode('a', 'g', 0);
+
+        const nodes = store.getState().currentDoc!.nodes;
+        const world = worldOf(nodes, 'a');
+        expect(world.e).toBe(100);
+        expect(world.f).toBe(100);
+        // The local transform absorbed the parent delta rather than jumping.
+        expect(nodes.find((n) => n.id === 'a')!.transform.x).toBe(-900);
+    });
+
+    it('reparent under a rotated group keeps the node world position', () => {
+        const group = groupNode('g');
+        group.transform = { x: 0, y: 0, rotDeg: 90, scaleX: 1, scaleY: 1 };
+        const a = textNode('a');
+        a.transform = { x: 100, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 };
+
+        const store = setupStore(makeDoc([group, a]));
+        store.getState().reparentNode('a', 'g', 0);
+
+        const world = worldOf(store.getState().currentDoc!.nodes, 'a');
+        expect(world.e).toBeCloseTo(100, 6);
+        expect(world.f).toBeCloseTo(0, 6);
+    });
+
+    it('ungrouping a translated, moved group preserves the child world bounds', () => {
+        const group = groupNode('g');
+        group.transform = { x: 1000, y: 500, rotDeg: 0, scaleX: 1, scaleY: 1 };
+        const child = textNode('a', 'g');
+        child.transform = { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 };
+
+        const store = setupStore(makeDoc([group, child]));
+        const before = worldOf(store.getState().currentDoc!.nodes, 'a');
+        store.getState().ungroupNode('g');
+
+        const nodes = store.getState().currentDoc!.nodes;
+        expect(nodes.find((n) => n.id === 'g')).toBeUndefined();
+        const after = worldOf(nodes, 'a');
+        expect(after.e).toBeCloseTo(before.e, 6);
+        expect(after.f).toBeCloseTo(before.f, 6);
+        // Folded out of the group: local x now carries the group translation.
+        expect(nodes.find((n) => n.id === 'a')!.transform.x).toBe(1000);
+    });
+
+    it('ungrouping a rotated group preserves the child world bounds', () => {
+        const group = groupNode('g');
+        group.transform = { x: 1000, y: 500, rotDeg: 90, scaleX: 1, scaleY: 1 };
+        const child = textNode('a', 'g');
+        child.transform = { x: 100, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 };
+
+        const store = setupStore(makeDoc([group, child]));
+        const before = worldOf(store.getState().currentDoc!.nodes, 'a');
+        store.getState().ungroupNode('g');
+
+        const after = worldOf(store.getState().currentDoc!.nodes, 'a');
+        expect(after.e).toBeCloseTo(before.e, 6);
+        expect(after.f).toBeCloseTo(before.f, 6);
     });
 });

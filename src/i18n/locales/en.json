@@ -398,6 +398,7 @@
         "letterSpacing": "Letter spacing",
         "direction": "Direction",
         "shape": "Shape",
+        "text": "Text",
         "points": "Points",
         "closed": "Closed",
         "cornerRadius": "Corner radius",

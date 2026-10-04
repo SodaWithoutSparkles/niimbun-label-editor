@@ -49,7 +49,7 @@ export const createDocSlice: StoreSlice = (set, get) => {
             // Leaving the editor must not drop a pending autosave: flush it
             // before the view changes (the timer would otherwise fire with
             // `view !== 'editor'` and silently discard the edit).
-            if (get().view === 'editor' && view !== 'editor') get().flushAutosave();
+            if (get().view === 'editor' && view !== 'editor') void get().flushAutosave();
             set({ view });
         },
 
@@ -132,8 +132,9 @@ export const createDocSlice: StoreSlice = (set, get) => {
             // Doc-switch boundary: flush any pending autosave for the doc we are
             // leaving (so its last edit is not dropped), then drop its undo
             // history and transient baseline (so undo/redo can never apply doc
-            // A's snapshots to doc B).
-            get().flushAutosave();
+            // A's snapshots to doc B). Await the flush so the leaving doc's write
+            // settles before the new doc becomes current (deterministic ordering).
+            await get().flushAutosave();
             get().clearDocHistory();
             // Default view orientation for this document (view-only, §6). Done
             // here — the single doc-open boundary — so it never re-fires from a
@@ -151,13 +152,12 @@ export const createDocSlice: StoreSlice = (set, get) => {
             // the rest of the slice's gallery behaviour.
             const repo = get().labelRepo;
             if (!doc || !repo) return false;
-            // Cancel/flush the pending debounced autosave first. The explicit
-            // save captures the doc *now*, so a timer left armed would fire
-            // after `repo.save` resolves and rewrite the older captured doc
-            // (setting `updatedAt`/`lastAutoSaveAt` after this save). `flush`
-            // is the existing boundary seam: it writes the pending doc if there
-            // is one, then clears the timer.
-            get().flushAutosave();
+            // Cancel/flush the pending debounced autosave first, and **await** it
+            // so ordering is deterministic: the older captured doc must settle
+            // before this newer explicit save, or a deferred autosave would land
+            // last and clobber it (must-fix #8). `flush` writes the pending doc
+            // if there is one, then clears the timer.
+            await get().flushAutosave();
             // Stamp fresh activity so the gallery sorts the explicit save to the
             // top; shallow-copy so the state update is observable.
             const updated: LabelDoc = { ...doc, meta: { ...doc.meta, updatedAt: Math.floor(Date.now() / 1000) } };
@@ -190,9 +190,10 @@ export const createDocSlice: StoreSlice = (set, get) => {
             const closingCurrent = get().currentDoc?.meta.id === id;
             if (closingCurrent) {
                 // The open doc is being removed: flush its pending save first
-                // (harmless if it was already saved), then discard history that
-                // can no longer be meaningfully undone.
-                get().flushAutosave();
+                // and **await** it, so the write settles before the remove. A
+                // deferred autosave landing after `repo.remove` would recreate
+                // the label (remove-before-save inversion, must-fix #8).
+                await get().flushAutosave();
                 get().clearDocHistory();
             }
             try {

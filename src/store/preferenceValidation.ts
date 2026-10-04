@@ -37,11 +37,7 @@ export const TOOL_SHORTCUT_KEYS = [
     'rectangle',
     'ellipse',
     'line',
-    'arrow',
-    'callout',
-    'star',
     'text',
-    'dropper',
 ] as const;
 
 const MODIFIER_KEYS: readonly ModifierKey[] = ['ctrl', 'alt', 'shift'];

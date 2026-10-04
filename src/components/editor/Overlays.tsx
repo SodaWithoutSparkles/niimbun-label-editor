@@ -1,5 +1,6 @@
 import React from 'react';
 import { Layer, Line, Rect, Shape, Text } from 'react-konva';
+import type Konva from 'konva';
 import type { Guide } from '../../editor/render/guides';
 import { regionUnionPath, resolveRegionOverlay, type UnionSubpath } from '../../editor/render/regionOverlay';
 import type { LabelDoc } from '../../core/doc/types';
@@ -22,7 +23,7 @@ const GRID_STROKE = '#e5e7eb';
  * there is no per-region stroke to create one. Takes the **outline**, rounded
  * with `arcTo` for `roundedRect`, so the silhouette has real rounded corners.
  */
-const traceUnion = (ctx: CanvasRenderingContext2D, subpaths: readonly UnionSubpath[]): void => {
+const traceUnion = (ctx: Konva.Context, subpaths: readonly UnionSubpath[]): void => {
     ctx.beginPath();
     for (const path of subpaths) {
         switch (path.kind) {
@@ -60,7 +61,6 @@ const traceUnion = (ctx: CanvasRenderingContext2D, subpaths: readonly UnionSubpa
                 break;
         }
     }
-    ctx.fill();
 };
 
 /** Solid-white union silhouette — the label surface. `Shape` does not hit-test
@@ -69,7 +69,11 @@ const UnionSilhouette: React.FC<{ regions: readonly UnionSubpath[] }> = ({ regio
     <Shape
         listening={false}
         fill="#ffffff"
-        sceneFunc={(ctx) => traceUnion(ctx._context, regions)}
+        sceneFunc={(ctx, shape) => {
+            traceUnion(ctx as unknown as Konva.Context, regions);
+            // Apply the `fill` prop (raw ctx.fill() would use the default black).
+            ctx.fillStrokeShape(shape);
+        }}
     />
 );
 

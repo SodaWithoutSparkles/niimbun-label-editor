@@ -7,7 +7,11 @@ import { ColorPicker } from '../common/ColorPicker';
 import { Input, Select, SettingRow, Toggle } from '../common/forms';
 import { bulkFieldModel, type FieldDescriptor, type FieldReason } from '../../editor/inspectorModel';
 import { roundHm, type hm } from '../../core/hm';
-import type { Node } from '../../core/doc/types';
+import { nodeSize, pointsExtent } from '../../core/doc/geometry';
+import { effectiveTransform, nodeLookup, IDENTITY_MAT2D, type Mat2D } from '../../core/doc/derive';
+import { nodeLocalPoints, transformedBounds } from '../../editor/render/resolve';
+import type { Node, ShapeKind, ShapeNode } from '../../core/doc/types';
+import type { NodePatch } from '../../store/storeTypes';
 
 /**
  * MFP → Object tab (ui-spec.md §8/§10). Renders the field model from
@@ -42,6 +46,7 @@ const FIELD_LABEL_KEYS = {
     letterSpacing: 'editor.mfp.field.letterSpacing',
     direction: 'editor.mfp.field.direction',
     shape: 'editor.mfp.field.shape',
+    text: 'editor.mfp.field.text',
     points: 'editor.mfp.field.points',
     closed: 'editor.mfp.field.closed',
     cornerRadius: 'editor.mfp.field.cornerRadius',
@@ -118,6 +123,116 @@ const transformPatch = (node: Node, key: string, value: number) => ({
     transform: { ...node.transform, [key]: value },
 });
 
+/** The static text of a text node, or `''` for a non-static source. */
+export const textContentValue = (node: Node): string =>
+    node.type === 'text' && node.text.kind === 'static' ? node.text.value : '';
+
+/**
+ * Patch a text node's static content. CSV/template sources are not edited here
+ * (execution is P6), so this always writes a `static` source with the new value.
+ */
+export const textContentPatch = (value: string): NodePatch => ({
+    text: { kind: 'static', value },
+});
+
+const isPointShape = (kind: ShapeKind): boolean => kind === 'line' || kind === 'polygon';
+
+/**
+ * Convert a shape's geometry when its `shape` kind changes (must-fix #5), so the
+ * node always has geometry the renderer can draw:
+ *   - → line/polygon: seed `points` from the current `size` box (or the existing
+ *     point cloud) and drop `size`, since point shapes render from `points`.
+ *   - → rectangle/ellipse: drop `points` and seed `size` from the point cloud's
+ *     real extent, so a once-point shape still renders a box.
+ *   - line ↔ polygon and rectangle ↔ ellipse: no geometry change.
+ */
+export const shapeKindPatch = (node: ShapeNode, next: ShapeKind): NodePatch => {
+    if (node.shape === next) return {};
+    const nextIsPoint = isPointShape(next);
+    const oldIsPoint = isPointShape(node.shape);
+    // Within the point-shape family only the close flag changes; the point
+    // cloud is already valid geometry.
+    if (nextIsPoint && oldIsPoint) {
+        return { shape: next, closed: next === 'polygon' };
+    }
+    if (nextIsPoint) {
+        // → line/polygon from a boxed shape: seed the point cloud from the box
+        // and drop `size`, since point shapes render from `points`.
+        const box = nodeSize(node);
+        const points: [hm, hm][] = [
+            [0, 0],
+            [box.w, 0],
+            [box.w, box.h],
+            [0, box.h],
+        ];
+        return { shape: next, points, closed: next === 'polygon', size: undefined };
+    }
+    if (oldIsPoint) {
+        // → rectangle/ellipse from a point shape: drop `points` and seed `size`
+        // from the cloud's real extent, so the box still renders.
+        const extent = pointsExtent(node.points ?? []);
+        const w = extent.w > 0 ? extent.w : nodeSize(node).w;
+        const h = extent.h > 0 ? extent.h : nodeSize(node).h;
+        return { shape: next, points: undefined, size: { w: Math.max(1, roundHm(w)), h: Math.max(1, roundHm(h)) } };
+    }
+    return { shape: next };
+};
+
+/** World-space AABB of a node under its effective parent chain. */
+export const nodeWorldBounds = (node: Node, byId: ReadonlyMap<string, Node>) =>
+    transformedBounds(nodeLocalPoints(node), effectiveTransform(node, byId));
+
+/** Invert only the linear (a,b,c,d) part of a matrix; `null` when singular. */
+const invertLinear = (m: Mat2D): Mat2D | null => {
+    const det = m.a * m.d - m.b * m.c;
+    if (det === 0) return null;
+    return { a: m.d / det, b: -m.b / det, c: -m.c / det, d: m.a / det, e: 0, f: 0 };
+};
+
+/** The effective parent matrix (identity at the root). */
+const parentMatrix = (node: Node, byId: ReadonlyMap<string, Node>): Mat2D => {
+    if (node.parentId === null) return IDENTITY_MAT2D;
+    const parent = byId.get(node.parentId);
+    return parent ? effectiveTransform(parent, byId) : IDENTITY_MAT2D;
+};
+
+/**
+ * Patch that aligns a node to a backing edge (must-fix #10). The target is
+ * computed from the node's resolved **world** bounds and its real geometry
+ * (`nodeLocalPoints`, so line/polygon work too). The resulting world delta is
+ * converted into the parent-local space before it is folded into `transform.x/y`,
+ * so aligning under a translated/rotated parent does not jump.
+ */
+export const alignTransformPatch = (
+    node: Node,
+    byId: ReadonlyMap<string, Node>,
+    backingW: number,
+    backingH: number,
+    edge: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom',
+): NodePatch | null => {
+    const bounds = nodeWorldBounds(node, byId);
+    let worldDx = 0;
+    let worldDy = 0;
+    if (edge === 'left') worldDx = -bounds.x;
+    else if (edge === 'center') worldDx = Math.round(backingW / 2 - (bounds.x + bounds.w / 2));
+    else if (edge === 'right') worldDx = Math.round(backingW - (bounds.x + bounds.w));
+    else if (edge === 'top') worldDy = -bounds.y;
+    else if (edge === 'middle') worldDy = Math.round(backingH / 2 - (bounds.y + bounds.h / 2));
+    else worldDy = Math.round(backingH - (bounds.y + bounds.h));
+
+    const inverse = invertLinear(parentMatrix(node, byId));
+    if (!inverse) return null;
+    const localDx = inverse.a * worldDx + inverse.c * worldDy;
+    const localDy = inverse.b * worldDx + inverse.d * worldDy;
+    return {
+        transform: {
+            ...node.transform,
+            x: roundHm(node.transform.x + localDx),
+            y: roundHm(node.transform.y + localDy),
+        },
+    };
+};
+
 export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     const { t } = useTranslation();
     const updateNode = useStore((state) => state.updateNode);
@@ -169,15 +284,36 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
         }
     };
 
+    /**
+     * String edits — including the `text` textarea — are transient during the
+     * gesture and commit exactly **one** undo entry when it ends (must-fix #10).
+     * Otherwise the textarea produced one entry per character, which breaks the
+     * undo/redo demo.
+     */
     const setString = (key: string, value: string) => {
-        commitAll(() => ({ [key]: value }) as never);
+        gestureRef.current = true;
+        for (const node of selected) {
+            // `shape` is a geometry-bearing change: convert geometry so the node
+            // always renders (must-fix #5).
+            if (key === 'shape') {
+                if (node.type === 'shape') updateNodeTransient(node.id, shapeKindPatch(node, value as ShapeKind));
+            } else if (key === 'text') {
+                // `text` is a `ContentSource`, not a plain prop; write a static
+                // source so inserted text can be authored (must-fix #3).
+                if (node.type === 'text') updateNodeTransient(node.id, textContentPatch(value));
+            } else {
+                updateNodeTransient(node.id, { [key]: value } as never);
+            }
+        }
     };
 
+    /** Boolean toggles batch the same way (one entry per gesture). */
     const setBoolean = (key: string, value: boolean) => {
+        gestureRef.current = true;
         for (const node of selected) {
-            if (key === 'visible') updateNode(node.id, { visible: value });
-            else if (key === 'locked') updateNode(node.id, { locked: value });
-            else updateNode(node.id, { [key]: value } as never);
+            if (key === 'visible') updateNodeTransient(node.id, { visible: value });
+            else if (key === 'locked') updateNodeTransient(node.id, { locked: value });
+            else updateNodeTransient(node.id, { [key]: value } as never);
         }
     };
 
@@ -217,6 +353,18 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                         <Input value={stringValue(first, field.key)} onChange={(value) => setString(field.key, value)} className="w-40" />
                     </SettingRow>
                 );
+            case 'textContent':
+                return (
+                    <SettingRow key={field.key} label={label}>
+                        <textarea
+                            aria-label={label}
+                            value={textContentValue(first)}
+                            onChange={(event) => setString(field.key, event.target.value)}
+                            rows={2}
+                            className="w-40 rounded border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-100"
+                        />
+                    </SettingRow>
+                );
             case 'boolean':
                 return (
                     <SettingRow key={field.key} label={label}>
@@ -252,17 +400,10 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     const align = (edge: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
         const doc = useStore.getState().currentDoc;
         if (!doc) return;
+        const byId = nodeLookup(doc.nodes);
         for (const node of selected) {
-            const width = node.size?.w ?? 0;
-            const height = node.size?.h ?? 0;
-            const x = edge === 'left' ? 0 : edge === 'center' ? Math.round(doc.label.backingW / 2 - width / 2) : Math.round(doc.label.backingW - width);
-            const y = edge === 'top' ? 0 : edge === 'middle' ? Math.round(doc.label.backingH / 2 - height / 2) : Math.round(doc.label.backingH - height);
-            updateNode(node.id, {
-                transform: {
-                    ...node.transform,
-                    ...(edge === 'left' || edge === 'center' || edge === 'right' ? { x } : { y }),
-                },
-            });
+            const patch = alignTransformPatch(node, byId, doc.label.backingW, doc.label.backingH, edge);
+            if (patch) updateNode(node.id, patch);
         }
     };
 
@@ -273,7 +414,6 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
             className="space-y-3 p-3"
             onPointerUp={endGesture}
             onPointerCancel={endGesture}
-            onKeyUp={endGesture}
             onBlur={endGesture}
         >
             {model.mode !== 'single' && (

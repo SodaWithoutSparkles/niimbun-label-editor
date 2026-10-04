@@ -38,6 +38,7 @@ export type FieldKind =
     | 'boolean'
     | 'select'
     | 'color'
+    | 'textContent'
     | 'contentSource'
     | 'stub';
 
@@ -78,16 +79,20 @@ export const GROUP_TRANSFORM_FIELDS: readonly FieldDescriptor[] = TRANSFORM_FIEL
 
 /**
  * Props shared by every node type — the only fields shown for a **mixed**
- * multi-selection (`ui-spec.md` §10). `align` is universal here even though it
- * is also a text prop, so mixed selections can still align.
+ * multi-selection (`ui-spec.md` §10). `visible`/`locked` are deliberately NOT
+ * here: the layers panel owns visibility and lock (ui-spec §7), and the Object
+ * tab must not duplicate them. `align` is universal even though it is also a
+ * text prop, so mixed selections can still align.
  */
 export const UNIVERSAL_FIELDS: readonly FieldDescriptor[] = [
-    { key: 'visible', scope: 'universal', kind: 'boolean', wired: true },
-    { key: 'locked', scope: 'universal', kind: 'boolean', wired: true },
     { key: 'align', scope: 'universal', kind: 'select', wired: true, options: ['left', 'center', 'right'] },
 ];
 
 export const TEXT_FIELDS: readonly FieldDescriptor[] = [
+    // The leaf's editable static content. Backed by `text: { kind: 'static',
+    // value }`; CSV/template execution is P6, so only the static value is
+    // editable here.
+    { key: 'text', scope: 'text', kind: 'textContent', wired: true },
     // `size` is a `{w, h}` box, not a scalar; the Object tab edits it as the two
     // numeric `sizeW`/`sizeH` transform fields, so this aggregate stays a stub.
     { key: 'size', scope: 'text', kind: 'stub', wired: false, reason: 'content' },

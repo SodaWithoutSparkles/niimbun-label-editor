@@ -27,11 +27,7 @@ export const defaultKeyboardShortcuts: KeyboardShortcutConfig = {
         rectangle: 'q',
         ellipse: 'w',
         line: 'e',
-        arrow: 'a',
-        callout: 'c',
-        star: '1',
-        text: 't',
-        dropper: 'i'
+        text: 't'
     }
 };
 
