@@ -1,5 +1,7 @@
 import Konva from 'konva';
 import type { Mat2D } from '../../core/doc/derive';
+import type { ImageFit } from '../../core/doc/objects';
+import type { PreparedAsset } from './assets';
 import type { ResolvedNode } from './resolve';
 
 /**
@@ -50,13 +52,107 @@ const flattenPoints = (points: readonly [number, number][]): number[] => {
     return out;
 };
 
+/** The box + fit an image leaves uses; qr/barcode are always `contain`. */
+interface FitBox {
+    w: number;
+    h: number;
+    fit: ImageFit;
+}
+
+/** A source-pixel crop rect for `cover`. */
+export interface ImageCrop {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+/** The drawn rect (box-local px) plus an optional source crop. */
+export interface FittedImageAttrs {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    crop?: ImageCrop;
+}
+
+/**
+ * Compute the draw rect for a prepared asset inside `boxW`×`boxH`:
+ *   - `contain` (default): preserve aspect, centre inside the box;
+ *   - `cover`: preserve aspect, fill the box and crop the overflow;
+ *   - `stretch`: fill the box without preserving aspect.
+ *
+ * Exported so the policy mask can paint the **drawn** rect (not the whole box)
+ * for an image/qr/barcode leaf, keeping mask-topmost == raster-topmost.
+ */
+export const fitImageAttrs = (
+    boxW: number,
+    boxH: number,
+    srcW: number,
+    srcH: number,
+    fit: ImageFit,
+): FittedImageAttrs => {
+    if (fit === 'stretch') {
+        return { x: 0, y: 0, width: boxW, height: boxH };
+    }
+
+    if (fit === 'cover' && srcW > 0 && srcH > 0 && boxW > 0 && boxH > 0) {
+        const boxAspect = boxW / boxH;
+        const imageAspect = srcW / srcH;
+        let crop: ImageCrop;
+        if (imageAspect > boxAspect) {
+            const cropW = srcH * boxAspect;
+            crop = { x: (srcW - cropW) / 2, y: 0, width: cropW, height: srcH };
+        } else {
+            const cropH = srcW / boxAspect;
+            crop = { x: 0, y: (srcH - cropH) / 2, width: srcW, height: cropH };
+        }
+        return { x: 0, y: 0, width: boxW, height: boxH, crop };
+    }
+
+    // contain (and the guarded fallback for a degenerate box).
+    const scale = srcW > 0 && srcH > 0 ? Math.min(boxW / srcW, boxH / srcH) : 0;
+    const drawW = srcW * scale;
+    const drawH = srcH * scale;
+    return { x: (boxW - drawW) / 2, y: (boxH - drawH) / 2, width: drawW, height: drawH };
+};
+
+/**
+ * Build a `Konva.Image` for a prepared asset from {@link fitImageAttrs}.
+ */
+const createFittedImage = (box: FitBox, asset: PreparedAsset): Konva.Image => {
+    const { crop, ...rect } = fitImageAttrs(box.w, box.h, asset.widthPx, asset.heightPx, box.fit);
+    return new Konva.Image({ image: asset.image, ...rect, ...(crop ? { crop } : {}) });
+};
+
 /** Build an offscreen plain-Konva node for a resolved node (recurses for groups). */
-export const createKonvaNode = (node: ResolvedNode): Konva.Group | Konva.Shape => {
+export const createKonvaNode = (
+    node: ResolvedNode,
+    assets?: ReadonlyMap<string, PreparedAsset>,
+): Konva.Group | Konva.Shape => {
     switch (node.type) {
         case 'group': {
             const group = new Konva.Group();
-            for (const child of node.children) group.add(createKonvaNode(child));
+            for (const child of node.children) group.add(createKonvaNode(child, assets));
             return withTransform(group, node.localTransform);
+        }
+        case 'image':
+        case 'qr':
+        case 'barcode': {
+            const asset = assets?.get(node.id);
+            if (!asset) {
+                // Missing/unprepared asset draws nothing (the editor overlays a
+                // labelled placeholder; the print path stays blank-white).
+                return withTransform(new Konva.Group(), node.localTransform);
+            }
+            const fit: ImageFit = node.type === 'image' ? node.fit : 'contain';
+            // The node transform lives on a group so the fitted image keeps its
+            // local fit offset (`contain` centring / `cover` crop origin). Setting
+            // the transform on the image itself would overwrite that x/y with the
+            // node's translation (contain images rendered top-left anchored).
+            const imageGroup = new Konva.Group();
+            imageGroup.add(createFittedImage({ w: node.w, h: node.h, fit }, asset));
+            return withTransform(imageGroup, node.localTransform);
         }
         case 'text':
             return withTransform(

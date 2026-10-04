@@ -9,6 +9,14 @@ import {
     nodeLookup,
 } from '../../core/doc/derive';
 import type { ContentSource, LabelDoc, Node, TextNode } from '../../core/doc/types';
+import {
+    DEFAULT_BARCODE_SYMBOLOGY,
+    DEFAULT_IMAGE_FIT,
+    DEFAULT_QR_ERROR_CORRECTION,
+    type BarcodeSymbology,
+    type ImageFit,
+    type QrErrorCorrection,
+} from '../../core/doc/objects';
 import { DEFAULT_FONT_SIZE, nodeSize } from '../../core/doc/geometry';
 
 /**
@@ -28,7 +36,16 @@ import { DEFAULT_FONT_SIZE, nodeSize } from '../../core/doc/geometry';
  * defaults below.
  */
 
-export type ResolvedNodeType = 'group' | 'text' | 'line' | 'rectangle' | 'ellipse' | 'polygon';
+export type ResolvedNodeType =
+    | 'group'
+    | 'text'
+    | 'line'
+    | 'rectangle'
+    | 'ellipse'
+    | 'polygon'
+    | 'image'
+    | 'qr'
+    | 'barcode';
 export type TextAlign = TextNode['align'] & ('left' | 'center' | 'right');
 
 export { DEFAULT_CONTENT_SIZE, DEFAULT_FONT_SIZE } from '../../core/doc/geometry';
@@ -103,13 +120,49 @@ export interface ResolvedPolygon extends ResolvedBase {
     closed: boolean;
 }
 
+/**
+ * Image leaf. `resolve` emits geometry + the resource id only; the real pixels
+ * are produced by the async `prepareResolvedAssets` step (P5 §2.2). `fit`
+ * defaults to `DEFAULT_IMAGE_FIT`.
+ */
+export interface ResolvedImage extends ResolvedBase {
+    type: 'image';
+    imageId: string;
+    w: hm;
+    h: hm;
+    fit: ImageFit;
+}
+
+/** QR leaf. `text` is the resolved payload; empty content becomes the placeholder. */
+export interface ResolvedQr extends ResolvedBase {
+    type: 'qr';
+    text: string;
+    placeholder: boolean;
+    w: hm;
+    h: hm;
+    errorCorrection: QrErrorCorrection;
+}
+
+/** Barcode leaf. `symbology` defaults to `DEFAULT_BARCODE_SYMBOLOGY`. */
+export interface ResolvedBarcode extends ResolvedBase {
+    type: 'barcode';
+    text: string;
+    placeholder: boolean;
+    w: hm;
+    h: hm;
+    symbology: BarcodeSymbology;
+}
+
 export type ResolvedNode =
     | ResolvedGroup
     | ResolvedText
     | ResolvedLine
     | ResolvedRectangle
     | ResolvedEllipse
-    | ResolvedPolygon;
+    | ResolvedPolygon
+    | ResolvedImage
+    | ResolvedQr
+    | ResolvedBarcode;
 
 export interface ResolveContext {
     /** Text substituted when resolved content is empty. Defaults to `{empty}`. */
@@ -149,7 +202,7 @@ const rectCorners = (x: number, y: number, w: number, h: number): [number, numbe
 /**
  * Local geometry outline of any node as points, in the node's local space. Used
  * by `resolve` and by the keep-out predicate (which also covers image/qr/barcode,
- * omitted from the static resolver). Groups have no outline — callers recurse.
+ * all handled by the static resolver). Groups have no outline — callers recurse.
  */
 export const nodeLocalPoints = (node: Node): [number, number][] => {
     if (node.type === 'group') return [];
@@ -291,11 +344,46 @@ export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[]
                     }
                 }
                 break;
-            case 'image':
-            case 'qr':
-            case 'barcode':
-                // Not static content: images are P5, qr/barcode are P4.
-                return undefined;
+            case 'image': {
+                const { w, h } = nodeSize(node);
+                return {
+                    ...base,
+                    type: 'image',
+                    imageId: node.imageId,
+                    w,
+                    h,
+                    fit: node.fit ?? DEFAULT_IMAGE_FIT,
+                    bounds: transformedBounds(rectCorners(0, 0, w, h), base.transform),
+                };
+            }
+            case 'qr': {
+                const { w, h } = nodeSize(node);
+                const content = resolveContent(node.data, emptyText);
+                return {
+                    ...base,
+                    type: 'qr',
+                    text: content.text,
+                    placeholder: content.placeholder,
+                    w,
+                    h,
+                    errorCorrection: node.errorCorrection ?? DEFAULT_QR_ERROR_CORRECTION,
+                    bounds: transformedBounds(rectCorners(0, 0, w, h), base.transform),
+                };
+            }
+            case 'barcode': {
+                const { w, h } = nodeSize(node);
+                const content = resolveContent(node.data, emptyText);
+                return {
+                    ...base,
+                    type: 'barcode',
+                    text: content.text,
+                    placeholder: content.placeholder,
+                    w,
+                    h,
+                    symbology: node.symbology ?? DEFAULT_BARCODE_SYMBOLOGY,
+                    bounds: transformedBounds(rectCorners(0, 0, w, h), base.transform),
+                };
+            }
         }
         return undefined;
     };

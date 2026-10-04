@@ -15,8 +15,10 @@ import {
     type QuantizerPolicies,
     type RgbaBuffer,
 } from '../../core/render';
+import type { AssetDeps, AssetWarning, PreparedAsset } from './assets';
 import { applyRegionClip } from './clip';
-import { createKonvaNode, matrixToKonvaAttrs } from './konvaFactory';
+import { createKonvaNode, fitImageAttrs, matrixToKonvaAttrs } from './konvaFactory';
+import { prepareResolvedAssets } from './prepareAssets';
 import {
     DEFAULT_LINE_STROKE_WIDTH,
     prepareTextFonts,
@@ -55,6 +57,12 @@ export interface RenderLabelPageOptions {
     serpentine?: boolean;
     /** Per-pixel projection. Defaults to Mono (the only v1 color space). */
     colorSpace?: ColorSpace;
+    /**
+     * Async asset dependencies (image bytes, fonts, resolution cap). When
+     * present, image/qr/barcode leaves are prepared first; absent, those leaves
+     * simply draw nothing.
+     */
+    assets?: AssetDeps;
 }
 
 export interface RenderedLabelPage {
@@ -64,6 +72,11 @@ export interface RenderedLabelPage {
     heightPx: number;
     /** A fresh canvas holding the final quantized, clipped page (safe for the encoder). */
     canvas: HTMLCanvasElement;
+    /**
+     * Per-leaf asset problems (missing/invalid/too-small) so the editor can badge
+     * the node. Absent/empty when every asset prepared cleanly.
+     */
+    warnings?: ReadonlyMap<string, AssetWarning>;
 }
 
 /** A built policy mask plus the quantizers its indices resolve to. */
@@ -120,10 +133,12 @@ const paintCoverage = (node: Konva.Shape, color: string): void => {
  *
  * Every rendered non-group leaf is painted, in the **same tree order as the
  * raster** (`flattenResolved` pre-order == Konva's draw order), so mask-topmost
- * equals raster-topmost (M2). A leaf whose `resolveQuantizer` yields a policy
- * paints that policy's key colour; an unhinted/no-default leaf paints the global
- * key (mask value `0`), so it overrides any hinted leaf it covers. Pixels no leaf
- * covers also read `0`.
+ * equals raster-topmost (M2). An image/qr/barcode leaf with no prepared asset
+ * draws nothing and is skipped entirely; with one it claims only its **drawn
+ * rect** (the `fitImageAttrs` rect), so a `contain` letterbox stays uncovered. A
+ * leaf whose `resolveQuantizer` yields a policy paints that policy's key colour;
+ * an unhinted/no-default leaf paints the global key (mask value `0`), so it
+ * overrides any hinted leaf it covers. Pixels no leaf covers also read `0`.
  *
  * Guardrail: if **no** leaf resolves to a policy the whole mask is skipped
  * (`undefined`) and the caller runs one global pass, byte-identical.
@@ -139,6 +154,7 @@ export const buildPolicyMask = async (
     byId: ReadonlyMap<string, Node>,
     dims: { widthPx: number; heightPx: number },
     dpi: number,
+    assets?: ReadonlyMap<string, PreparedAsset>,
 ): Promise<PolicyMaskResult | undefined> => {
     // This is re-exported public surface; fail clearly before touching Konva.
     if (!Number.isFinite(dpi) || dpi <= 0) {
@@ -169,6 +185,15 @@ export const buildPolicyMask = async (
             // `resolve` only emits nodes from the document, so a miss is an
             // invariant violation — never silently drop a mask carrier.
             throw new Error(`buildPolicyMask: resolved node "${node.id}" is missing from the document`);
+        }
+        // An image/qr/barcode with no prepared asset draws nothing, so it must
+        // not claim any mask coverage either: a missing topmost asset would
+        // otherwise override a visible lower node's quantizer policy.
+        if (
+            (node.type === 'image' || node.type === 'qr' || node.type === 'barcode') &&
+            !assets?.get(node.id)
+        ) {
+            continue;
         }
         const policy = resolveQuantizer({ type: source.type, quantizerHint: source.quantizerHint });
         if (policy) {
@@ -215,10 +240,36 @@ export const buildPolicyMask = async (
         stage.add(layer);
 
         for (const carrier of carriers) {
-            const konva = createKonvaNode(carrier.node);
             // Absolute transform: a leaf inside a group must be painted where it
             // actually lands, not at its group-local position.
-            konva.setAttrs(matrixToKonvaAttrs(carrier.node.transform));
+            const attrs = matrixToKonvaAttrs(carrier.node.transform);
+            const leaf = carrier.node;
+            if (leaf.type === 'image' || leaf.type === 'qr' || leaf.type === 'barcode') {
+                // Paint only the **drawn** rect: for `contain` the letterbox is
+                // transparent in the raster, so it must not claim coverage.
+                const asset = assets?.get(leaf.id);
+                if (!asset) continue;
+                const fit = leaf.type === 'image' ? leaf.fit : 'contain';
+                const rect = fitImageAttrs(leaf.w, leaf.h, asset.widthPx, asset.heightPx, fit);
+                // Group carries the absolute transform; the rect keeps the local
+                // drawn-rect offset as a child so the two compose (setting both on
+                // one node would let the transform's x/y overwrite the offset).
+                const box = new Konva.Group();
+                box.setAttrs(attrs);
+                box.add(
+                    new Konva.Rect({
+                        x: rect.x,
+                        y: rect.y,
+                        width: rect.width,
+                        height: rect.height,
+                        fill: rgb(keyColors[carrier.value]!),
+                    }),
+                );
+                layer.add(box);
+                continue;
+            }
+            const konva = createKonvaNode(leaf, assets);
+            konva.setAttrs(attrs);
             paintCoverage(konva as Konva.Shape, rgb(keyColors[carrier.value]!));
             layer.add(konva);
         }
@@ -299,11 +350,22 @@ export const renderLabelPage = async (
         );
     }
 
+    // Register any imported fonts the document needs before text is measured.
+    // A rejected provider degrades to the browser's fallback fonts.
+    if (opts.assets?.fonts?.ensureFonts) {
+        try {
+            await opts.assets.fonts.ensureFonts(doc);
+        } catch {
+            // Never fail preview/print because a font could not be registered.
+        }
+    }
+    const { assets, warnings } = await prepareResolvedAssets(nodes, doc, opts.assets ?? {});
+
     const rasterOpts: RasterizeOptions = { widthPx, heightPx, dpi: doc.label.dpi };
-    const { imageData } = await rasterizeResolved(nodes, rasterOpts);
+    const { imageData } = await rasterizeResolved(nodes, rasterOpts, assets);
 
     const byId = nodeLookup(doc.nodes);
-    const policy = await buildPolicyMask(nodes, byId, { widthPx, heightPx }, doc.label.dpi);
+    const policy = await buildPolicyMask(nodes, byId, { widthPx, heightPx }, doc.label.dpi, assets);
 
     const hmPerPx = HM_PER_INCH / doc.label.dpi;
     // Pre-clip: the diffusion pass sees a white surround outside the union.
@@ -333,5 +395,5 @@ export const renderLabelPage = async (
     encoded.data.set(imageData.data);
     canvasCtx.putImageData(encoded, 0, 0);
 
-    return { rgba: imageData, widthPx, heightPx, canvas };
+    return { rgba: imageData, widthPx, heightPx, canvas, warnings };
 };

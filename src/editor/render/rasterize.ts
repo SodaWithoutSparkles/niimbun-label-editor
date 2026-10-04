@@ -1,5 +1,6 @@
 import Konva from 'konva';
 import { HM_PER_INCH, type RgbaBuffer } from '../../core/render';
+import type { PreparedAsset } from './assets';
 import type { ResolvedNode } from './resolve';
 import { createKonvaNode } from './konvaFactory';
 
@@ -98,6 +99,9 @@ export const prepareTextFonts = async (nodes: readonly ResolvedNode[]): Promise<
 export const DEFAULT_LINE_STROKE_WIDTH = 1;
 
 export const applyInkDefaults = (node: Konva.Node): void => {
+    // A prepared image/qr/barcode is a `Konva.Image` (a `Konva.Shape`): its
+    // pixels are the ink. Filling it black would erase the asset completely.
+    if (node instanceof Konva.Image) return;
     if (node instanceof Konva.Line && !node.closed()) {
         if (!node.stroke()) node.stroke('black');
         node.strokeScaleEnabled(false);
@@ -131,6 +135,7 @@ const applyInkDefaultsDeep = (node: Konva.Node): void => {
 export const rasterizeResolved = async (
     nodes: readonly ResolvedNode[],
     opts: RasterizeOptions,
+    assets?: ReadonlyMap<string, PreparedAsset>,
 ): Promise<Rasterized> => {
     const { widthPx, heightPx, dpi } = opts;
     if (!Number.isFinite(dpi) || dpi <= 0) {
@@ -171,7 +176,7 @@ export const rasterizeResolved = async (
         );
 
         for (const node of nodes) {
-            const konva = createKonvaNode(node);
+            const konva = createKonvaNode(node, assets);
             applyInkDefaultsDeep(konva);
             layer.add(konva);
         }

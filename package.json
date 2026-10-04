@@ -34,6 +34,7 @@
     "@mmote/niimbluelib": "0.47.0",
     "@tailwindcss/postcss": "^4.1.18",
     "@tailwindcss/vite": "^4.1.18",
+    "bwip-js": "4.11.4",
     "clsx": "^2.1.1",
     "i18next": "^26.4.2",
     "idb": "8.0.3",

@@ -6,3 +6,8 @@ export * from './clip';
 export * from './unionPath';
 export * from './rasterize';
 export * from './renderLabelPage';
+export * from './assets';
+export * from './prepareAssets';
+export * from './imageAssets';
+export * from './qrImage';
+export * from './barcodeImage';

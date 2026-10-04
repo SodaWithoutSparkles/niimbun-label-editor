@@ -4,6 +4,7 @@ import type { LabelDoc, Node } from '../../core/doc/types';
 import { createLabelDoc } from '../../core/doc/factory';
 import type { Mat2D } from '../../core/doc/derive';
 import { resolve } from './resolve';
+import type { PreparedAsset } from './assets';
 import { createKonvaNode, matrixToKonvaAttrs } from './konvaFactory';
 
 const node = (value: Record<string, unknown>): Node => value as unknown as Node;
@@ -140,6 +141,45 @@ describe('createKonvaNode — plain Konva, no react-konva', () => {
         const group = createKonvaNode(byId('g')) as Konva.Group;
         expect(group.getChildren()).toHaveLength(1);
         expect(group.getChildren()[0]).toBeInstanceOf(Konva.Text);
+    });
+
+    it('keeps the fit offset on the image and the node transform on a wrapping group', () => {
+        const doc = createLabelDoc({
+            backingW: 3000,
+            backingH: 2000,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 3000, h: 2000 }],
+            nodes: [
+                node({
+                    id: 'img',
+                    parentId: null,
+                    type: 'image',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 100, y: 50, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    imageId: 'i1',
+                    size: { w: 2000, h: 1000 },
+                }),
+            ],
+        });
+        const asset: PreparedAsset = {
+            image: {} as CanvasImageSource,
+            widthPx: 100,
+            heightPx: 100,
+        };
+        const konva = createKonvaNode(resolve(doc)[0]!, new Map([['img', asset]]));
+
+        expect(konva).toBeInstanceOf(Konva.Group);
+        const group = konva as Konva.Group;
+        expect(group.x(), 'node transform lives on the group').toBe(100);
+        expect(group.y()).toBe(50);
+        expect(group.getChildren()).toHaveLength(1);
+        const img = group.getChildren()[0] as Konva.Image;
+        expect(img).toBeInstanceOf(Konva.Image);
+        // contain: 2000×1000 box, 100×100 asset → 1000×1000 centred at x=500.
+        expect(img.x(), 'centred fit offset survives on the image').toBe(500);
+        expect(img.y()).toBe(0);
+        expect(img.width()).toBe(1000);
+        expect(img.height()).toBe(1000);
     });
 });
 

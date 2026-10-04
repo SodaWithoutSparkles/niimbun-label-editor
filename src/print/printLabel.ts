@@ -1,7 +1,7 @@
 import { ImageEncoder, PageColorType } from '@mmote/niimbluelib';
 import type { EncodedImage, PrintDirection } from '@mmote/niimbluelib';
 import type { LabelDoc } from '../core/doc/types';
-import { renderLabelPage, type RenderedLabelPage } from '../editor/render';
+import { renderLabelPage, type AssetDeps, type RenderedLabelPage } from '../editor/render';
 import type { PrintJob, PrintPage, PrintResult, PrinterTransport } from './transport';
 
 /**
@@ -28,6 +28,12 @@ export interface BuildLabelPrintJobDeps {
      * production never diverges from the preview path (invariant 7).
      */
     render?: (doc: LabelDoc) => Promise<RenderedLabelPage>;
+    /**
+     * Async asset deps forwarded to the default {@link renderLabelPage} (image
+     * bytes, fonts, print resolution cap). Ignored when a custom `render` is
+     * supplied — that seam owns its own rendering.
+     */
+    assets?: AssetDeps;
 }
 
 /**
@@ -75,7 +81,10 @@ export const buildLabelPrintJob = async (
         );
     }
 
-    const render = deps.render ?? renderLabelPage;
+    const render =
+        deps.render ??
+        ((value: LabelDoc) =>
+            renderLabelPage(value, {}, deps.assets ? { assets: deps.assets } : {}));
     const page = await render(doc);
 
     const data = ImageEncoder.encodeCanvas(

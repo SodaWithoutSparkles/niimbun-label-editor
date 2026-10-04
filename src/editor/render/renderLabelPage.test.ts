@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import Konva from 'konva';
+import { loadImage } from '@napi-rs/canvas';
 import { installCanvasShim } from '../../test/canvasHarness';
 import { createLabelDoc } from '../../core/doc/factory';
 import { nodeLookup } from '../../core/doc/derive';
@@ -13,6 +14,7 @@ import {
     type RgbaBuffer,
 } from '../../core/render';
 import { applyRegionClip } from './clip';
+import type { PreparedAsset } from './assets';
 import { buildPolicyMask, renderLabelPage } from './renderLabelPage';
 import { resolve } from './resolve';
 import { rasterizeResolved } from './rasterize';
@@ -61,8 +63,61 @@ const ellipse = (id: string, cx: number, cy: number, w: number, h: number): Node
         size: { w, h },
     });
 
+const image = (id: string, x: number, y: number, w: number, h: number): Node =>
+    node({
+        id,
+        parentId: null,
+        type: 'image',
+        visible: true,
+        locked: false,
+        transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        imageId: 'i1',
+        size: { w, h },
+    });
+
 const smallDoc = (regions: Region[], nodes: Node[]): LabelDoc =>
     createLabelDoc({ backingW: 3000, backingH: 2000, dpi: 300, regions, nodes });
+
+/** A solid-black `w`×`h` asset drawable by the canvas shim. */
+const solidAsset = async (w: number, h: number): Promise<PreparedAsset> => {
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, w, h);
+    const image = (await loadImage(canvas.toDataURL('image/png'))) as unknown as CanvasImageSource;
+    return { image, widthPx: w, heightPx: h };
+};
+
+const fullRegions: Region[] = [{ kind: 'rect', x: 0, y: 0, w: 4000, h: 2000 }];
+
+/** A 4000×2000 @254dpi doc (scale 0.1) so hm → px is a clean /10. */
+const imageDoc = (nodes: Node[]): LabelDoc =>
+    createLabelDoc({ backingW: 4000, backingH: 2000, dpi: 254, regions: fullRegions, nodes });
+
+/**
+ * Assert the image leaf's mask footprint is byte-for-byte the raster ink: for
+ * every pixel, "policy mask covers it" == "raster has opaque dark ink".
+ */
+const expectMaskEqualsRaster = async (doc: LabelDoc): Promise<void> => {
+    const nodes = resolve(doc);
+    const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+    const asset = await solidAsset(100, 100);
+    const assets = new Map<string, PreparedAsset>([['img', asset]]);
+    const built = await buildPolicyMask(nodes, nodeLookup(doc.nodes), dims, doc.label.dpi, assets);
+    expect(built).toBeDefined();
+    if (!built) return;
+    const { imageData } = await rasterizeResolved(nodes, { ...dims, dpi: doc.label.dpi }, assets);
+
+    let mismatches = 0;
+    for (let p = 0; p < built.mask.data.length; p++) {
+        const i = p * 4;
+        const rasterInk = imageData.data[i]! < 128 && imageData.data[i + 3]! > 0;
+        if ((built.mask.data[p]! > 0) !== rasterInk) mismatches++;
+    }
+    expect(mismatches, 'mask footprint matches the raster ink exactly').toBe(0);
+};
 
 const leftHalfRegions: Region[] = [{ kind: 'rect', x: 0, y: 0, w: 1500, h: 2000 }];
 
@@ -354,6 +409,123 @@ describe('renderLabelPage — shared preview/print path', () => {
             nodes: [],
         });
         await expect(renderLabelPage(doc)).rejects.toThrow(RangeError);
+    });
+
+    it('a missing image asset does not override a lower node’s mask policy', async () => {
+        const regions: Region[] = [{ kind: 'rect', x: 0, y: 0, w: 4000, h: 2000 }];
+        const withImage = createLabelDoc({
+            backingW: 4000,
+            backingH: 2000,
+            dpi: 254,
+            regions,
+            nodes: [text('t', 100, 100, 'XYZ'), image('img', 100, 100, 2000, 1000)],
+        });
+        const withoutImage = createLabelDoc({
+            backingW: 4000,
+            backingH: 2000,
+            dpi: 254,
+            regions,
+            nodes: [text('t', 100, 100, 'XYZ')],
+        });
+        const dims = rasterDimensions(4000, 2000, 254);
+        const a = await buildPolicyMask(resolve(withImage), nodeLookup(withImage.nodes), dims, 254, new Map());
+        const b = await buildPolicyMask(resolve(withoutImage), nodeLookup(withoutImage.nodes), dims, 254, new Map());
+        expect(a).toBeDefined();
+        expect(b).toBeDefined();
+        if (!a || !b) return;
+        // The missing topmost image contributes no coverage, so it cannot
+        // override the lower text's policy.
+        expect(a.mask.data).toEqual(b.mask.data);
+        expect(a.mask.data.some((value) => value !== 0)).toBe(true);
+    });
+
+    it('a contain image masks only its drawn rect, not the letterbox', async () => {
+        const regions: Region[] = [{ kind: 'rect', x: 0, y: 0, w: 4000, h: 2000 }];
+        const doc = createLabelDoc({
+            backingW: 4000,
+            backingH: 2000,
+            dpi: 254,
+            regions,
+            nodes: [
+                rect('under', 0, 0, 4000, 2000, 'threshold'),
+                image('img', 0, 0, 2000, 1000),
+            ],
+        });
+        const dims = rasterDimensions(4000, 2000, 254);
+        // A square asset in a 2:1 box forces a `contain` letterbox.
+        const assets = new Map<string, PreparedAsset>([
+            ['img', { image: {} as CanvasImageSource, widthPx: 100, heightPx: 100 }],
+        ]);
+        const built = await buildPolicyMask(resolve(doc), nodeLookup(doc.nodes), dims, 254, assets);
+        expect(built).toBeDefined();
+        if (!built) return;
+        const width = dims.widthPx;
+        // Image box 2000×1000 hm → 200×100 px; a 100×100 asset `contain`s to
+        // 100×100 at x=50, so px 0..50 and 150..200 are letterbox.
+        expect(built.mask.data[50 * width + 10], 'letterbox keeps the lower policy').toBe(1);
+        expect(built.mask.data[50 * width + 100], 'drawn rect takes the image policy').toBe(2);
+    });
+
+    it('a contain image raster keeps the centred fit offset (letterbox blank on both sides)', async () => {
+        const doc = imageDoc([image('img', 0, 0, 2000, 1000)]);
+        const nodes = resolve(doc);
+        const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+        const asset = await solidAsset(100, 100);
+        const assets = new Map<string, PreparedAsset>([['img', asset]]);
+        const { imageData } = await rasterizeResolved(nodes, { ...dims, dpi: doc.label.dpi }, assets);
+
+        const dark = (x: number, y: number): boolean => {
+            const i = (y * imageData.width + x) * 4;
+            return imageData.data[i]! < 128 && imageData.data[i + 3]! > 0;
+        };
+        // Box 2000×1000 hm → 200×100 px; a square asset contains to 100×100 at x=50.
+        expect(dark(100, 50), 'centred drawn rect has ink').toBe(true);
+        expect(dark(10, 50), 'left letterbox is blank').toBe(false);
+        expect(dark(190, 50), 'right letterbox is blank').toBe(false);
+    });
+
+    it('a contain image mask covers exactly the raster drawn rect at the origin', async () => {
+        await expectMaskEqualsRaster(imageDoc([image('img', 0, 0, 2000, 1000)]));
+    });
+
+    it('a contain image mask covers exactly the raster drawn rect at a non-zero transform', async () => {
+        await expectMaskEqualsRaster(imageDoc([image('img', 1000, 500, 2000, 1000)]));
+    });
+
+    it('a contain image mask covers exactly the raster drawn rect nested in a translated group', async () => {
+        const doc = imageDoc([
+            node({
+                id: 'g',
+                parentId: null,
+                type: 'group',
+                visible: true,
+                locked: false,
+                transform: { x: 1000, y: 500, rotDeg: 0, scaleX: 1, scaleY: 1 },
+            }),
+            node({
+                id: 'img',
+                parentId: 'g',
+                type: 'image',
+                visible: true,
+                locked: false,
+                transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                imageId: 'i1',
+                size: { w: 2000, h: 1000 },
+            }),
+        ]);
+        await expectMaskEqualsRaster(doc);
+    });
+
+    it('degrades to fallback fonts when the font provider rejects', async () => {
+        const doc = smallDoc(leftHalfRegions, [text('t', 100, 200, 'Hi')]);
+        const page = await renderLabelPage(doc, {}, {
+            assets: { fonts: { ensureFonts: () => Promise.reject(new Error('no fonts')) } },
+        });
+        let dark = 0;
+        for (let i = 0; i < page.rgba.data.length; i += 4) {
+            if (page.rgba.data[i]! < 128) dark++;
+        }
+        expect(dark, 'text still renders with fallback fonts').toBeGreaterThan(0);
     });
 
     it('paints text glyph coverage, not its bounding box (real canvas)', async () => {
