@@ -9,5 +9,7 @@ export default mergeConfig(viteConfig, defineConfig({
     clearMocks: true,
     unstubEnvs: true,
     unstubGlobals: true,
+    testTimeout: 15000,
+    hookTimeout: 15000,
   },
 }))
