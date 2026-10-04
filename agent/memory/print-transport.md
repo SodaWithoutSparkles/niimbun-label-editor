@@ -71,6 +71,21 @@ niim.blue passes `quantity` per `printPage` and `totalPages = pages * copies`; o
 - B1_PRO printhead = 567 dots @ 300 dpi ≈ 48 mm.
 
 
+## Render pipeline (P4)
+
+- **The one path:** `src/core/render/` (pure: `dimensions`, `colorSpace` seam, `quantize` — threshold/FS/Stucki/Atkinson, `policy` masks) → `src/editor/render/{rasterize,clip,renderLabelPage,unionPath}` → `ImageEncoder`. `renderLabelPage` is the shared preview≡print entry point; `src/print/printLabel.ts` encodes via `ImageEncoder.encodeCanvas` (never hand-build `rowsData`). Dev harness: `?print=1`.
+- **Clip is `union(regions)` = "inside any region" = nonzero winding, never `evenodd`** (plan §187). `regionUnionPath` normalizes polygon signed-area winding; keep-out/count predicates must use the drawable-union predicate (`isDrawableRegion`), kept in sync between `src/editor/render/regionOverlay.ts` and `src/core/doc/derive.ts` (duplicated — `src/core` can't import `src/editor`).
+- **Konva offscreen gotchas (both cost a must-fix in the P4 gate):**
+  - `stage.destroy()` **frees its canvases** (`Konva.releaseCanvasOnDestroy` default true) → read pixels *before* destroying, and build the encoder canvas fresh from the final `ImageData`; never return a canvas you destroyed.
+  - Konva's layer canvas uses `Konva.pixelRatio` (device DPR). Force `Konva.pixelRatio = 1` inside a `try/finally` around the offscreen create/draw/read, or HiDPI overscales/truncates the read.
+  - `Konva.Text` renders real glyphs under the `@napi-rs/canvas` test shim (system Arial resolves) — text golden tests are possible headlessly.
+- **Per-object quantizer policy masks:** no hint anywhere ⇒ no mask, exactly one global pass (guardrail). Painting every rendered leaf (globals = mask 0) in the same tree order as the raster gives topmost-wins.
+- **Testing:** real canvas in Vitest via `src/test/canvasHarness.ts` (`installCanvasShim()`, `@napi-rs/canvas` dev dep). Guard `src/test/canvasHarness.guard.test.ts` forbids product imports.
+
+## Narrow-roll placement (P7 must fix — found by hardware smoke 2026-10-04)
+
+Printing a **25 mm** label on the **567-dot (~48 mm)** printhead left-aligns content at the origin of the padded bit plane, so on the owner's **50×30 mm** test roll the box printed ~15.5 mm from the left edge (blank head columns), and the printer trimmed 78−30 mm at the tag boundary (IR sensor). This is transport behavior, **not** a clip/render bug (invariant 6: raster stays the backing rect). P7 owns the fix: feed/label offset + centering knobs (`PrintPreview.svelte` `offset.{x,y,offsetType}`) and the printhead-overflow warning.
+
 ## Gotchas (learned the hard way)
 
 - **Pass only defined option keys to `newPrintTask`.** It spreads options over library defaults, so `{ pageColor: undefined }` *overwrites* the default and `validatePage` throws on the first real page. Build a `Partial<PrintOptions>` conditionally.
