@@ -164,11 +164,25 @@ Fix rounds ≤2 per area; deadlock → escalate to Build.
 
 | WS | Area | Status |
 | -- | ---- | ------ |
-| W1 | CSV import + store + virtualized preview + cap | pending |
-| W2 | Row context + binding resolution + fallbacks | pending |
-| W3 | Template engine + Web Worker | pending |
-| W4 | Trust gate (IDB trust + prompt + settings) | pending |
+| W1 | CSV import + store + virtualized preview + cap | **DONE** — `22fc00e`; review APPROVE (review + review-fast) |
+| W2 | Row context + binding resolution + fallbacks | in progress |
+| W3 | Template engine + Web Worker | **DONE** — `e1b8872`; experimental-review + review-alt APPROVE (2 fix rounds) |
+| W4 | Trust gate (IDB trust + prompt + settings) | in progress |
 | W5 | Globals prefetch once per job | pending |
 | W6 | Editor preview row N + inspector wiring | pending |
 
-**Next action:** resolve O1–O6 with the owner, then dispatch W3 interface + W1.
+## 8. Review record
+
+- **W3** (`review` provider-error → `experimental-review` + `review-alt`): round 1 = CHANGES-REQUESTED
+  (runtime `SyntaxError` misclassified; `getOwnPropertyDescriptor`/`getPrototypeOf` freeze escapes;
+  250 ms budget included worker cold start; disposed leak) → fix → `review-alt` found 2 regressions
+  (own `constructor` key shadowed; `instanceof Object` broken) → fix → **APPROVE** (0 blocking).
+  Engine now: ready handshake, direct strict-mode body compile, timeout scoped per request, lazy
+  reset, `context`/`worker` error kinds. 41 template tests.
+- **W1** (`review`): round 1 = CHANGES-REQUESTED (preview window not clamped on shrink; `Object.prototype`
+  leak on `__proto__`/`constructor` headers; blank header discarded; unbounded error list; unvalidated
+  `setDocCsv`) → fix (parser reworked to `header:false` + manual split) → `review-fast` **APPROVE**
+  (6/6 resolved). 23 CSV-import tests.
+- Gate at W1+W3 commit: **800 tests / 76 files**, `tsc` clean, build green.
+
+**Next action:** W4 + W2 in flight; then W5 → W6 → full-gate re-review → headed check → owner hw smoke.
