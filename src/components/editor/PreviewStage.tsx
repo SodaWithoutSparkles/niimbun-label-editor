@@ -529,14 +529,17 @@ export const PreviewStage: React.FC = () => {
     );
 
     // A page reload/close inside the autosave debounce would otherwise drop the
-    // last edit; flush the pending write on `pagehide` (must-fix #8).
+    // last edit; commit any open transient gesture, then flush the pending
+    // write on `pagehide` (must-fix #8). Ordering matters: `commitDoc` schedules
+    // the autosave, `flushAutosave` then writes it synchronously-ish.
     useEffect(() => {
         const onPageHide = () => {
+            commitDoc();
             void flushAutosave();
         };
         window.addEventListener('pagehide', onPageHide);
         return () => window.removeEventListener('pagehide', onPageHide);
-    }, [flushAutosave]);
+    }, [commitDoc, flushAutosave]);
 
     // Abandon a half-open transient gesture if the preview unmounts mid-gesture
     // (view switch, doc close). The transient updates have already mutated

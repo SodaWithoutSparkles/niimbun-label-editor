@@ -454,8 +454,12 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             // Preserve the node's world placement across the parent change
             // (must-fix #4): fold the delta between the old and new effective
             // parent transforms into its local transform. `byId` is read before
-            // the parentId flip, so the old parent chain is intact.
-            preserveWorldTransform(moved, moved.parentId, parentId, nodeLookup(next.nodes));
+            // the parentId flip, so the old parent chain is intact. Skip when
+            // the parent is unchanged (plain sibling reorder) — the round-trip
+            // through decompose/recompose would drift the transform.
+            if (moved.parentId !== parentId) {
+                preserveWorldTransform(moved, moved.parentId, parentId, nodeLookup(next.nodes));
+            }
             moved.parentId = parentId;
             // Drop the node, then reinsert it among its new siblings at the
             // requested index so array order keeps encoding sibling z-order.
