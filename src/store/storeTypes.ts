@@ -3,10 +3,11 @@ import type { SupportedLanguage } from '../i18n/languages';
 import type { InsertAction } from './slices/toolsSlice';
 import type { ZoomMode } from './slices/viewSlice';
 import type { hm } from '../core/hm';
-import type { LabelDoc, Node, Region } from '../core/doc/types';
+import type { FontRef, ImageRef, LabelDoc, Node, Region } from '../core/doc/types';
 import type { ResizeOptions, Size } from '../core/doc/geometry';
 import type { LabelPresetId } from '../core/doc/label-presets';
 import type { LabelRepo, LabelSummary } from '../data/labelRepo';
+import type { ResourceRepo } from '../data/resourceRepo';
 import type { PrinterStatus } from '../print/transport';
 
 /** Input for the `createLabel` store action — forwarded to `createLabelDoc`. */
@@ -127,6 +128,9 @@ export interface AppState {
     storageError: boolean;
     labelRepo: LabelRepo | null;
     setLabelRepo: (repo: LabelRepo | null) => void;
+    /** Binary asset storage (font/image bytes); shared adapter with `labelRepo`. */
+    resourceRepo: ResourceRepo | null;
+    setResourceRepo: (repo: ResourceRepo | null) => void;
     refreshGallery: () => Promise<void>;
     createLabel: (spec: CreateLabelSpec) => Promise<LabelDoc | null>;
     openLabel: (id: string) => Promise<LabelDoc | null>;
@@ -146,6 +150,21 @@ export interface AppState {
     /** Adds a node with a fresh id; returns the new id, or null with no doc. */
     addNode: (node: Node) => string | null;
     updateNode: (id: string, patch: NodePatch) => void;
+    /**
+     * Register an image resource (one undo entry). Returns `false` (no-op) when
+     * there is no open doc or an `imageId` collision.
+     */
+    addImageRef: (ref: ImageRef) => boolean;
+    /**
+     * Patch an existing image resource by `imageId` (one undo entry). `name`/
+     * `alt` are editable without breaking node references; `widthPx`/`heightPx`
+     * are rounded to non-negative integers.
+     */
+    updateImageRef: (imageId: string, patch: Partial<Omit<ImageRef, 'imageId'>>) => void;
+    /** Register a font resource (one undo entry); `false` on no doc/collision. */
+    addFontRef: (ref: FontRef) => boolean;
+    /** Patch an existing font resource by `fontId` (one undo entry). */
+    updateFontRef: (fontId: string, patch: Partial<Omit<FontRef, 'fontId'>>) => void;
     /** Rename the open document (`doc.meta.name`) as one undo entry. */
     renameDoc: (name: string) => void;
     /** Set the preview sample row (`doc.data.sampleRowIndex`) as one undo entry. */

@@ -2,7 +2,7 @@ import { newLabelId, roundNode } from '../../core/doc/factory';
 import { resizeNodeGeometry } from '../../core/doc/geometry';
 import { effectiveTransform, IDENTITY_MAT2D, nodeLookup, worldPreservingTransform, type Mat2D } from '../../core/doc/derive';
 import { roundHm } from '../../core/hm';
-import type { GroupNode, LabelDoc, Node } from '../../core/doc/types';
+import type { FontRef, GroupNode, ImageRef, LabelDoc, Node } from '../../core/doc/types';
 import type { NodePatch, StoreSlice } from '../storeTypes';
 
 /**
@@ -58,6 +58,30 @@ const docsEqual = (a: LabelDoc, b: LabelDoc): boolean => JSON.stringify(a) === J
 
 /** Integer hm, or 0 for a non-finite number (matches `factory.ts` discipline). */
 const safeRoundHm = (value: number): number => (Number.isFinite(value) ? roundHm(value) : 0);
+
+/** Non-negative integer, or 0 for a non-finite number (image px discipline). */
+const nonNegativeInt = (value: number): number =>
+    Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+
+/**
+ * Apply an asset-reference patch in place with the stable id restored. `alt` is
+ * the only optional field: an explicit `undefined` clears it (the key is
+ * deleted, matching `applyNodePatch`). Restoring the id means a runtime `as`
+ * cast can never re-key a resource and silently break every node that
+ * references it.
+ */
+const applyRefPatch = (
+    ref: ImageRef | FontRef,
+    idKey: 'imageId' | 'fontId',
+    id: string,
+    patch: Partial<Omit<ImageRef, 'imageId'>> | Partial<Omit<FontRef, 'fontId'>>,
+): void => {
+    Object.assign(ref, patch);
+    if (Object.prototype.hasOwnProperty.call(patch, 'alt') && patch.alt === undefined) {
+        delete (ref as unknown as Record<string, unknown>).alt;
+    }
+    (ref as unknown as Record<string, unknown>)[idKey] = id;
+};
 
 /** `null`/missing parent is a valid root; otherwise the parent must be a group. */
 const isValidParent = (nodes: readonly Node[], parentId: string | null): boolean => {
@@ -320,6 +344,51 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             const next = cloneDoc(doc);
             const node = next.nodes.find((entry) => entry.id === id)!;
             applyNodePatch(node, patch);
+            commit(next, doc);
+        },
+
+        addImageRef: (ref) => {
+            const doc = get().currentDoc;
+            if (!doc) return false;
+            // A duplicate id would make every node referencing it ambiguous.
+            if (doc.resources.images.some((entry) => entry.imageId === ref.imageId)) return false;
+            const next = cloneDoc(doc);
+            next.resources.images.push(structuredClone(ref));
+            commit(next, doc);
+            return true;
+        },
+
+        updateImageRef: (imageId, patch) => {
+            const doc = get().currentDoc;
+            if (!doc) return;
+            const index = doc.resources.images.findIndex((entry) => entry.imageId === imageId);
+            if (index < 0) return;
+            const next = cloneDoc(doc);
+            const ref = next.resources.images[index]!;
+            applyRefPatch(ref, 'imageId', imageId, patch);
+            // px dimensions are stored as non-negative integers.
+            if (patch.widthPx !== undefined) ref.widthPx = nonNegativeInt(patch.widthPx);
+            if (patch.heightPx !== undefined) ref.heightPx = nonNegativeInt(patch.heightPx);
+            commit(next, doc);
+        },
+
+        addFontRef: (ref) => {
+            const doc = get().currentDoc;
+            if (!doc) return false;
+            if (doc.resources.fonts.some((entry) => entry.fontId === ref.fontId)) return false;
+            const next = cloneDoc(doc);
+            next.resources.fonts.push(structuredClone(ref));
+            commit(next, doc);
+            return true;
+        },
+
+        updateFontRef: (fontId, patch) => {
+            const doc = get().currentDoc;
+            if (!doc) return;
+            const index = doc.resources.fonts.findIndex((entry) => entry.fontId === fontId);
+            if (index < 0) return;
+            const next = cloneDoc(doc);
+            applyRefPatch(next.resources.fonts[index]!, 'fontId', fontId, patch);
             commit(next, doc);
         },
 

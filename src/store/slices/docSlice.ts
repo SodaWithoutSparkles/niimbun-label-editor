@@ -3,6 +3,7 @@ import { createLabelDoc } from '../../core/doc/factory';
 import { isLabelDoc } from '../../core/doc/validate';
 import { createIdbAdapter } from '../../data/db';
 import { createLabelRepo } from '../../data/labelRepo';
+import { createResourceRepo } from '../../data/resourceRepo';
 import type { LabelDoc } from '../../core/doc/types';
 import type { PrinterStatus } from '../../print/transport';
 import type { StoreSlice } from '../storeTypes';
@@ -64,11 +65,13 @@ export const createDocSlice: StoreSlice = (set, get) => {
         galleryLoading: true,
         storageError: false,
         labelRepo: null,
+        resourceRepo: null,
 
         printerStatus: DEFAULT_PRINTER_STATUS,
         setPrinterStatus: (printerStatus) => set({ printerStatus }),
 
         setLabelRepo: (labelRepo) => set({ labelRepo }),
+        setResourceRepo: (resourceRepo) => set({ resourceRepo }),
 
         refreshGallery: async () => {
             const repo = get().labelRepo;
@@ -216,9 +219,14 @@ export const createDocSlice: StoreSlice = (set, get) => {
                     if (!get().labelRepo) {
                         const adapter = await createIdbAdapter();
                         // `setLabelRepo` may have landed while IDB was opening;
-                        // an injected repo still wins over the real one.
+                        // an injected repo still wins over the real one. The
+                        // resource repo shares the same adapter (one DB
+                        // connection, one migration pass).
                         if (!get().labelRepo) {
                             set({ labelRepo: createLabelRepo(adapter) });
+                        }
+                        if (!get().resourceRepo) {
+                            set({ resourceRepo: createResourceRepo(adapter) });
                         }
                     }
                     set({ storageError: false });
