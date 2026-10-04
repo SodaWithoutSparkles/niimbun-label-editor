@@ -41,6 +41,29 @@ describe('pointInRegion / pointInUnion', () => {
         expect(pointInRegion(3, 3, { kind: 'roundedRect', x: 0, y: 0, w: 10, h: 10, r: 3 })).toBe(true);
     });
 
+    it('clamps an over-large rounded-rect radius like the tracer', () => {
+        // r=100 on a 10×10 box clamps to 5, so the centre is inside. Without the
+        // clamp the corner discs sit at (100,100) and exclude the whole box.
+        const region: Region = { kind: 'roundedRect', x: 0, y: 0, w: 10, h: 10, r: 100 };
+        expect(pointInRegion(5, 5, region)).toBe(true);
+    });
+
+    it('rejects non-drawable regions like the clip', () => {
+        expect(pointInRegion(0, 0, { kind: 'rect', x: 0, y: 0, w: 0, h: 10 }), 'zero-width rect').toBe(false);
+        expect(pointInRegion(0, 0, { kind: 'roundedRect', x: 0, y: 0, w: 10, h: -1, r: 2 }), 'negative height').toBe(
+            false,
+        );
+        expect(pointInRegion(0, 0, { kind: 'circle', cx: 0, cy: 0, r: 0 }), 'zero-radius circle').toBe(false);
+        expect(
+            pointInRegion(1, 1, { kind: 'polygon', points: [[0, 0], [10, 0], [0, 10]], closed: false }),
+            'open polygon',
+        ).toBe(false);
+        expect(
+            pointInRegion(5, 5, { kind: 'polygon', points: [[0, 0], [5, 5], [10, 10]], closed: true }),
+            'collinear polygon',
+        ).toBe(false);
+    });
+
     it('treats overlapping regions as a hole-free union (nonzero winding)', () => {
         const regions: Region[] = [
             { kind: 'rect', x: 0, y: 0, w: 1000, h: 1000 },
@@ -101,6 +124,49 @@ describe('regionUnionPath — silhouette subpaths', () => {
 
     it('drops a degenerate polygon (fewer than 3 points)', () => {
         expect(regionUnionPath([{ kind: 'polygon', points: [[0, 0], [1, 1]], closed: true }])).toEqual([]);
+    });
+
+    it('drops zero-area and open contours (no printable interior)', () => {
+        expect(regionUnionPath([{ kind: 'rect', x: 0, y: 0, w: 0, h: 10 }])).toEqual([]);
+        expect(regionUnionPath([{ kind: 'roundedRect', x: 0, y: 0, w: 10, h: 0, r: 2 }])).toEqual([]);
+        expect(regionUnionPath([{ kind: 'circle', cx: 0, cy: 0, r: 0 }])).toEqual([]);
+        // Collinear points: non-zero vertex count but no painted area.
+        expect(
+            regionUnionPath([{ kind: 'polygon', points: [[0, 0], [5, 5], [10, 10]], closed: true }]),
+        ).toEqual([]);
+        // An open polygon has no interior.
+        expect(
+            regionUnionPath([{ kind: 'polygon', points: [[0, 0], [10, 0], [0, 10]], closed: false }]),
+        ).toEqual([]);
+    });
+
+    it('keeps a self-intersecting bow-tie polygon (net area 0, nonzero fill paints)', () => {
+        const bowTie: Region = { kind: 'polygon', points: [[0, 0], [10, 10], [10, 0], [0, 10]], closed: true };
+        const paths = regionUnionPath([bowTie]);
+        expect(paths).toHaveLength(1);
+        expect(paths[0]).toMatchObject({ kind: 'polygon' });
+        // Net signed area is 0, so winding is left as authored (not reversed).
+        if (paths[0]?.kind === 'polygon') {
+            expect(paths[0].points).toEqual([[0, 0], [10, 10], [10, 0], [0, 10]]);
+        }
+    });
+
+    it('normalizes polygon winding to the rect/arc direction (S6)', () => {
+        const pointsOf = (paths: UnionSubpath[]): [number, number][] =>
+            (paths[0] as Extract<UnionSubpath, { kind: 'polygon' }>).points;
+        // Same square, opposite input orientations.
+        const forward = regionUnionPath([
+            { kind: 'polygon', points: [[0, 0], [10, 0], [10, 10], [0, 10]], closed: true },
+        ]);
+        const reverse = regionUnionPath([
+            { kind: 'polygon', points: [[0, 0], [0, 10], [10, 10], [10, 0]], closed: true },
+        ]);
+        expect(pointsOf(forward)).toEqual([[0, 0], [10, 0], [10, 10], [0, 10]]);
+        // The reverse-wound input is flipped to match, not passed through.
+        expect(pointsOf(reverse)).toEqual([[10, 0], [10, 10], [0, 10], [0, 0]]);
+        expect(regionUnionPath([{ kind: 'polygon', points: [[0, 0], [0, 10], [10, 10], [10, 0]], closed: true }])).toEqual(
+            reverse,
+        );
     });
 
     it('reads the F-tag preset: 3 subpaths and the expected union bounds', () => {
@@ -174,6 +240,17 @@ describe('nodesIntersectNonPrintable — truth table', () => {
 
     it('is silent when the document declares no regions', () => {
         const doc = docWith([], [node({ id: 'a', parentId: null, ...rect(5000, 5000, 100, 100) })]);
+        expect(nodesIntersectNonPrintable(doc)).toEqual([]);
+    });
+
+    it('is silent when the regions have no drawable union', () => {
+        // Only open/degenerate contours: the clip is a no-op, so keep-out is too.
+        const regions: Region[] = [
+            { kind: 'polygon', points: [[0, 0], [10, 0], [0, 10]], closed: false },
+            { kind: 'rect', x: 0, y: 0, w: 0, h: 1000 },
+            { kind: 'circle', cx: 0, cy: 0, r: 0 },
+        ];
+        const doc = docWith(regions, [node({ id: 'anywhere', parentId: null, ...rect(5000, 5000, 100, 100) })]);
         expect(nodesIntersectNonPrintable(doc)).toEqual([]);
     });
 

@@ -1,8 +1,8 @@
 import React from 'react';
 import { Layer, Line, Rect, Shape, Text } from 'react-konva';
-import type Konva from 'konva';
 import type { Guide } from '../../editor/render/guides';
 import { regionUnionPath, resolveRegionOverlay, type UnionSubpath } from '../../editor/render/regionOverlay';
+import { traceUnion } from '../../editor/render/unionPath';
 import type { LabelDoc } from '../../core/doc/types';
 import type { hm } from '../../core/hm';
 
@@ -17,60 +17,16 @@ const GUIDE_STROKE = '#9ca3af';
 const GRID_STROKE = '#e5e7eb';
 
 /**
- * Trace `union(regions)` as closed subpaths. Filling all of them in one
- * `ctx.fill()` uses the canvas default **nonzero** winding, so overlapping
- * regions stay white (winding +1/+2, never 0) and no internal seam is drawn —
- * there is no per-region stroke to create one. Takes the **outline**, rounded
- * with `arcTo` for `roundedRect`, so the silhouette has real rounded corners.
+ * Solid-white union silhouette — the label surface. `Shape` does not hit-test
+ * (`listening={false}`), so empty-canvas selection still works. Tracing is the
+ * shared `traceUnion`, so the overlay and the raster clip stay identical.
  */
-const traceUnion = (ctx: Konva.Context, subpaths: readonly UnionSubpath[]): void => {
-    ctx.beginPath();
-    for (const path of subpaths) {
-        switch (path.kind) {
-            case 'rect':
-                ctx.moveTo(path.x, path.y);
-                ctx.lineTo(path.x + path.w, path.y);
-                ctx.lineTo(path.x + path.w, path.y + path.h);
-                ctx.lineTo(path.x, path.y + path.h);
-                ctx.closePath();
-                break;
-            case 'roundedRect': {
-                const { x, y, w, h } = path;
-                const r = Math.min(path.r, w / 2, h / 2);
-                ctx.moveTo(x + r, y);
-                ctx.lineTo(x + w - r, y);
-                ctx.arcTo(x + w, y, x + w, y + r, r);
-                ctx.lineTo(x + w, y + h - r);
-                ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-                ctx.lineTo(x + r, y + h);
-                ctx.arcTo(x, y + h, x, y + h - r, r);
-                ctx.lineTo(x, y + r);
-                ctx.arcTo(x, y, x + r, y, r);
-                ctx.closePath();
-                break;
-            }
-            case 'circle':
-                ctx.moveTo(path.cx + path.r, path.cy);
-                ctx.arc(path.cx, path.cy, path.r, 0, Math.PI * 2);
-                ctx.closePath();
-                break;
-            case 'polygon':
-                ctx.moveTo(path.points[0]![0], path.points[0]![1]);
-                for (let i = 1; i < path.points.length; i++) ctx.lineTo(path.points[i]![0], path.points[i]![1]);
-                ctx.closePath();
-                break;
-        }
-    }
-};
-
-/** Solid-white union silhouette — the label surface. `Shape` does not hit-test
- *  (`listening={false}`), so empty-canvas selection still works. */
 const UnionSilhouette: React.FC<{ regions: readonly UnionSubpath[] }> = ({ regions }) => (
     <Shape
         listening={false}
         fill="#ffffff"
         sceneFunc={(ctx, shape) => {
-            traceUnion(ctx as unknown as Konva.Context, regions);
+            traceUnion(ctx, regions);
             // Apply the `fill` prop (raw ctx.fill() would use the default black).
             ctx.fillStrokeShape(shape);
         }}
