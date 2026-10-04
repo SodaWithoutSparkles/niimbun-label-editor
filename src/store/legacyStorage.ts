@@ -1,7 +1,6 @@
 import type { AppState, KeyboardShortcutConfig } from './storeTypes';
-import { defaultColors, defaultKeyboardShortcuts, defaultToolSettings } from './storeDefaults';
+import { defaultKeyboardShortcuts, defaultToolSettings } from './storeDefaults';
 import {
-    normalizeColors,
     normalizeKeyboardShortcuts,
     normalizeToolSettings,
 } from './preferenceValidation';
@@ -9,13 +8,12 @@ import {
 /**
  * Keys used by the pre-`persist` store. `autosave_project` is listed for
  * completeness (it is a project autosave blob owned by `Header.tsx`, not a
- * preference), but only the four preference keys below are read/cleared here.
+ * preference), but only the three preference keys below are read/cleared here.
  */
 export const LEGACY_KEYS = {
     keyboardShortcuts: 'ui_keyboard_shortcuts',
     autoSave: 'ui_auto_save',
     toolSettings: 'ui_tool_settings',
-    colors: 'ui_colors',
     autosaveProject: 'autosave_project',
 } as const;
 
@@ -24,11 +22,10 @@ const PREFERENCE_KEYS = [
     LEGACY_KEYS.keyboardShortcuts,
     LEGACY_KEYS.autoSave,
     LEGACY_KEYS.toolSettings,
-    LEGACY_KEYS.colors,
 ] as const;
 
 export type LegacyPreferences = Partial<
-    Pick<AppState, 'autoSave' | 'keyboardShortcuts' | 'toolSettings' | 'colors'>
+    Pick<AppState, 'autoSave' | 'keyboardShortcuts' | 'toolSettings'>
 >;
 
 /** Reads a raw value from storage, swallowing access errors. */
@@ -103,9 +100,6 @@ export const readLegacyPreferences = (storage: Storage): LegacyPreferences => {
         defaultToolSettings,
     );
     if (toolSettings !== undefined) preferences.toolSettings = toolSettings;
-
-    const colors = normalizeColors(readLegacyJSON(storage, LEGACY_KEYS.colors), defaultColors);
-    if (colors !== undefined) preferences.colors = colors;
 
     return preferences;
 };

@@ -3,7 +3,7 @@ import type { StoreSlice } from '../storeTypes';
 /**
  * Non-preference/misc state. The preference fields (autoSave, keyboard
  * shortcuts) now live in `settingsSlice`; this slice keeps runtime and
- * transient UI state (history, export modal, last autosave timestamp).
+ * transient UI state (history, last autosave timestamp).
  */
 export const createPreferencesSlice: StoreSlice = (set) => ({
     history: [],
@@ -20,8 +20,4 @@ export const createPreferencesSlice: StoreSlice = (set) => ({
 
     lastAutoSaveAt: null,
     setLastAutoSaveAt: (timestamp) => set({ lastAutoSaveAt: timestamp }),
-
-    isExportModalOpen: false,
-    openExportModal: () => set({ isExportModalOpen: true }),
-    closeExportModal: () => set({ isExportModalOpen: false }),
 });

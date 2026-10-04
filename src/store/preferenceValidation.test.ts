@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
     normalizeBoolean,
-    normalizeColors,
     normalizeKeyboardShortcuts,
     normalizeLanguage,
     normalizeToolSettings,
@@ -12,7 +11,6 @@ import {
 import {
     DEFAULT_SCREEN_DPI,
     defaultAutoSave,
-    defaultColors,
     defaultKeyboardShortcuts,
     defaultLanguage,
     defaultToolSettings,
@@ -92,22 +90,10 @@ describe('normalizeToolSettings', () => {
     });
 });
 
-describe('normalizeColors', () => {
-    it('repairs bad fields and keeps good ones', () => {
-        const result = normalizeColors({ stroke: '#123456', fill: 7, active: 'nope' }, defaultColors);
-        expect(result).toEqual({ stroke: '#123456', fill: defaultColors.fill, active: defaultColors.active });
-    });
-
-    it('returns undefined for non-objects', () => {
-        expect(normalizeColors(null, defaultColors)).toBeUndefined();
-    });
-});
-
 const defaults: PersistedSettings = {
     autoSave: defaultAutoSave,
     keyboardShortcuts: defaultKeyboardShortcuts,
     toolSettings: defaultToolSettings,
-    colors: defaultColors,
     language: defaultLanguage,
     screenDpi: DEFAULT_SCREEN_DPI,
 };
@@ -120,7 +106,7 @@ describe('validatePersistedSettings', () => {
 
     it('repairs bad types back to defaults', () => {
         const result = validatePersistedSettings(
-            { autoSave: 'yes', language: 'xx-YY', colors: 3, toolSettings: null, keyboardShortcuts: 'x' },
+            { autoSave: 'yes', language: 'xx-YY', toolSettings: null, keyboardShortcuts: 'x' },
             defaults,
         );
         expect(result).toEqual(defaults);
@@ -128,12 +114,11 @@ describe('validatePersistedSettings', () => {
 
     it('keeps valid values', () => {
         const result = validatePersistedSettings(
-            { autoSave: false, language: 'en', colors: { stroke: '#fff', fill: '#000', active: 'fill' } },
+            { autoSave: false, language: 'en' },
             defaults,
         );
         expect(result.autoSave).toBe(false);
         expect(result.language).toBe('en');
-        expect(result.colors).toEqual({ stroke: '#fff', fill: '#000', active: 'fill' });
     });
 });
 

@@ -1,13 +1,8 @@
 {
   "fileMenu": {
     "title": "File",
-    "newProject": "New Project",
-    "openProject": "Open Project",
-    "saveProjectInPlace": "Save Project (in-place)",
-    "saveProject": "Save Project",
-    "saveProjectAs": "Save Project As...",
-    "autoSave": "Auto-save",
-    "exportImage": "Export as Image..."
+    "saveProject": "Save Label",
+    "autoSave": "Auto-save"
   },
   "bottomBar": {
     "autoSaveOff": "Auto-save off",
@@ -23,14 +18,8 @@
     "lastSaved": "Last saved: {{time}}",
     "lastSavedShort": "{{time}}",
     "shortJustNow": "Just now",
-    "zoom": "Zoom:",
-    "x": "X:",
-    "y": "Y:",
     "tool": "Tool:",
-    "home": "Home",
-    "toggleAutoSave": "Toggle auto-save",
-    "resetView": "Reset view to center",
-    "coords": "({{x}}, {{y}}, {{scale}}%)"
+    "toggleAutoSave": "Toggle auto-save"
   },
   "keyLabels": {
     "ctrl": "Ctrl",
@@ -53,11 +42,8 @@
     "close": "Close"
   },
   "header": {
-    "confirmOverwriteCleared": "WARNING: You have cleared all objects during this session.\nSaving now will OVERWRITE your existing file on disk with these changes.\n\nIf you intended to start a new drawing based on this file, you should probably use 'Save As' instead to keep the old file intact.\n\nClick OK to overwrite the existing file.\nClick Cancel to abort (then use File > Save As).",
-    "confirmSaveEmpty": "You are about to save an empty canvas to your existing file.\nThis will overwrite your previous work with no objects.\n\nClick OK to overwrite in-place.\nClick Cancel to abort.",
-    "promptImageUrl": "Paste an image URL",
-    "projectNameAria": "Project name",
-    "renameProjectTitle": "Click to rename project"
+    "labelNameAria": "Label name",
+    "renameLabelTitle": "Click to rename label"
   },
   "rightSidebar": {
     "confirmClearAll": "WARNING: This will delete ALL objects on the canvas.\n\nAre you sure you want to clear everything?",
@@ -96,7 +82,7 @@
     "undone": "Undone"
   },
   "errors": {
-    "saveFailed": "Failed to save project",
+    "saveFailed": "Failed to save label",
     "loadFailed": "Failed to load project file",
     "openFailed": "Failed to open project file",
     "invalidStoredRecord": "labels: invalid stored record"
@@ -110,42 +96,12 @@
   },
   "help": {
     "title": "Help",
-    "intro": "Welcome to the drawing app. Use the left toolbar to add shapes (rectangle, ellipse, line, arrow, star, text, callout), pick colors, and draw on the canvas.",
-    "panels": "The right panel lets you edit the selected object's properties, review the action history, and manage layers. Use the top menus to create, open, save, and export your project."
+    "intro": "The gallery lists your saved labels. Create a new label, open an existing one, or delete labels you no longer need.",
+    "panels": "In the editor, use the insert rail to add text, images, shapes, and codes, then adjust the selected object in the right panel. Save your work from the File menu; auto-save runs in the background while the editor is open."
   },
   "helpMenu": {
     "title": "Help",
     "openHelp": "Open Help"
-  },
-  "export": {
-    "title": "Export Preview",
-    "close": "Close",
-    "download": "Download",
-    "capturing": "Capturing preview... Large Canvas might take longer",
-    "capturingShort": "Capturing preview...",
-    "captureFailed": "Failed to capture canvas.",
-    "loading": "Loading...",
-    "zoomHint": "Zoom to fit before exporting for best results.",
-    "filename": "Filename",
-    "format": "File format",
-    "defaultFilename": "drawing-export",
-    "size": "Size",
-    "quality": "Quality",
-    "qualityHint": "JPG/WebP only",
-    "qualityHintPng": "PNG ignores quality",
-    "trim": "Trim empty space",
-    "trimShort": "Trim",
-    "trimHint": "Detects transparent areas and crops them out.",
-    "previewReady": "Preview ready • {{width}} × {{height}}px"
-  },
-  "saveAs": {
-    "title": "Save Project As",
-    "projectName": "Project name",
-    "projectNamePlaceholder": "Project name",
-    "fileName": "File name",
-    "fileNamePlaceholder": "filename.fsp",
-    "hint": "Use .fsp for compressed saves or .json for legacy format.",
-    "save": "Save"
   },
   "settings": {
     "title": "Settings",
@@ -227,9 +183,7 @@
     "group": "Group",
     "ungroup": "Ungroup",
     "moveUp": "Move Up",
-    "moveDown": "Move Down",
-    "insertLocalImage": "Insert Local Image",
-    "insertRemoteImage": "Insert Remote Image"
+    "moveDown": "Move Down"
   },
   "tools": {
     "select": "Select",
@@ -260,14 +214,6 @@
     "pickFromCanvasLabeled": "Pick {{label}} color from canvas",
     "opacity": "Opacity: {{percent}}%",
     "presets": "Presets:"
-  },
-  "dualColorPicker": {
-    "strokeColor": "Stroke Color",
-    "fillColor": "Fill Color",
-    "presetTitle": "Stroke: {{stroke}}, Fill: {{fill}}",
-    "addPreset": "Add current color as preset",
-    "stroke": "Stroke",
-    "fill": "Fill"
   },
   "popoverSlider": {
     "presets": "presets"

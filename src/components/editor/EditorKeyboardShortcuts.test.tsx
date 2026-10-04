@@ -49,12 +49,6 @@ describe('EditorKeyboardShortcuts', () => {
         expect(useStore.getState().selectedNodeIds).toEqual(['root-visible', 'root-parent']);
     });
 
-    it('Ctrl+, opens global settings (must-fix #9)', () => {
-        render(<EditorKeyboardShortcuts />);
-        press(',', { ctrlKey: true });
-        expect(useStore.getState().isSettingsOpen).toBe(true);
-    });
-
     it('bails while a modal dialog is open', () => {
         const dialog = document.createElement('dialog');
         dialog.setAttribute('open', '');

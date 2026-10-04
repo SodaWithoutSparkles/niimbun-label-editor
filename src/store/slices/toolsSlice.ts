@@ -52,10 +52,4 @@ export const createToolsSlice: StoreSlice = (set) => ({
     setActiveTool: (tool) => set({ activeTool: normalizeInsertAction(tool) }),
     /** Return to the resting select state (after place, or on Esc). */
     clearActiveTool: () => set({ activeTool: 'select' }),
-
-    // Legacy template popup state, retained so not-yet-stripped components
-    // (LeftSidebar / ToolSettingsModal / Header save blob) still typecheck.
-    // W6 removes them; the new editor path never reads these (ui-spec.md §4).
-    showToolSettings: false,
-    setShowToolSettings: (show) => set({ showToolSettings: show }),
 });

@@ -1,14 +1,10 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import type { AppState } from './storeTypes';
-import { createCanvasSlice } from './slices/canvasSlice';
-import { createColorsSlice } from './slices/colorsSlice';
 import { createNotificationsSlice } from './slices/notificationsSlice';
 import { createPreferencesSlice } from './slices/preferencesSlice';
-import { createProjectSlice } from './slices/projectSlice';
 import { createSettingsSlice } from './slices/settingsSlice';
 import { createToolsSlice } from './slices/toolsSlice';
-import { createNavigationSlice } from './slices/navigationSlice';
 import { createDocSlice } from './slices/docSlice';
 import { createEditorSlice } from './slices/editorSlice';
 import { createSelectionSlice } from './slices/selectionSlice';
@@ -16,7 +12,6 @@ import { createViewSlice } from './slices/viewSlice';
 import {
     DEFAULT_SCREEN_DPI,
     defaultAutoSave,
-    defaultColors,
     defaultKeyboardShortcuts,
     defaultLanguage,
     defaultToolSettings,
@@ -32,7 +27,6 @@ const persistedDefaults: PersistedSettings = {
     autoSave: defaultAutoSave,
     keyboardShortcuts: defaultKeyboardShortcuts,
     toolSettings: defaultToolSettings,
-    colors: defaultColors,
     language: defaultLanguage,
     screenDpi: DEFAULT_SCREEN_DPI,
 };
@@ -113,14 +107,10 @@ export const createAppStore = (storage?: Storage) => {
                 // 1. Legacy values seed the initial state where present.
                 const legacy = storage ? readLegacyPreferences(storage) : {};
                 const state: Partial<AppState> = {
-                    ...createProjectSlice(set, get, api),
-                    ...createCanvasSlice(set, get, api),
                     ...createToolsSlice(set, get, api),
-                    ...createColorsSlice(set, get, api),
                     ...createNotificationsSlice(set, get, api),
                     ...createPreferencesSlice(set, get, api),
                     ...createSettingsSlice(set, get, api),
-                    ...createNavigationSlice(set, get, api),
                     ...createDocSlice(set, get, api),
                     ...createEditorSlice(set, get, api),
                     ...createSelectionSlice(set, get, api),
@@ -129,7 +119,6 @@ export const createAppStore = (storage?: Storage) => {
                 if (legacy.autoSave !== undefined) state.autoSave = legacy.autoSave;
                 if (legacy.keyboardShortcuts !== undefined) state.keyboardShortcuts = legacy.keyboardShortcuts;
                 if (legacy.toolSettings !== undefined) state.toolSettings = legacy.toolSettings;
-                if (legacy.colors !== undefined) state.colors = legacy.colors;
                 return state as AppState;
             },
             {
@@ -144,13 +133,12 @@ export const createAppStore = (storage?: Storage) => {
                 storage: safeStorage ? createJSONStorage(() => safeStorage) : undefined,
                 // 2. `persist` rehydrates `ui_settings` over the seed — persisted wins.
                 //    `partialize` is load-bearing: without it the whole flattened
-                //    state (objects, undo history, notifications, fileHandle) would
+                //    state (current document, undo history, notifications) would
                 //    land in localStorage.
                 partialize: (s) => ({
                     autoSave: s.autoSave,
                     keyboardShortcuts: s.keyboardShortcuts,
                     toolSettings: s.toolSettings,
-                    colors: s.colors,
                     language: s.language,
                     screenDpi: s.screenDpi,
                 }),

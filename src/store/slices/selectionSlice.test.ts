@@ -59,14 +59,6 @@ describe('selectionSlice — document node selection', () => {
         expect(store.getState().selectedNodeIds).toEqual([]);
     });
 
-    it('coexists with canvasSlice selectedIds without collision', () => {
-        const store = setup();
-        store.getState().selectNodes(['doc-a']);
-        store.getState().selectItem('canvas-x');
-        expect(store.getState().selectedNodeIds).toEqual(['doc-a']);
-        expect(store.getState().selectedIds).toEqual(['canvas-x']);
-    });
-
     it('is not persisted into ui_settings', async () => {
         const storage = makeStorage();
         const store = createAppStore(storage);

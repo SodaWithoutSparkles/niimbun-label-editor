@@ -2,7 +2,6 @@ import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n/languages';
 import { SCREEN_DPI_MAX, SCREEN_DPI_MIN } from './storeDefaults';
 import type {
     AppState,
-    ColorPreset,
     KeyboardShortcutConfig,
     ModifierKey,
     TextSaveModifier,
@@ -11,7 +10,7 @@ import type {
 /** The only state that belongs in localStorage. Everything else is runtime. */
 export type PersistedSettings = Pick<
     AppState,
-    'autoSave' | 'keyboardShortcuts' | 'toolSettings' | 'colors' | 'language' | 'screenDpi'
+    'autoSave' | 'keyboardShortcuts' | 'toolSettings' | 'language' | 'screenDpi'
 >;
 
 /**
@@ -50,7 +49,6 @@ const TEXT_SAVE_MODIFIERS: readonly TextSaveModifier[] = ['ctrl', 'alt', 'shift'
 const FONT_WEIGHTS = ['normal', 'bold'] as const;
 const FONT_STYLES = ['normal', 'italic'] as const;
 const TEXT_ALIGNS = ['left', 'center', 'right'] as const;
-const COLOR_ACTIVES = ['stroke', 'fill'] as const;
 
 const isOneOf = <T extends string>(value: unknown, allowed: readonly T[]): value is T =>
     isString(value) && (allowed as readonly string[]).includes(value);
@@ -110,20 +108,6 @@ export const normalizeToolSettings = (
     return normalized;
 };
 
-/** Returns a fully-repaired `colors`, or `undefined` when unusable. */
-export const normalizeColors = (
-    value: unknown,
-    fallback: AppState['colors'],
-): AppState['colors'] | undefined => {
-    if (!isRecord(value)) return undefined;
-
-    return {
-        stroke: isString(value.stroke) ? value.stroke : fallback.stroke,
-        fill: isString(value.fill) ? value.fill : fallback.fill,
-        active: isOneOf(value.active, COLOR_ACTIVES) ? value.active : fallback.active,
-    };
-};
-
 /** Returns the boolean when it is one, otherwise `undefined`. */
 export const normalizeBoolean = (value: unknown): boolean | undefined =>
     typeof value === 'boolean' ? value : undefined;
@@ -168,7 +152,6 @@ export const validatePersistedSettings = (
         toolSettings:
             normalizeToolSettings(persisted.toolSettings, defaults.toolSettings) ??
             defaults.toolSettings,
-        colors: normalizeColors(persisted.colors, defaults.colors) ?? defaults.colors,
         language: normalizeLanguage(persisted.language) ?? defaults.language,
         screenDpi:
             normalizeScreenDpi(persisted.screenDpi, SCREEN_DPI_MIN, SCREEN_DPI_MAX) ??
@@ -193,14 +176,7 @@ export const pickPersistedKeys = (
     if ('autoSave' in persisted) picked.autoSave = repaired.autoSave;
     if ('keyboardShortcuts' in persisted) picked.keyboardShortcuts = repaired.keyboardShortcuts;
     if ('toolSettings' in persisted) picked.toolSettings = repaired.toolSettings;
-    if ('colors' in persisted) picked.colors = repaired.colors;
     if ('language' in persisted) picked.language = repaired.language;
     if ('screenDpi' in persisted) picked.screenDpi = repaired.screenDpi;
     return picked;
 };
-
-const isColorPreset = (value: unknown): value is ColorPreset =>
-    isRecord(value) && isString(value.stroke) && isString(value.fill);
-
-// Exported for completeness in case a consumer needs the guard.
-export { isColorPreset };

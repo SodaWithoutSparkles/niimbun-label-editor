@@ -5,14 +5,13 @@ import type { ToolLabelKey } from './toolLabels';
 /** Translator stub that echoes the catalogue key back. */
 const t = (key: ToolLabelKey) => `t:${key}`;
 
+// The insert-rail vocabulary plus the resting `select` state. Legacy draw
+// tools (`arrow`, `callout`, `star`) were stripped with the drawing canvas.
 const VALID_TOOLS = [
     'select',
     'rectangle',
     'ellipse',
     'line',
-    'arrow',
-    'callout',
-    'star',
     'text',
     'image',
     'polygon',

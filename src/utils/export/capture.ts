@@ -1,3 +1,5 @@
+// reserved for P8 (image export). The sole importer, `ExportModal`, was deleted
+// with the legacy drawing canvas; this helper is kept for the P8 export work.
 import type Konva from 'konva';
 
 export interface StageCapture {

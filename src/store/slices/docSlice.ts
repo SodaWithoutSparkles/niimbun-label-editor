@@ -55,6 +55,11 @@ export const createDocSlice: StoreSlice = (set, get) => {
 
         // Document library
         currentDoc: null,
+        // Explicit-save timestamp (ms epoch) for the BottomBar readout. `null`
+        // until the user saves the open document. Owned here so the writer and
+        // the reader share one slice.
+        lastSavedAt: null,
+        setLastSavedAt: (timestamp) => set({ lastSavedAt: timestamp }),
         gallery: [],
         galleryLoading: true,
         storageError: false,
@@ -138,6 +143,45 @@ export const createDocSlice: StoreSlice = (set, get) => {
             get().applyDefaultViewOrientation(doc.label.backingW, doc.label.backingH);
             set({ currentDoc: doc, view: 'editor' });
             return doc;
+        },
+
+        saveCurrentLabel: async () => {
+            const doc = get().currentDoc;
+            // No open document (gallery) or no storage: a silent no-op, matching
+            // the rest of the slice's gallery behaviour.
+            const repo = get().labelRepo;
+            if (!doc || !repo) return false;
+            // Cancel/flush the pending debounced autosave first. The explicit
+            // save captures the doc *now*, so a timer left armed would fire
+            // after `repo.save` resolves and rewrite the older captured doc
+            // (setting `updatedAt`/`lastAutoSaveAt` after this save). `flush`
+            // is the existing boundary seam: it writes the pending doc if there
+            // is one, then clears the timer.
+            get().flushAutosave();
+            // Stamp fresh activity so the gallery sorts the explicit save to the
+            // top; shallow-copy so the state update is observable.
+            const updated: LabelDoc = { ...doc, meta: { ...doc.meta, updatedAt: Math.floor(Date.now() / 1000) } };
+            try {
+                await repo.save(updated);
+            } catch {
+                get().addNotification({ type: 'error', message: i18next.t('errors.saveFailed') });
+                return false;
+            }
+            // Identity guard: a committed edit while `repo.save` was in flight
+            // replaced `currentDoc` with a newer object. Do not revert it to
+            // `updated` (that would silently drop the edit and desync `docPast`
+            // from IDB). The save still happened, so record its timestamp.
+            if (get().currentDoc === doc) {
+                set({ currentDoc: updated });
+            }
+            get().setLastSavedAt(Date.now());
+            // A refresh failure must not turn a successful save into a failure.
+            try {
+                await get().refreshGallery();
+            } catch {
+                // `refreshGallery` owns its error surface.
+            }
+            return true;
         },
 
         deleteLabel: async (id) => {

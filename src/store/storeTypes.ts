@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand';
-import type { CanvasItem, HistoryEntry, SaveFile } from '../types';
+import type { HistoryEntry } from '../types';
 import type { SupportedLanguage } from '../i18n/languages';
 import type { InsertAction } from './slices/toolsSlice';
 import type { ZoomMode } from './slices/viewSlice';
@@ -76,55 +76,14 @@ export interface KeyboardShortcutConfig {
 }
 
 export interface AppState {
-    // Project Data
-    projectName: string;
-    setProjectName: (name: string) => void;
-    createdAt: number | null;
-    setCreatedAt: (timestamp: number | null) => void;
-    saveFileName: string | null;
-    setSaveFileName: (name: string | null) => void;
-    fileHandle: FileSystemFileHandle | null;
-    setFileHandle: (handle: FileSystemFileHandle | null) => void;
     lastSavedAt: number | null;
     setLastSavedAt: (timestamp: number | null) => void;
-    version: string;
-
-    // Canvas Objects
-    objects: CanvasItem[];
-    addItem: (item: CanvasItem) => void;
-    updateItem: (id: string, updates: Partial<CanvasItem>) => void;
-    updateItems: (ids: string[], updates: Partial<CanvasItem>) => void;
-    moveItemsByDelta: (ids: string[], delta: { x: number; y: number }) => void;
-    moveItemsByDeltaTransient: (ids: string[], delta: { x: number; y: number }) => void;
-    commitHistory: (snapshot: CanvasItem[]) => void;
-    removeItem: (id: string) => void;
-    deleteSelected: () => void;
-    deleteAllItems: () => void;
-    hasPerformedClearAll: boolean; // flag to guard against accidental massive data loss on save
-    selectedIds: string[];
-    selectItem: (id: string | null) => void;
-    toggleSelectItem: (id: string) => void;
-    selectAllItems: () => void;
-    clearSelection: () => void;
-
-    // History (Undo/Redo)
-    past: CanvasItem[][];
-    future: CanvasItem[][];
-    undo: () => void;
-    redo: () => void;
-
-    // Edit Operations
-    cloneSelected: () => void;
-    moveSelectedLayer: (direction: 'up' | 'down') => void;
 
     // Tool State (Editor insert rail — one-shot armed actions; see toolsSlice)
     activeTool: InsertAction;
     setActiveTool: (tool: InsertAction) => void;
     /** Return to the resting select state (after place, or Esc). */
     clearActiveTool: () => void;
-    /** Legacy template popup state (stripped in W6); kept for old components. */
-    showToolSettings: boolean;
-    setShowToolSettings: (show: boolean) => void;
     toolSettings: {
         lineWidth: number;
         fontSize: number;
@@ -136,42 +95,16 @@ export interface AppState {
     };
     setToolSettings: (settings: Partial<AppState['toolSettings']>) => void;
 
-    // Color State
-    colors: { stroke: string; fill: string; active: 'stroke' | 'fill' };
-    setColors: (colors: Partial<AppState['colors']>) => void;
-    selectionColorSnapshot: { stroke: string; fill: string; active: 'stroke' | 'fill' } | null;
-    // Saved Color Presets (Max 8) - stores both stroke and fill
-    colorPresets: ColorPreset[];
-    addColorPreset: (preset: ColorPreset) => void;
-    updateColorPreset: (index: number, updates: Partial<ColorPreset>) => void;
-    selectColorPreset: (index: number) => void;
-    removeColorPreset: (index: number) => void;
-    selectedPresetIndex: number | null;
-
-    isDropperActive: boolean;
-    setDropperActive: (active: boolean) => void;
-    pickedColor: string | null;
-    setPickedColor: (color: string | null) => void;
-
     // Log History
     history: HistoryEntry[];
     historyUndoCount: number;
     addToHistory: (action: HistoryEntry) => void;
-
-    // Actions
-    loadProject: (data: SaveFile) => void;
-    resetProject: () => void;
 
     // AutoSave
     autoSave: boolean;
     toggleAutoSave: () => void;
     lastAutoSaveAt: number | null;
     setLastAutoSaveAt: (timestamp: number | null) => void;
-
-    // Export
-    isExportModalOpen: boolean;
-    openExportModal: () => void;
-    closeExportModal: () => void;
 
     // Keyboard Shortcuts
     keyboardShortcuts: KeyboardShortcutConfig;
@@ -199,12 +132,6 @@ export interface AppState {
     removeNotification: (id: string) => void;
     clearNotifications: () => void;
 
-    // Canvas Navigation
-    canvasPosition: { x: number; y: number; scale: number };
-    setCanvasPosition: (pos: { x: number; y: number; scale: number }) => void;
-    homeViewTrigger: number;
-    triggerHomeView: () => void;
-
     // Document library / shell (docSlice) — never persisted
     view: 'gallery' | 'editor';
     setView: (view: AppState['view']) => void;
@@ -218,14 +145,14 @@ export interface AppState {
     refreshGallery: () => Promise<void>;
     createLabel: (spec: CreateLabelSpec) => Promise<LabelDoc | null>;
     openLabel: (id: string) => Promise<LabelDoc | null>;
+    /** Persist the open document (no-op in the gallery); stamps `updatedAt`. */
+    saveCurrentLabel: () => Promise<boolean>;
     deleteLabel: (id: string) => Promise<void>;
     printerStatus: PrinterStatus;
     setPrinterStatus: (status: PrinterStatus) => void;
     initPersistence: () => Promise<void>;
 
     // Editor document operations (editorSlice) — undo history never persisted.
-    // Named `docPast`/`docFuture` to avoid colliding with canvasSlice's
-    // `past`/`future` (legacy drawing model).
     docPast: LabelDoc[];
     docFuture: LabelDoc[];
     /** Debounced autosave delay; injectable for tests. */
@@ -234,6 +161,8 @@ export interface AppState {
     /** Adds a node with a fresh id; returns the new id, or null with no doc. */
     addNode: (node: Node) => string | null;
     updateNode: (id: string, patch: NodePatch) => void;
+    /** Rename the open document (`doc.meta.name`) as one undo entry. */
+    renameDoc: (name: string) => void;
     /** Set the preview sample row (`doc.data.sampleRowIndex`) as one undo entry. */
     setSampleRowIndex: (index: number) => void;
     /** Gesture seam: applies `patch` to `currentDoc` without history, `updatedAt`
@@ -271,8 +200,7 @@ export interface AppState {
     undoDoc: () => void;
     redoDoc: () => void;
 
-    // Document-editor selection (selectionSlice). Distinct from canvasSlice's
-    // `selectedIds` (legacy drawing model) so both coexist until the P3 strip.
+    // Document-editor selection (selectionSlice).
     selectedNodeIds: string[];
     selectNode: (id: string | null) => void;
     toggleSelectNode: (id: string) => void;

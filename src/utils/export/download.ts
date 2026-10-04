@@ -1,3 +1,4 @@
+// reserved for P8 (image export). Kept with `capture.ts` for the P8 export work.
 /**
  * Trigger a client-side download of a data URL.
  *

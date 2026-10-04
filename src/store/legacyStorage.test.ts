@@ -5,7 +5,7 @@ import {
     readLegacyPreferences,
 } from './legacyStorage';
 import { createAppStore, createSafeStorage } from './useStore';
-import { defaultColors, defaultToolSettings } from './storeDefaults';
+import { defaultToolSettings } from './storeDefaults';
 
 const makeStorage = (initial: Record<string, string> = {}): Storage => {
     const map = new Map<string, string>(Object.entries(initial));
@@ -29,13 +29,11 @@ const PREFERENCE_KEYS = [
     LEGACY_KEYS.keyboardShortcuts,
     LEGACY_KEYS.autoSave,
     LEGACY_KEYS.toolSettings,
-    LEGACY_KEYS.colors,
 ];
 
 const seedLegacy = (storage: Storage): void => {
     storage.setItem(LEGACY_KEYS.autoSave, 'false');
     storage.setItem(LEGACY_KEYS.toolSettings, JSON.stringify(defaultToolSettings));
-    storage.setItem(LEGACY_KEYS.colors, JSON.stringify(defaultColors));
     storage.setItem(LEGACY_KEYS.keyboardShortcuts, JSON.stringify({ modifyKey: 'alt' }));
 };
 
@@ -62,14 +60,13 @@ const makeThrowingStorage = (seed?: (storage: Storage) => void): Storage => {
 };
 
 describe('readLegacyPreferences', () => {
-    it('reads and repairs the four preference keys', () => {
+    it('reads and repairs the three preference keys', () => {
         const storage = makeStorage();
         seedLegacy(storage);
         const prefs = readLegacyPreferences(storage);
 
         expect(prefs.autoSave).toBe(false);
         expect(prefs.toolSettings).toEqual(defaultToolSettings);
-        expect(prefs.colors).toEqual(defaultColors);
         expect(prefs.keyboardShortcuts?.modifyKey).toBe('alt');
     });
 
@@ -77,7 +74,6 @@ describe('readLegacyPreferences', () => {
         const storage = makeStorage({
             [LEGACY_KEYS.autoSave]: 'maybe',
             [LEGACY_KEYS.toolSettings]: 'not json',
-            [LEGACY_KEYS.colors]: '[1,2,3]',
             [LEGACY_KEYS.keyboardShortcuts]: 'null',
         });
         expect(readLegacyPreferences(storage)).toEqual({});
@@ -132,7 +128,6 @@ describe('migration gating through createAppStore', () => {
         // Seed directly; the read path must keep working even though writes throw.
         map.set(LEGACY_KEYS.autoSave, 'false');
         map.set(LEGACY_KEYS.toolSettings, JSON.stringify(defaultToolSettings));
-        map.set(LEGACY_KEYS.colors, JSON.stringify(defaultColors));
         map.set(LEGACY_KEYS.keyboardShortcuts, JSON.stringify({ modifyKey: 'alt' }));
 
         const throwingStorage: Storage = {

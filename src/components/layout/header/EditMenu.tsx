@@ -1,5 +1,6 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import { cn } from '../../../utils/cn';
 import { MenuItem } from './MenuItem';
 
 interface EditMenuProps {
@@ -11,12 +12,15 @@ interface EditMenuProps {
     onCloneSelected: () => void;
     onDeleteSelected: () => void;
     onMoveSelectedLayer: (direction: 'up' | 'down') => void;
-    onGroup?: () => void;
-    onUngroup?: () => void;
-    onInsertLocalImage: () => void;
-    onInsertRemoteImage: () => void;
+    onGroup: () => void;
+    onUngroup: () => void;
 }
 
+/**
+ * Edit menu (ui-spec.md §3). Targets the open document's selection; every
+ * command is a no-op in the gallery. Image insertion now lives in the editor's
+ * insert rail (P5), so the legacy canvas-image items were stripped in W6.
+ */
 export const EditMenu: React.FC<EditMenuProps> = ({
     activeMenu,
     onToggle,
@@ -27,15 +31,16 @@ export const EditMenu: React.FC<EditMenuProps> = ({
     onDeleteSelected,
     onMoveSelectedLayer,
     onGroup,
-    onUngroup,
-    onInsertLocalImage,
-    onInsertRemoteImage
+    onUngroup
 }) => {
     const { t } = useTranslation();
     return (
         <div className="relative">
             <div
-                className={`px-3 hover:bg-gray-700 cursor-pointer h-full flex items-center ${activeMenu === 'edit' ? 'bg-gray-700' : ''}`}
+                className={cn(
+                    'px-3 hover:bg-gray-700 cursor-pointer h-full flex items-center',
+                    activeMenu === 'edit' && 'bg-gray-700',
+                )}
                 onClick={() => onToggle('edit')}
             >
                 {t('editMenu.title')}
@@ -47,13 +52,10 @@ export const EditMenu: React.FC<EditMenuProps> = ({
                     <div className="h-px bg-gray-700 my-1" />
                     <MenuItem label={t('editMenu.cloneObject')} onClick={() => { onCloneSelected(); onCloseMenu(); }} shortcut="Ctrl+D" />
                     <MenuItem label={t('editMenu.deleteSelected')} onClick={() => { onDeleteSelected(); onCloseMenu(); }} shortcut="Del" />
-                    <MenuItem label={t('editMenu.group')} onClick={() => { onGroup?.(); onCloseMenu(); }} shortcut="Ctrl+G" />
-                    <MenuItem label={t('editMenu.ungroup')} onClick={() => { onUngroup?.(); onCloseMenu(); }} shortcut="Ctrl+Shift+G" />
+                    <MenuItem label={t('editMenu.group')} onClick={() => { onGroup(); onCloseMenu(); }} shortcut="Ctrl+G" />
+                    <MenuItem label={t('editMenu.ungroup')} onClick={() => { onUngroup(); onCloseMenu(); }} shortcut="Ctrl+Shift+G" />
                     <MenuItem label={t('editMenu.moveUp')} onClick={() => { onMoveSelectedLayer('up'); onCloseMenu(); }} shortcut="]" />
                     <MenuItem label={t('editMenu.moveDown')} onClick={() => { onMoveSelectedLayer('down'); onCloseMenu(); }} shortcut="[" />
-                    <div className="h-px bg-gray-700 my-1" />
-                    <MenuItem label={t('editMenu.insertLocalImage')} onClick={() => { onInsertLocalImage(); onCloseMenu(); }} />
-                    <MenuItem label={t('editMenu.insertRemoteImage')} onClick={() => { void onInsertRemoteImage(); onCloseMenu(); }} />
                 </div>
             )}
         </div>

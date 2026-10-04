@@ -32,15 +32,6 @@ export const EditorKeyboardShortcuts = () => {
             const mod = event.ctrlKey || event.metaKey;
             const key = event.key.toLowerCase();
 
-            // Global settings. The legacy `common/KeyboardShortcuts` that used to
-            // own this is no longer mounted (must-fix #9); this is the single
-            // handler now, and it already owns the dialog + input guards above.
-            if (mod && key === ',') {
-                event.preventDefault();
-                state.openSettings();
-                return;
-            }
-
             if (state.view !== 'editor') return;
 
             if (mod && key === 'z' && !event.shiftKey) {

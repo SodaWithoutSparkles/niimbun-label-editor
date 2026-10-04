@@ -1,22 +1,18 @@
-import type { ShapeType } from '../../types';
-
 /**
- * Shape type enum value -> catalogue key. A literal map keeps i18next's
- * typed-key union intact. Keyed on `ShapeType` so every displayed shape type is
- * covered and none can fall back to its lowercase enum value.
+ * Tool id -> catalogue key. A literal map keeps i18next's typed-key union
+ * intact. Keyed on the insert-rail's `InsertAction` vocabulary plus `select`;
+ * legacy draw-tool ids (`arrow`, `callout`, `star`) were stripped with the
+ * deleted drawing canvas and now fall back to their raw id.
  */
 const BASE_LABEL_KEYS = {
     select: 'tools.select',
     rectangle: 'tools.rectangle',
     ellipse: 'tools.ellipse',
     line: 'tools.line',
-    arrow: 'tools.arrow',
-    callout: 'tools.callout',
-    star: 'tools.star',
     text: 'tools.text',
     image: 'tools.image',
     polygon: 'tools.polygon',
-} as const satisfies Record<ShapeType | 'select' | 'callout', string>;
+} as const;
 
 /**
  * One-shot insert-rail shape actions (ui-spec.md §4). Kept beside the shape

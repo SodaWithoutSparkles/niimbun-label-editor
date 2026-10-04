@@ -3,10 +3,9 @@ import type { StoreSlice } from '../storeTypes';
 /**
  * Document-editor selection.
  *
- * Owns `selectedNodeIds` — selection over `LabelDoc.nodes` — for the new editor
- * shell. Deliberately distinct from `canvasSlice`'s `selectedIds`, which still
- * selects the legacy drawing model's `CanvasItem[]`; the two coexist until the
- * P3 strip removes `canvasSlice`. No action names or keys are shared.
+ * Owns `selectedNodeIds` — selection over `LabelDoc.nodes` — for the editor
+ * shell. The legacy drawing model's `canvasSlice` (and its `selectedIds`) was
+ * stripped, so this is now the only selection model.
  *
  * Selection is view state: it is never persisted and never touches the doc.
  */

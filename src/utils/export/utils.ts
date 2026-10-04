@@ -1,4 +1,4 @@
-
+// reserved for P8 (image export). Kept with `capture.ts` for the P8 export work.
 export const computeTrimBounds = (image: HTMLImageElement) => {
     const canvas = document.createElement('canvas');
     canvas.width = image.width;

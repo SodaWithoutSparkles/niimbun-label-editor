@@ -8,8 +8,8 @@ interface ToolsSectionProps {
 }
 
 /**
- * Tool defaults, split across the Shape and Text tabs. Writes the same
- * `toolSettings` fields the modeless `ToolSettingsModal` edits.
+ * Tool defaults, split across the Shape and Text tabs. Writes the persisted
+ * `toolSettings` preference (also the seed for newly inserted text/shape tools).
  */
 export const ToolsSection: React.FC<ToolsSectionProps> = ({ tab }) => {
     const { t } = useTranslation();

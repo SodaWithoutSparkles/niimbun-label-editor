@@ -13,9 +13,7 @@ import type { NodePatch, StoreSlice } from '../storeTypes';
  * doc is therefore never mutated in place, and each successful op is exactly one
  * undo entry.
  *
- * Undo history is deliberately named `docPast`/`docFuture` (actions
- * `undoDoc`/`redoDoc`) to avoid colliding with `canvasSlice`'s flat
- * `past`/`future`/`undo`/`redo`, which still own the legacy drawing model.
+ * Undo history is named `docPast`/`docFuture` (actions `undoDoc`/`redoDoc`).
  * Neither stack is in `useStore`'s `partialize`, so it is never serialized into
  * `.lbl.json.gz` or localStorage. History is scoped to one document: `openLabel`/
  * `deleteLabel` clear both stacks at the doc-switch boundary, and `undoDoc`/
@@ -281,6 +279,19 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             const node = next.nodes.find((entry) => entry.id === id)!;
             applyNodePatch(node, patch);
             commit(next, doc);
+        },
+
+        renameDoc: (name) => {
+            const doc = get().currentDoc;
+            if (!doc) return;
+            // An empty/whitespace name would erase the gallery title; keep the
+            // current name instead. A no-op rename must not create an undo entry.
+            const trimmed = name.trim();
+            const next = trimmed.length > 0 ? trimmed : doc.meta.name;
+            if (next === doc.meta.name) return;
+            const nextDoc = cloneDoc(doc);
+            nextDoc.meta.name = next;
+            commit(nextDoc, doc);
         },
 
         setSampleRowIndex: (index) => {

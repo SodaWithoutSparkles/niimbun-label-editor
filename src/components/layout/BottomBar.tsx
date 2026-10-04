@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
-import { Home, ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import clsx from 'clsx';
 import { formatKey } from '../../utils/formatKey';
 import { toolLabel } from './toolLabels';
@@ -14,8 +14,6 @@ export const BottomBar: React.FC = () => {
     const lastAutoSaveAt = useStore((state) => state.lastAutoSaveAt);
     const lastSavedAt = useStore((state) => state.lastSavedAt);
     const keyboardShortcuts = useStore((state) => state.keyboardShortcuts);
-    const canvasPosition = useStore((state) => state.canvasPosition);
-    const triggerHomeView = useStore((state) => state.triggerHomeView);
     const language = useStore((state) => state.language);
     const view = useStore((state) => state.view);
     const setView = useStore((state) => state.setView);
@@ -151,22 +149,6 @@ export const BottomBar: React.FC = () => {
                     )}
                 </div>
 
-                <div className="px-2 py-0.5 rounded border border-amber-700 bg-amber-900/40 text-amber-100">
-                    {isCompact ? (
-                        <span>
-                            {t('bottomBar.coords', { x: Math.round(canvasPosition.x), y: Math.round(canvasPosition.y), scale: Math.round(canvasPosition.scale * 100) })}
-                        </span>
-                    ) : (
-                        <>
-                            {t('bottomBar.zoom')} <span className="text-white font-medium">{Math.round(canvasPosition.scale * 100)}%</span>
-                            <span className="ml-2">
-                                {t('bottomBar.x')} <span className="text-white font-medium">{Math.round(canvasPosition.x)}</span>
-                                {' '}{t('bottomBar.y')} <span className="text-white font-medium">{Math.round(canvasPosition.y)}</span>
-                            </span>
-                        </>
-                    )}
-                </div>
-
                 <button
                     onClick={toggleAutoSave}
                     className={clsx(
@@ -207,14 +189,6 @@ export const BottomBar: React.FC = () => {
                         {!isCompact && <span>{t('nav.backToGallery')}</span>}
                     </button>
                 )}
-                <button
-                    onClick={triggerHomeView}
-                    className="px-3 h-full flex items-center rounded transition-colors space-x-2 bg-gray-800 hover:bg-gray-700 text-gray-300"
-                    title={t('bottomBar.resetView')}
-                >
-                    <Home size={14} />
-                    {!isCompact && <span>{t('bottomBar.home')}</span>}
-                </button>
             </div>
         </div>
     );

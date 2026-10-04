@@ -53,7 +53,7 @@ describe('CreateLabelDialog — submit robustness', () => {
         // `saving` released → the button is interactive again.
         await vi.waitFor(() => expect(createButton).toBeEnabled());
         // Failure is visible, not a silent stuck dialog.
-        expect(await screen.findByText('Failed to save project')).toBeInTheDocument();
+        expect(await screen.findByText('Failed to save label')).toBeInTheDocument();
         expect(onClose).not.toHaveBeenCalled();
     });
 
@@ -68,7 +68,7 @@ describe('CreateLabelDialog — submit robustness', () => {
         fireEvent.click(createButton);
 
         await vi.waitFor(() => expect(createButton).toBeEnabled());
-        expect(await screen.findByText('Failed to save project')).toBeInTheDocument();
+        expect(await screen.findByText('Failed to save label')).toBeInTheDocument();
         expect(onClose).not.toHaveBeenCalled();
     });
 });

@@ -4,7 +4,6 @@ import {
     SCREEN_DPI_MAX,
     SCREEN_DPI_MIN,
     defaultAutoSave,
-    defaultColors,
     defaultKeyboardShortcuts,
     defaultLanguage,
     defaultToolSettings,
@@ -14,8 +13,7 @@ import {
  * Preference fields and actions. Moved verbatim out of `preferencesSlice`
  * (autoSave + keyboard shortcuts) and `toolsSlice` (toolSettings). No state key
  * or action name was renamed — slices are spread flat, so consumers are blind
- * to the move. `colors` stays owned by `colorsSlice`; `resetSettings` only
- * writes to it because the store state is flat.
+ * to the move.
  */
 export const createSettingsSlice: StoreSlice = (set) => ({
     autoSave: defaultAutoSave,
@@ -77,7 +75,6 @@ export const createSettingsSlice: StoreSlice = (set) => ({
         autoSave: defaultAutoSave,
         keyboardShortcuts: defaultKeyboardShortcuts,
         toolSettings: defaultToolSettings,
-        colors: defaultColors,
         language: defaultLanguage,
         screenDpi: DEFAULT_SCREEN_DPI,
     }),

@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAppStore } from './useStore';
 import { createMemoryAdapter } from '../data/db';
 import { createLabelRepo } from '../data/labelRepo';
 import { LABEL_PRESETS } from '../core/doc/label-presets';
-import type { Region } from '../core/doc/types';
+import { createLabelDoc } from '../core/doc/factory';
+import type { LabelDoc, Node, Region } from '../core/doc/types';
 
 /** Minimal in-memory Storage, mirroring `projectSlice.test.ts`. */
 const makeStorage = (): Storage => {
@@ -232,5 +233,109 @@ describe('docSlice — create → reload → reopen', () => {
         await expect(
             store.getState().createLabel({ preset: 'ftagSpare-25x78' }),
         ).resolves.toBeNull();
+    });
+});
+
+const textNode = (id: string): Node => ({
+    id,
+    parentId: null,
+    type: 'text',
+    visible: true,
+    locked: false,
+    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+    text: { kind: 'static', value: 'hello' },
+});
+
+const makeDoc = (nodes: Node[] = []): LabelDoc =>
+    createLabelDoc({ id: 'doc-1', name: 'Test', nodes, now: 1_000_000 });
+
+describe('docSlice — saveCurrentLabel', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    it('saves the open document through the injected repo and stamps lastSavedAt', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-02-03T04:05:06Z'));
+        const store = createAppStore(makeStorage());
+        const repo = createLabelRepo(createMemoryAdapter());
+        const save = vi.spyOn(repo, 'save');
+        store.getState().setLabelRepo(repo);
+        store.setState({ currentDoc: makeDoc([textNode('a')]), view: 'editor' });
+
+        const ok = await store.getState().saveCurrentLabel();
+
+        expect(ok).toBe(true);
+        expect(save).toHaveBeenCalledTimes(1);
+        expect(save.mock.calls[0]![0].meta.id).toBe('doc-1');
+        // `lastSavedAt` is ms epoch (BottomBar's `Date.now()` readout).
+        expect(store.getState().lastSavedAt).toBe(Date.now());
+        expect(store.getState().lastSavedAt).toBeGreaterThan(1_000_000_000_000);
+    });
+
+    it('is a silent no-op in the gallery (no doc, no write, no timestamp)', async () => {
+        const store = createAppStore(makeStorage());
+        const repo = createLabelRepo(createMemoryAdapter());
+        const save = vi.spyOn(repo, 'save');
+        store.getState().setLabelRepo(repo);
+        store.setState({ currentDoc: null, view: 'gallery' });
+
+        await expect(store.getState().saveCurrentLabel()).resolves.toBe(false);
+
+        expect(save).not.toHaveBeenCalled();
+        expect(store.getState().lastSavedAt).toBeNull();
+    });
+
+    it('does not revert a committed edit made while the save is in flight', async () => {
+        const store = createAppStore(makeStorage());
+        const repo = createLabelRepo(createMemoryAdapter());
+        // Hold `save` open so we can commit a newer edit mid-flight.
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        vi.spyOn(repo, 'save').mockReturnValue(gate);
+        store.getState().setLabelRepo(repo);
+        store.getState().setDocAutosaveDelay(1_000_000);
+        store.setState({ currentDoc: makeDoc([textNode('a')]), view: 'editor' });
+
+        const saving = store.getState().saveCurrentLabel();
+        // A committed edit replaces `currentDoc` with a newer object.
+        store.getState().addNode(textNode('b'));
+        const edited = store.getState().currentDoc;
+        expect(edited?.nodes).toHaveLength(2);
+
+        release();
+        await saving;
+
+        // The in-flight save must not clobber the newer committed edit.
+        expect(store.getState().currentDoc).toBe(edited);
+        expect(store.getState().currentDoc?.nodes).toHaveLength(2);
+        // The save itself still succeeded, so its timestamp is recorded.
+        expect(store.getState().lastSavedAt).not.toBeNull();
+    });
+
+    it('flushes and cancels the pending autosave before writing', async () => {
+        vi.useFakeTimers();
+        const store = createAppStore(makeStorage());
+        const repo = createLabelRepo(createMemoryAdapter());
+        const save = vi.spyOn(repo, 'save').mockResolvedValue(undefined);
+        store.getState().setLabelRepo(repo);
+        // Large debounce: the timer would never fire on its own during the test.
+        store.getState().setDocAutosaveDelay(1_000_000);
+        store.setState({ currentDoc: makeDoc(), view: 'editor', autoSave: true });
+
+        // Schedule a pending autosave, then save explicitly.
+        store.getState().addNode(textNode('a'));
+        await store.getState().saveCurrentLabel();
+        const writesAfterSave = save.mock.calls.length;
+
+        // The cancelled timer must never fire a later, stale write that would
+        // rewrite `updatedAt`/`lastAutoSaveAt` after the explicit save.
+        await vi.advanceTimersByTimeAsync(1_000_001);
+        expect(save.mock.calls.length).toBe(writesAfterSave);
+        // The explicit save still ran.
+        expect(save).toHaveBeenCalled();
     });
 });
