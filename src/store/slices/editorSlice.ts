@@ -2,7 +2,7 @@ import { newLabelId, roundNode } from '../../core/doc/factory';
 import { resizeNodeGeometry } from '../../core/doc/geometry';
 import { effectiveTransform, IDENTITY_MAT2D, nodeLookup, worldPreservingTransform, type Mat2D } from '../../core/doc/derive';
 import { roundHm } from '../../core/hm';
-import type { FontRef, GroupNode, ImageRef, LabelDoc, Node } from '../../core/doc/types';
+import type { CsvRef, FontRef, GroupNode, ImageRef, LabelDoc, Node } from '../../core/doc/types';
 import type { NodePatch, StoreSlice } from '../storeTypes';
 
 /**
@@ -413,6 +413,35 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             if (clamped === doc.data.sampleRowIndex) return;
             const next = cloneDoc(doc);
             next.data.sampleRowIndex = clamped;
+            commit(next, doc);
+        },
+
+        setDocCsv: (csv) => {
+            const doc = get().currentDoc;
+            if (!doc) return;
+            // Build the ref from scratch: provenance must be `local` and the IDB
+            // key must match, or a caller could attach a dangling/remote source.
+            let ref: CsvRef | null = null;
+            if (csv !== null) {
+                const csvId = csv.csvId.trim();
+                if (csvId.length === 0) return;
+                ref = {
+                    csvId,
+                    name: csv.name,
+                    source: { kind: 'local', mediaType: 'text/csv', resourceId: csvId },
+                };
+            }
+            const current = doc.data.csv;
+            // No-op guard: attaching an identical ref or clearing an absent one
+            // must not create a dead undo entry.
+            if (ref === null) {
+                if (current === undefined) return;
+            } else if (current !== undefined && JSON.stringify(current) === JSON.stringify(ref)) {
+                return;
+            }
+            const next = cloneDoc(doc);
+            if (ref === null) delete next.data.csv;
+            else next.data.csv = ref;
             commit(next, doc);
         },
 

@@ -453,6 +453,10 @@
       "rowNext": "Next row",
       "rowJump": "Go to row",
       "rowIndex": "Row index"
+    },
+    "csvPreview": {
+      "label": "CSV preview",
+      "empty": "No rows"
     }
   }
 }

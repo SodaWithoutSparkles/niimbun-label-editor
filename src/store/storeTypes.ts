@@ -6,6 +6,7 @@ import type { hm } from '../core/hm';
 import type { FontRef, ImageRef, LabelDoc, Node, Region } from '../core/doc/types';
 import type { ResizeOptions, Size } from '../core/doc/geometry';
 import type { LabelPresetId } from '../core/doc/label-presets';
+import type { CsvRepo } from '../data/csvRepo';
 import type { LabelRepo, LabelSummary } from '../data/labelRepo';
 import type { ResourceRepo } from '../data/resourceRepo';
 import type { PrinterStatus } from '../print/transport';
@@ -19,6 +20,16 @@ export interface CreateLabelSpec {
     dpi?: number;
     regions?: Region[];
     printDirection?: LabelDoc['label']['printDirection'];
+}
+
+/**
+ * CSV attach input. The store builds the `CsvRef` itself so provenance cannot be
+ * spoofed: `source` is always `local` and its `resourceId` always equals `csvId`
+ * (the IDB `csvs` key). `name` is the original import filename.
+ */
+export interface DocCsvAttachment {
+    csvId: string;
+    name: string;
 }
 
 /**
@@ -131,6 +142,9 @@ export interface AppState {
     /** Binary asset storage (font/image bytes); shared adapter with `labelRepo`. */
     resourceRepo: ResourceRepo | null;
     setResourceRepo: (repo: ResourceRepo | null) => void;
+    /** Parsed CSV table storage; shared adapter with `labelRepo`. */
+    csvRepo: CsvRepo | null;
+    setCsvRepo: (repo: CsvRepo | null) => void;
     refreshGallery: () => Promise<void>;
     createLabel: (spec: CreateLabelSpec) => Promise<LabelDoc | null>;
     openLabel: (id: string) => Promise<LabelDoc | null>;
@@ -169,6 +183,13 @@ export interface AppState {
     renameDoc: (name: string) => void;
     /** Set the preview sample row (`doc.data.sampleRowIndex`) as one undo entry. */
     setSampleRowIndex: (index: number) => void;
+    /**
+     * Attach (`{ csvId, name }`) or clear (`null`) `doc.data.csv` as one undo
+     * entry. The `CsvRef` is built here as `local` with `resourceId === csvId`,
+     * so a caller cannot attach a non-local or mismatched source. A blank
+     * `csvId` or a no-op (same ref, clearing when absent) creates no entry.
+     */
+    setDocCsv: (csv: DocCsvAttachment | null) => void;
     /** Gesture seam: applies `patch` to `currentDoc` without history, `updatedAt`
      * or autosave. Pair N calls with one `commitDoc` for a single undo entry.
      */

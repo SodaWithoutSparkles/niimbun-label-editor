@@ -2,6 +2,7 @@ import i18next from 'i18next';
 import { createLabelDoc } from '../../core/doc/factory';
 import { isLabelDoc } from '../../core/doc/validate';
 import { createIdbAdapter } from '../../data/db';
+import { createCsvRepo } from '../../data/csvRepo';
 import { createLabelRepo } from '../../data/labelRepo';
 import { createResourceRepo } from '../../data/resourceRepo';
 import type { LabelDoc } from '../../core/doc/types';
@@ -66,12 +67,14 @@ export const createDocSlice: StoreSlice = (set, get) => {
         storageError: false,
         labelRepo: null,
         resourceRepo: null,
+        csvRepo: null,
 
         printerStatus: DEFAULT_PRINTER_STATUS,
         setPrinterStatus: (printerStatus) => set({ printerStatus }),
 
         setLabelRepo: (labelRepo) => set({ labelRepo }),
         setResourceRepo: (resourceRepo) => set({ resourceRepo }),
+        setCsvRepo: (csvRepo) => set({ csvRepo }),
 
         refreshGallery: async () => {
             const repo = get().labelRepo;
@@ -227,6 +230,9 @@ export const createDocSlice: StoreSlice = (set, get) => {
                         }
                         if (!get().resourceRepo) {
                             set({ resourceRepo: createResourceRepo(adapter) });
+                        }
+                        if (!get().csvRepo) {
+                            set({ csvRepo: createCsvRepo(adapter) });
                         }
                     }
                     set({ storageError: false });
