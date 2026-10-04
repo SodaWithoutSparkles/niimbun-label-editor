@@ -2,7 +2,7 @@
 
 **Run:** `agent/2026-09-29_label-editor-v1` · **Owner:** Coordinator · **Started:** 2026-10-04
 **Plan:** `plan.md` P5 row (line 312), decisions 6/17/22/23/29/30/31/36/42 · **Prev:** `HANDOFF-p4.md` · **Handoff:** `HANDOFF-p5.md`
-**Status:** IMPLEMENTATION DONE — pending per-area commits + final gate. See `state.md` P5 record.
+**Status:** DONE ✅ (2026-10-05) — committed `a34f401`…`2ab28b4`; hardware smoke passed. See `state.md` P5 record.
 
 ## 0. Scope (frozen from plan:312)
 
