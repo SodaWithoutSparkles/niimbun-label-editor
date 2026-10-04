@@ -157,6 +157,29 @@ describe('regionBounds / regionUnionBounds', () => {
         expect(regionUnionBounds([{ kind: 'polygon', points: [], closed: true }])).toBeUndefined();
     });
 
+    it('ignores zero-area and open regions (no printable area)', () => {
+        expect(regionUnionBounds([{ kind: 'rect', x: 0, y: 0, w: 0, h: 10 }])).toBeUndefined();
+        expect(regionUnionBounds([{ kind: 'circle', cx: 0, cy: 0, r: 0 }])).toBeUndefined();
+        expect(
+            regionUnionBounds([{ kind: 'polygon', points: [[0, 0], [10, 0], [0, 10]], closed: false }]),
+        ).toBeUndefined();
+        // A drawable region alongside a non-drawable one still yields the union.
+        expect(
+            regionUnionBounds([
+                { kind: 'rect', x: 0, y: 0, w: 100, h: 100 },
+                { kind: 'rect', x: 200, y: 200, w: 0, h: 50 },
+            ]),
+        ).toEqual({ x: 0, y: 0, w: 100, h: 100 });
+    });
+
+    it('includes a self-intersecting bow-tie polygon (net area 0 but paints)', () => {
+        expect(
+            regionUnionBounds([
+                { kind: 'polygon', points: [[0, 0], [10, 10], [10, 0], [0, 10]], closed: true },
+            ]),
+        ).toEqual({ x: 0, y: 0, w: 10, h: 10 });
+    });
+
     it('unions mixed regions into an integer bounding rect', () => {
         const bounds = regionUnionBounds([
             { kind: 'rect', x: 0, y: 0, w: 100, h: 50 },

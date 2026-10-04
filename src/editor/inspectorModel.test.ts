@@ -4,6 +4,7 @@ import {
     BARCODE_FIELDS,
     IMAGE_FIELDS,
     QR_FIELDS,
+    QUANTIZER_HINT_OPTIONS,
     RESERVED_FIELDS,
     SHAPE_FIELDS,
     TEXT_FIELDS,
@@ -66,12 +67,23 @@ describe('inspectorModel — field descriptors', () => {
         for (const field of IMAGE_FIELDS) expect(field.reason).toBe('image');
         for (const field of QR_FIELDS) expect(field.reason).toBe('qr');
         for (const field of BARCODE_FIELDS) expect(field.reason).toBe('barcode');
-        for (const field of RESERVED_FIELDS) {
-            expect(['trust', 'quantizer', 'content']).toContain(field.reason);
+        for (const field of RESERVED_FIELDS.filter((f) => !f.wired)) {
+            expect(['trust', 'content']).toContain(field.reason);
         }
-        // Quantizer is P4; trust is P6.
-        expect(RESERVED_FIELDS.find((f) => f.key === 'quantizerHint')?.reason).toBe('quantizer');
+        // Trust is P6; the per-object quantizer policy is now wired (P4).
         expect(RESERVED_FIELDS.find((f) => f.key === 'templateTrust')?.reason).toBe('trust');
+    });
+
+    it('wires quantizerHint as a select over the quantizer registry', () => {
+        const field = RESERVED_FIELDS.find((f) => f.key === 'quantizerHint');
+        expect(field?.wired).toBe(true);
+        expect(field?.kind).toBe('select');
+        // Explicit default (empty) plus all four quantizer ids, registry order.
+        expect(field?.options).toEqual(QUANTIZER_HINT_OPTIONS);
+        expect(field?.options).toContain('');
+        for (const id of ['threshold', 'floydSteinberg', 'stucki', 'atkinson']) {
+            expect(field?.options).toContain(id);
+        }
     });
 
     it('typeFields returns the type-specific props per node type', () => {
@@ -89,9 +101,12 @@ describe('inspectorModel — field descriptors', () => {
         }
     });
 
-    it('reserves contentSource, quantizerHint and templateTrust as unwired descriptors', () => {
+    it('keeps contentSource and templateTrust as unwired descriptors', () => {
         expect(keys(RESERVED_FIELDS)).toEqual(['contentSource', 'quantizerHint', 'templateTrust']);
-        expect(RESERVED_FIELDS.every((f) => f.wired === false)).toBe(true);
+        for (const key of ['contentSource', 'templateTrust']) {
+            expect(RESERVED_FIELDS.find((f) => f.key === key)?.wired).toBe(false);
+        }
+        expect(RESERVED_FIELDS.find((f) => f.key === 'quantizerHint')?.wired).toBe(true);
     });
 });
 

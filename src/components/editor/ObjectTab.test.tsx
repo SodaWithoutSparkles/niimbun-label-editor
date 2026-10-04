@@ -71,7 +71,7 @@ describe('size mapping (must-fix #1)', () => {
 });
 
 describe('ObjectTab — disabled field reasons (must-fix #12)', () => {
-    it('shows the image-engine reason for image fields, not the quantizer one', () => {
+    it('shows the image-engine reason for image fields, not a quantizer one', () => {
         useStore.setState({ currentDoc: doc([imageNode()]), selectedNodeIds: ['a'] });
         render(<ObjectTab selected={[imageNode()]} />);
         // Image engine fields present.
@@ -80,8 +80,8 @@ describe('ObjectTab — disabled field reasons (must-fix #12)', () => {
         // Every image field carries the image reason (the old blanket behavior
         // gave all three the quantizer message).
         expect(screen.getAllByText(/image engine/i)).toHaveLength(3);
-        // The only quantizer message on screen is the quantizer-hint field.
-        expect(screen.getAllByText(/Quantizer settings/i)).toHaveLength(1);
+        // The quantizer policy is wired (P4) — no disabled message anywhere.
+        expect(screen.queryByText(/Quantizer settings/i)).toBeNull();
     });
 
     it('renders real labels for unmapped ids instead of the raw key', () => {
@@ -89,6 +89,46 @@ describe('ObjectTab — disabled field reasons (must-fix #12)', () => {
         render(<ObjectTab selected={[imageNode()]} />);
         expect(screen.queryByText('imageId')).toBeNull();
         expect(screen.queryByText('resolution')).toBeNull();
+    });
+});
+
+describe('ObjectTab — quantizer policy (P4)', () => {
+    const quantizerSelect = (): HTMLSelectElement =>
+        screen.getAllByRole('combobox').find((el) =>
+            Array.from((el as HTMLSelectElement).options).some(
+                (option) => option.value === 'floydSteinberg',
+            ),
+        ) as HTMLSelectElement;
+
+    it('renders the wired select with translated option labels', () => {
+        useStore.setState({ currentDoc: doc([imageNode()]), selectedNodeIds: ['a'] });
+        render(<ObjectTab selected={[imageNode()]} />);
+        const select = quantizerSelect();
+        expect(select).toBeTruthy();
+        expect(select.value).toBe('');
+        expect(Array.from(select.options).map((option) => option.textContent)).toEqual([
+            'Type default',
+            'Threshold',
+            'Floyd–Steinberg',
+            'Stucki',
+            'Atkinson',
+        ]);
+    });
+
+    it('writes a chosen hint and clears it back to the type default', () => {
+        const selected = imageNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['a'] });
+        render(<ObjectTab selected={[selected]} />);
+        const select = quantizerSelect();
+
+        fireEvent.change(select, { target: { value: 'atkinson' } });
+        let persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 'a')!;
+        expect(persisted.quantizerHint).toBe('atkinson');
+
+        // The empty option clears the field (absent ⇒ the type default).
+        fireEvent.change(select, { target: { value: '' } });
+        persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 'a')!;
+        expect(persisted.quantizerHint).toBeUndefined();
     });
 });
 

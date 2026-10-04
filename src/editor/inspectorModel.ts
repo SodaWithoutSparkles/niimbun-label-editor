@@ -1,4 +1,5 @@
 import type { Node, NodeType } from '../core/doc/types';
+import { QUANTIZERS } from '../core/render';
 
 /**
  * Typed field model for the MFP **Object** tab. Data only — no store, no React,
@@ -8,9 +9,8 @@ import type { Node, NodeType } from '../core/doc/types';
  * Two markers matter:
  *   - `wired` — `true` when P3 can actually act on the field; `false` is a
  *     reserved stub the panel renders disabled, with a `reason` naming which
- *     engine owns it (P4 quantizer/QR/barcode, P5 image, P6 templating /
- *     trust). Shipping the field now keeps the panel's shape stable while the
- *     engine lands later.
+ *     engine owns it (QR/barcode P4, image P5, templating / trust P6). Shipping
+ *     the field now keeps the panel's shape stable while the engine lands later.
  *   - `scope` — which selection mode the field belongs to. Bulk mode
  *     (`ui-spec.md` §10): same-type selection → the type's shared props; mixed
  *     selection → `UNIVERSAL_FIELDS` only. There is deliberately no per-field
@@ -46,7 +46,7 @@ export type FieldKind =
  * Why a `wired: false` field is disabled, so the panel can show the *right*
  * reason instead of one blanket message. `null` for wired fields.
  */
-export type FieldReason = 'quantizer' | 'trust' | 'image' | 'qr' | 'barcode' | 'content';
+export type FieldReason = 'trust' | 'image' | 'qr' | 'barcode' | 'content';
 
 export interface FieldDescriptor {
     /** Stable field id — the node prop it edits, or a reserved key. */
@@ -148,17 +148,24 @@ export const BARCODE_FIELDS: readonly FieldDescriptor[] = [
 ];
 
 /**
- * Reserved fields whose engine ships later. Present so the Object tab has a
- * stable shape; every entry is `wired: false` and must render disabled.
- *   - `contentSource`  — static is P3, CSV/template execution is P6
- *   - `quantizerHint`  — policy is P4
- *   - `templateTrust`  — trust store is P6
+ * Per-object dither policies offered by `quantizerHint`. The empty value is the
+ * explicit "default" (absent) choice; the node's `type` then picks the policy.
+ * Order comes from the `QUANTIZERS` registry (single source of truth).
+ */
+export const QUANTIZER_HINT_OPTIONS: readonly string[] = ['', ...Object.keys(QUANTIZERS)];
+
+/**
+ * Extra fields whose owning engine ships later, plus the wired per-object
+ * quantizer policy. Kept in one list so the Object tab has a stable shape.
+ *   - `contentSource`  — static is P3, CSV/template execution is P6 (unwired)
+ *   - `quantizerHint`  — per-object dither policy, wired (P4)
+ *   - `templateTrust`  — trust store is P6 (unwired)
  */
 export const RESERVED_FIELDS: readonly FieldDescriptor[] = [
     // Content-source switching (CSV/template) ships with templating in P6.
     { key: 'contentSource', scope: 'reserved', kind: 'contentSource', wired: false, reason: 'content' },
-    // Quantizer policy is P4.
-    { key: 'quantizerHint', scope: 'reserved', kind: 'stub', wired: false, reason: 'quantizer' },
+    // Per-object dither policy: absent ⇒ the node type's default policy.
+    { key: 'quantizerHint', scope: 'reserved', kind: 'select', wired: true, options: QUANTIZER_HINT_OPTIONS },
     // Template trust store is P6.
     { key: 'templateTrust', scope: 'reserved', kind: 'stub', wired: false, reason: 'trust' },
 ];

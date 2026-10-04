@@ -1,4 +1,5 @@
 import type { hm } from '../hm';
+import { QUANTIZERS, type QuantizerId } from '../render/quantize';
 import type {
     AssetRef,
     BaseNode,
@@ -46,6 +47,8 @@ const isOneOf = <T extends string>(value: unknown, allowed: readonly T[]): value
 
 const NODE_TYPES: readonly NodeType[] = ['group', 'text', 'image', 'shape', 'qr', 'barcode'];
 const SHAPE_KINDS: readonly ShapeKind[] = ['line', 'rectangle', 'ellipse', 'polygon'];
+// Derived from the registry so a newly added quantizer is accepted automatically.
+const QUANTIZER_IDS = Object.keys(QUANTIZERS) as QuantizerId[];
 const PRINT_DIRECTIONS: readonly LabelDoc['label']['printDirection'][] = [
     'top',
     'right',
@@ -70,6 +73,13 @@ export const normalizeDpi = (value: unknown): number => {
     return Math.min(DPI_MAX, Math.max(DPI_MIN, Math.round(value)));
 };
 
+/** Clamp a region extent to `≥ 0`, recording a visible repair when it was negative. */
+const clampRegionExtent = (value: hm, label: string, repairs?: string[]): hm => {
+    if (value >= 0) return value;
+    repairs?.push(label);
+    return 0;
+};
+
 export const isRegion = (value: unknown, repairs?: string[]): Region | undefined => {
     if (!isRecord(value)) return undefined;
     switch (value.kind) {
@@ -81,7 +91,13 @@ export const isRegion = (value: unknown, repairs?: string[]): Region | undefined
             if (x === undefined || y === undefined || w === undefined || h === undefined) {
                 return undefined;
             }
-            return { kind: 'rect', x, y, w, h };
+            return {
+                kind: 'rect',
+                x,
+                y,
+                w: clampRegionExtent(w, 'region.w: negative width clamped to 0', repairs),
+                h: clampRegionExtent(h, 'region.h: negative height clamped to 0', repairs),
+            };
         }
         case 'roundedRect': {
             const x = isHm(value.x);
@@ -92,14 +108,27 @@ export const isRegion = (value: unknown, repairs?: string[]): Region | undefined
                 return undefined;
             }
             // `r` is required by the type but a missing radius safely defaults to 0.
-            return { kind: 'roundedRect', x, y, w, h, r: isHm(value.r) ?? 0 };
+            const r = isHm(value.r) ?? 0;
+            return {
+                kind: 'roundedRect',
+                x,
+                y,
+                w: clampRegionExtent(w, 'region.w: negative width clamped to 0', repairs),
+                h: clampRegionExtent(h, 'region.h: negative height clamped to 0', repairs),
+                r: clampRegionExtent(r, 'region.r: negative radius clamped to 0', repairs),
+            };
         }
         case 'circle': {
             const cx = isHm(value.cx);
             const cy = isHm(value.cy);
             const r = isHm(value.r);
             if (cx === undefined || cy === undefined || r === undefined) return undefined;
-            return { kind: 'circle', cx, cy, r };
+            return {
+                kind: 'circle',
+                cx,
+                cy,
+                r: clampRegionExtent(r, 'region.r: negative radius clamped to 0', repairs),
+            };
         }
         case 'polygon': {
             if (!Array.isArray(value.points)) return undefined;
@@ -232,6 +261,18 @@ const toFontSize = (value: unknown): hm | undefined => {
     return n === undefined || n <= 0 ? undefined : n;
 };
 
+/**
+ * Optional `quantizerHint` enum. An unknown/invalid value is dropped (absent)
+ * rather than failing the document — an absent hint means "type default", which
+ * is always a safe fallback.
+ */
+const toQuantizerHint = (value: unknown, repairs?: string[]): QuantizerId | undefined => {
+    if (value === undefined) return undefined;
+    if (isOneOf(value, QUANTIZER_IDS)) return value;
+    repairs?.push('node.quantizerHint: unknown quantizer dropped');
+    return undefined;
+};
+
 export const isNode = (value: unknown, repairs?: string[]): Node | undefined => {
     if (!isRecord(value)) return undefined;
     if (!isString(value.id) || value.id.length === 0) return undefined;
@@ -256,6 +297,8 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
     if (size !== undefined) base.size = size;
     const strokeWidth = toOptionalHm(value.strokeWidth);
     if (strokeWidth !== undefined) base.strokeWidth = strokeWidth;
+    const quantizerHint = toQuantizerHint(value.quantizerHint, repairs);
+    if (quantizerHint !== undefined) base.quantizerHint = quantizerHint;
 
     switch (value.type) {
         case 'group':

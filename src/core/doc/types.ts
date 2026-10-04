@@ -1,4 +1,5 @@
 import type { hm } from '../hm';
+import type { QuantizerId } from '../render/quantize';
 
 /**
  * LabelDoc v1 — the document contract.
@@ -45,6 +46,12 @@ export interface BaseNode {
     size?: NodeSize;
     /** Stroke width in hm (shapes). Optional; scales uniformly on resize. */
     strokeWidth?: number;
+    /**
+     * Optional per-object dither policy. When absent, the node's `type` selects
+     * the default quantizer (see `core/render/policy`). Deliberately NOT part of
+     * `ContentSource` — it is node data, not content.
+     */
+    quantizerHint?: QuantizerId;
 } // + type-specific fields (text props, shape kind, image resource ref, qr payload…)
 
 /** The composed transform shape. Derived type; never stored on a node. */

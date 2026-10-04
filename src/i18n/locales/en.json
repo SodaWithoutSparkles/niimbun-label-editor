@@ -375,8 +375,13 @@
       "contentTemplate": "Template",
       "contentFallback": "Fallback",
       "contentSourceDisabled": "Content sources arrive with templating in a later phase.",
-      "quantizer": "Quantizer",
-      "quantizerDisabled": "Quantizer settings arrive in a later phase.",
+      "quantizerOptions": {
+        "auto": "Type default",
+        "threshold": "Threshold",
+        "floydSteinberg": "Floyd–Steinberg",
+        "stucki": "Stucki",
+        "atkinson": "Atkinson"
+      },
       "trustDisabled": "Template trust settings arrive in a later phase.",
       "imageDisabled": "Image options arrive with the image engine in a later phase.",
       "qrDisabled": "QR options arrive with the QR engine in a later phase.",
@@ -414,7 +419,7 @@
         "errorCorrection": "Error correction",
         "symbology": "Symbology",
         "contentSource": "Content source",
-        "quantizerHint": "Quantizer hint",
+        "quantizerHint": "Quantizer",
         "templateTrust": "Template trust"
       }
     },

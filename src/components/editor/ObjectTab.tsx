@@ -11,6 +11,7 @@ import { nodeSize, pointsExtent } from '../../core/doc/geometry';
 import { effectiveTransform, nodeLookup, IDENTITY_MAT2D, type Mat2D } from '../../core/doc/derive';
 import { nodeLocalPoints, transformedBounds } from '../../editor/render/resolve';
 import type { Node, ShapeKind, ShapeNode } from '../../core/doc/types';
+import type { QuantizerId } from '../../core/render';
 import type { NodePatch } from '../../store/storeTypes';
 
 /**
@@ -73,13 +74,35 @@ const labelFor = (key: string, t: TFunction): string =>
 
 /** i18n key for a disabled field's reason (what engine owns it). */
 const REASON_KEYS: Record<FieldReason, string> = {
-    quantizer: 'editor.mfp.quantizerDisabled',
     trust: 'editor.mfp.trustDisabled',
     image: 'editor.mfp.imageDisabled',
     qr: 'editor.mfp.qrDisabled',
     barcode: 'editor.mfp.barcodeDisabled',
     content: 'editor.mfp.contentSourceDisabled',
 };
+
+/**
+ * i18n keys for the `quantizerHint` select. The empty value is the explicit
+ * "default" choice (absent ⇒ the node type's default policy).
+ */
+const QUANTIZER_LABEL_KEYS = {
+    '': 'editor.mfp.quantizerOptions.auto',
+    threshold: 'editor.mfp.quantizerOptions.threshold',
+    floydSteinberg: 'editor.mfp.quantizerOptions.floydSteinberg',
+    stucki: 'editor.mfp.quantizerOptions.stucki',
+    atkinson: 'editor.mfp.quantizerOptions.atkinson',
+} as const satisfies Record<QuantizerId | '', string>;
+
+type QuantizerOption = keyof typeof QUANTIZER_LABEL_KEYS;
+
+const isQuantizerOption = (option: string): option is QuantizerOption =>
+    option in QUANTIZER_LABEL_KEYS;
+
+/** Human label for one select option. Non-quantizer selects show the raw value. */
+const optionLabel = (fieldKey: string, option: string, t: TFunction): string =>
+    fieldKey === 'quantizerHint' && isQuantizerOption(option)
+        ? t(QUANTIZER_LABEL_KEYS[option])
+        : option;
 
 /** The transform keys read straight off `node.transform`. */
 const TRANSFORM_KEYS = ['x', 'y', 'rotDeg', 'scaleX', 'scaleY'] as const;
@@ -301,6 +324,12 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                 // `text` is a `ContentSource`, not a plain prop; write a static
                 // source so inserted text can be authored (must-fix #3).
                 if (node.type === 'text') updateNodeTransient(node.id, textContentPatch(value));
+            } else if (key === 'quantizerHint') {
+                // The empty option clears the field (absent ⇒ the node type's
+                // default policy), so a hint is never stored as an empty string.
+                updateNodeTransient(node.id, {
+                    quantizerHint: value === '' ? undefined : (value as QuantizerId),
+                });
             } else {
                 updateNodeTransient(node.id, { [key]: value } as never);
             }
@@ -377,7 +406,7 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                         <Select
                             value={stringValue(first, field.key)}
                             onChange={(value) => setString(field.key, value)}
-                            options={(field.options ?? []).map((option) => ({ value: option, label: option }))}
+                            options={(field.options ?? []).map((option) => ({ value: option, label: optionLabel(field.key, option, t) }))}
                             className="w-36"
                         />
                     </SettingRow>

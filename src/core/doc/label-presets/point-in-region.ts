@@ -10,8 +10,11 @@ import type { Region } from '../types';
  */
 export const pointInRegion = (x: number, y: number, region: Region): boolean => {
     if (region.kind !== 'roundedRect') return false;
-    const { x: rx, y: ry, w, h, r } = region;
+    const { x: rx, y: ry, w, h } = region;
     if (x < rx || x > rx + w || y < ry || y > ry + h) return false;
+    // Same clamp as the renderer's `traceUnion` / `pointInRoundedRect`, so this
+    // helper's arithmetic really matches the clip for an over-large radius.
+    const r = Math.max(0, Math.min(region.r, w / 2, h / 2));
     // Only the four corner squares can fall outside the rounded body.
     const cx = x < rx + r ? rx + r : x > rx + w - r ? rx + w - r : null;
     const cy = y < ry + r ? ry + r : y > ry + h - r ? ry + h - r : null;

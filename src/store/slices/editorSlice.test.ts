@@ -481,6 +481,20 @@ describe('editorSlice — document operations', () => {
         });
     });
 
+    it('clearing an optional field removes the key, not just its value (ObjectTab hint clear)', () => {
+        const withHint: Node = { ...textNode('a'), quantizerHint: 'atkinson' };
+        const store = setupStore(makeDoc([withHint]));
+        expect(store.getState().currentDoc!.nodes[0]!.quantizerHint).toBe('atkinson');
+
+        // Mirrors the ObjectTab clear path: transient edit, then commit.
+        store.getState().updateNodeTransient('a', { quantizerHint: undefined });
+        store.getState().commitDoc();
+
+        const node = store.getState().currentDoc!.nodes[0]! as Node & Record<string, unknown>;
+        expect(node.quantizerHint).toBeUndefined();
+        expect(Object.hasOwn(node, 'quantizerHint')).toBe(false);
+    });
+
     it('groupNodes requires at least two ids', () => {
         const store = setupStore(makeDoc([textNode('a'), textNode('b')]));
         expect(store.getState().groupNodes(['a'])).toBeNull();

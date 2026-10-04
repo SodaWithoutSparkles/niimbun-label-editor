@@ -104,6 +104,13 @@ const preserveWorldTransform = (
 const applyNodePatch = (node: Node, patch: NodePatch): void => {
     const { id, parentId, type, transform } = node;
     Object.assign(node, patch);
+    // A patch value of `undefined` means "clear this optional field": delete the
+    // key instead of leaving a live `quantizerHint: undefined` own property
+    // (which would break `'key' in node` checks and strict snapshots).
+    const target = node as unknown as Record<string, unknown>;
+    for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined) delete target[key];
+    }
     Object.assign(node, { id, parentId, type });
     // A cast patch may carry `transform: undefined`; restore the original rather
     // than letting the rounding below throw on a missing transform.

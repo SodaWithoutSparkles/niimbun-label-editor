@@ -26,6 +26,7 @@ const sampleDoc = (): LabelDoc => ({
             locked: false,
             transform: { x: 10, y: 20, rotDeg: 0, scaleX: 1, scaleY: 1 },
             text: { kind: 'static', value: 'hi' },
+            quantizerHint: 'floydSteinberg',
         },
     ],
     data: { sampleRowIndex: 0, globals: [] },
@@ -45,5 +46,6 @@ describe('LabelDoc type contract', () => {
         const parsed: LabelDoc = result.doc satisfies LabelDoc;
         expect(parsed.version).toBe(1);
         expect(parsed.label.backingW).toBe(2500);
+        expect(parsed.nodes[0]?.quantizerHint).toBe('floydSteinberg');
     });
 });

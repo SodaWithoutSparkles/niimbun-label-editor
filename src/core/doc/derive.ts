@@ -181,8 +181,48 @@ export const regionBounds = (region: Region): Bounds => {
 };
 
 /**
+ * True when a polygon has at least one non-collinear triple. Mirrors
+ * `hasNonCollinearTriple` in `src/editor/render/regionOverlay.ts` (core cannot
+ * import the editor). Net signed area is the wrong test: a bow-tie has area 0
+ * yet its nonzero fill still paints both lobes.
+ */
+const hasNonCollinearTriple = (points: readonly [hm, hm][]): boolean => {
+    const [x0, y0] = points[0]!;
+    for (let i = 1; i < points.length - 1; i++) {
+        const [x1, y1] = points[i]!;
+        const [x2, y2] = points[i + 1]!;
+        if ((x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0) !== 0) return true;
+    }
+    return false;
+};
+
+/**
+ * True when a region contributes a drawable interior. Mirrors `isDrawableRegion`
+ * in `src/editor/render/regionOverlay.ts` (core cannot import the editor):
+ * positive extents, positive circle radius, and a closed polygon with a
+ * non-collinear triple. An **open** polygon has no interior and is not printable.
+ */
+const isDrawableRegion = (region: Region): boolean => {
+    switch (region.kind) {
+        case 'rect':
+        case 'roundedRect':
+            return region.w > 0 && region.h > 0;
+        case 'circle':
+            return region.r > 0;
+        case 'polygon':
+            return (
+                region.closed === true &&
+                region.points.length >= 3 &&
+                hasNonCollinearTriple(region.points)
+            );
+    }
+};
+
+/**
  * Bounding rect of the region union — the thumbnail silhouette only. No raster
- * clipping (that is P4). `undefined` when there is no drawable region.
+ * clipping (that is P4). `undefined` when there is no drawable region; a region
+ * with no interior (zero extents, zero radius, open/degenerate polygon) is
+ * skipped, matching `regionUnionPath`.
  */
 export const regionUnionBounds = (regions: readonly Region[]): Bounds | undefined => {
     let minX = Infinity;
@@ -192,7 +232,7 @@ export const regionUnionBounds = (regions: readonly Region[]): Bounds | undefine
     let found = false;
 
     for (const region of regions) {
-        if (region.kind === 'polygon' && region.points.length === 0) continue;
+        if (!isDrawableRegion(region)) continue;
         const box = regionBounds(region);
         found = true;
         if (box.x < minX) minX = box.x;

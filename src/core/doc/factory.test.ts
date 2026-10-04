@@ -159,6 +159,21 @@ describe('integer hm invariant', () => {
         expect(isLabelDoc(doc).ok).toBe(true);
     });
 
+    it('clamps negative region w/h/r to 0 (rect, roundedRect, circle)', () => {
+        const doc = createLabelDoc({
+            regions: [
+                { kind: 'rect', x: 1, y: 2, w: -500, h: -1 },
+                { kind: 'roundedRect', x: 0, y: 0, w: 10, h: 20, r: -3 },
+                { kind: 'circle', cx: 5, cy: 6, r: -7 },
+            ],
+        });
+        expect(doc.label.regions).toEqual([
+            { kind: 'rect', x: 1, y: 2, w: 0, h: 0 },
+            { kind: 'roundedRect', x: 0, y: 0, w: 10, h: 20, r: 0 },
+            { kind: 'circle', cx: 5, cy: 6, r: 0 },
+        ]);
+    });
+
     it('rounds caller-supplied float node transforms (regression: factory bypassed hm rounding)', () => {
         const doc = createLabelDoc({
             nodes: [

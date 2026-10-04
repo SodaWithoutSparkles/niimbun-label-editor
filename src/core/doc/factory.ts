@@ -32,23 +32,25 @@ const nonNegativeHm = (value: number): hm => Math.max(0, safeRoundHm(value));
  * `regions` from UI code; a float hm would otherwise be persisted verbatim
  * (`"x": 10.5`) while `parseDoc` rounds on read — so the factory must apply the
  * same integer discipline as the validator. Non-finite numeric fields become 0
- * so a structurally valid Region can never serialize as `NaN`/`Infinity`.
+ * so a structurally valid Region can never serialize as `NaN`/`Infinity`, and
+ * negative `w`/`h`/`r` are clamped to 0 (a negative extent is not renderable and
+ * `CreateLabelDialog`'s `min="0"` is only a hint).
  */
 const roundRegion = (region: Region): Region => {
     switch (region.kind) {
         case 'rect':
-            return { kind: 'rect', x: safeRoundHm(region.x), y: safeRoundHm(region.y), w: safeRoundHm(region.w), h: safeRoundHm(region.h) };
+            return { kind: 'rect', x: safeRoundHm(region.x), y: safeRoundHm(region.y), w: nonNegativeHm(region.w), h: nonNegativeHm(region.h) };
         case 'roundedRect':
             return {
                 kind: 'roundedRect',
                 x: safeRoundHm(region.x),
                 y: safeRoundHm(region.y),
-                w: safeRoundHm(region.w),
-                h: safeRoundHm(region.h),
-                r: safeRoundHm(region.r),
+                w: nonNegativeHm(region.w),
+                h: nonNegativeHm(region.h),
+                r: nonNegativeHm(region.r),
             };
         case 'circle':
-            return { kind: 'circle', cx: safeRoundHm(region.cx), cy: safeRoundHm(region.cy), r: safeRoundHm(region.r) };
+            return { kind: 'circle', cx: safeRoundHm(region.cx), cy: safeRoundHm(region.cy), r: nonNegativeHm(region.r) };
         case 'polygon':
             return {
                 kind: 'polygon',

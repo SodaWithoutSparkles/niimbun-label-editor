@@ -143,6 +143,26 @@ describe('isRegion', () => {
         expect(isRegion({ kind: 'polygon', points: [[1, 'x']] })).toBeUndefined();
         expect(isRegion(null)).toBeUndefined();
     });
+
+    it('clamps negative region extents to 0 and records a repair', () => {
+        const rectRepairs: string[] = [];
+        expect(
+            isRegion({ kind: 'rect', x: 0, y: 0, w: -500, h: 10 }, rectRepairs),
+        ).toEqual({ kind: 'rect', x: 0, y: 0, w: 0, h: 10 });
+        expect(rectRepairs.join(' ')).toContain('region.w: negative width clamped to 0');
+
+        const roundedRepairs: string[] = [];
+        expect(
+            isRegion({ kind: 'roundedRect', x: 0, y: 0, w: 1, h: 1, r: -2 }, roundedRepairs),
+        ).toMatchObject({ r: 0 });
+        expect(roundedRepairs.join(' ')).toContain('region.r: negative radius clamped to 0');
+
+        const circleRepairs: string[] = [];
+        expect(isRegion({ kind: 'circle', cx: 0, cy: 0, r: -7 }, circleRepairs)).toMatchObject({
+            r: 0,
+        });
+        expect(circleRepairs.join(' ')).toContain('region.r: negative radius clamped to 0');
+    });
 });
 
 describe('isAssetRef', () => {
@@ -260,6 +280,37 @@ describe('isNode — geometry fields (P3 §13)', () => {
         const dropRepairs: string[] = [];
         expect(isNode(baseNode({ shape: 'polygon' }), dropRepairs)).toBeUndefined();
         expect(dropRepairs.join(' ')).toContain('node dropped');
+    });
+});
+
+describe('isNode — quantizerHint (P4)', () => {
+    it('keeps a known quantizer id', () => {
+        expect(isNode(baseNode({ quantizerHint: 'atkinson' }))?.quantizerHint).toBe('atkinson');
+    });
+
+    it('drops an unknown quantizer id (absent) and records a repair', () => {
+        const repairs: string[] = [];
+        const node = isNode(baseNode({ quantizerHint: 'ordered' }), repairs);
+        expect(node).toBeDefined();
+        expect(node?.quantizerHint).toBeUndefined();
+        expect(repairs.join(' ')).toContain('node.quantizerHint');
+    });
+
+    it('round-trips a valid hint and drops an invalid one through isLabelDoc', () => {
+        const kept = isLabelDoc(
+            validRaw({ nodes: [baseNode({ id: 'k', quantizerHint: 'stucki' })] }),
+        );
+        expect(kept.ok).toBe(true);
+        if (!kept.ok) return;
+        expect(kept.doc.nodes[0]?.quantizerHint).toBe('stucki');
+
+        const dropped = isLabelDoc(
+            validRaw({ nodes: [baseNode({ id: 'd', quantizerHint: 'nope' })] }),
+        );
+        expect(dropped.ok).toBe(true);
+        if (!dropped.ok) return;
+        expect(dropped.doc.nodes[0]?.quantizerHint).toBeUndefined();
+        expect(dropped.repairs.join(' ')).toContain('nodes[0]: node.quantizerHint');
     });
 });
 
