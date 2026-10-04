@@ -168,23 +168,41 @@ interface LabelDoc {
 - `effectiveTransform(n) = parentTransform × localTransform`
 - children derived from `parentId`; never stored separately.
 
-**F-tag preset** (`ftagSpare-25x78`, backing 2500×7800 hm):
+**F-tag preset** (`ftagSpare-25x78`, backing 2500×7800 hm) — **as shipped** in
+`src/core/doc/label-presets/f-tag-spare.ts` (`ftagSpareRegions()`); re-measured with
+calipers 2026-10-03:
 - `flag`: roundedRect x0 y0 w2500 h3800 r200
-- `tail`: roundedRect x0 y3400 w1975 h4400 r200
-- `tab`: roundedRect x1575 y0 w600 h7800 r200
+- `spare`: roundedRect x0 y3800 w1500 h4000 r200
+- `tail`: roundedRect x1500 y0 w725 h7800 r200
 
-> **Corrected by the owner, 2026-10-03:** the preset is now a 3-region union
-> (was 4). Abutting `roundedRect`s lose a corner half-disc at every shared seam,
-> punching notches into the `union(regions)` clip. The fix: the flag is one
-> region (two halves can never tile), and the tail overlaps its neighbours by
-> ≥ 2r (`y3400`, `w1975`). Silhouette intent unchanged: 25×78, lower-right notch
-> OUT, tab column x∈[1575,2175] IN. See `src/core/doc/factory.ts` `ftagSpareRegions()`.
+> **Corrected by the owner, 2026-10-03 (matches the shipped preset):** the preset is a
+> 3-region union (was 4). Abutting `roundedRect`s lose a corner half-disc at every
+> shared seam, punching notches into the `union(regions)` clip. Fix: the flag is one
+> region (two halves can never tile), and the **tail** column is a single tall region
+> overlapping the flag's right band so that seam is hole-free. Silhouette intent
+> unchanged: 25×78, lower-right notch (x>2225, y>3800) OUT, tail column printed.
+> Where blocks only abut (flag/spare at y=3800, spare/tail at x=1500) the measured
+> boxes touch without overlap; the outer corner of such a seam sits outside both
+> blocks (the accepted `(1500,3800)` inner-corner bite — do not "repair" it).
+> **`flag`/`spare`/`tail` are descriptive comments; the regions carry no role/id**
+> (decision 25). An earlier revision of this doc block described a `tail y3400 w1975`
+> geometry that does not match the shipped preset; that is superseded.
 
 **v1 node set:** text, image, shape (line, rectangle, ellipse, polygon), qr, barcode, group. QR/barcode payloads are `ContentSource` (templatable).
 
 **Region semantics:** `regions` is consumed only as `union(regions)` — a printable-area clip. Regions carry no role, id, or zone label; `flag`/`tail`/`tab` in the preset are just descriptive comment names for three physical areas of one printable union. No object is ever assigned to a region.
 
-> **⚠ P4 clip requirement — union MUST use NONZERO winding (added 2026-10-03).** Region rectangles may now **overlap on purpose** (the F-tag preset's tail overlaps the flag and tab by ≥ 2r to cover shared rounded corners). Under even-odd (default `fill` in some APIs / `ctx.clip('evenodd')`) every overlap band becomes a **hole**, re-creating the exact clip defect the 2026-10-03 geometry fix removed. The P4 renderer **must** clip with nonzero winding (e.g. canvas `ctx.clip()` default is nonzero — do NOT pass `'evenodd'`; SVG `fill-rule="nonzero"`), or equivalently merge regions into a single path before clipping. Pin this with a P4 test: overlapping regions must produce no interior holes.
+> **⚠ P4 clip requirement — union MUST use NONZERO winding (added 2026-10-03).** Region
+> shapes may **overlap on purpose** (the shipped F-tag's `tail` overlaps the `flag` so
+> that seam is hole-free). Under even-odd (default `fill` in some APIs / `ctx.clip('evenodd')`)
+> every overlap band becomes a **hole**, re-creating the clip defect the 2026-10-03 geometry
+> fix removed. The P4 renderer **must** clip with nonzero winding (canvas `ctx.fill()` default
+> is nonzero — do NOT pass `'evenodd'`; SVG `fill-rule="nonzero"`), or equivalently merge
+> regions into a single same-wound path before clipping. Pinned by `src/editor/render/clip.test.ts`
+> (full-raster no-hole scan over `regionUnionBounds`) and `regionOverlay.test.ts` (polygon
+> winding normalization). Scope note (feat/recon 2026-10-04): this guarantee holds for
+> `union(regions)` = *inside any region*; the clip is not a region-adjacency-preserving union,
+> and only the F-tag tail/flag seam is designed as a true overlap.
 
 ## Storage
 
