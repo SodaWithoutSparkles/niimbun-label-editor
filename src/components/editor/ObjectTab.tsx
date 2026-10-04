@@ -89,6 +89,7 @@ const REASON_KEYS: Record<FieldReason, string> = {
     qr: 'editor.mfp.qrDisabled',
     barcode: 'editor.mfp.barcodeDisabled',
     content: 'editor.mfp.contentSourceDisabled',
+    size: 'editor.mfp.sizeDisabled',
 };
 
 /**

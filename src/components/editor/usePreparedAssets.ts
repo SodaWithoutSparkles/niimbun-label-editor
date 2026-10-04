@@ -51,23 +51,48 @@ export const bytesProviderFor = (repo: ResourceRepo): BytesProvider => ({
 });
 
 /**
- * Build the `AssetDeps` the render/print seam consumes from a `ResourceRepo`.
+ * Build the repo-backed providers (bytes + fonts) for the render/print seam.
+ * The returned `images`/`fonts` identities are stable for a given `repo`, which
+ * matters because `prepareResolvedAssets` keys its decode cache on the provider
+ * object and `createFontProvider` remembers registered fontIds. Callers must
+ * memoize this on the repo alone so a zoom change cannot rebuild the providers
+ * (which would bypass the decode cache and re-register every `FontFace`).
  * With no repo the local-bytes providers are omitted (a `local` image then
  * prepares as `missing`, while inline/remote images and qr/barcode still work).
- * `imageScale` is only forwarded when finite, so print can leave it undefined
- * and fall back to the document dpi.
  */
-export const createResourceAssetDeps = (
-    repo: ResourceRepo | null,
-    imageScale?: number,
-): AssetDeps => {
+export const createResourceAssetProviders = (repo: ResourceRepo | null): AssetDeps => {
     const deps: AssetDeps = {};
     if (repo) {
         const bytes = bytesProviderFor(repo);
         deps.images = bytes;
         deps.fonts = createFontProvider({ getBytes: bytes.getBytes });
     }
-    if (imageScale !== undefined && Number.isFinite(imageScale)) deps.imageScale = imageScale;
+    return deps;
+};
+
+/**
+ * The resolution cap is device px per hm. Only a finite, **positive** value is
+ * forwarded: a `0` (e.g. the initial `effectiveZoom`) or a non-finite value must
+ * fall back to the document-dpi print scale rather than produce a zero-size cap.
+ */
+const forwardableImageScale = (imageScale: number | undefined): number | undefined =>
+    imageScale !== undefined && Number.isFinite(imageScale) && imageScale > 0
+        ? imageScale
+        : undefined;
+
+/**
+ * Build the `AssetDeps` the render/print seam consumes from a `ResourceRepo`.
+ * Convenience wrapper over {@link createResourceAssetProviders}; `imageScale` is
+ * only forwarded when finite and > 0, so print can leave it undefined and fall
+ * back to the document dpi.
+ */
+export const createResourceAssetDeps = (
+    repo: ResourceRepo | null,
+    imageScale?: number,
+): AssetDeps => {
+    const deps = createResourceAssetProviders(repo);
+    const scale = forwardableImageScale(imageScale);
+    if (scale !== undefined) deps.imageScale = scale;
     return deps;
 };
 
@@ -82,10 +107,17 @@ export const usePreparedAssets = (
     const resourceRepo = useStore((state) => state.resourceRepo);
     const effectiveZoom = useStore((state) => state.effectiveZoom);
 
-    const deps = useMemo(
-        () => createResourceAssetDeps(resourceRepo, effectiveZoom * devicePixelRatioOf()),
-        [resourceRepo, effectiveZoom],
-    );
+    // Providers are memoized on the repo ALONE. If they were rebuilt on every
+    // zoom tick, `deps.images` would change identity and bypass the per-provider
+    // decode cache in `prepareResolvedAssets`, while `createFontProvider` would
+    // be recreated and re-register every imported `FontFace` on each tick. The
+    // resolution cap still lives in the deps object, so a zoom change re-runs the
+    // prepare and re-caps — now cheap, because the decode is a cache hit.
+    const providers = useMemo(() => createResourceAssetProviders(resourceRepo), [resourceRepo]);
+    const deps = useMemo(() => {
+        const scale = forwardableImageScale(effectiveZoom * devicePixelRatioOf());
+        return scale === undefined ? providers : { ...providers, imageScale: scale };
+    }, [providers, effectiveZoom]);
 
     // The prepared result is only valid for the inputs it was built from. Keying
     // it to the exact `nodes`/`doc` identity means a changed document reports

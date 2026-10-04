@@ -29,7 +29,7 @@ vi.mock('../../editor/render/prepareAssets', () => ({
     prepareResolvedAssets: prepareSpy,
 }));
 
-import { usePreparedAssets } from './usePreparedAssets';
+import { usePreparedAssets, createResourceAssetDeps } from './usePreparedAssets';
 
 const emptyPrepared = () => ({ assets: new Map<string, PreparedAsset>(), warnings: new Map() });
 
@@ -117,5 +117,35 @@ describe('usePreparedAssets (P5 render seam)', () => {
         // The prepare still runs and the hook still resolves to a result.
         await waitFor(() => expect(prepareSpy).toHaveBeenCalledWith(NO_NODES, doc, expect.anything()));
         await waitFor(() => expect(result.current).toBeDefined());
+    });
+
+    it('keeps provider identity stable across a zoom change (cache + font registration survive)', async () => {
+        const repo = createResourceRepo(createMemoryAdapter());
+        const doc = makeDoc();
+        useStore.setState({ resourceRepo: repo, effectiveZoom: 1 });
+
+        renderHook(() => usePreparedAssets(NO_NODES, doc));
+        await waitFor(() => expect(prepareSpy).toHaveBeenCalled());
+        const firstDeps = prepareSpy.mock.calls[0]![2];
+
+        // A zoom tick must NOT rebuild the providers: their identity is the
+        // decode-cache scope and the FontFace registry. Only the cap changes.
+        useStore.setState({ effectiveZoom: 2 });
+        await waitFor(() => expect(prepareSpy.mock.calls.length).toBeGreaterThan(1));
+        const lastDeps = prepareSpy.mock.calls.at(-1)![2];
+
+        expect(lastDeps.images).toBe(firstDeps.images);
+        expect(lastDeps.fonts).toBe(firstDeps.fonts);
+        expect(lastDeps.imageScale).not.toBe(firstDeps.imageScale);
+    });
+
+    it('drops a zero/non-finite imageScale so it falls back to the doc dpi', () => {
+        const repo = createResourceRepo(createMemoryAdapter());
+        // The initial `effectiveZoom` is 0: a zero-size cap must never be built.
+        expect('imageScale' in createResourceAssetDeps(repo, 0)).toBe(false);
+        expect('imageScale' in createResourceAssetDeps(repo, Number.NaN)).toBe(false);
+        expect('imageScale' in createResourceAssetDeps(repo, Number.POSITIVE_INFINITY)).toBe(false);
+        // A finite, positive scale is still forwarded.
+        expect(createResourceAssetDeps(repo, 1.5).imageScale).toBe(1.5);
     });
 });

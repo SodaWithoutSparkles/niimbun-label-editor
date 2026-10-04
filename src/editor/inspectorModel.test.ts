@@ -66,13 +66,22 @@ describe('inspectorModel — field descriptors', () => {
 
     it('tags every unwired field with the engine that owns it', () => {
         for (const field of IMAGE_FIELDS.filter((f) => !f.wired)) expect(field.reason).toBe('image');
-        for (const field of QR_FIELDS.filter((f) => !f.wired)) expect(field.reason).toBe('qr');
-        for (const field of BARCODE_FIELDS.filter((f) => !f.wired)) expect(field.reason).toBe('barcode');
+        for (const field of QR_FIELDS.filter((f) => !f.wired)) expect(field.reason).toBe('size');
+        for (const field of BARCODE_FIELDS.filter((f) => !f.wired)) expect(field.reason).toBe('size');
         for (const field of RESERVED_FIELDS.filter((f) => !f.wired)) {
             expect(['trust', 'content']).toContain(field.reason);
         }
         // Trust is P6; the per-object quantizer policy is now wired (P4).
         expect(RESERVED_FIELDS.find((f) => f.key === 'templateTrust')?.reason).toBe('trust');
+    });
+
+    it('points every size stub at the transform W/H fields, not a shipped engine', () => {
+        // The size box is edited through the numeric sizeW/sizeH transform
+        // fields, so the stub says so for text, shape, qr and barcode alike.
+        expect(TEXT_FIELDS.find((f) => f.key === 'size')?.reason).toBe('size');
+        expect(SHAPE_FIELDS.find((f) => f.key === 'size')?.reason).toBe('size');
+        expect(QR_FIELDS.find((f) => f.key === 'size')?.reason).toBe('size');
+        expect(BARCODE_FIELDS.find((f) => f.key === 'size')?.reason).toBe('size');
     });
 
     it('wires quantizerHint as a select over the quantizer registry', () => {

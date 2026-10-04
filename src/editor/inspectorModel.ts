@@ -70,7 +70,7 @@ export const SYSTEM_FONTS: readonly string[] = [
  * Why a `wired: false` field is disabled, so the panel can show the *right*
  * reason instead of one blanket message. `null` for wired fields.
  */
-export type FieldReason = 'trust' | 'image' | 'qr' | 'barcode' | 'content';
+export type FieldReason = 'trust' | 'image' | 'qr' | 'barcode' | 'content' | 'size';
 
 export interface FieldDescriptor {
     /** Stable field id — the node prop it edits, or a reserved key. */
@@ -119,7 +119,7 @@ export const TEXT_FIELDS: readonly FieldDescriptor[] = [
     { key: 'text', scope: 'text', kind: 'textContent', wired: true },
     // `size` is a `{w, h}` box, not a scalar; the Object tab edits it as the two
     // numeric `sizeW`/`sizeH` transform fields, so this aggregate stays a stub.
-    { key: 'size', scope: 'text', kind: 'stub', wired: false, reason: 'content' },
+    { key: 'size', scope: 'text', kind: 'stub', wired: false, reason: 'size' },
     // A `fontId` links to a `FontRef`; selecting one also resolves `fontFamily`.
     // The options come from `doc.resources.fonts`, resolved by the panel.
     { key: 'fontId', scope: 'text', kind: 'fontRef', wired: true },
@@ -138,7 +138,7 @@ export const TEXT_FIELDS: readonly FieldDescriptor[] = [
 export const SHAPE_FIELDS: readonly FieldDescriptor[] = [
     { key: 'shape', scope: 'shape', kind: 'select', wired: true, options: ['line', 'rectangle', 'ellipse', 'polygon'] },
     // `size` is a `{w, h}` box (see TEXT_FIELDS); edited via sizeW/sizeH.
-    { key: 'size', scope: 'shape', kind: 'stub', wired: false, reason: 'content' },
+    { key: 'size', scope: 'shape', kind: 'stub', wired: false, reason: 'size' },
     { key: 'points', scope: 'shape', kind: 'stub', wired: false, reason: 'content' },
     { key: 'closed', scope: 'shape', kind: 'boolean', wired: true },
     // The resolver draws rectangles without a corner radius, so this is a stub
@@ -168,14 +168,14 @@ export const IMAGE_FIELDS: readonly FieldDescriptor[] = [
 export const QR_FIELDS: readonly FieldDescriptor[] = [
     { key: 'data', scope: 'qr', kind: 'dataContent', wired: true },
     { key: 'errorCorrection', scope: 'qr', kind: 'select', wired: true, options: QR_ERROR_CORRECTIONS },
-    { key: 'size', scope: 'qr', kind: 'stub', wired: false, reason: 'qr' },
+    { key: 'size', scope: 'qr', kind: 'stub', wired: false, reason: 'size' },
 ];
 
 /** Barcode fields (P5). `data` is the static payload; `symbology` the bcid. */
 export const BARCODE_FIELDS: readonly FieldDescriptor[] = [
     { key: 'data', scope: 'barcode', kind: 'dataContent', wired: true },
     { key: 'symbology', scope: 'barcode', kind: 'select', wired: true, options: BARCODE_SYMBOLOGIES },
-    { key: 'size', scope: 'barcode', kind: 'stub', wired: false, reason: 'barcode' },
+    { key: 'size', scope: 'barcode', kind: 'stub', wired: false, reason: 'size' },
 ];
 
 /**
