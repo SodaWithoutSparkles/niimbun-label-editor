@@ -10,6 +10,7 @@ Label editor for NIIMBOT thermal printers (React 19, TypeScript, Tailwind v4, zu
 - [`store-and-slices.md`](memory/store-and-slices.md) — flat-slice pattern; move fields without renaming keys.
 - [`testing.md`](memory/testing.md) — Vitest + happy-dom setup, `bun run test`, what must stay a browser test.
 - [`print-transport.md`](memory/print-transport.md) — `src/core` headless hm math; frozen `PrinterTransport` contract (`src/print`); niimbluelib 0.47.0 verified print flow + adapter gotchas.
+- [`objects-assets.md`](memory/objects-assets.md) — P5 object/font/asset model + the async asset seam (`prepareResolvedAssets`), bwip-js QR/barcode rules, image provenance/CORS, resolution cap, Konva fit/mask parity. Read before touching `src/editor/render/*` or the object inspector.
 - [`niimblue-reference.md`](memory/niimblue-reference.md) — what the niim.blue clone (`references/niimblue/`, gitignored) does, and where our plan beats / should adopt it. Read before P2–P8.
 - [`ui-design-workflow.md`](memory/ui-design-workflow.md) — **owner designs the UI** (screenshot/mspaint = spec; never redesign), and the label-editor shell direction (bounded canvas, keep layer stack, shrink tool rail, reserve right-side object config). Read before any UI-facing phase.
 

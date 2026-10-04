@@ -71,7 +71,7 @@ niim.blue passes `quantity` per `printPage` and `totalPages = pages * copies`; o
 - B1_PRO printhead = 567 dots @ 300 dpi ≈ 48 mm.
 
 
-## Render pipeline (P4)
+## Render pipeline (P4; P5 objects/assets seam → [`objects-assets.md`](objects-assets.md))
 
 - **The one path:** `src/core/render/` (pure: `dimensions`, `colorSpace` seam, `quantize` — threshold/FS/Stucki/Atkinson, `policy` masks) → `src/editor/render/{rasterize,clip,renderLabelPage,unionPath}` → `ImageEncoder`. `renderLabelPage` is the shared preview≡print entry point; `src/print/printLabel.ts` encodes via `ImageEncoder.encodeCanvas` (never hand-build `rowsData`). Dev harness: `?print=1`.
 - **Clip is `union(regions)` = "inside any region" = nonzero winding, never `evenodd`** (plan §187). `regionUnionPath` normalizes polygon signed-area winding; keep-out/count predicates must use the drawable-union predicate (`isDrawableRegion`), kept in sync between `src/editor/render/regionOverlay.ts` and `src/core/doc/derive.ts` (duplicated — `src/core` can't import `src/editor`).

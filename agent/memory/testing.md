@@ -35,6 +35,21 @@ via `mergeConfig`). Explicit `import { describe, it, expect } from 'vitest'` —
   check caught it. Regression: `src/utils/compress.test.ts` uses a
   backpressure-faithful `CompressionStream` fake.
 
+## Real-canvas harness (P4/P5)
+
+`src/test/canvasHarness.ts` (`installCanvasShim()`) installs `@napi-rs/canvas` so
+Konva + `Konva.Text`/`Konva.Image` rasterize **real pixels** in-process — use it
+for render/golden tests. `src/test/canvasHarness.guard.test.ts` forbids product
+imports. `@napi-rs/canvas`'s `loadImage` is the reliable way to turn a
+shim-generated canvas into a fixture its `drawImage` accepts (napi rejects a
+shimmed happy-dom `HTMLCanvasElement`).
+
+Heavy real-canvas tests (`rasterize.test.ts`, `renderLabelPage.test.ts`, the P5
+object-engine tests) can exceed Vitest's default 5 s per-test timeout under
+full-suite parallel load; `vitest.config.ts` sets `testTimeout: 15000` for this
+reason. A timeout there is CPU contention, not a regression — re-run or isolate
+before chasing it.
+
 ## Gotcha
 
 This Vitest runner (Node 24 / Bun) rejects a raw `ArrayBuffer` write chunk for
