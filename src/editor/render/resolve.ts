@@ -164,9 +164,26 @@ export type ResolvedNode =
     | ResolvedQr
     | ResolvedBarcode;
 
+/**
+ * Resolved content for one leaf: the final text plus whether it is the
+ * empty-content placeholder. Shared by `resolveContent` (the static/fallback
+ * path) and the async binding pre-pass's override map (`prepareContent.ts`).
+ */
+export interface ResolvedContent {
+    text: string;
+    placeholder: boolean;
+}
+
 export interface ResolveContext {
     /** Text substituted when resolved content is empty. Defaults to `{empty}`. */
     emptyText?: string;
+    /**
+     * Per-node-id content produced by the async binding pre-pass (P6 W2):
+     * evaluated csv/template sources for a given row. When an entry exists it
+     * wins over the static/`fallback` path. Absent → today's behaviour. The map
+     * is read only; `resolve` never mutates it.
+     */
+    overrides?: ReadonlyMap<string, ResolvedContent>;
 }
 
 /** Apply an affine matrix to a local point. */
@@ -243,14 +260,18 @@ const unionBounds = (boxes: readonly Bounds[]): Bounds => {
 };
 
 /**
- * Resolve a `ContentSource` without executing anything. Static values pass
- * through; csv/template use their static `fallback` (execution is P6). An empty
- * result becomes the placeholder so an object never renders blank.
+ * Resolve a `ContentSource` without executing anything. An explicit `override`
+ * (from the async binding pre-pass) wins outright; otherwise static values pass
+ * through and csv/template use their static `fallback` (execution is the P6
+ * pre-pass). An empty result becomes the placeholder so an object never renders
+ * blank.
  */
 export const resolveContent = (
     source: ContentSource,
     emptyText: string = DEFAULT_EMPTY_TEXT,
-): { text: string; placeholder: boolean } => {
+    override?: ResolvedContent,
+): ResolvedContent => {
+    if (override !== undefined) return override;
     const raw = source.kind === 'static' ? source.value : source.fallback;
     if (raw.length === 0) return { text: emptyText, placeholder: true };
     return { text: raw, placeholder: false };
@@ -258,10 +279,13 @@ export const resolveContent = (
 
 /**
  * Build the resolved static scene graph. Roots in `nodes[]` order, children in
- * array order, hidden subtrees omitted. Template/CSV content is not executed.
+ * array order, hidden subtrees omitted. Template/CSV content is not executed
+ * here; `ctx.overrides` (from the async P6 pre-pass) supplies evaluated content
+ * keyed by node id, otherwise csv/template render their static `fallback`.
  */
 export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[] => {
     const emptyText = ctx.emptyText ?? DEFAULT_EMPTY_TEXT;
+    const overrides = ctx.overrides;
     const byId = nodeLookup(doc.nodes);
     const seen = new Set<string>();
 
@@ -288,7 +312,7 @@ export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[]
             }
             case 'text': {
                 const { w, h } = nodeSize(node);
-                const content = resolveContent(node.text, emptyText);
+                const content = resolveContent(node.text, emptyText, overrides?.get(node.id));
                 return {
                     ...base,
                     type: 'text',
@@ -358,7 +382,7 @@ export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[]
             }
             case 'qr': {
                 const { w, h } = nodeSize(node);
-                const content = resolveContent(node.data, emptyText);
+                const content = resolveContent(node.data, emptyText, overrides?.get(node.id));
                 return {
                     ...base,
                     type: 'qr',
@@ -372,7 +396,7 @@ export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[]
             }
             case 'barcode': {
                 const { w, h } = nodeSize(node);
-                const content = resolveContent(node.data, emptyText);
+                const content = resolveContent(node.data, emptyText, overrides?.get(node.id));
                 return {
                     ...base,
                     type: 'barcode',

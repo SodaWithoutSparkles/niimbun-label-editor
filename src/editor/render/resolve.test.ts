@@ -273,3 +273,94 @@ describe('resolve — geometry fallbacks', () => {
         }
     });
 });
+
+describe('resolve — content overrides (P6 W2)', () => {
+    const overridesFor = (id: string, text: string): Map<string, { text: string; placeholder: boolean }> =>
+        new Map([[id, { text, placeholder: false }]]);
+
+    it('prefers an override over static content', () => {
+        const resolved = resolve(smallDoc(), { overrides: overridesFor('t1', 'overridden') });
+        const t1 = resolved.find((n) => n.id === 't1');
+        expect(t1?.type === 'text' && t1.text).toBe('overridden');
+        expect(t1?.type === 'text' && t1.placeholder).toBe(false);
+    });
+
+    it('honours an override placeholder', () => {
+        const overrides = new Map([['t1', { text: DEFAULT_EMPTY_TEXT, placeholder: true }]]);
+        const t1 = resolve(smallDoc(), { overrides }).find((n) => n.id === 't1');
+        expect(t1?.type === 'text' && t1.placeholder).toBe(true);
+    });
+
+    it('applies an override to a nested child node', () => {
+        const overrides = new Map([['t2', { text: 'child overridden', placeholder: false }]]);
+        const group = resolve(smallDoc(), { overrides }).find((n) => n.id === 'g1');
+        const child = group?.type === 'group' ? group.children[0] : undefined;
+        expect(child?.type === 'text' && child.text).toBe('child overridden');
+    });
+
+    it('overrides qr and barcode payloads', () => {
+        const doc = createLabelDoc({
+            id: 'doc-override',
+            now: 1_700_000_000,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 1000, h: 1000 }],
+            nodes: [
+                node({
+                    id: 'q1',
+                    parentId: null,
+                    type: 'qr',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    data: { kind: 'csv', column: 'sku', fallback: 'N/A' },
+                    size: { w: 100, h: 100 },
+                }),
+                node({
+                    id: 'b1',
+                    parentId: null,
+                    type: 'barcode',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    data: { kind: 'csv', column: 'sku', fallback: 'N/A' },
+                    size: { w: 100, h: 100 },
+                }),
+            ],
+        });
+        const overrides = new Map([
+            ['q1', { text: 'QR-1', placeholder: false }],
+            ['b1', { text: 'BC-1', placeholder: false }],
+        ]);
+        const byId = new Map(resolve(doc, { overrides }).map((n) => [n.id, n]));
+        const qr = byId.get('q1');
+        const barcode = byId.get('b1');
+        expect(qr?.type === 'qr' && qr.text).toBe('QR-1');
+        expect(barcode?.type === 'barcode' && barcode.text).toBe('BC-1');
+    });
+
+    it('keeps the fallback path when no override matches', () => {
+        const doc = createLabelDoc({
+            id: 'doc-fallback',
+            now: 1_700_000_000,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 1000, h: 1000 }],
+            nodes: [
+                node({
+                    id: 't1',
+                    parentId: null,
+                    type: 'text',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    text: { kind: 'csv', column: 'sku', fallback: 'N/A' },
+                    size: { w: 100, h: 50 },
+                }),
+            ],
+        });
+        const t1 = resolve(doc, { overrides: overridesFor('other', 'x') })[0];
+        expect(t1?.type === 'text' && t1.text).toBe('N/A');
+    });
+
+    it('stays deterministic with the same overrides', () => {
+        const overrides = overridesFor('t1', 'X');
+        expect(resolve(smallDoc(), { overrides })).toEqual(resolve(smallDoc(), { overrides }));
+    });
+});
