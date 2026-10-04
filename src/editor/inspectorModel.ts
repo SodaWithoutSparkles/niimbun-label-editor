@@ -1,5 +1,6 @@
 import type { Node, NodeType } from '../core/doc/types';
 import { QUANTIZERS } from '../core/render';
+import { BARCODE_SYMBOLOGIES, IMAGE_FITS, QR_ERROR_CORRECTIONS } from '../core/doc/objects';
 
 /**
  * Typed field model for the MFP **Object** tab. Data only — no store, no React,
@@ -39,8 +40,31 @@ export type FieldKind =
     | 'select'
     | 'color'
     | 'textContent'
+    /** Editable static content on `node.data` (qr / barcode payload). */
+    | 'dataContent'
+    /** Select over `doc.resources.images` (options resolved in the panel). */
+    | 'imageRef'
+    /** Select over `doc.resources.fonts` + import action (options resolved in the panel). */
+    | 'fontRef'
     | 'contentSource'
     | 'stub';
+
+/**
+ * Curated system-font families offered by the Object tab's system-font picker.
+ * These are ubiquitous platform families (or the generic CSS fallbacks); the
+ * picker only sets `fontFamily`, never a `fontId`.
+ */
+export const SYSTEM_FONTS: readonly string[] = [
+    'sans-serif',
+    'serif',
+    'monospace',
+    'Arial',
+    'Helvetica',
+    'Verdana',
+    'Georgia',
+    'Times New Roman',
+    'Courier New',
+];
 
 /**
  * Why a `wired: false` field is disabled, so the panel can show the *right*
@@ -96,7 +120,11 @@ export const TEXT_FIELDS: readonly FieldDescriptor[] = [
     // `size` is a `{w, h}` box, not a scalar; the Object tab edits it as the two
     // numeric `sizeW`/`sizeH` transform fields, so this aggregate stays a stub.
     { key: 'size', scope: 'text', kind: 'stub', wired: false, reason: 'content' },
-    { key: 'fontFamily', scope: 'text', kind: 'string', wired: true },
+    // A `fontId` links to a `FontRef`; selecting one also resolves `fontFamily`.
+    // The options come from `doc.resources.fonts`, resolved by the panel.
+    { key: 'fontId', scope: 'text', kind: 'fontRef', wired: true },
+    // System-font picker: sets `fontFamily` from the curated family list.
+    { key: 'fontFamily', scope: 'text', kind: 'select', wired: true, options: SYSTEM_FONTS },
     { key: 'fontSize', scope: 'text', kind: 'number', wired: true },
     // The renderer reads `fontStyle` but ignores weight/spacing/direction, so
     // advertising them as wired would let a user edit a field nothing acts on.
@@ -126,24 +154,27 @@ export const SHAPE_FIELDS: readonly FieldDescriptor[] = [
 
 
 
-/** Image engine is P5 — typed stubs, all disabled. */
+/**
+ * Image fields (P5). `imageId` selects a `doc.resources.images` entry (options
+ * resolved by the panel); `fit` chooses the draw policy. The resolution cap is
+ * derived by the render path, so there is no editable `resolution` field.
+ */
 export const IMAGE_FIELDS: readonly FieldDescriptor[] = [
-    { key: 'imageId', scope: 'image', kind: 'stub', wired: false, reason: 'image' },
-    { key: 'resolution', scope: 'image', kind: 'stub', wired: false, reason: 'image' },
-    { key: 'fit', scope: 'image', kind: 'stub', wired: false, reason: 'image' },
+    { key: 'imageId', scope: 'image', kind: 'imageRef', wired: true },
+    { key: 'fit', scope: 'image', kind: 'select', wired: true, options: IMAGE_FITS },
 ];
 
-/** QR engine is P4 — typed stubs, all disabled. */
+/** QR fields (P5). `data` is the static payload; `errorCorrection` the EC level. */
 export const QR_FIELDS: readonly FieldDescriptor[] = [
-    { key: 'data', scope: 'qr', kind: 'contentSource', wired: false, reason: 'qr' },
-    { key: 'errorCorrection', scope: 'qr', kind: 'stub', wired: false, reason: 'qr' },
+    { key: 'data', scope: 'qr', kind: 'dataContent', wired: true },
+    { key: 'errorCorrection', scope: 'qr', kind: 'select', wired: true, options: QR_ERROR_CORRECTIONS },
     { key: 'size', scope: 'qr', kind: 'stub', wired: false, reason: 'qr' },
 ];
 
-/** Barcode engine is P4 — typed stubs, all disabled. */
+/** Barcode fields (P5). `data` is the static payload; `symbology` the bcid. */
 export const BARCODE_FIELDS: readonly FieldDescriptor[] = [
-    { key: 'data', scope: 'barcode', kind: 'contentSource', wired: false, reason: 'barcode' },
-    { key: 'symbology', scope: 'barcode', kind: 'stub', wired: false, reason: 'barcode' },
+    { key: 'data', scope: 'barcode', kind: 'dataContent', wired: true },
+    { key: 'symbology', scope: 'barcode', kind: 'select', wired: true, options: BARCODE_SYMBOLOGIES },
     { key: 'size', scope: 'barcode', kind: 'stub', wired: false, reason: 'barcode' },
 ];
 

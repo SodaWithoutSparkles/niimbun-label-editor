@@ -29,6 +29,7 @@ import { createNodeForInsert } from '../../editor/insertActions';
 import { selectionAfterClick, nodesInMarquee } from '../../editor/selectionModel';
 import { GRID_STEP_HM } from './gridConstants';
 import { ResolvedShape } from './ResolvedShape';
+import { usePreparedAssets } from './usePreparedAssets';
 import { Overlays, type SnapGuideLine } from './Overlays';
 import { Rulers } from './Rulers';
 
@@ -161,6 +162,20 @@ export const PreviewStage: React.FC = () => {
 
     const resolved = useMemo<ResolvedNode[]>(() => (doc ? resolve(doc) : []), [doc]);
     const flatResolved = useMemo(() => flattenResolved(resolved), [resolved]);
+    // Decoded image / qr / barcode rasters for the preview (P5). The resolution
+    // cap follows the on-screen device scale, so previews never over-decode.
+    const { assets, warnings } = usePreparedAssets(resolved, doc);
+    /** Placeholder label per asset leaf: the image's resource name, or the node id. */
+    const assetLabels = useMemo(() => {
+        const map = new Map<string, string>();
+        if (!doc) return map;
+        const imageNames = new Map(doc.resources.images.map((ref) => [ref.imageId, ref.name] as const));
+        for (const node of flatResolved) {
+            if (node.type === 'image') map.set(node.id, imageNames.get(node.imageId) ?? (node.imageId || node.id));
+            else if (node.type === 'qr' || node.type === 'barcode') map.set(node.id, node.id);
+        }
+        return map;
+    }, [doc, flatResolved]);
     const targets = useMemo<HitTestable[]>(
         () => flatResolved.map((node) => ({ id: node.id, bounds: node.bounds, visible: node.visible, locked: node.locked })),
         [flatResolved],
@@ -615,6 +630,9 @@ export const PreviewStage: React.FC = () => {
                             registerRef={registerRef}
                             selected={selectedNodeIds.includes(node.id)}
                             warn={keepOutIds.includes(node.id)}
+                            assets={assets}
+                            warnings={warnings}
+                            assetLabels={assetLabels}
                         />
                     ))}
                     <Transformer

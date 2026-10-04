@@ -3,11 +3,17 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '../../i18n';
 import { useStore } from '../../store/useStore';
 import { createLabelDoc } from '../../core/doc/factory';
-import type { Node } from '../../core/doc/types';
+import { createMemoryAdapter } from '../../data/db';
+import { createResourceRepo } from '../../data/resourceRepo';
+import { bytesProviderFor, createResourceAssetDeps } from './usePreparedAssets';
+import type { FontRef, ImageRef, Node } from '../../core/doc/types';
 import {
     ObjectTab,
     alignTransformPatch,
     clampSizeHm,
+    dataContentPatch,
+    dataContentValue,
+    fontFamilyPatch,
     shapeKindPatch,
     sizePatch,
     textContentPatch,
@@ -70,18 +76,15 @@ describe('size mapping (must-fix #1)', () => {
     });
 });
 
-describe('ObjectTab — disabled field reasons (must-fix #12)', () => {
-    it('shows the image-engine reason for image fields, not a quantizer one', () => {
+describe('ObjectTab — image field wiring (P5)', () => {
+    it('shows wired image resource + fit controls and no disabled image stubs', () => {
         useStore.setState({ currentDoc: doc([imageNode()]), selectedNodeIds: ['a'] });
         render(<ObjectTab selected={[imageNode()]} />);
-        // Image engine fields present.
         expect(screen.getByText('Image')).toBeTruthy();
-        expect(screen.getByText('Resolution')).toBeTruthy();
-        // Every image field carries the image reason (the old blanket behavior
-        // gave all three the quantizer message).
-        expect(screen.getAllByText(/image engine/i)).toHaveLength(3);
-        // The quantizer policy is wired (P4) — no disabled message anywhere.
-        expect(screen.queryByText(/Quantizer settings/i)).toBeNull();
+        expect(screen.getByText('Fit')).toBeTruthy();
+        // The resolution cap is derived; the stub is gone.
+        expect(screen.queryByText('Resolution')).toBeNull();
+        expect(screen.queryByText(/image engine/i)).toBeNull();
     });
 
     it('renders real labels for unmapped ids instead of the raw key', () => {
@@ -89,6 +92,21 @@ describe('ObjectTab — disabled field reasons (must-fix #12)', () => {
         render(<ObjectTab selected={[imageNode()]} />);
         expect(screen.queryByText('imageId')).toBeNull();
         expect(screen.queryByText('resolution')).toBeNull();
+    });
+
+    it('writes the fit select to the node', () => {
+        const selected = imageNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['a'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        const fitSelect = screen
+            .getAllByRole('combobox')
+            .find((el) => Array.from((el as HTMLSelectElement).options).some((o) => o.value === 'cover')) as HTMLSelectElement;
+        fireEvent.change(fitSelect, { target: { value: 'cover' } });
+        fireEvent.blur(fitSelect);
+
+        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 'a')!;
+        expect((persisted as { fit?: string }).fit).toBe('cover');
     });
 });
 
@@ -309,5 +327,267 @@ describe('align uses resolved world bounds (must-fix #10)', () => {
         // World right edge for a 400-wide box under +1000 parent is 3000-1400=1600 world.
         // Local delta = world delta (translation only) => local x = 1600.
         expect(patch?.transform?.x).toBe(1600);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// P5 field wiring
+// ---------------------------------------------------------------------------
+
+const qrNode = (over: Record<string, unknown> = {}): Node =>
+    node({
+        id: 'q',
+        parentId: null,
+        type: 'qr',
+        data: { kind: 'static', value: '' },
+        visible: true,
+        locked: false,
+        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        size: { w: 500, h: 500 },
+        ...over,
+    });
+
+const barcodeNode = (over: Record<string, unknown> = {}): Node =>
+    node({
+        id: 'b',
+        parentId: null,
+        type: 'barcode',
+        data: { kind: 'static', value: '' },
+        visible: true,
+        locked: false,
+        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        size: { w: 500, h: 500 },
+        ...over,
+    });
+
+const withResources = (nodes: Node[], images: ImageRef[] = [], fonts: FontRef[] = []) => {
+    const built = createLabelDoc({ id: 'doc-1', now: 1_700_000_000, backingW: 3000, backingH: 2000, nodes });
+    built.resources.images.push(...images);
+    built.resources.fonts.push(...fonts);
+    return built;
+};
+
+const imageRef: ImageRef = {
+    imageId: 'img-1',
+    name: 'logo.png',
+    alt: 'a logo',
+    source: { kind: 'inline', mediaType: 'image/png', dataUrl: 'data:image/png;base64,AAAA' },
+    widthPx: 100,
+    heightPx: 50,
+};
+
+const fontRef: FontRef = {
+    fontId: 'font-1',
+    familyName: 'My Font',
+    name: 'My Font File',
+    source: { kind: 'system', descriptor: 'My Font' },
+};
+
+const selectWithOption = (value: string): HTMLSelectElement =>
+    screen
+        .getAllByRole('combobox')
+        .find((el) => Array.from((el as HTMLSelectElement).options).some((o) => o.value === value)) as HTMLSelectElement;
+
+describe('ObjectTab — qr / barcode payload + options (P5)', () => {
+    it('reads and writes static qr data', () => {
+        expect(dataContentValue(qrNode({ data: { kind: 'static', value: 'hi' } }))).toBe('hi');
+        expect(dataContentValue(textNode())).toBe('');
+        expect(dataContentPatch('x')).toEqual({ data: { kind: 'static', value: 'x' } });
+    });
+
+    it('edits the qr payload and error correction through the tab', () => {
+        const selected = qrNode({ errorCorrection: 'M' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['q'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        const data = screen.getByLabelText('Data');
+        fireEvent.change(data, { target: { value: 'https://x.test' } });
+        fireEvent.blur(data);
+        const ec = selectWithOption('H');
+        fireEvent.change(ec, { target: { value: 'H' } });
+        fireEvent.blur(ec);
+
+        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 'q')! as {
+            data: { value: string };
+            errorCorrection?: string;
+        };
+        expect(persisted.data.value).toBe('https://x.test');
+        expect(persisted.errorCorrection).toBe('H');
+    });
+
+    it('edits the barcode payload and symbology through the tab', () => {
+        const selected = barcodeNode({ symbology: 'code128' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['b'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        const data = screen.getByLabelText('Data');
+        fireEvent.change(data, { target: { value: '987' } });
+        fireEvent.blur(data);
+        const sym = selectWithOption('ean13');
+        fireEvent.change(sym, { target: { value: 'ean13' } });
+        fireEvent.blur(sym);
+
+        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 'b')! as {
+            data: { value: string };
+            symbology?: string;
+        };
+        expect(persisted.data.value).toBe('987');
+        expect(persisted.symbology).toBe('ean13');
+    });
+});
+
+describe('ObjectTab — text font resource wiring (P5)', () => {
+    it('selecting a font resource sets fontId and resolves fontFamily', () => {
+        const selected = textNode({ fontFamily: 'sans-serif' });
+        useStore.setState({ currentDoc: withResources([selected], [], [fontRef]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        const fontSelect = selectWithOption('font-1');
+        fireEvent.change(fontSelect, { target: { value: 'font-1' } });
+
+        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')! as {
+            fontId?: string;
+            fontFamily?: string;
+        };
+        expect(persisted.fontId).toBe('font-1');
+        expect(persisted.fontFamily).toBe('My Font');
+    });
+});
+
+describe('ObjectTab — asset name/alt rename (P5)', () => {
+    it('renames an image ref without changing the node reference', () => {
+        const selected = imageNode({ imageId: 'img-1' });
+        useStore.setState({ currentDoc: withResources([selected], [imageRef]), selectedNodeIds: ['a'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        const nameInput = screen.getByLabelText('Name');
+        fireEvent.change(nameInput, { target: { value: 'brand-logo.png' } });
+        fireEvent.blur(nameInput);
+
+        const state = useStore.getState();
+        const ref = state.currentDoc!.resources.images.find((r) => r.imageId === 'img-1')!;
+        const nodeRef = state.currentDoc!.nodes.find((n) => n.id === 'a')! as { imageId: string };
+        expect(ref.name).toBe('brand-logo.png');
+        // Renaming never rewrites the node's reference.
+        expect(nodeRef.imageId).toBe('img-1');
+    });
+
+    it('renames a font ref without changing the node reference', () => {
+        const selected = textNode({ fontId: 'font-1', fontFamily: 'My Font' });
+        useStore.setState({ currentDoc: withResources([selected], [], [fontRef]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        const nameInput = screen.getByLabelText('Name');
+        fireEvent.change(nameInput, { target: { value: 'Heading font' } });
+        fireEvent.blur(nameInput);
+
+        const state = useStore.getState();
+        const ref = state.currentDoc!.resources.fonts.find((r) => r.fontId === 'font-1')!;
+        const nodeRef = state.currentDoc!.nodes.find((n) => n.id === 't')! as { fontId?: string };
+        expect(ref.name).toBe('Heading font');
+        expect(nodeRef.fontId).toBe('font-1');
+    });
+});
+
+describe('createResourceAssetDeps (P5 asset prep seam)', () => {
+    it('omits providers without a repo and forwards a finite imageScale', () => {
+        const deps = createResourceAssetDeps(null, 2);
+        expect(deps.images).toBeUndefined();
+        expect(deps.fonts).toBeUndefined();
+        expect(deps.imageScale).toBe(2);
+    });
+
+    it('drops a non-finite imageScale so print falls back to the doc dpi', () => {
+        const deps = createResourceAssetDeps(null, Number.NaN);
+        expect('imageScale' in deps).toBe(false);
+    });
+
+    it('wires bytes + font providers when a repo is present', async () => {
+        const repo = createResourceRepo(createMemoryAdapter());
+        await repo.put({ id: 'r1', mediaType: 'image/png', bytes: new Uint8Array([1, 2, 3]) });
+        const deps = createResourceAssetDeps(repo, 1.5);
+
+        expect(deps.images).toBeDefined();
+        expect(deps.fonts).toBeDefined();
+        expect(typeof deps.fonts?.ensureFonts).toBe('function');
+        expect(await deps.images!.getBytes('r1')).toEqual(new Uint8Array([1, 2, 3]));
+        expect(await deps.images!.getBytes('missing')).toBeNull();
+    });
+
+    it('bytesProviderFor never throws when the repo read rejects', async () => {
+        const provider = bytesProviderFor({
+            get: async () => {
+                throw new Error('boom');
+            },
+        } as never);
+        expect(await provider.getBytes('x')).toBeNull();
+    });
+});
+
+describe('ObjectTab — non-static content is never rewritten (must-fix #1)', () => {
+    it('renders the text editor disabled for a csv source', () => {
+        const selected = textNode({ text: { kind: 'csv', column: 'name', fallback: 'x' } });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+        const field = screen.getByLabelText('Text') as HTMLTextAreaElement;
+        expect(field.disabled).toBe(true);
+    });
+
+    it('never mutates a csv text source when its editor is edited', () => {
+        const source = { kind: 'csv' as const, column: 'name', fallback: 'x' };
+        const selected = textNode({ text: source });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+        const field = screen.getByLabelText('Text') as HTMLTextAreaElement;
+        fireEvent.change(field, { target: { value: 'hacked' } });
+        fireEvent.blur(field);
+        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')!;
+        expect((persisted as { text: unknown }).text).toEqual(source);
+        expect(useStore.getState().docPast).toHaveLength(0);
+    });
+
+    it('renders the data editor disabled for a template qr source', () => {
+        const selected = qrNode({ data: { kind: 'template', code: 'x', fallback: 'y' } });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['q'] });
+        render(<ObjectTab selected={[selected]} />);
+        expect((screen.getByLabelText('Data') as HTMLTextAreaElement).disabled).toBe(true);
+    });
+});
+
+describe('ObjectTab — fontFamily / fontId stay consistent (must-fix #2)', () => {
+    it('fontFamilyPatch detaches a linked font only when the family differs', () => {
+        expect(fontFamilyPatch(textNode({ fontId: 'font-1' }), 'Arial', [fontRef])).toStrictEqual({
+            fontFamily: 'Arial',
+            fontId: undefined,
+        });
+        expect(fontFamilyPatch(textNode({ fontId: 'font-1' }), 'My Font', [fontRef])).toStrictEqual({
+            fontFamily: 'My Font',
+        });
+        // No link: nothing to detach.
+        expect(fontFamilyPatch(textNode(), 'Arial', [fontRef])).toStrictEqual({
+            fontFamily: 'Arial',
+            fontId: undefined,
+        });
+    });
+
+    it('clears the linked fontId when the system family select changes', () => {
+        const selected = textNode({ fontId: 'font-1', fontFamily: 'My Font' });
+        useStore.setState({ currentDoc: withResources([selected], [], [fontRef]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+        // The system-family select is the one carrying the curated options.
+        const familySelect = screen
+            .getAllByRole('combobox')
+            .find((el) =>
+                Array.from((el as HTMLSelectElement).options).some((option) => option.value === 'Arial'),
+            ) as HTMLSelectElement;
+        fireEvent.change(familySelect, { target: { value: 'Arial' } });
+        fireEvent.blur(familySelect);
+
+        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')! as {
+            fontFamily?: string;
+            fontId?: string;
+        };
+        expect(persisted.fontFamily).toBe('Arial');
+        expect(persisted.fontId).toBeUndefined();
     });
 });

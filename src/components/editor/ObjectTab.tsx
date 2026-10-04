@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { useStore } from '../../store/useStore';
@@ -10,9 +10,18 @@ import { roundHm, type hm } from '../../core/hm';
 import { nodeSize, pointsExtent } from '../../core/doc/geometry';
 import { effectiveTransform, nodeLookup, IDENTITY_MAT2D, type Mat2D } from '../../core/doc/derive';
 import { nodeLocalPoints, transformedBounds } from '../../editor/render/resolve';
-import type { Node, ShapeKind, ShapeNode } from '../../core/doc/types';
+import {
+    DEFAULT_BARCODE_SYMBOLOGY,
+    DEFAULT_IMAGE_FIT,
+    DEFAULT_QR_ERROR_CORRECTION,
+} from '../../core/doc/objects';
+import { fontBadges, type FontBadge } from '../../editor/render/fontAssets';
+import { importFontFile } from '../../editor/assetImport';
+import type { ContentSource, ImageRef, Node, ShapeKind, ShapeNode } from '../../core/doc/types';
 import type { QuantizerId } from '../../core/render';
 import type { NodePatch } from '../../store/storeTypes';
+import { bytesProviderFor } from './usePreparedAssets';
+import { ImageImportDialog } from './ImageImportDialog';
 
 /**
  * MFP → Object tab (ui-spec.md §8/§10). Renders the field model from
@@ -57,6 +66,7 @@ const FIELD_LABEL_KEYS = {
     visible: 'editor.mfp.field.visible',
     locked: 'editor.mfp.field.locked',
     imageId: 'editor.mfp.field.imageId',
+    fontId: 'editor.mfp.field.fontId',
     resolution: 'editor.mfp.field.resolution',
     fit: 'editor.mfp.field.fit',
     data: 'editor.mfp.field.data',
@@ -157,6 +167,54 @@ export const textContentValue = (node: Node): string =>
 export const textContentPatch = (value: string): NodePatch => ({
     text: { kind: 'static', value },
 });
+
+/** The static payload of a qr/barcode node, or `''` for a non-static source. */
+export const dataContentValue = (node: Node): string =>
+    (node.type === 'qr' || node.type === 'barcode') && node.data.kind === 'static' ? node.data.value : '';
+
+/** Patch a qr/barcode node's static payload (CSV/template execution is P6). */
+export const dataContentPatch = (value: string): NodePatch => ({
+    data: { kind: 'static', value },
+});
+
+/** The `ContentSource` a text/qr/barcode node carries, for the static editors. */
+export const contentSourceOf = (node: Node): ContentSource | undefined => {
+    if (node.type === 'text') return node.text;
+    if (node.type === 'qr' || node.type === 'barcode') return node.data;
+    return undefined;
+};
+
+/**
+ * Patch a text node's system `fontFamily` (the curated picker). Editing the
+ * family must keep `fontId` consistent: a linked `FontRef` whose resolved family
+ * no longer matches is detached, so the resource select and the displayed family
+ * can never disagree. A link that still matches is preserved.
+ */
+export const fontFamilyPatch = (
+    node: Node,
+    value: string,
+    fonts: readonly { fontId: string; familyName: string }[],
+): NodePatch => {
+    if (node.type !== 'text') return {};
+    const linked = node.fontId ? fonts.find((ref) => ref.fontId === node.fontId) : undefined;
+    const keepLink = linked !== undefined && linked.familyName === value;
+    return { fontFamily: value, ...(keepLink ? {} : { fontId: undefined }) };
+};
+
+/**
+ * Effective value shown by an enum select when the node omits the optional
+ * field: the render path falls back to these defaults, so the panel mirrors
+ * them instead of showing a blank choice.
+ */
+const FIELD_DEFAULTS: Record<string, string> = {
+    errorCorrection: DEFAULT_QR_ERROR_CORRECTION,
+    symbology: DEFAULT_BARCODE_SYMBOLOGY,
+    fit: DEFAULT_IMAGE_FIT,
+    fontFamily: 'sans-serif',
+};
+
+/** Badge glyph for a font availability, used beside a font name in the select. */
+const badgeGlyph = (badge: FontBadge | undefined): string => (badge === 'imported' ? '✓' : '⚠');
 
 const isPointShape = (kind: ShapeKind): boolean => kind === 'line' || kind === 'polygon';
 
@@ -261,6 +319,17 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     const updateNode = useStore((state) => state.updateNode);
     const updateNodeTransient = useStore((state) => state.updateNodeTransient);
     const commitDoc = useStore((state) => state.commitDoc);
+    const doc = useStore((state) => state.currentDoc);
+    const resourceRepo = useStore((state) => state.resourceRepo);
+    const addImageRef = useStore((state) => state.addImageRef);
+    const addFontRef = useStore((state) => state.addFontRef);
+    const updateImageRef = useStore((state) => state.updateImageRef);
+    const updateFontRef = useStore((state) => state.updateFontRef);
+
+    const [fontBadgeMap, setFontBadgeMap] = useState<ReadonlyMap<string, FontBadge>>(new Map());
+    const [imageDialogOpen, setImageDialogOpen] = useState(false);
+    const [fontError, setFontError] = useState<string | undefined>(undefined);
+    const fontInputRef = useRef<HTMLInputElement>(null);
 
     const model = useMemo(() => bulkFieldModel(selected), [selected]);
     const first = selected[0];
@@ -283,6 +352,27 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
         [commitDoc],
     );
 
+    // Font availability badges for the `fontId` select (imported / system /
+    // missing). Recompute when the document's resource set changes.
+    useEffect(() => {
+        if (!doc) {
+            setFontBadgeMap(new Map());
+            return;
+        }
+        let cancelled = false;
+        const bytes = resourceRepo ? bytesProviderFor(resourceRepo) : { getBytes: async () => null };
+        fontBadges(doc, bytes)
+            .then((map) => {
+                if (!cancelled) setFontBadgeMap(map);
+            })
+            .catch(() => {
+                if (!cancelled) setFontBadgeMap(new Map());
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [doc, resourceRepo]);
+
     const endGesture = () => {
         if (!gestureRef.current) return;
         gestureRef.current = false;
@@ -296,6 +386,45 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     /** One committed op for the whole selection (select/toggle/text/color). */
     const commitAll = (patchFor: (node: Node) => Parameters<typeof updateNode>[1]) => {
         for (const node of selected) updateNode(node.id, patchFor(node));
+    };
+
+    /** Register an imported image and assign it to every selected image node. */
+    const handleImageImported = (ref: ImageRef) => {
+        addImageRef(ref);
+        for (const node of selected) {
+            if (node.type === 'image') updateNode(node.id, { imageId: ref.imageId });
+        }
+    };
+
+    /** Selecting a `FontRef` sets `fontId` and resolves `fontFamily` to its family. */
+    const handleFontSelect = (value: string) => {
+        const ref = value === '' ? undefined : doc?.resources.fonts.find((font) => font.fontId === value);
+        gestureRef.current = true;
+        for (const node of selected) {
+            if (node.type !== 'text') continue;
+            updateNodeTransient(node.id, {
+                fontId: value === '' ? undefined : value,
+                ...(ref ? { fontFamily: ref.familyName } : {}),
+            });
+        }
+    };
+
+    /** Import a font file: store bytes, register the ref, link the selection. */
+    const handleFontFile = async (file: File) => {
+        if (!resourceRepo) {
+            setFontError(t('editor.mfp.fontImportNeedsStorage'));
+            return;
+        }
+        setFontError(undefined);
+        try {
+            const { ref } = await importFontFile(file, resourceRepo, {});
+            addFontRef(ref);
+            for (const node of selected) {
+                if (node.type === 'text') updateNode(node.id, { fontId: ref.fontId, fontFamily: ref.familyName });
+            }
+        } catch (caught) {
+            setFontError(caught instanceof Error ? caught.message : String(caught));
+        }
     };
 
     const setNumber = (key: string, value: number) => {
@@ -321,9 +450,22 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
             if (key === 'shape') {
                 if (node.type === 'shape') updateNodeTransient(node.id, shapeKindPatch(node, value as ShapeKind));
             } else if (key === 'text') {
-                // `text` is a `ContentSource`, not a plain prop; write a static
-                // source so inserted text can be authored (must-fix #3).
-                if (node.type === 'text') updateNodeTransient(node.id, textContentPatch(value));
+                // `text` is a `ContentSource`; only a static source is authored
+                // here. A csv/template source is left untouched (execution is
+                // P6) so its column/code + fallback survive (must-fix #1).
+                if (node.type === 'text' && node.text.kind === 'static') {
+                    updateNodeTransient(node.id, textContentPatch(value));
+                }
+            } else if (key === 'data') {
+                // qr / barcode static payload (CSV/template execution is P6).
+                if ((node.type === 'qr' || node.type === 'barcode') && node.data.kind === 'static') {
+                    updateNodeTransient(node.id, dataContentPatch(value));
+                }
+            } else if (key === 'fontFamily') {
+                // Editing the system family keeps `fontId` consistent (must-fix #2).
+                if (node.type === 'text') {
+                    updateNodeTransient(node.id, fontFamilyPatch(node, value, doc?.resources.fonts ?? []));
+                }
             } else if (key === 'quantizerHint') {
                 // The empty option clears the field (absent ⇒ the node type's
                 // default policy), so a hint is never stored as an empty string.
@@ -383,34 +525,109 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                     </SettingRow>
                 );
             case 'textContent':
+            case 'dataContent': {
+                // Only a `static` source is editable here. A csv/template source
+                // renders disabled with the same reason its owning engine is
+                // unwired, so an edit can never silently rewrite it to static
+                // and discard its column/code + fallback (must-fix #1).
+                const isStatic = contentSourceOf(first)?.kind === 'static';
+                const value = field.kind === 'textContent' ? textContentValue(first) : dataContentValue(first);
                 return (
-                    <SettingRow key={field.key} label={label}>
+                    <SettingRow
+                        key={field.key}
+                        label={label}
+                        description={isStatic ? undefined : t('editor.mfp.contentSourceDisabled')}
+                    >
                         <textarea
                             aria-label={label}
-                            value={textContentValue(first)}
+                            value={value}
+                            disabled={!isStatic}
                             onChange={(event) => setString(field.key, event.target.value)}
                             rows={2}
-                            className="w-40 rounded border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-100"
+                            className="w-40 rounded border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
                         />
                     </SettingRow>
                 );
+            }
             case 'boolean':
                 return (
                     <SettingRow key={field.key} label={label}>
                         <Toggle checked={booleanValue(first, field.key)} onChange={(value) => setBoolean(field.key, value)} />
                     </SettingRow>
                 );
-            case 'select':
+            case 'select': {
+                const options = field.options ?? [];
+                const raw = stringValue(first, field.key);
+                // Absent enum ⇒ the render default; a family resolved by a font
+                // selection may not be in the curated list, so keep it selectable.
+                const value = raw !== '' ? raw : (FIELD_DEFAULTS[field.key] ?? '');
+                const withCurrent = value !== '' && !options.includes(value) ? [value, ...options] : options;
                 return (
                     <SettingRow key={field.key} label={label}>
                         <Select
-                            value={stringValue(first, field.key)}
-                            onChange={(value) => setString(field.key, value)}
-                            options={(field.options ?? []).map((option) => ({ value: option, label: optionLabel(field.key, option, t) }))}
+                            value={value}
+                            onChange={(next) => setString(field.key, next)}
+                            options={withCurrent.map((option) => ({ value: option, label: optionLabel(field.key, option, t) }))}
                             className="w-36"
                         />
                     </SettingRow>
                 );
+            }
+            case 'imageRef': {
+                const images = doc?.resources.images ?? [];
+                const options = [
+                    { value: '', label: t('editor.mfp.none') },
+                    ...images.map((ref) => ({ value: ref.imageId, label: ref.name })),
+                ];
+                return (
+                    <SettingRow key={field.key} label={label}>
+                        <div className="flex items-center gap-2">
+                            <Select
+                                value={stringValue(first, field.key)}
+                                onChange={(value) => setString(field.key, value)}
+                                options={options}
+                                className="w-32"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setImageDialogOpen(true)}
+                                className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                            >
+                                {t('editor.mfp.importImage')}
+                            </button>
+                        </div>
+                    </SettingRow>
+                );
+            }
+            case 'fontRef': {
+                const fonts = doc?.resources.fonts ?? [];
+                const options = [
+                    { value: '', label: t('editor.mfp.none') },
+                    ...fonts.map((ref) => ({
+                        value: ref.fontId,
+                        label: `${ref.name} ${badgeGlyph(fontBadgeMap.get(ref.fontId))}`,
+                    })),
+                ];
+                return (
+                    <SettingRow key={field.key} label={label}>
+                        <div className="flex items-center gap-2">
+                            <Select
+                                value={stringValue(first, field.key)}
+                                onChange={handleFontSelect}
+                                options={options}
+                                className="w-32"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => fontInputRef.current?.click()}
+                                className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                            >
+                                {t('editor.mfp.importFont')}
+                            </button>
+                        </div>
+                    </SettingRow>
+                );
+            }
             case 'color':
                 return (
                     <SettingRow key={field.key} label={label}>
@@ -437,6 +654,14 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     };
 
     const hasTransform = model.fields.some((field) => field.scope === 'transform');
+
+    // The selected node's referenced asset, if any, for the name/alt rename UI.
+    const firstImageRef =
+        first.type === 'image' ? doc?.resources.images.find((ref) => ref.imageId === first.imageId) : undefined;
+    const firstFontRef =
+        first.type === 'text' && first.fontId
+            ? doc?.resources.fonts.find((ref) => ref.fontId === first.fontId)
+            : undefined;
 
     return (
         <div
@@ -486,7 +711,98 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
             {model.fields
                 .filter((field) => field.scope !== 'transform')
                 .map(renderField)}
+
+            {(firstImageRef || firstFontRef) && (
+                <section>
+                    <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                        {t('editor.mfp.asset')}
+                    </h4>
+                    <AssetRenameFields
+                        key={firstImageRef ? `img:${firstImageRef.imageId}` : `font:${firstFontRef!.fontId}`}
+                        name={firstImageRef ? firstImageRef.name : firstFontRef!.name}
+                        alt={(firstImageRef ? firstImageRef.alt : firstFontRef!.alt) ?? ''}
+                        onCommit={(patch) => {
+                            if (firstImageRef) updateImageRef(firstImageRef.imageId, patch);
+                            else if (firstFontRef) updateFontRef(firstFontRef.fontId, patch);
+                        }}
+                    />
+                </section>
+            )}
+
+            {fontError && <p className="text-xs text-red-400">{fontError}</p>}
+
+            <input
+                ref={fontInputRef}
+                type="file"
+                accept=".woff2,.woff,.ttf,.otf,.ttc,.eot,font/*"
+                aria-label={t('editor.mfp.importFont')}
+                className="hidden"
+                onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = '';
+                    if (file) void handleFontFile(file);
+                }}
+            />
+            <ImageImportDialog
+                open={imageDialogOpen}
+                onClose={() => setImageDialogOpen(false)}
+                onImported={handleImageImported}
+            />
         </div>
+    );
+};
+
+interface AssetRenameFieldsProps {
+    name: string;
+    alt: string;
+    onCommit: (patch: { name?: string; alt?: string }) => void;
+}
+
+/**
+ * Editable `name` / `alt` for the selected node's referenced asset. Edits are
+ * local drafts committed on blur/Enter, so a rename is exactly one undo entry
+ * and a live node reference is never rewritten (the patch is by asset id).
+ * Remounts on the asset id (parent `key`), so drafts seed from fresh props.
+ */
+const AssetRenameFields: React.FC<AssetRenameFieldsProps> = ({ name, alt, onCommit }) => {
+    const { t } = useTranslation();
+    const [draftName, setDraftName] = useState(name);
+    const [draftAlt, setDraftAlt] = useState(alt);
+
+    const commit = () => {
+        const patch: { name?: string; alt?: string } = {};
+        if (draftName !== name) patch.name = draftName;
+        if (draftAlt !== alt) patch.alt = draftAlt === '' ? undefined : draftAlt;
+        if (Object.keys(patch).length > 0) onCommit(patch);
+    };
+
+    return (
+        <>
+            <SettingRow label={t('editor.mfp.field.assetName')}>
+                <Input
+                    value={draftName}
+                    onChange={setDraftName}
+                    onBlur={commit}
+                    onKeyDown={(event) => {
+                        if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+                    }}
+                    aria-label={t('editor.mfp.field.assetName')}
+                    className="w-40"
+                />
+            </SettingRow>
+            <SettingRow label={t('editor.mfp.field.alt')}>
+                <Input
+                    value={draftAlt}
+                    onChange={setDraftAlt}
+                    onBlur={commit}
+                    onKeyDown={(event) => {
+                        if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+                    }}
+                    aria-label={t('editor.mfp.field.alt')}
+                    className="w-40"
+                />
+            </SettingRow>
+        </>
     );
 };
 

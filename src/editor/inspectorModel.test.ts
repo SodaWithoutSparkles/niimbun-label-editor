@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Node, NodeType } from '../core/doc/types';
+import { BARCODE_SYMBOLOGIES, IMAGE_FITS, QR_ERROR_CORRECTIONS } from '../core/doc/objects';
 import {
     BARCODE_FIELDS,
     IMAGE_FIELDS,
@@ -64,9 +65,9 @@ describe('inspectorModel — field descriptors', () => {
     });
 
     it('tags every unwired field with the engine that owns it', () => {
-        for (const field of IMAGE_FIELDS) expect(field.reason).toBe('image');
-        for (const field of QR_FIELDS) expect(field.reason).toBe('qr');
-        for (const field of BARCODE_FIELDS) expect(field.reason).toBe('barcode');
+        for (const field of IMAGE_FIELDS.filter((f) => !f.wired)) expect(field.reason).toBe('image');
+        for (const field of QR_FIELDS.filter((f) => !f.wired)) expect(field.reason).toBe('qr');
+        for (const field of BARCODE_FIELDS.filter((f) => !f.wired)) expect(field.reason).toBe('barcode');
         for (const field of RESERVED_FIELDS.filter((f) => !f.wired)) {
             expect(['trust', 'content']).toContain(field.reason);
         }
@@ -95,10 +96,35 @@ describe('inspectorModel — field descriptors', () => {
         expect(typeFields('group')).toEqual([]);
     });
 
-    it('marks unwired engine fields (image / qr / barcode) as disabled stubs', () => {
-        for (const field of [...IMAGE_FIELDS, ...QR_FIELDS, ...BARCODE_FIELDS]) {
-            expect(field.wired).toBe(false);
-        }
+    it('wires the P5 image / qr / barcode options (size stays a stub)', () => {
+        const image = Object.fromEntries(IMAGE_FIELDS.map((f) => [f.key, f]));
+        expect(image.imageId?.wired).toBe(true);
+        expect(image.imageId?.kind).toBe('imageRef');
+        expect(image.fit?.wired).toBe(true);
+        expect(image.fit?.options).toEqual(IMAGE_FITS);
+        // The resolution cap is derived; there is no editable field.
+        expect(image.resolution).toBeUndefined();
+
+        const qr = Object.fromEntries(QR_FIELDS.map((f) => [f.key, f]));
+        expect(qr.data?.wired).toBe(true);
+        expect(qr.data?.kind).toBe('dataContent');
+        expect(qr.errorCorrection?.options).toEqual(QR_ERROR_CORRECTIONS);
+        expect(qr.size?.wired).toBe(false);
+
+        const barcode = Object.fromEntries(BARCODE_FIELDS.map((f) => [f.key, f]));
+        expect(barcode.data?.wired).toBe(true);
+        expect(barcode.symbology?.options).toEqual(BARCODE_SYMBOLOGIES);
+        expect(barcode.size?.wired).toBe(false);
+    });
+
+    it('offers a font-resource select and a curated system-font picker', () => {
+        const fontId = TEXT_FIELDS.find((f) => f.key === 'fontId');
+        expect(fontId?.wired).toBe(true);
+        expect(fontId?.kind).toBe('fontRef');
+        const family = TEXT_FIELDS.find((f) => f.key === 'fontFamily');
+        expect(family?.wired).toBe(true);
+        expect(family?.kind).toBe('select');
+        expect(family?.options).toContain('sans-serif');
     });
 
     it('keeps contentSource and templateTrust as unwired descriptors', () => {

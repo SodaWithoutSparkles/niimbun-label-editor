@@ -13,6 +13,12 @@ interface ModalProps {
     footer?: ReactNode;
     size?: 'sm' | 'md' | 'lg' | 'xl';
     className?: string;
+    /**
+     * When true, every dismissal path (X / Escape / backdrop / cancel) is inert.
+     * The caller stays in control of `open`; used to keep a dialog open while an
+     * async operation is in flight.
+     */
+    closeDisabled?: boolean;
     children: ReactNode;
 }
 
@@ -41,6 +47,7 @@ export const Modal: React.FC<ModalProps> = ({
     footer,
     size = 'md',
     className,
+    closeDisabled = false,
     children
 }) => {
     const dialogRef = useRef<HTMLDialogElement>(null);
@@ -123,6 +130,8 @@ export const Modal: React.FC<ModalProps> = ({
     }, [open]);
 
     const requestClose = () => {
+        // A caller-managed in-flight operation can veto every dismissal path.
+        if (closeDisabled) return;
         const dialog = dialogRef.current;
         // Closing the dialog synchronously here lets the browser's native
         // Escape default action run afterwards and pop the *next* stacked
@@ -139,7 +148,7 @@ export const Modal: React.FC<ModalProps> = ({
             // otherwise the browser proceeds to close a lower stacked dialog.
             onCancel={(e) => {
                 e.preventDefault();
-                onClose();
+                if (!closeDisabled) onClose();
             }}
             // Native Escape handling is unreliable (and unfocused-input cases
             // vary by browser), so close explicitly on any Escape inside the
@@ -159,7 +168,7 @@ export const Modal: React.FC<ModalProps> = ({
                 pressedBackdropRef.current = e.target === e.currentTarget;
             }}
             onClick={(e) => {
-                if (pressedBackdropRef.current && e.target === e.currentTarget) onClose();
+                if (pressedBackdropRef.current && e.target === e.currentTarget && !closeDisabled) onClose();
             }}
             aria-label={title ? undefined : ariaLabel}
             aria-labelledby={title ? titleId : undefined}
@@ -194,7 +203,8 @@ export const Modal: React.FC<ModalProps> = ({
                     <button
                         type="button"
                         onClick={onClose}
-                        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-800 hover:text-white"
+                        disabled={closeDisabled}
+                        className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                         aria-label={t('dialog.close')}
                         title={t('dialog.close')}
                     >

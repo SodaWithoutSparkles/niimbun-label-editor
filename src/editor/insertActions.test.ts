@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { createAppStore } from '../store/useStore';
 import { INSERT_ACTIONS, normalizeInsertAction } from '../store/slices/toolsSlice';
-import { createNodeForInsert, shapeKindForAction, SHAPE_ACTIONS } from './insertActions';
+import {
+    createImageNodeForRef,
+    createNodeForInsert,
+    DEFAULT_BARCODE_PAYLOAD,
+    DEFAULT_QR_PAYLOAD,
+    shapeKindForAction,
+    SHAPE_ACTIONS,
+} from './insertActions';
 
 describe('createNodeForInsert', () => {
     it('places a default-size text node', () => {
@@ -29,6 +36,39 @@ describe('createNodeForInsert', () => {
 
     it('exposes exactly the four shape menu actions', () => {
         expect([...SHAPE_ACTIONS]).toEqual(['shape:line', 'shape:rectangle', 'shape:ellipse', 'shape:polygon']);
+    });
+
+    it('seeds the P5 qr / barcode defaults', () => {
+        const qr = createNodeForInsert('qr', 0, 0);
+        expect(qr?.type === 'qr' && qr.data).toEqual({ kind: 'static', value: DEFAULT_QR_PAYLOAD });
+        expect(qr?.type === 'qr' && qr.errorCorrection).toBe('M');
+        expect(qr?.type === 'qr' && qr.size).toEqual({ w: 1500, h: 1500 });
+
+        const barcode = createNodeForInsert('barcode', 0, 0);
+        expect(barcode?.type === 'barcode' && barcode.data).toEqual({
+            kind: 'static',
+            value: DEFAULT_BARCODE_PAYLOAD,
+        });
+        expect(barcode?.type === 'barcode' && barcode.symbology).toBe('code128');
+        expect(barcode?.type === 'barcode' && barcode.size).toEqual({ w: 2000, h: 800 });
+    });
+});
+
+describe('createImageNodeForRef', () => {
+    it('sizes the node to the image aspect within the max box', () => {
+        const wide = createImageNodeForRef(10, 20, { imageId: 'i', widthPx: 200, heightPx: 100 }, 1000);
+        expect(wide.type === 'image' && wide.size).toEqual({ w: 1000, h: 500 });
+        expect(wide.type === 'image' && wide.imageId).toBe('i');
+        expect(wide.type === 'image' && wide.fit).toBe('contain');
+
+        // A portrait source flips the constraint (height is the long side).
+        const tall = createImageNodeForRef(0, 0, { imageId: 'i2', widthPx: 100, heightPx: 400 }, 800);
+        expect(tall.type === 'image' && tall.size).toEqual({ w: 200, h: 800 });
+    });
+
+    it('falls back to a square for a degenerate source size', () => {
+        const node = createImageNodeForRef(0, 0, { imageId: 'i', widthPx: 0, heightPx: 0 }, 500);
+        expect(node.type === 'image' && node.size).toEqual({ w: 500, h: 500 });
     });
 });
 

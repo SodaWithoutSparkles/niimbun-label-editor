@@ -1,6 +1,6 @@
 import type { hm } from '../core/hm';
 import type { InsertAction } from '../store/slices/toolsSlice';
-import type { Node, ShapeKind } from '../core/doc/types';
+import type { ImageRef, Node, ShapeKind } from '../core/doc/types';
 
 /**
  * One-shot insert defaults (ui-spec.md §4). A rail action arms, the user clicks
@@ -25,6 +25,15 @@ const base = (x: hm, y: hm) => ({
 
 /** Default box for content nodes that carry a `size` (mm → hm). */
 const DEFAULT_BOX = { w: 1500 as hm, h: 1000 as hm };
+
+/** Default boxes for the P5 object inserts (mm → hm). */
+const DEFAULT_IMAGE_BOX = { w: 1500 as hm, h: 1500 as hm };
+const DEFAULT_QR_BOX = { w: 1500 as hm, h: 1500 as hm };
+const DEFAULT_BARCODE_BOX = { w: 2000 as hm, h: 800 as hm };
+
+/** Default static payloads for the armed qr / barcode inserts (P5). */
+export const DEFAULT_QR_PAYLOAD = 'https://example.com';
+export const DEFAULT_BARCODE_PAYLOAD = '123456789012';
 
 /** Shape kinds a rail action can arm; `null` for non-shape actions. */
 export const shapeKindForAction = (action: InsertAction): ShapeKind | null => {
@@ -69,11 +78,23 @@ export const createNodeForInsert = (action: InsertAction, x: hm, y: hm): Node | 
                 align: 'left',
             };
         case 'image':
-            return { ...common, type: 'image', imageId: '', size: { ...DEFAULT_BOX } };
+            return { ...common, type: 'image', imageId: '', size: { ...DEFAULT_IMAGE_BOX }, fit: 'contain' };
         case 'qr':
-            return { ...common, type: 'qr', data: { kind: 'static', value: '' }, size: { ...DEFAULT_BOX } };
+            return {
+                ...common,
+                type: 'qr',
+                data: { kind: 'static', value: DEFAULT_QR_PAYLOAD },
+                errorCorrection: 'M',
+                size: { ...DEFAULT_QR_BOX },
+            };
         case 'barcode':
-            return { ...common, type: 'barcode', data: { kind: 'static', value: '' }, size: { ...DEFAULT_BOX } };
+            return {
+                ...common,
+                type: 'barcode',
+                data: { kind: 'static', value: DEFAULT_BARCODE_PAYLOAD },
+                symbology: 'code128',
+                size: { ...DEFAULT_BARCODE_BOX },
+            };
         case 'shape:line':
             return { ...common, type: 'shape', shape: 'line', points: [[0, 0], [1500, 0]] };
         case 'shape:polygon':
@@ -90,4 +111,31 @@ export const createNodeForInsert = (action: InsertAction, x: hm, y: hm): Node | 
         default:
             return null;
     }
+};
+
+/**
+ * Build an `ImageNode` for an imported `ImageRef` at top-left `(x, y)`, sized to
+ * the source aspect within a `maxSide` box (never distorted). Used by the image
+ * import dialog, which places the imported asset at the label centre.
+ */
+export const createImageNodeForRef = (
+    x: hm,
+    y: hm,
+    ref: Pick<ImageRef, 'imageId' | 'widthPx' | 'heightPx'>,
+    maxSide: hm = 2000,
+): Node => {
+    const aspect = ref.widthPx > 0 && ref.heightPx > 0 ? ref.widthPx / ref.heightPx : 1;
+    let w = maxSide;
+    let h = Math.round(maxSide / aspect);
+    if (h > maxSide) {
+        h = maxSide;
+        w = Math.round(maxSide * aspect);
+    }
+    return {
+        ...base(x, y),
+        type: 'image',
+        imageId: ref.imageId,
+        size: { w: Math.max(1, w) as hm, h: Math.max(1, h) as hm },
+        fit: 'contain',
+    };
 };

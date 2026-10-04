@@ -3,14 +3,20 @@ import { useTranslation } from 'react-i18next';
 import { Type, Image as ImageIcon, Square, QrCode, Barcode, ChevronDown, Minus, Circle, Pentagon } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { cn } from '../../utils/cn';
+import type { hm } from '../../core/hm';
+import type { ImageRef } from '../../core/doc/types';
 import type { InsertAction } from '../../store/slices/toolsSlice';
+import { createImageNodeForRef } from '../../editor/insertActions';
+import { ImageImportDialog } from './ImageImportDialog';
 
 /**
  * Insert rail (ui-spec.md §4): one-shot insert actions, ~48 px, top-only.
  * `Select` is the resting state and has no button; an armed action turns the
  * preview cursor into a crosshair and clears back to select after placing.
  *
- * Image / QR / Barcode are disabled — their engines are P5/P4.
+ * Image opens the import dialog (file or URL) and places the imported asset at
+ * the label centre, sized to its aspect. QR / barcode arm click-to-place with a
+ * default static payload and a sensible symbol box (P5).
  */
 
 /** Literal map so dynamic rail ids keep i18next's typed-key union. */
@@ -71,7 +77,12 @@ export const InsertRail: React.FC = () => {
     const activeTool = useStore((state) => state.activeTool);
     const setActiveTool = useStore((state) => state.setActiveTool);
     const clearActiveTool = useStore((state) => state.clearActiveTool);
+    const currentDoc = useStore((state) => state.currentDoc);
+    const addNode = useStore((state) => state.addNode);
+    const addImageRef = useStore((state) => state.addImageRef);
+    const selectNode = useStore((state) => state.selectNode);
     const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
+    const [imageDialogOpen, setImageDialogOpen] = useState(false);
 
     const arm = (action: InsertAction) => {
         // Clicking the already-armed action disarms back to select.
@@ -82,6 +93,20 @@ export const InsertRail: React.FC = () => {
 
     const shapeArmed = activeTool.startsWith('shape:');
 
+    /** Register an imported image and place it centred, sized to its aspect. */
+    const handleImageImported = (ref: ImageRef) => {
+        if (!currentDoc) return;
+        addImageRef(ref);
+        const maxSide = Math.max(500, Math.min(currentDoc.label.backingW, currentDoc.label.backingH) - 200);
+        const node = createImageNodeForRef(0, 0, ref, maxSide as hm);
+        const w = node.size?.w ?? 0;
+        const h = node.size?.h ?? 0;
+        node.transform.x = Math.round((currentDoc.label.backingW - w) / 2);
+        node.transform.y = Math.round((currentDoc.label.backingH - h) / 2);
+        const id = addNode(node);
+        if (id) selectNode(id);
+    };
+
     return (
         <div className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-gray-700 bg-gray-800 py-2">
             <RailButton action="text" label={t(INSERT_LABEL_KEYS.text)} active={activeTool === 'text'} onArm={arm}>
@@ -91,10 +116,8 @@ export const InsertRail: React.FC = () => {
             <RailButton
                 action="image"
                 label={t(INSERT_LABEL_KEYS.image)}
-                disabled
-                title={`${t(INSERT_LABEL_KEYS.image)} — ${t('editor.insert.disabledEngine')}`}
                 active={false}
-                onArm={arm}
+                onArm={() => setImageDialogOpen(true)}
             >
                 <ImageIcon size={20} />
             </RailButton>
@@ -148,27 +171,24 @@ export const InsertRail: React.FC = () => {
                 )}
             </div>
 
-            <RailButton
-                action="qr"
-                label={t(INSERT_LABEL_KEYS.qr)}
-                disabled
-                title={`${t(INSERT_LABEL_KEYS.qr)} — ${t('editor.insert.disabledEngine')}`}
-                active={false}
-                onArm={arm}
-            >
+            <RailButton action="qr" label={t(INSERT_LABEL_KEYS.qr)} active={activeTool === 'qr'} onArm={arm}>
                 <QrCode size={20} />
             </RailButton>
 
             <RailButton
                 action="barcode"
                 label={t(INSERT_LABEL_KEYS.barcode)}
-                disabled
-                title={`${t(INSERT_LABEL_KEYS.barcode)} — ${t('editor.insert.disabledEngine')}`}
-                active={false}
+                active={activeTool === 'barcode'}
                 onArm={arm}
             >
                 <Barcode size={20} />
             </RailButton>
+
+            <ImageImportDialog
+                open={imageDialogOpen}
+                onClose={() => setImageDialogOpen(false)}
+                onImported={handleImageImported}
+            />
         </div>
     );
 };
