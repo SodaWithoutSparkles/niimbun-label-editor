@@ -164,12 +164,26 @@ Fix rounds ≤2 per area; deadlock → escalate to Build.
 
 | WS | Area | Status |
 | -- | ---- | ------ |
-| W1 | CSV import + store + virtualized preview + cap | **DONE** — `22fc00e`; review APPROVE (review + review-fast) |
-| W2 | Row context + binding resolution + fallbacks | in progress |
-| W3 | Template engine + Web Worker | **DONE** — `e1b8872`; experimental-review + review-alt APPROVE (2 fix rounds) |
-| W4 | Trust gate (IDB trust + prompt + settings) | in progress |
-| W5 | Globals prefetch once per job | pending |
-| W6 | Editor preview row N + inspector wiring | pending |
+| W1 | CSV import + store + virtualized preview + cap | **DONE** — `22fc00e`; review + review-fast APPROVE |
+| W2 | Row context + binding resolution + fallbacks | **DONE** — `3a8bcd0`; review → fix → APPROVE |
+| W3 | Template engine + Web Worker | **DONE** — `e1b8872`; experimental-review + review-alt APPROVE (2 rounds) |
+| W4 | Trust gate (IDB trust + prompt + settings) | **DONE** — `40a8fbd`; experimental-review + review-alt APPROVE (2 rounds) |
+| W5 | Globals prefetch once per job | **DONE** — `1992239`; review → fix → review-fast APPROVE |
+| W6 | Editor preview row N + inspector wiring | **DONE** — `f9bbe8e`; review + experimental-review APPROVE (3 rounds) |
+
+**Gate at P6 code-complete:** 985 tests / 90 files · `tsc` clean · build green. Headed check + owner hardware smoke pending.
+
+### W6 review record (the hard one)
+
+3 fix rounds. Round 1 findings: trust **fail-open** (`ask`/null gate executed templates) → fixed to execute only on `always`; whole resolve pass re-ran per pointermove against the serial worker; globals refetched per tick; Settings revoke did not reach the editor. Round 2 introduced/left: preview **snapshot regression** (drag/resize/hide no longer repainted) → restored a synchronous `resolve(doc, {overrides})` in `PreviewStage` with the async pass supplying only the override map; CSV attach/detach deleted the stored record under undo → write path no longer deletes; Settings revoke still not reaching the editor → `trustRevision`. Round 3: session-only trust decisions were invisible to Settings → `TrustGate.sessionEntries()` + merged/revocable rows. Final: **APPROVE** (both reviewers).
+
+### Carry / open (P6)
+
+- Orphan `CsvRecord` sweep deferred (write path no longer deletes; reclaim unreferenced ids in a cleanup pass).
+- `vitest.config.ts` `testTimeout` (15000 ms from P5) can likely return to default now that the suite is ~23 s.
+- `useSampleRow` `resolveKeyOf` stringifies per node per pointermove tick (negligible).
+- Status-bar `rowCount === 0` conflates no-CSV/loading/empty (cosmetic).
+- Headed check + owner hardware smoke (50×30) still to run.
 
 ## 8. Review record
 
