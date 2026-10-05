@@ -4,10 +4,10 @@ import { installCanvasShim } from '../test/canvasHarness';
 import { createLabelDoc } from '../core/doc/factory';
 import { rasterDimensions } from '../core/render';
 import type { LabelDoc, Node } from '../core/doc/types';
-import { renderLabelPage } from '../editor/render';
+import { orientForPrint, renderLabelPage } from '../editor/render';
 import { MockTransport } from './mockTransport';
 import type { PrintJob, PrintPage } from './transport';
-import { buildLabelPrintJob, printLabel, toEncoderPrintDirection } from './printLabel';
+import { buildLabelPrintJob, printLabel } from './printLabel';
 
 beforeAll(() => {
     installCanvasShim();
@@ -129,19 +129,92 @@ describe('buildLabelPrintJob', () => {
         const doc = ftagDoc();
         const [page] = await collectPages(await buildLabelPrintJob(doc));
         const preview = await renderLabelPage(doc);
+        const oriented = orientForPrint(preview, doc.label.printDirection);
         const expected = ImageEncoder.encodeCanvas(
-            preview.canvas,
+            oriented.canvas,
             PageColorType.SingleColor,
-            toEncoderPrintDirection(doc.label.printDirection),
+            oriented.direction,
         );
         expect(page!.data).toEqual(expected);
     });
 
-    it('maps only left to the rotated encoder direction', () => {
-        expect(toEncoderPrintDirection('left')).toBe('left');
-        expect(toEncoderPrintDirection('top')).toBe('top');
-        expect(toEncoderPrintDirection('right')).toBe('top');
-        expect(toEncoderPrintDirection('bottom')).toBe('top');
+    it('orients printDirection=bottom: pre-rotates 180° and encodes top (D-04)', async () => {
+        const doc = ftagDoc('bottom');
+        const [page] = await collectPages(await buildLabelPrintJob(doc));
+        const preview = await renderLabelPage(doc);
+
+        const oriented = orientForPrint(preview, 'bottom');
+        expect(oriented.direction).toBe('top');
+        expect(oriented.canvas).not.toBe(preview.canvas);
+
+        const expected = ImageEncoder.encodeCanvas(
+            oriented.canvas,
+            PageColorType.SingleColor,
+            oriented.direction,
+        );
+        expect(page!.data.rowsData).toEqual(expected.rowsData);
+
+        // The old bug encoded the unrotated canvas as 'top'; the oriented bytes
+        // must differ (the doc is asymmetric: rect + text at different rows).
+        const buggy = ImageEncoder.encodeCanvas(
+            preview.canvas,
+            PageColorType.SingleColor,
+            'top',
+        );
+        expect(page!.data.rowsData).not.toEqual(buggy.rowsData);
+    });
+
+    it('orients printDirection=right: pre-rotates 180° and encodes left (D-04)', async () => {
+        const doc = ftagDoc('right');
+        const [page] = await collectPages(await buildLabelPrintJob(doc));
+        const preview = await renderLabelPage(doc);
+
+        const oriented = orientForPrint(preview, 'right');
+        expect(oriented.direction).toBe('left');
+        expect(oriented.canvas).not.toBe(preview.canvas);
+
+        const expected = ImageEncoder.encodeCanvas(
+            oriented.canvas,
+            PageColorType.SingleColor,
+            oriented.direction,
+        );
+        expect(page!.data.rowsData).toEqual(expected.rowsData);
+
+        // The old bug encoded the unrotated canvas as 'top' (not even 'left').
+        const buggy = ImageEncoder.encodeCanvas(
+            preview.canvas,
+            PageColorType.SingleColor,
+            'top',
+        );
+        expect(page!.data.rowsData).not.toEqual(buggy.rowsData);
+    });
+
+    it('empirically pins the encoder’s 90° clockwise rotation for direction=left', () => {
+        // 3×2 canvas with a single black pixel at the top-left (0,0).
+        const canvas = document.createElement('canvas');
+        canvas.width = 3;
+        canvas.height = 2;
+        const ctx = canvas.getContext('2d')!;
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, 3, 2);
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, 1, 1);
+
+        // Unrotated: source (0,0) maps to output row 0, col 0 (bit 0 of octet 0).
+        const top = ImageEncoder.encodeCanvas(canvas, PageColorType.SingleColor, 'top');
+        expect(top.rows).toBe(2);
+        expect(top.cols).toBe(8); // padded from 3
+        expect(top.rowsData[0]!.rowDataBlack![0]).toBe(0b1000_0000);
+
+        // 'left' rotates the raster 90° clockwise: source (x=0,y=0) lands at
+        // output row x=0, column height-1-y=1 (bit 1 of octet 0); rows 1..2 are
+        // void because the rotated raster is only 2 source-columns wide.
+        const left = ImageEncoder.encodeCanvas(canvas, PageColorType.SingleColor, 'left');
+        expect(left.rows).toBe(3);
+        expect(left.cols).toBe(8);
+        expect(left.rowsData[0]!.dataType).toBe('pixels');
+        expect(left.rowsData[0]!.rowDataBlack![0]).toBe(0b0100_0000);
+        expect(left.rowsData[1]!.dataType).toBe('void');
     });
 });
 

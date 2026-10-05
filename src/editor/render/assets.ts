@@ -55,6 +55,13 @@ export interface AssetDeps {
      */
     imageScale?: number;
     /**
+     * Effective render dpi. When set (and no explicit `imageScale`), it overrides
+     * `doc.label.dpi` for the default device-px-per-hm scale, so a thumbnail
+     * render decodes assets at its own resolution. Additive: absent ⇒ today's
+     * behaviour (document dpi).
+     */
+    dpi?: number;
+    /**
      * Injectable image decoder. When present, `prepareResolvedAssets` resolves
      * an `ImageRef` through this instead of fetching/decoding its `AssetRef`
      * bytes. Lets tests and embeds supply a prepared raster with no network and

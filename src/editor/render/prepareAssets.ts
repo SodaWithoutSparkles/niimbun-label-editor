@@ -16,9 +16,10 @@ import type { ResolvedNode } from './resolve';
  * {@link AssetWarning} — callers draw nothing for that leaf — and the function
  * never throws.
  *
- * `imageScale` is device px per hm. It defaults to the document dpi (the print
- * requirement); the editor can pass a smaller value so previews cap decoded
- * images to the on-screen size.
+ * `imageScale` is device px per hm. It defaults to the effective render dpi
+ * (`deps.dpi ?? doc.label.dpi`, the print requirement); the editor can pass a
+ * smaller value so previews cap decoded images to the on-screen size. A
+ * thumbnail render sets `deps.dpi` (~50) so assets are not decoded at full dpi.
  *
  * Decoded **full-size** assets are cached per provider (bounded, FIFO) keyed by
  * a stable identity so repeated prepare calls for the same image decode/fetch
@@ -183,10 +184,17 @@ export const prepareResolvedAssets = async (
 ): Promise<PreparedAssetsResult> => {
     const assets = new Map<string, PreparedAsset>();
     const warnings = new Map<string, AssetWarning>();
+    // The effective dpi may be overridden by the caller (e.g. a ~50 dpi
+    // thumbnail) so assets are never decoded at the full document dpi; an
+    // explicit `imageScale` still wins.
+    const effectiveDpi =
+        deps.dpi !== undefined && Number.isFinite(deps.dpi) && deps.dpi > 0
+            ? deps.dpi
+            : doc.label.dpi;
     const imageScale =
         deps.imageScale !== undefined && Number.isFinite(deps.imageScale)
             ? deps.imageScale
-            : doc.label.dpi / HM_PER_INCH;
+            : effectiveDpi / HM_PER_INCH;
     const minModulePx = minModulePxFor(imageScale);
 
     const imageRefs = new Map((doc.resources.images ?? []).map((ref) => [ref.imageId, ref] as const));

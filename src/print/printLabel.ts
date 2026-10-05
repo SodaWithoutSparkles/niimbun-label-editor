@@ -1,7 +1,8 @@
 import { ImageEncoder, PageColorType } from '@mmote/niimbluelib';
-import type { EncodedImage, PrintDirection } from '@mmote/niimbluelib';
+import type { EncodedImage } from '@mmote/niimbluelib';
 import type { LabelDoc } from '../core/doc/types';
 import { renderLabelPage, type AssetDeps, type RenderedLabelPage } from '../editor/render';
+import { orientForPrint } from '../editor/render/printOrientation';
 import type { PrintJob, PrintPage, PrintResult, PrinterTransport } from './transport';
 
 /**
@@ -36,24 +37,6 @@ export interface BuildLabelPrintJobDeps {
     assets?: AssetDeps;
 }
 
-/**
- * Map the document's 4-way `printDirection` onto niimbluelib's two-value
- * `PrintDirection`.
- *
- * The encoder implements only two feed orientations: `'left'` rotates the
- * raster 90° clockwise (`cols`/`rows` swap and `cols` is padded to a multiple
- * of 8), while `'top'` sends it unrotated. The document model also carries
- * `right`/`bottom`, but the encoder cannot express 180°/270° rotation, so those
- * encode unrotated like `'top'`.
- *
- * TODO: this mapping is UNVERIFIED ON HARDWARE (no W4 smoke has run). In
- * particular `right`/`bottom` currently encode unrotated like `top`; whether
- * they need a 180°/270° feed treatment is still an open decision (plan §5/§7).
- */
-export const toEncoderPrintDirection = (
-    direction: LabelDoc['label']['printDirection'],
-): PrintDirection => (direction === 'left' ? 'left' : 'top');
-
 /** The single lazy page of a one-label job. */
 async function* singlePage(data: EncodedImage, quantity: number): AsyncIterable<PrintPage> {
     yield { data, quantity };
@@ -87,10 +70,14 @@ export const buildLabelPrintJob = async (
             renderLabelPage(value, {}, deps.assets ? { assets: deps.assets } : {}));
     const page = await render(doc);
 
+    // D-04: the doc's 4-way direction is realised by pre-rotating the raster
+    // 180° for `bottom`/`right` and choosing the (2-valued) encoder direction —
+    // never by passing the raw direction to the encoder.
+    const oriented = orientForPrint(page, doc.label.printDirection);
     const data = ImageEncoder.encodeCanvas(
-        page.canvas,
+        oriented.canvas,
         PageColorType.SingleColor,
-        toEncoderPrintDirection(doc.label.printDirection),
+        oriented.direction,
     );
 
     return {

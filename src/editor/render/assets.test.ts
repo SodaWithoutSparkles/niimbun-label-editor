@@ -455,6 +455,20 @@ describe('prepareResolvedAssets', () => {
         expect(resolveImage).toHaveBeenCalledTimes(1);
     });
 
+    it('uses the effective AssetDeps.dpi for the default image scale (thumbnail)', async () => {
+        const doc = docWithImage();
+        const asset = await inkAsset(500);
+        const { assets } = await prepareResolvedAssets(resolve(doc), doc, {
+            resolveImage: () => asset,
+            dpi: 50,
+        });
+
+        // 1000 hm at 50 dpi → round(1000 * 50/2540) = 20 px, not the 118 px at
+        // the document's 300 dpi. A `dpi: 50` thumbnail must not decode at full dpi.
+        expect(assets.get('img')?.widthPx).toBe(20);
+        expect(assets.get('img')?.heightPx).toBe(20);
+    });
+
     it('decodes once per imageId within a call', async () => {
         const doc = createLabelDoc({
             backingW: 3000,

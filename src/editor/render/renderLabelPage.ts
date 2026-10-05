@@ -32,11 +32,19 @@ import { flattenResolved, resolve, type ResolvedNode, type ResolveContext } from
  *
  * Pipeline (plan §5):
  *   `resolve(doc)` → `rasterizeResolved` → build policy mask → `applyRegionClip`
- *   → `quantizeRgba` → `applyRegionClip` again → final encoder canvas.
+ *   → `quantizeRgba` → `invert` → `mirror` → `applyRegionClip` again → `offset`
+ *   → final encoder canvas.
  *
  * The clip runs **both before and after** quantization: pre-quantize so the
  * diffusion sees a white surround, post-quantize so error diffused across the
  * union boundary can never leave ink outside the printable area (M3).
+ *
+ * Post-quantize override order is fixed: `quantize → invert → mirror →
+ * post-clip → offset`. Invert/mirror run **before** the post-clip so they can
+ * never deposit ink in the guaranteed-white margin; offset runs last, on a
+ * fresh canvas. A mirror that pushes ink across the union boundary is clipped
+ * away — that silent loss is reported via {@link RenderNotice} so the UI can
+ * warn instead of shipping a quietly-damaged label.
  *
  * `rasterizeResolved` destroys its Konva canvas on return, so the final encoder
  * canvas is built here from the quantized RGBA via `putImageData` (M1).
@@ -63,6 +71,23 @@ export interface RenderLabelPageOptions {
      * simply draw nothing.
      */
     assets?: AssetDeps;
+    /**
+     * Effective render dpi; defaults to `doc.label.dpi`. Drives the raster
+     * dimensions, the `hm → px` stage scale, `hmPerPx` and the policy-mask
+     * scale, so everything downstream stays on one dpi. Thumbnails render at
+     * ~50 dpi through this same path (O1).
+     */
+    dpi?: number;
+    /** Post-quantize: flip every RGB channel (`v → 255 - v`), so black ↔ white. */
+    invert?: boolean;
+    /** Post-quantize: flip the raster horizontally. */
+    mirror?: boolean;
+    /**
+     * Applied last, on a **fresh** canvas: shift the raster by device px at the
+     * effective dpi. `inner` keeps the raster size (`putImageData` at `x`/`y`);
+     * `outer` expands by `|x|`/`|y|` and places the image at `max(x,0)`/`max(y,0)`.
+     */
+    offset?: { x: number; y: number; type: 'inner' | 'outer' };
 }
 
 export interface RenderedLabelPage {
@@ -77,6 +102,23 @@ export interface RenderedLabelPage {
      * the node. Absent/empty when every asset prepared cleanly.
      */
     warnings?: ReadonlyMap<string, AssetWarning>;
+    /**
+     * Non-fatal render outcomes the UI can surface. Absent when there is nothing
+     * to report. Populated only on the mirror path, where the post-clip can
+     * silently erase ink the flip moved outside the printable union.
+     */
+    notices?: readonly RenderNotice[];
+}
+
+/**
+ * A non-fatal rendering outcome. Today only the mirror override uses it:
+ * flattening the raster across the printable union can destroy deposited ink,
+ * which is unacceptable to do silently.
+ */
+export interface RenderNotice {
+    kind: 'mirror-clipped-ink';
+    /** Ink pixels the post-quantize clip removed after the horizontal flip. */
+    lostPx: number;
 }
 
 /** A built policy mask plus the quantizers its indices resolve to. */
@@ -322,6 +364,51 @@ const buildQuantizeOptions = (opts: RenderLabelPageOptions): Parameters<typeof q
 };
 
 /**
+ * Post-quantize invert: `v → 255 - v` on R/G/B. Alpha (opacity) is left intact
+ * so the raster stays opaque — the reference `effects.invert` only touches the
+ * colour channels.
+ */
+const invertRgb = (rgba: RgbaBuffer): void => {
+    const { data } = rgba;
+    for (let i = 0; i < data.length; i += 4) {
+        data[i] = 255 - data[i]!;
+        data[i + 1] = 255 - data[i + 1]!;
+        data[i + 2] = 255 - data[i + 2]!;
+    }
+};
+
+/** Post-quantize horizontal flip, in place (all four channels). */
+const mirrorRgba = (rgba: RgbaBuffer): void => {
+    const { data, width, height } = rgba;
+    for (let y = 0; y < height; y++) {
+        const row = y * width;
+        for (let x = 0; x < Math.floor(width / 2); x++) {
+            const left = (row + x) * 4;
+            const right = (row + width - 1 - x) * 4;
+            for (let c = 0; c < 4; c++) {
+                const tmp = data[left + c]!;
+                data[left + c] = data[right + c]!;
+                data[right + c] = tmp;
+            }
+        }
+    }
+};
+
+/**
+ * Count dark (ink) pixels. Only the mirror path pays for this: the region clip
+ * can silently erase ink the flip moved outside the printable union, so the
+ * before/after counts become a {@link RenderNotice} instead of vanishing.
+ */
+const countInkPx = (rgba: RgbaBuffer): number => {
+    const { data } = rgba;
+    let count = 0;
+    for (let i = 0; i < data.length; i += 4) {
+        if (data[i]! < 128) count++;
+    }
+    return count;
+};
+
+/**
  * Render a label page to final 1-bit RGBA. The single entry point for both the
  * preview and the print path; only encoding differs downstream (invariant 7).
  */
@@ -330,11 +417,18 @@ export const renderLabelPage = async (
     ctx: ResolveContext = {},
     opts: RenderLabelPageOptions = {},
 ): Promise<RenderedLabelPage> => {
+    // Validate the effective dpi **before** resolve so a bad `opts.dpi` cannot
+    // pay a full resolve/template pass (invariant 9). A caller-supplied
+    // `assets.dpi` is honoured, then the document dpi.
+    const dpi = opts.dpi ?? opts.assets?.dpi ?? doc.label.dpi;
+    if (!Number.isFinite(dpi) || dpi <= 0) {
+        throw new RangeError(`renderLabelPage: dpi must be > 0 (got ${dpi})`);
+    }
     const nodes = resolve(doc, ctx);
     const { widthPx, heightPx } = rasterDimensions(
         doc.label.backingW,
         doc.label.backingH,
-        doc.label.dpi,
+        dpi,
     );
 
     // Pre-flight before any allocation (invariant 9).
@@ -359,15 +453,20 @@ export const renderLabelPage = async (
             // Never fail preview/print because a font could not be registered.
         }
     }
-    const { assets, warnings } = await prepareResolvedAssets(nodes, doc, opts.assets ?? {});
+    // Thread the **effective** dpi into asset preparation so a `dpi: 50`
+    // thumbnail decodes image/QR/barcode assets at its own resolution instead of
+    // the full document dpi (additive: an explicit `assets.imageScale` still
+    // wins; absent `dpi`, `prepareAssets` falls back to `doc.label.dpi`).
+    const assetDeps: AssetDeps = { ...(opts.assets ?? {}), dpi };
+    const { assets, warnings } = await prepareResolvedAssets(nodes, doc, assetDeps);
 
-    const rasterOpts: RasterizeOptions = { widthPx, heightPx, dpi: doc.label.dpi };
+    const rasterOpts: RasterizeOptions = { widthPx, heightPx, dpi };
     const { imageData } = await rasterizeResolved(nodes, rasterOpts, assets);
 
     const byId = nodeLookup(doc.nodes);
-    const policy = await buildPolicyMask(nodes, byId, { widthPx, heightPx }, doc.label.dpi, assets);
+    const policy = await buildPolicyMask(nodes, byId, { widthPx, heightPx }, dpi, assets);
 
-    const hmPerPx = HM_PER_INCH / doc.label.dpi;
+    const hmPerPx = HM_PER_INCH / dpi;
     // Pre-clip: the diffusion pass sees a white surround outside the union.
     applyRegionClip(imageData, { widthPx, heightPx }, doc.label.regions, hmPerPx);
 
@@ -382,8 +481,28 @@ export const renderLabelPage = async (
         quantizeOptions,
     );
 
+    // Post-quantize overrides, applied **before** the post-clip: invert must not
+    // blacken the guaranteed-white margin, and mirror must not move ink outside
+    // the union. Order: quantize → invert → mirror → post-clip → offset.
+    if (opts.invert) invertRgb(imageData);
+
     // Post-clip: error diffusion can cross the boundary; guarantee blank outside.
-    applyRegionClip(imageData, { widthPx, heightPx }, doc.label.regions, hmPerPx);
+    // Only the mirror path counts ink around the clip: the flip is the one
+    // override that can push already-deposited ink across the union, and the
+    // common path must stay free of the extra scan. A non-zero loss is surfaced
+    // as a notice rather than silently swallowed.
+    let notices: RenderNotice[] | undefined;
+    if (opts.mirror) {
+        mirrorRgba(imageData);
+        const inkBefore = countInkPx(imageData);
+        applyRegionClip(imageData, { widthPx, heightPx }, doc.label.regions, hmPerPx);
+        const lostPx = inkBefore - countInkPx(imageData);
+        if (lostPx > 0) {
+            notices = [{ kind: 'mirror-clipped-ink', lostPx }];
+        }
+    } else {
+        applyRegionClip(imageData, { widthPx, heightPx }, doc.label.regions, hmPerPx);
+    }
 
     // Final encoder canvas — the Konva canvas is gone (M1).
     const canvas = document.createElement('canvas');
@@ -395,5 +514,65 @@ export const renderLabelPage = async (
     encoded.data.set(imageData.data);
     canvasCtx.putImageData(encoded, 0, 0);
 
-    return { rgba: imageData, widthPx, heightPx, canvas, warnings };
+    const offset = opts.offset;
+    // `{0,0}` is a no-op: skip the extra-canvas round trip and return the base
+    // raster (same `canvas` identity).
+    if (!offset || (offset.x === 0 && offset.y === 0)) {
+        return { rgba: imageData, widthPx, heightPx, canvas, warnings, ...(notices ? { notices } : {}) };
+    }
+    // Offset x/y are device px, so they must be integers (and finite: NaN/
+    // Infinity fail `Number.isInteger`). Validate before any offset allocation.
+    if (!Number.isInteger(offset.x) || !Number.isInteger(offset.y)) {
+        throw new RangeError(
+            `renderLabelPage: offset must be integer device px (got x=${offset.x}, y=${offset.y})`,
+        );
+    }
+
+    // Offset is applied last, on a **fresh** canvas: the base `canvas` above is
+    // never mutated. `putImageData` writes (does not composite) and clips to the
+    // canvas, matching the reference `inner`/`outer` semantics.
+    const { x, y, type } = offset;
+    const outer = type === 'outer';
+    const outWidthPx = outer ? widthPx + Math.abs(x) : widthPx;
+    const outHeightPx = outer ? heightPx + Math.abs(y) : heightPx;
+
+    // Pre-flight the offset raster before allocating (invariant 9).
+    if (
+        !Number.isInteger(outWidthPx) ||
+        outWidthPx <= 0 ||
+        !Number.isInteger(outHeightPx) ||
+        outHeightPx <= 0
+    ) {
+        throw new RangeError(
+            `renderLabelPage: offset raster dimensions must be positive integers (got ${outWidthPx}×${outHeightPx})`,
+        );
+    }
+    const outPixels = outWidthPx * outHeightPx;
+    if (outPixels > MAX_RASTER_PIXELS) {
+        throw new RangeError(
+            `renderLabelPage: offset raster ${outWidthPx}×${outHeightPx} = ${outPixels} px exceeds the ${MAX_RASTER_PIXELS}-pixel cap`,
+        );
+    }
+
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = outWidthPx;
+    outCanvas.height = outHeightPx;
+    const outCtx = outCanvas.getContext('2d');
+    if (!outCtx) throw new Error('renderLabelPage: no 2D context for the offset canvas');
+    outCtx.fillStyle = 'white';
+    outCtx.fillRect(0, 0, outWidthPx, outHeightPx);
+    const offsetData = outCtx.createImageData(widthPx, heightPx);
+    offsetData.data.set(imageData.data);
+    outCtx.putImageData(offsetData, outer ? Math.max(x, 0) : x, outer ? Math.max(y, 0) : y);
+
+    // Read the composed raster back so `rgba` is exactly the final canvas.
+    const finalImage = outCtx.getImageData(0, 0, outWidthPx, outHeightPx);
+    return {
+        rgba: { data: finalImage.data, width: outWidthPx, height: outHeightPx },
+        widthPx: outWidthPx,
+        heightPx: outHeightPx,
+        canvas: outCanvas,
+        warnings,
+        ...(notices ? { notices } : {}),
+    };
 };

@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import Konva from 'konva';
 import { loadImage } from '@napi-rs/canvas';
 import { installCanvasShim } from '../../test/canvasHarness';
@@ -18,6 +18,24 @@ import type { PreparedAsset } from './assets';
 import { buildPolicyMask, renderLabelPage } from './renderLabelPage';
 import { resolve } from './resolve';
 import { rasterizeResolved } from './rasterize';
+
+// Spy seam for the `assets.dpi` test: `renderLabelPage` imports
+// `prepareResolvedAssets` by name, so wrap the module and pass arguments
+// through unchanged (same technique as `renderLabelPage.assetDpi.test.ts`).
+const prepareSpy = vi.hoisted(() => vi.fn());
+
+vi.mock('./prepareAssets', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./prepareAssets')>();
+    return {
+        ...actual,
+        prepareResolvedAssets: ((
+            ...args: Parameters<typeof actual.prepareResolvedAssets>
+        ) => {
+            prepareSpy(...args);
+            return actual.prepareResolvedAssets(...args);
+        }) as typeof actual.prepareResolvedAssets,
+    };
+});
 
 beforeAll(() => {
     installCanvasShim();
@@ -617,5 +635,276 @@ describe('renderLabelPage — shared preview/print path', () => {
             buildPolicyMask(nodes, byId, { widthPx: 10, heightPx: 20.25 }, 300),
             'fractional heightPx',
         ).rejects.toThrow(RangeError);
+    });
+});
+
+/** A 4000×2000 @254dpi doc (400×200 px) with a black strip in the left 100px. */
+const stripDoc = (): LabelDoc => imageDoc([rect('r', 0, 0, 1000, 2000)]);
+
+describe('renderLabelPage — overrides (W2)', () => {
+    it('dpi override drives rasterDimensions, rgba and canvas dims', async () => {
+        const doc = smallDoc(leftHalfRegions, smallNodes());
+        const base = await renderLabelPage(doc);
+        const expected = rasterDimensions(doc.label.backingW, doc.label.backingH, 150);
+        const page = await renderLabelPage(doc, {}, { dpi: 150 });
+
+        expect(page.widthPx).toBe(expected.widthPx);
+        expect(page.heightPx).toBe(expected.heightPx);
+        expect(page.rgba.width).toBe(expected.widthPx);
+        expect(page.rgba.height).toBe(expected.heightPx);
+        expect(page.canvas.width).toBe(expected.widthPx);
+        expect(page.canvas.height).toBe(expected.heightPx);
+        expect(page.widthPx).not.toBe(base.widthPx);
+    });
+
+    it('no overrides (or an equal dpi) is byte-identical to the baseline', async () => {
+        const doc = smallDoc(leftHalfRegions, smallNodes());
+        const baseline = await renderLabelPage(doc);
+        const implicit = await renderLabelPage(doc, {}, {});
+        const explicit = await renderLabelPage(doc, {}, { dpi: doc.label.dpi });
+
+        expect(implicit.rgba.data).toEqual(baseline.rgba.data);
+        expect(explicit.rgba.data).toEqual(baseline.rgba.data);
+        expect(implicit.widthPx).toBe(baseline.widthPx);
+        expect(explicit.heightPx).toBe(baseline.heightPx);
+        expect(implicit.canvas.width).toBe(baseline.canvas.width);
+        expect(implicit.canvas.height).toBe(baseline.canvas.height);
+    });
+
+    it('honours a caller-supplied assets.dpi over doc.label.dpi', async () => {
+        const doc = imageDoc([image('img', 0, 0, 2000, 1000)]);
+        prepareSpy.mockClear();
+
+        await renderLabelPage(doc, {}, { assets: { dpi: 63 } });
+
+        expect(prepareSpy).toHaveBeenCalledTimes(1);
+        const deps = prepareSpy.mock.calls[0]![2] as { dpi?: number } | undefined;
+        expect(deps?.dpi, 'assets.dpi wins over doc.label.dpi').toBe(63);
+    });
+
+    it('invert flips a known black region to white and white to black', async () => {
+        const doc = stripDoc();
+        const base = await renderLabelPage(doc);
+        const inverted = await renderLabelPage(doc, {}, { invert: true });
+
+        expect(pixelAt(base.rgba, 50, 100).slice(0, 3)).toEqual([0, 0, 0]);
+        expect(pixelAt(base.rgba, 300, 100).slice(0, 3)).toEqual([255, 255, 255]);
+
+        expect(pixelAt(inverted.rgba, 50, 100).slice(0, 3)).toEqual([255, 255, 255]);
+        expect(pixelAt(inverted.rgba, 300, 100).slice(0, 3)).toEqual([0, 0, 0]);
+        // Alpha stays opaque; the buffer stays quantized to exact 1-bit channels.
+        expect(pixelAt(inverted.rgba, 50, 100)[3]).toBe(255);
+        expect(pixelAt(inverted.rgba, 300, 100)[3]).toBe(255);
+    });
+
+    it('mirror flips an asymmetric raster horizontally', async () => {
+        const doc = stripDoc();
+        const base = await renderLabelPage(doc);
+        const mirrored = await renderLabelPage(doc, {}, { mirror: true });
+        const width = base.widthPx;
+
+        expect(pixelAt(base.rgba, 50, 100).slice(0, 3)).toEqual([0, 0, 0]);
+        expect(pixelAt(base.rgba, 350, 100).slice(0, 3)).toEqual([255, 255, 255]);
+
+        // x ↔ width - 1 - x.
+        expect(pixelAt(mirrored.rgba, width - 1 - 50, 100).slice(0, 3)).toEqual([0, 0, 0]);
+        expect(pixelAt(mirrored.rgba, width - 1 - 350, 100).slice(0, 3)).toEqual([255, 255, 255]);
+    });
+
+    it('offset inner keeps the size and shifts the raster onto a fresh canvas', async () => {
+        const doc = stripDoc();
+        const base = await renderLabelPage(doc);
+        const shifted = await renderLabelPage(doc, {}, { offset: { x: 20, y: 0, type: 'inner' } });
+
+        expect(shifted.widthPx).toBe(base.widthPx);
+        expect(shifted.heightPx).toBe(base.heightPx);
+        expect(shifted.rgba.width).toBe(base.widthPx);
+        expect(shifted.canvas.width).toBe(base.widthPx);
+        expect(shifted.canvas).not.toBe(base.canvas);
+
+        // A 20px white gutter; content is the base raster shifted right.
+        for (let x = 0; x < 20; x++) expect(isWhite(shifted.rgba, x, 100)).toBe(true);
+        expect(pixelAt(shifted.rgba, 20 + 50, 100).slice(0, 3)).toEqual([0, 0, 0]);
+        expect(pixelAt(shifted.rgba, 20 + 300, 100).slice(0, 3)).toEqual([255, 255, 255]);
+    });
+
+    it('offset outer expands the raster and places the image at max(x,0)/max(y,0)', async () => {
+        const doc = stripDoc();
+        const base = await renderLabelPage(doc);
+        const shifted = await renderLabelPage(doc, {}, { offset: { x: 20, y: 10, type: 'outer' } });
+
+        expect(shifted.widthPx).toBe(base.widthPx + 20);
+        expect(shifted.heightPx).toBe(base.heightPx + 10);
+        expect(shifted.rgba.width).toBe(shifted.widthPx);
+        expect(shifted.rgba.height).toBe(shifted.heightPx);
+        expect(shifted.canvas.width).toBe(shifted.widthPx);
+
+        // White margins on the top/left; the image lands at (20,10).
+        expect(isWhite(shifted.rgba, 10, 10)).toBe(true);
+        expect(isWhite(shifted.rgba, 300, 5)).toBe(true);
+        expect(pixelAt(shifted.rgba, 20 + 50, 10 + 100).slice(0, 3)).toEqual([0, 0, 0]);
+        expect(pixelAt(shifted.rgba, 20 + 300, 10 + 100).slice(0, 3)).toEqual([255, 255, 255]);
+    });
+
+    it('offset outer keeps the whole image when x/y are negative', async () => {
+        const doc = stripDoc();
+        const base = await renderLabelPage(doc);
+        const shifted = await renderLabelPage(doc, {}, { offset: { x: -15, y: -5, type: 'outer' } });
+
+        expect(shifted.widthPx).toBe(base.widthPx + 15);
+        expect(shifted.heightPx).toBe(base.heightPx + 5);
+        // Image at (0,0); the extra size is white on the right/bottom.
+        expect(pixelAt(shifted.rgba, 50, 100).slice(0, 3)).toEqual([0, 0, 0]);
+        expect(isWhite(shifted.rgba, shifted.widthPx - 1, 100)).toBe(true);
+        expect(isWhite(shifted.rgba, 50, shifted.heightPx - 1)).toBe(true);
+    });
+
+    it('does not mutate the document with overrides (invariant 2)', async () => {
+        const doc = stripDoc();
+        const before = structuredClone(doc);
+        await renderLabelPage(doc, {}, {
+            dpi: 150,
+            invert: true,
+            mirror: true,
+            offset: { x: 5, y: 5, type: 'outer' },
+        });
+        expect(doc).toEqual(before);
+    });
+});
+
+describe('renderLabelPage — override/clip ordering (W2 review)', () => {
+    /** A 4000×2000 @254dpi doc (400×200 px): a printable left half (px 0..150). */
+    const partiallyPrintableDoc = (): LabelDoc =>
+        createLabelDoc({
+            backingW: 4000,
+            backingH: 2000,
+            dpi: 254,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 1500, h: 2000 }],
+            // Black ink px 0..100, fully inside the 0..150 union.
+            nodes: [rect('r', 0, 0, 1000, 2000)],
+        });
+
+    it('invert cannot blacken the guaranteed-white margin outside the union', async () => {
+        const doc = partiallyPrintableDoc();
+        const inverted = await renderLabelPage(doc, {}, { invert: true });
+
+        // Inside the union: generic ink (px 0..100) inverts to white; the blank
+        // band (px 100..150) inverts to black.
+        expect(pixelAt(inverted.rgba, 50, 100).slice(0, 3)).toEqual([255, 255, 255]);
+        expect(pixelAt(inverted.rgba, 120, 100).slice(0, 3)).toEqual([0, 0, 0]);
+
+        // Outside the union (x > 150) is re-clipped to white despite invert.
+        for (let x = 200; x < inverted.widthPx; x += 17) {
+            expect(isWhite(inverted.rgba, x, 100), `x=${x} outside the union is white`).toBe(true);
+        }
+    });
+
+    it('mirror cannot move ink outside the union (post-clip after mirror)', async () => {
+        const doc = partiallyPrintableDoc();
+        const base = await renderLabelPage(doc);
+        expect(pixelAt(base.rgba, 50, 100).slice(0, 3)).toEqual([0, 0, 0]);
+
+        const mirrored = await renderLabelPage(doc, {}, { mirror: true });
+
+        // Mirroring across the full 400px width sends the px 0..100 ink to
+        // px 299..399, outside the 0..150 union, so it must be clipped to white.
+        let dark = 0;
+        for (let i = 0; i < mirrored.rgba.data.length; i += 4) {
+            if (mirrored.rgba.data[i]! < 128) dark++;
+        }
+        expect(dark, 'mirrored ink outside the union is clipped to white').toBe(0);
+    });
+
+    it('rejects a non-integer / non-finite offset (device px)', async () => {
+        const doc = stripDoc();
+        await expect(
+            renderLabelPage(doc, {}, { offset: { x: 1.5, y: 0, type: 'inner' } }),
+        ).rejects.toThrow(RangeError);
+        await expect(
+            renderLabelPage(doc, {}, { offset: { x: 0, y: Number.NaN, type: 'inner' } }),
+        ).rejects.toThrow(RangeError);
+        await expect(
+            renderLabelPage(doc, {}, { offset: { x: 0, y: Number.POSITIVE_INFINITY, type: 'outer' } }),
+        ).rejects.toThrow(RangeError);
+    });
+
+    it('rejects an outer offset whose expanded raster exceeds the pixel cap (invariant 9)', async () => {
+        const doc = stripDoc();
+        // Base 400×200 px; (400 + 100000) × 200 ≈ 20.1M > 16M.
+        await expect(
+            renderLabelPage(doc, {}, { offset: { x: 100_000, y: 0, type: 'outer' } }),
+        ).rejects.toThrow(RangeError);
+    });
+
+    it('treats a {x:0,y:0} offset as a no-op that skips the extra canvas allocation', async () => {
+        const doc = stripDoc();
+        const spy = vi.spyOn(document, 'createElement');
+        const canvasesCreated = (): HTMLCanvasElement[] =>
+            spy.mock.results
+                .filter((_result, index) => spy.mock.calls[index]![0] === 'canvas')
+                .map((result) => result.value as HTMLCanvasElement);
+        try {
+            spy.mockClear();
+            const zero = await renderLabelPage(doc, {}, { offset: { x: 0, y: 0, type: 'inner' } });
+            const zeroCanvases = canvasesCreated();
+            // Base path: the encoder canvas is the last canvas allocated.
+            expect(zeroCanvases[zeroCanvases.length - 1]).toBe(zero.canvas);
+
+            spy.mockClear();
+            const shifted = await renderLabelPage(doc, {}, { offset: { x: 0, y: 5, type: 'outer' } });
+            const shiftedCanvases = canvasesCreated();
+            // Offset path: one extra (offset) canvas, and it is the returned one.
+            expect(shiftedCanvases.length).toBe(zeroCanvases.length + 1);
+            expect(shiftedCanvases[shiftedCanvases.length - 1]).toBe(shifted.canvas);
+
+            // …and `{0,0}` is byte-identical to the no-offset base render.
+            const baseline = await renderLabelPage(doc);
+            expect(zero.rgba.data).toEqual(baseline.rgba.data);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it('validates opts.dpi before resolve (no full resolve/template pass)', async () => {
+        const doc = partiallyPrintableDoc();
+        await expect(renderLabelPage(doc, {}, { dpi: 0 })).rejects.toThrow(RangeError);
+        await expect(renderLabelPage(doc, {}, { dpi: Number.NaN })).rejects.toThrow(RangeError);
+        await expect(renderLabelPage(doc, {}, { dpi: -5 })).rejects.toThrow(RangeError);
+    });
+});
+
+describe('renderLabelPage — mirror clip notice (W2 review, round A)', () => {
+    /** A 4000×2000 @254dpi doc (400×200 px): printable left half (px 0..150). */
+    const asymUnionDoc = (): LabelDoc =>
+        createLabelDoc({
+            backingW: 4000,
+            backingH: 2000,
+            dpi: 254,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 1500, h: 2000 }],
+            // Black ink px 0..100, fully inside the 0..150 union before the flip.
+            nodes: [rect('r', 0, 0, 1000, 2000)],
+        });
+
+    it('reports mirror-clipped-ink (lostPx > 0) when the flip pushes ink outside the union', async () => {
+        const doc = asymUnionDoc();
+        const base = await renderLabelPage(doc);
+        expect(base.notices, 'no mirror ⇒ no notice').toBeUndefined();
+
+        const mirrored = await renderLabelPage(doc, {}, { mirror: true });
+
+        expect(mirrored.notices).toHaveLength(1);
+        const notice = mirrored.notices?.[0];
+        expect(notice?.kind).toBe('mirror-clipped-ink');
+        expect(notice?.lostPx, 'mirroring destroyed ink outside the union').toBeGreaterThan(0);
+    });
+
+    it('does not emit a notice when the mirrored ink still fits the union', async () => {
+        // Full-backing union: the strip mirrors into the other half, still inside.
+        const doc = stripDoc();
+        const mirrored = await renderLabelPage(doc, {}, { mirror: true });
+
+        // Sanity: the flip really moved the strip (and the render is non-blank).
+        expect(pixelAt(mirrored.rgba, mirrored.widthPx - 1 - 50, 100).slice(0, 3)).toEqual([0, 0, 0]);
+        expect(mirrored.notices ?? [], 'nothing clipped ⇒ no notice').toEqual([]);
     });
 });
