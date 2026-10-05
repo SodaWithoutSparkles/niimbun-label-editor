@@ -3,12 +3,14 @@ import type { SupportedLanguage } from '../i18n/languages';
 import type { InsertAction } from './slices/toolsSlice';
 import type { ZoomMode } from './slices/viewSlice';
 import type { hm } from '../core/hm';
-import type { FontRef, ImageRef, LabelDoc, Node, Region } from '../core/doc/types';
+import type { FontRef, ImageRef, LabelDoc, Node, Region, GlobalSpec } from '../core/doc/types';
 import type { ResizeOptions, Size } from '../core/doc/geometry';
 import type { LabelPresetId } from '../core/doc/label-presets';
 import type { CsvRepo } from '../data/csvRepo';
 import type { LabelRepo, LabelSummary } from '../data/labelRepo';
 import type { ResourceRepo } from '../data/resourceRepo';
+import type { TrustRepo } from '../data/trustRepo';
+import type { TrustGate } from '../core/trust';
 import type { PrinterStatus } from '../print/transport';
 
 /** Input for the `createLabel` store action — forwarded to `createLabelDoc`. */
@@ -145,6 +147,27 @@ export interface AppState {
     /** Parsed CSV table storage; shared adapter with `labelRepo`. */
     csvRepo: CsvRepo | null;
     setCsvRepo: (repo: CsvRepo | null) => void;
+    /**
+     * Template trust decisions (local state, never doc data); shared adapter
+     * with `labelRepo`. The editor trust gate and Settings both read it.
+     */
+    trustRepo: TrustRepo | null;
+    setTrustRepo: (repo: TrustRepo | null) => void;
+    /**
+     * The ONE trust gate (and session overlay) for `trustRepo`. Both the editor
+     * sample-row pass and Settings' trust section resolve/revoke through this
+     * instance, so a revoke lifts a session Allow immediately.
+     */
+    trustGate: TrustGate | null;
+    /**
+     * Monotonic counter bumped whenever a Settings trust revoke/reset changes
+     * the shared gate's session overlay or persisted records. The editor's
+     * sample-row pass includes it in its effect deps, so a revoke re-resolves
+     * the open document instead of leaving stale executed output on screen.
+     */
+    trustRevision: number;
+    /** Signal that the shared trust gate's decisions changed (see `trustRevision`). */
+    bumpTrustRevision: () => void;
     refreshGallery: () => Promise<void>;
     createLabel: (spec: CreateLabelSpec) => Promise<LabelDoc | null>;
     openLabel: (id: string) => Promise<LabelDoc | null>;
@@ -190,6 +213,19 @@ export interface AppState {
      * `csvId` or a no-op (same ref, clearing when absent) creates no entry.
      */
     setDocCsv: (csv: DocCsvAttachment | null) => void;
+    /**
+     * Attach a CSV and reset the sample row to 0 in **one** undo entry (a fresh
+     * table must not leave two undo steps and must not point past its data).
+     * `null` clears the ref only. A re-attach of the identical ref with the row
+     * already at 0 is a no-op.
+     */
+    attachCsv: (csv: DocCsvAttachment | null) => void;
+    /**
+     * Replace `doc.data.globals` as one undo entry. Blank-named specs are
+     * dropped and `expiresAt` is floored to an integer probability epoch-second
+     * value; an identical list is a no-op (no undo entry).
+     */
+    setDocGlobals: (globals: GlobalSpec[]) => void;
     /** Gesture seam: applies `patch` to `currentDoc` without history, `updatedAt`
      * or autosave. Pair N calls with one `commitDoc` for a single undo entry.
      */

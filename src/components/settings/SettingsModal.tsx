@@ -22,6 +22,10 @@ interface SettingsModalProps {
 export const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) => {
     const { t } = useTranslation();
     const resetSettings = useStore((state) => state.resetSettings);
+    // The store's shared repo/gate: Settings revokes must lift the editor's
+    // session overlay, so both must use the SAME gate instance.
+    const trustRepo = useStore((state) => state.trustRepo);
+    const trustGate = useStore((state) => state.trustGate);
 
     const sections = useMemo<SettingsSection[]>(
         () => [
@@ -41,7 +45,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) =
                 id: 'trust',
                 label: t('settings.trust.label'),
                 icon: <ShieldCheck size={18} />,
-                content: <TrustSection />
+                content: <TrustSection repo={trustRepo ?? undefined} gate={trustGate ?? undefined} />
             },
             {
                 id: 'tools',
@@ -61,7 +65,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) =
                 ]
             }
         ],
-        [t]
+        [t, trustRepo, trustGate]
     );
 
     const [activeSectionId, setActiveSectionId] = useState(sections[0]?.id);

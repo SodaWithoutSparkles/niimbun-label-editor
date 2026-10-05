@@ -1,0 +1,138 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import '../../i18n';
+import { useStore } from '../../store/useStore';
+import { createLabelDoc } from '../../core/doc/factory';
+import type { GlobalSpec } from '../../core/doc/types';
+import { GlobalDataTab } from './GlobalDataTab';
+
+/** GlobalDataTab (P6 W6): add/edit/remove write through undoable setDocGlobals. */
+
+const makeDoc = (globals: GlobalSpec[] = []) => {
+    const doc = createLabelDoc({ id: 'doc-1', now: 1_700_000_000, backingW: 3000, backingH: 2000, nodes: [] });
+    doc.data.globals = globals;
+    return doc;
+};
+
+const seed: GlobalSpec = { name: 'store', url: 'https://x.test', extract: 'name', expiresAt: 10 };
+
+afterEach(() => {
+    cleanup();
+    useStore.setState({ currentDoc: null, docPast: [], docFuture: [] });
+});
+
+describe('GlobalDataTab', () => {
+    it('adds a global through the store as one undo entry', () => {
+        const doc = makeDoc();
+        useStore.setState({ currentDoc: doc });
+        render(<GlobalDataTab doc={doc} />);
+
+        fireEvent.click(screen.getByText('Add global'));
+
+        const globals = useStore.getState().currentDoc!.data.globals;
+        expect(globals).toHaveLength(1);
+        // The new spec is seeded with a unique, editable placeholder name so it
+        // survives the store's blank-name normalization.
+        expect(globals[0]!.name).toBe('global1');
+        expect(useStore.getState().docPast).toHaveLength(1);
+    });
+
+    it('seeds a new global with a future cache expiry, not 0', () => {
+        const doc = makeDoc();
+        useStore.setState({ currentDoc: doc });
+        render(<GlobalDataTab doc={doc} />);
+
+        fireEvent.click(screen.getByText('Add global'));
+
+        const spec = useStore.getState().currentDoc!.data.globals[0]!;
+        // `globals.ts` treats an entry as valid only while `expiresAt * 1000 >
+        // now`; `0` means "never cached" and would refetch every pass. A fresh
+        // spec must cache for the job.
+        const now = Math.floor(Date.now() / 1000);
+        expect(spec.expiresAt).toBeGreaterThan(now);
+        expect(spec.expiresAt).toBeLessThanOrEqual(now + 300 + 5);
+    });
+
+    it('renders an existing global and commits an edit on blur', () => {
+        const doc = makeDoc([seed]);
+        useStore.setState({ currentDoc: doc });
+        render(<GlobalDataTab doc={doc} />);
+
+        const nameInput = screen.getByLabelText('Name') as HTMLInputElement;
+        fireEvent.change(nameInput, { target: { value: 'shop' } });
+        fireEvent.blur(nameInput);
+
+        expect(useStore.getState().currentDoc!.data.globals[0]!.name).toBe('shop');
+        expect(useStore.getState().docPast).toHaveLength(1);
+    });
+
+    it('commits a valid expiry edit as one undo entry', () => {
+        const doc = makeDoc([seed]);
+        useStore.setState({ currentDoc: doc });
+        render(<GlobalDataTab doc={doc} />);
+
+        const expires = screen.getByLabelText('Expires at') as HTMLInputElement;
+        fireEvent.change(expires, { target: { value: '42' } });
+        fireEvent.blur(expires);
+
+        expect(useStore.getState().currentDoc!.data.globals[0]!.expiresAt).toBe(42);
+        expect(useStore.getState().docPast).toHaveLength(1);
+    });
+
+    it('surfaces an invalid expiry instead of silently committing 0', () => {
+        const doc = makeDoc([seed]);
+        useStore.setState({ currentDoc: doc });
+        render(<GlobalDataTab doc={doc} />);
+
+        const expires = screen.getByLabelText('Expires at') as HTMLInputElement;
+        fireEvent.change(expires, { target: { value: '' } });
+        fireEvent.blur(expires);
+
+        expect(screen.getByRole('alert')).toBeTruthy();
+        // The committed spec is unchanged and no undo entry is created.
+        expect(useStore.getState().currentDoc!.data.globals[0]!.expiresAt).toBe(10);
+        expect(useStore.getState().docPast).toHaveLength(0);
+    });
+
+    it('removes a global as one undo entry', () => {
+        const doc = makeDoc([seed]);
+        useStore.setState({ currentDoc: doc });
+        render(<GlobalDataTab doc={doc} />);
+
+        fireEvent.click(screen.getByText('Remove'));
+
+        expect(useStore.getState().currentDoc!.data.globals).toEqual([]);
+        expect(useStore.getState().docPast).toHaveLength(1);
+        useStore.getState().undoDoc();
+        expect(useStore.getState().currentDoc!.data.globals).toHaveLength(1);
+    });
+
+    it('re-seeds drafts when the committed spec changes externally', async () => {
+        const doc = makeDoc([seed]);
+        useStore.setState({ currentDoc: doc });
+        const view = render(<GlobalDataTab doc={doc} />);
+
+        const nameInput = screen.getByLabelText('Name') as HTMLInputElement;
+        fireEvent.change(nameInput, { target: { value: 'unsaved' } });
+
+        // An external change (e.g. undo/redo or a removal re-index) replaces the
+        // spec; the draft must re-seed rather than overwrite the fresh value on
+        // the next blur.
+        const restored = makeDoc([{ ...seed, name: 'restored' }]);
+        useStore.setState({ currentDoc: restored });
+        view.rerender(<GlobalDataTab doc={restored} />);
+
+        await waitFor(() =>
+            expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('restored'),
+        );
+        fireEvent.blur(screen.getByLabelText('Name'));
+        expect(useStore.getState().currentDoc!.data.globals[0]!.name).toBe('restored');
+    });
+
+    it('shows an empty state with no globals', () => {
+        const doc = makeDoc();
+        useStore.setState({ currentDoc: doc });
+        render(<GlobalDataTab doc={doc} />);
+        expect(screen.getByText('No global data specs.')).toBeTruthy();
+    });
+});

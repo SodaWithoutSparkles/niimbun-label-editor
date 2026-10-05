@@ -5,6 +5,8 @@ import { createIdbAdapter } from '../../data/db';
 import { createCsvRepo } from '../../data/csvRepo';
 import { createLabelRepo } from '../../data/labelRepo';
 import { createResourceRepo } from '../../data/resourceRepo';
+import { createTrustRepo } from '../../data/trustRepo';
+import { trustGateFor } from '../trustGate';
 import type { LabelDoc } from '../../core/doc/types';
 import type { PrinterStatus } from '../../print/transport';
 import type { StoreSlice } from '../storeTypes';
@@ -68,6 +70,12 @@ export const createDocSlice: StoreSlice = (set, get) => {
         labelRepo: null,
         resourceRepo: null,
         csvRepo: null,
+        trustRepo: null,
+        trustGate: null,
+        // Bumped by Settings when it revokes/resets trust; the sample-row pass
+        // watches it so a revoke re-resolves the open document.
+        trustRevision: 0,
+        bumpTrustRevision: () => set((state) => ({ trustRevision: state.trustRevision + 1 })),
 
         printerStatus: DEFAULT_PRINTER_STATUS,
         setPrinterStatus: (printerStatus) => set({ printerStatus }),
@@ -75,6 +83,9 @@ export const createDocSlice: StoreSlice = (set, get) => {
         setLabelRepo: (labelRepo) => set({ labelRepo }),
         setResourceRepo: (resourceRepo) => set({ resourceRepo }),
         setCsvRepo: (csvRepo) => set({ csvRepo }),
+        // The gate shares the repo's session overlay; Settings and the editor
+        // must read/write the SAME gate so a revoke lifts a session Allow.
+        setTrustRepo: (trustRepo) => set({ trustRepo, trustGate: trustGateFor(trustRepo) }),
 
         refreshGallery: async () => {
             const repo = get().labelRepo;
@@ -233,6 +244,10 @@ export const createDocSlice: StoreSlice = (set, get) => {
                         }
                         if (!get().csvRepo) {
                             set({ csvRepo: createCsvRepo(adapter) });
+                        }
+                        if (!get().trustRepo) {
+                            const trustRepo = createTrustRepo(adapter);
+                            set({ trustRepo, trustGate: trustGateFor(trustRepo) });
                         }
                     }
                     set({ storageError: false });

@@ -2,7 +2,7 @@ import { newLabelId, roundNode } from '../../core/doc/factory';
 import { resizeNodeGeometry } from '../../core/doc/geometry';
 import { effectiveTransform, IDENTITY_MAT2D, nodeLookup, worldPreservingTransform, type Mat2D } from '../../core/doc/derive';
 import { roundHm } from '../../core/hm';
-import type { CsvRef, FontRef, GroupNode, ImageRef, LabelDoc, Node } from '../../core/doc/types';
+import type { CsvRef, FontRef, GlobalSpec, GroupNode, ImageRef, LabelDoc, Node } from '../../core/doc/types';
 import type { NodePatch, StoreSlice } from '../storeTypes';
 
 /**
@@ -55,6 +55,17 @@ const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
 /** Structural equality for plain-JSON docs; skips no-op undo entries. */
 const docsEqual = (a: LabelDoc, b: LabelDoc): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/** Field-wise CSV-ref equality, so a preserved `alt`/fingerprint is not a change. */
+const csvRefsEqual = (a: CsvRef, b: CsvRef): boolean =>
+    a.csvId === b.csvId &&
+    a.name === b.name &&
+    a.alt === b.alt &&
+    a.source.kind === b.source.kind &&
+    a.source.mediaType === b.source.mediaType &&
+    (a.source.kind !== 'local' ||
+        b.source.kind !== 'local' ||
+        (a.source.resourceId === b.source.resourceId && a.source.fingerprint === b.source.fingerprint));
 
 /** Integer hm, or 0 for a non-finite number (matches `factory.ts` discipline). */
 const safeRoundHm = (value: number): number => (Number.isFinite(value) ? roundHm(value) : 0);
@@ -408,6 +419,9 @@ export const createEditorSlice: StoreSlice = (set, get) => {
         setSampleRowIndex: (index) => {
             const doc = get().currentDoc;
             if (!doc) return;
+            // Reject non-finite input before rounding (NaN/Infinity would become
+            // NaN/Infinity and corrupt the stored index).
+            if (!Number.isFinite(index)) return;
             const clamped = Math.max(0, Math.round(index));
             // A no-op change must not create an undo entry (mirrors commitDoc).
             if (clamped === doc.data.sampleRowIndex) return;
@@ -425,23 +439,99 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             if (csv !== null) {
                 const csvId = csv.csvId.trim();
                 if (csvId.length === 0) return;
+                // Re-attaching the same table preserves its identity fields
+                // (`fingerprint`, `alt`) instead of dropping them.
+                const previous = doc.data.csv;
+                const sameId = previous?.csvId === csvId;
                 ref = {
                     csvId,
                     name: csv.name,
-                    source: { kind: 'local', mediaType: 'text/csv', resourceId: csvId },
+                    ...(sameId && previous?.alt !== undefined ? { alt: previous.alt } : {}),
+                    source: {
+                        kind: 'local',
+                        mediaType: 'text/csv',
+                        resourceId: csvId,
+                        ...(sameId && previous?.source.kind === 'local' && previous.source.fingerprint !== undefined
+                            ? { fingerprint: previous.source.fingerprint }
+                            : {}),
+                    },
                 };
             }
             const current = doc.data.csv;
-            // No-op guard: attaching an identical ref or clearing an absent one
-            // must not create a dead undo entry.
+            // No-op guard: an identical ref or clearing an absent one must not
+            // create a dead undo entry. Compared field-wise so a preserved
+            // `alt`/`fingerprint` does not spuriously count as a change.
             if (ref === null) {
                 if (current === undefined) return;
-            } else if (current !== undefined && JSON.stringify(current) === JSON.stringify(ref)) {
+            } else if (current !== undefined && csvRefsEqual(current, ref)) {
                 return;
             }
             const next = cloneDoc(doc);
             if (ref === null) delete next.data.csv;
             else next.data.csv = ref;
+            commit(next, doc);
+        },
+
+        /**
+         * Attach a CSV **and** reset the sample row in ONE undo entry. Importing
+         * a fresh table must not leave two undo steps (`setDocCsv` +
+         * `setSampleRowIndex`), and the sample row must not point past the new
+         * data. Clearing (`null`) leaves the row untouched.
+         */
+        attachCsv: (csv) => {
+            const doc = get().currentDoc;
+            if (!doc) return;
+            if (csv === null) {
+                get().setDocCsv(null);
+                return;
+            }
+            const csvId = csv.csvId.trim();
+            if (csvId.length === 0) return;
+            const current = doc.data.csv;
+            const sameId = current?.csvId === csvId;
+            const ref: CsvRef = {
+                csvId,
+                name: csv.name,
+                ...(sameId && current?.alt !== undefined ? { alt: current.alt } : {}),
+                source: {
+                    kind: 'local',
+                    mediaType: 'text/csv',
+                    resourceId: csvId,
+                    ...(sameId && current?.source.kind === 'local' && current.source.fingerprint !== undefined
+                        ? { fingerprint: current.source.fingerprint }
+                        : {}),
+                },
+            };
+            // A re-attach of the identical ref with the row already at 0 is a no-op.
+            if (current !== undefined && csvRefsEqual(current, ref) && doc.data.sampleRowIndex === 0) return;
+            const next = cloneDoc(doc);
+            next.data.csv = ref;
+            next.data.sampleRowIndex = 0;
+            commit(next, doc);
+        },
+
+        setDocGlobals: (globals) => {
+            const doc = get().currentDoc;
+            if (!doc) return;
+            // Normalize to the stored shape and drop specs the template layer
+            // could never use: a blank `name` cannot be addressed as
+            // `globals.<name>`, and `expiresAt` must be a finite epoch-second
+            // value. A malformed spec is dropped rather than persisted.
+            const next_globals: GlobalSpec[] = [];
+            for (const spec of globals) {
+                const name = spec.name.trim();
+                if (name.length === 0) continue;
+                next_globals.push({
+                    name,
+                    url: spec.url.trim(),
+                    extract: spec.extract,
+                    expiresAt: Number.isFinite(spec.expiresAt) ? Math.max(0, Math.floor(spec.expiresAt)) : 0,
+                });
+            }
+            // No-op guard: an identical list must not create a dead undo entry.
+            if (JSON.stringify(doc.data.globals) === JSON.stringify(next_globals)) return;
+            const next = cloneDoc(doc);
+            next.data.globals = next_globals;
             commit(next, doc);
         },
 

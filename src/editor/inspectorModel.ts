@@ -46,7 +46,10 @@ export type FieldKind =
     | 'imageRef'
     /** Select over `doc.resources.fonts` + import action (options resolved in the panel). */
     | 'fontRef'
+    /** Explicit static/csv/template kind switcher for a node's `ContentSource`. */
     | 'contentSource'
+    /** Read-only template trust state for the open document. */
+    | 'templateTrust'
     | 'stub';
 
 /**
@@ -188,17 +191,17 @@ export const QUANTIZER_HINT_OPTIONS: readonly string[] = ['', ...Object.keys(QUA
 /**
  * Extra fields whose owning engine ships later, plus the wired per-object
  * quantizer policy. Kept in one list so the Object tab has a stable shape.
- *   - `contentSource`  — static is P3, CSV/template execution is P6 (unwired)
+ *   - `contentSource`  — static/csv/template kind switcher, wired (P6)
  *   - `quantizerHint`  — per-object dither policy, wired (P4)
- *   - `templateTrust`  — trust store is P6 (unwired)
+ *   - `templateTrust`  — read-only trust state, wired (P6)
  */
 export const RESERVED_FIELDS: readonly FieldDescriptor[] = [
-    // Content-source switching (CSV/template) ships with templating in P6.
-    { key: 'contentSource', scope: 'reserved', kind: 'contentSource', wired: false, reason: 'content' },
+    // Explicit static/csv/template switch: the ONLY place a source is rewritten.
+    { key: 'contentSource', scope: 'reserved', kind: 'contentSource', wired: true, options: ['static', 'csv', 'template'] },
     // Per-object dither policy: absent ⇒ the node type's default policy.
     { key: 'quantizerHint', scope: 'reserved', kind: 'select', wired: true, options: QUANTIZER_HINT_OPTIONS },
-    // Template trust store is P6.
-    { key: 'templateTrust', scope: 'reserved', kind: 'stub', wired: false, reason: 'trust' },
+    // Read-only template trust state for the open document.
+    { key: 'templateTrust', scope: 'reserved', kind: 'templateTrust', wired: true },
 ];
 
 /** Type-specific fields, keyed by node type. Groups carry none. */

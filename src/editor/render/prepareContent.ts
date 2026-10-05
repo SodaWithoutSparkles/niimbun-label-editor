@@ -1,5 +1,6 @@
-import type { ContentSource, LabelDoc, Node } from '../../core/doc/types';
+import type { LabelDoc } from '../../core/doc/types';
 import { buildRowContext } from '../../core/doc/rowContext';
+import { contentSourceOf } from '../contentSource';
 import type { CsvRecord } from '../../data/csvRepo';
 import type { TemplateEngine, TemplateFormat, TemplateLabel } from '../../templates/engine';
 import { DEFAULT_EMPTY_TEXT, type ResolvedContent } from './resolve';
@@ -60,19 +61,6 @@ export interface PrepareContentInput {
     /** Static context pieces (label/globals/fmt); `now` is read internally. */
     ctx?: PrepareContentContext;
 }
-
-/** The `ContentSource` carried by a leaf, if the node has one. */
-const contentSourceOf = (node: Node): ContentSource | undefined => {
-    switch (node.type) {
-        case 'text':
-            return node.text;
-        case 'qr':
-        case 'barcode':
-            return node.data;
-        default:
-            return undefined;
-    }
-};
 
 /**
  * Coerce a template result to a non-empty string, or `undefined` when it must

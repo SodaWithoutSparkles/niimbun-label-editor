@@ -4,31 +4,27 @@ import { useStore } from '../../store/useStore';
 import { cn } from '../../utils/cn';
 import { ObjectTab } from './ObjectTab';
 import { DataSourceTab } from './DataSourceTab';
+import { GlobalDataTab } from './GlobalDataTab';
 import { JsTab } from './JsTab';
-import type { ContentSource, Node } from '../../core/doc/types';
+import { carriesContentSource } from '../../editor/contentSource';
+import type { Node } from '../../core/doc/types';
 
 /**
  * Multi-function panel (ui-spec.md §8) — row B, spanning the insert rail and
  * preview. Tabs: Object (always, default; bulk mode on multi-select), Data
- * source (stub), JS (contextual to template sources, disabled until P6). Every
- * tab scrolls internally because the panel height is limited.
+ * source (CSV attach/preview + sample row), Global data (O6), and JS (the
+ * selected node's content source). Every tab scrolls internally because the
+ * panel height is limited.
  */
 
-type MfpTab = 'object' | 'data' | 'js';
+type MfpTab = 'object' | 'data' | 'globals' | 'js';
 
 const TAB_LABEL_KEYS = {
     object: 'editor.mfp.object',
     data: 'editor.mfp.dataSource',
+    globals: 'editor.mfp.globalData',
     js: 'editor.mfp.js',
 } as const;
-
-/** The content source a node carries, if any (text / qr / barcode). */
-const contentSourceOf = (node: Node): ContentSource | undefined => {
-    if (node.type === 'text') return node.text;
-    if (node.type === 'qr') return node.data;
-    if (node.type === 'barcode') return node.data;
-    return undefined;
-};
 
 export const MfpPanel: React.FC = () => {
     const { t } = useTranslation();
@@ -41,12 +37,12 @@ export const MfpPanel: React.FC = () => {
         [doc, selectedNodeIds],
     );
 
-    const hasTemplateSource = useMemo(
-        () => selected.some((node) => contentSourceOf(node)?.kind === 'template'),
-        [selected],
-    );
+    // The JS tab is contextual to a selection that can carry a content source.
+    const canAuthorSource = selected.some((node) => carriesContentSource(node));
 
-    const tabs: MfpTab[] = hasTemplateSource ? ['object', 'data', 'js'] : ['object', 'data'];
+    const tabs: MfpTab[] = canAuthorSource
+        ? ['object', 'data', 'globals', 'js']
+        : ['object', 'data', 'globals'];
     const activeTab: MfpTab = tabs.includes(tab) ? tab : 'object';
 
     return (
@@ -72,8 +68,9 @@ export const MfpPanel: React.FC = () => {
             </div>
             <div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto">
                 {activeTab === 'object' && <ObjectTab selected={selected} />}
-                {activeTab === 'data' && <DataSourceTab />}
-                {activeTab === 'js' && <JsTab />}
+                {activeTab === 'data' && doc && <DataSourceTab doc={doc} />}
+                {activeTab === 'globals' && doc && <GlobalDataTab doc={doc} />}
+                {activeTab === 'js' && <JsTab selected={selected} />}
             </div>
         </div>
     );

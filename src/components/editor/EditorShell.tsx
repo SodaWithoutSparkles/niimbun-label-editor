@@ -7,6 +7,7 @@ import { MfpPanel } from './MfpPanel';
 import { LayersPanel } from './LayersPanel';
 import { EditorStatusBar } from './EditorStatusBar';
 import { EditorKeyboardShortcuts } from './EditorKeyboardShortcuts';
+import { SampleRowProvider } from './sampleRowContext';
 
 /**
  * Editor shell (ui-spec.md §2). Grid:
@@ -29,35 +30,37 @@ export const EditorShell: React.FC = () => {
     useEffect(() => () => clearActiveTool(), [clearActiveTool]);
 
     return (
-        <div className="flex min-h-0 flex-1 flex-col">
-            <EditorKeyboardShortcuts />
-            <div
-                className="grid min-h-0 flex-1"
-                style={{
-                    gridTemplateColumns: `3rem minmax(0, 1fr) ${RIGHT_COLUMN_PX}px`,
-                    gridTemplateRows: `${ROW_A_FR}fr ${ROW_B_FR}fr`,
-                }}
-            >
-                {/* Row A */}
-                <div className="row-start-1 col-start-1 flex min-h-0">
-                    <InsertRail />
-                </div>
-                <div className="row-start-1 col-start-2 flex min-h-0 min-w-0">
-                    <PreviewStage />
-                </div>
-                <div className="row-start-1 col-start-3 flex min-h-0 flex-col overflow-hidden">
-                    <ViewControls />
-                </div>
+        <SampleRowProvider>
+            <div className="flex min-h-0 flex-1 flex-col">
+                <EditorKeyboardShortcuts />
+                <div
+                    className="grid min-h-0 flex-1"
+                    style={{
+                        gridTemplateColumns: `3rem minmax(0, 1fr) ${RIGHT_COLUMN_PX}px`,
+                        gridTemplateRows: `${ROW_A_FR}fr ${ROW_B_FR}fr`,
+                    }}
+                >
+                    {/* Row A */}
+                    <div className="row-start-1 col-start-1 flex min-h-0">
+                        <InsertRail />
+                    </div>
+                    <div className="row-start-1 col-start-2 flex min-h-0 min-w-0">
+                        <PreviewStage />
+                    </div>
+                    <div className="row-start-1 col-start-3 flex min-h-0 flex-col overflow-hidden">
+                        <ViewControls />
+                    </div>
 
-                {/* Row B */}
-                <div className="row-start-2 col-start-1 col-span-2 flex min-h-0 min-w-0">
-                    <MfpPanel />
+                    {/* Row B */}
+                    <div className="row-start-2 col-start-1 col-span-2 flex min-h-0 min-w-0">
+                        <MfpPanel />
+                    </div>
+                    <div className="row-start-2 col-start-3 flex min-h-0 flex-col overflow-hidden">
+                        <LayersPanel />
+                    </div>
                 </div>
-                <div className="row-start-2 col-start-3 flex min-h-0 flex-col overflow-hidden">
-                    <LayersPanel />
-                </div>
+                <EditorStatusBar />
             </div>
-            <EditorStatusBar />
-        </div>
+        </SampleRowProvider>
     );
 };

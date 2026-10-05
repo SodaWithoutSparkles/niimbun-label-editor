@@ -11,6 +11,8 @@ vi.mock('../common/dialogs', async (orig) => ({
 import '../../i18n';
 import { TrustSection } from './TrustSection';
 import type { TrustRecord, TrustRepo } from '../../data/trustRepo';
+import { createTrustGate } from '../../core/trust';
+import { useStore } from '../../store/useStore';
 
 const makeRepo = (records: TrustRecord[] = []): TrustRepo => ({
     get: vi.fn(async (docId: string) => records.find((r) => r.docId === docId)?.decision ?? 'ask'),
@@ -114,5 +116,32 @@ describe('TrustSection', () => {
         expect(
             await screen.findByText('Could not read stored trust decisions.'),
         ).toBeInTheDocument();
+    });
+
+    it('lists a session-only allow, marks it, and revokes it through the gate', async () => {
+        const repo = makeRepo();
+        const gate = createTrustGate({ repo });
+        gate.allowOnce('doc-session');
+
+        const before = useStore.getState().trustRevision;
+        render(<TrustSection repo={repo} gate={gate} />);
+
+        // The session overlay is listed even though no record is persisted.
+        expect(await screen.findByText('doc-session')).toBeInTheDocument();
+        expect(screen.getByTestId('trust-session-badge')).toHaveTextContent('Session');
+        expect(screen.getByText('Always allow')).toBeInTheDocument();
+        // "Reset all" is offered whenever either list is non-empty.
+        expect(screen.getByText('Reset all')).toBeInTheDocument();
+
+        // Revoke through the UI (not `gate.remove` directly): it must lift the
+        // session decision and bump the shared trust revision.
+        fireEvent.click(screen.getByText('Revoke'));
+
+        await waitFor(() => expect(repo.remove).toHaveBeenCalledWith('doc-session'));
+        expect(await gate.resolve('doc-session')).toBe('ask');
+        expect(useStore.getState().trustRevision).toBe(before + 1);
+        await waitFor(() =>
+            expect(screen.getByText('No stored template trust decisions.')).toBeInTheDocument(),
+        );
     });
 });

@@ -58,6 +58,13 @@ export interface TrustGate {
     clear(): Promise<void>;
     /** Drop the whole session overlay without touching persisted decisions. */
     clearSession(): void;
+    /**
+     * Snapshot of the session-only overlay (prompt Allow/Deny), so Settings can
+     * list and lift a decision that was never persisted. Returns a fresh array of
+     * plain records — the live map is never exposed and later overlay changes do
+     * not mutate the result.
+     */
+    sessionEntries(): { docId: string; decision: TrustDecision }[];
 }
 
 export interface CreateTrustGateOptions {
@@ -112,6 +119,10 @@ export const createTrustGate = ({ repo, session }: CreateTrustGateOptions): Trus
 
         clearSession() {
             overlay.clear();
+        },
+
+        sessionEntries() {
+            return [...overlay].map(([docId, decision]) => ({ docId, decision }));
         },
     };
 

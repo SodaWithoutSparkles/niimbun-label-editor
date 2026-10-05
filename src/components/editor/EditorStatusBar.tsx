@@ -4,12 +4,13 @@ import { ChevronDown } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { ConnectionChip } from '../common/ConnectionChip';
 import { realZoom } from '../../core/viewport';
+import { useSampleRowState } from './sampleRowContext';
 
 /**
  * Editor status bar (ui-spec.md §9): zoom %, DPI, row-selector popup and the
- * connection chip. The row selector is a plain popover (not a dialog); its
- * Escape and click-outside handling are local and `stopPropagation` so the
- * global editor shortcuts do not also fire.
+ * connection chip. The row selector is a non-modal popover (`role="dialog"` for
+ * a11y); its Escape and click-outside handling are local and `stopPropagation`
+ * so the global editor shortcuts do not also fire.
  *
  * Zoom % is expressed relative to real physical size (`realZoom` from the
  * Screen-DPI calibration): 100% means the label measures its true size on
@@ -24,6 +25,8 @@ export const EditorStatusBar: React.FC = () => {
     const setSampleRowIndex = useStore((state) => state.setSampleRowIndex);
     const [rowOpen, setRowOpen] = useState(false);
     const popoverRef = useRef<HTMLDivElement>(null);
+    const triggerRef = useRef<HTMLButtonElement>(null);
+    const rowInputRef = useRef<HTMLInputElement>(null);
 
     const real = realZoom(screenDpi);
     // `effectiveZoom` is 0 until the Preview binds the real viewport. Rendering
@@ -32,6 +35,23 @@ export const EditorStatusBar: React.FC = () => {
         real > 0 && effectiveZoom > 0 ? Math.round((effectiveZoom / real) * 100) : null;
     const rowIndex = doc?.data.sampleRowIndex ?? 0;
     const hasCsv = Boolean(doc?.data.csv);
+    const rowCount = useSampleRowState()?.rowCount ?? 0;
+    const lastIndex = Math.max(0, rowCount - 1);
+    // 1-based draft for the popup input, so the input and the trigger label agree.
+    const [rowDraft, setRowDraft] = useState(String(rowIndex + 1));
+
+    // Keep the draft in step with the committed row (an external change while the
+    // popup is open, or a prev/next step).
+    useEffect(() => {
+        if (rowOpen) setRowDraft(String(rowIndex + 1));
+    }, [rowOpen, rowIndex]);
+
+    // Move focus into the popup when it opens.
+    useEffect(() => {
+        if (!rowOpen) return;
+        rowInputRef.current?.focus();
+        rowInputRef.current?.select();
+    }, [rowOpen]);
 
     useEffect(() => {
         if (!rowOpen) return;
@@ -39,6 +59,7 @@ export const EditorStatusBar: React.FC = () => {
             if (event.key !== 'Escape') return;
             event.stopPropagation();
             setRowOpen(false);
+            triggerRef.current?.focus();
         };
         const onPointerDown = (event: PointerEvent) => {
             if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) setRowOpen(false);
@@ -51,9 +72,36 @@ export const EditorStatusBar: React.FC = () => {
         };
     }, [rowOpen]);
 
+    /** Clamp a 0-based row into the attached table's range. */
+    const clampIndex = (index: number): number => Math.min(lastIndex, Math.max(0, Math.round(index)));
+
+    /** Commit a 0-based row, clamped so prev/next can never run off the table. */
     const jump = (index: number) => {
-        setSampleRowIndex(index);
+        const next = clampIndex(index);
+        setRowDraft(String(next + 1));
+        setSampleRowIndex(next);
     };
+
+    /**
+     * Commit the typed row on blur/Enter — one undo entry, not one per keystroke.
+     * The input is 1-based (matching the trigger label); an unparseable value
+     * reverts to the committed row.
+     */
+    const commitDraft = () => {
+        const parsed = Number(rowDraft);
+        if (!Number.isFinite(parsed)) {
+            setRowDraft(String(rowIndex + 1));
+            return;
+        }
+        const oneBased = Math.min(rowCount, Math.max(1, Math.round(parsed)));
+        jump(oneBased - 1);
+    };
+
+    const triggerLabel = hasCsv
+        ? rowCount > 0
+            ? t('editor.status.rowOf', { index: rowIndex + 1, count: rowCount })
+            : `${t('editor.status.row')}: ${rowIndex + 1}`
+        : `${t('editor.status.row')}: —`;
 
     return (
         <div className="flex h-8 shrink-0 items-center justify-between border-t border-gray-700 bg-gray-900 px-3 text-xs text-gray-300 select-none">
@@ -67,41 +115,63 @@ export const EditorStatusBar: React.FC = () => {
 
                 <div className="relative" ref={popoverRef}>
                     <button
+                        ref={triggerRef}
                         type="button"
+                        aria-haspopup="dialog"
+                        aria-expanded={rowOpen}
+                        aria-controls="editor-row-popup"
                         onClick={() => setRowOpen((open) => !open)}
                         title={hasCsv ? t('editor.status.rowPopupTitle') : t('editor.status.noCsv')}
                         className="flex items-center gap-1 rounded border border-gray-600 bg-gray-800 px-2 py-0.5 transition-colors hover:bg-gray-700"
                     >
-                        {t('editor.status.row')}: {hasCsv ? rowIndex : '—'}
+                        {triggerLabel}
                         <ChevronDown size={12} />
                     </button>
                     {rowOpen && (
-                        <div className="absolute bottom-full left-0 z-40 mb-1 w-56 rounded border border-gray-600 bg-gray-800 p-2 shadow-xl">
-                            {hasCsv && doc ? (
+                        <div
+                            id="editor-row-popup"
+                            role="dialog"
+                            aria-label={t('editor.status.rowPopupTitle')}
+                            className="absolute bottom-full left-0 z-40 mb-1 w-56 rounded border border-gray-600 bg-gray-800 p-2 shadow-xl"
+                        >
+                            {hasCsv && doc && rowCount > 0 ? (
                                 <div className="flex items-center justify-between gap-2">
                                     <button
                                         type="button"
                                         onClick={() => jump(rowIndex - 1)}
-                                        className="rounded bg-gray-700 px-2 py-1 hover:bg-gray-600"
+                                        disabled={rowIndex <= 0}
+                                        className="rounded bg-gray-700 px-2 py-1 hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-40"
                                     >
                                         {t('editor.status.rowPrev')}
                                     </button>
                                     <input
+                                        ref={rowInputRef}
                                         type="number"
-                                        min={0}
-                                        value={rowIndex}
-                                        onChange={(event) => jump(Number(event.target.value))}
+                                        min={1}
+                                        max={rowCount}
+                                        value={rowDraft}
+                                        onChange={(event) => setRowDraft(event.target.value)}
+                                        onBlur={commitDraft}
+                                        onKeyDown={(event) => {
+                                            if (event.key === 'Enter') {
+                                                event.preventDefault();
+                                                commitDraft();
+                                            }
+                                        }}
                                         aria-label={t('editor.status.rowIndex')}
                                         className="w-16 rounded border border-gray-600 bg-gray-900 px-1 py-1 text-center"
                                     />
                                     <button
                                         type="button"
                                         onClick={() => jump(rowIndex + 1)}
-                                        className="rounded bg-gray-700 px-2 py-1 hover:bg-gray-600"
+                                        disabled={rowIndex >= lastIndex}
+                                        className="rounded bg-gray-700 px-2 py-1 hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-40"
                                     >
                                         {t('editor.status.rowNext')}
                                     </button>
                                 </div>
+                            ) : hasCsv ? (
+                                <p className="text-xs italic text-gray-500">{t('editor.status.rowNoRows')}</p>
                             ) : (
                                 <p className="text-xs italic text-gray-500">{t('editor.status.noCsv')}</p>
                             )}

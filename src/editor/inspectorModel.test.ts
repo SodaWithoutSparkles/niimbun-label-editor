@@ -71,8 +71,9 @@ describe('inspectorModel — field descriptors', () => {
         for (const field of RESERVED_FIELDS.filter((f) => !f.wired)) {
             expect(['trust', 'content']).toContain(field.reason);
         }
-        // Trust is P6; the per-object quantizer policy is now wired (P4).
-        expect(RESERVED_FIELDS.find((f) => f.key === 'templateTrust')?.reason).toBe('trust');
+        // P6: contentSource and templateTrust are wired now, so no reserved
+        // field is a disabled stub.
+        expect(RESERVED_FIELDS.every((f) => f.wired)).toBe(true);
     });
 
     it('points every size stub at the transform W/H fields, not a shipped engine', () => {
@@ -136,11 +137,15 @@ describe('inspectorModel — field descriptors', () => {
         expect(family?.options).toContain('sans-serif');
     });
 
-    it('keeps contentSource and templateTrust as unwired descriptors', () => {
+    it('wires contentSource and templateTrust (P6)', () => {
         expect(keys(RESERVED_FIELDS)).toEqual(['contentSource', 'quantizerHint', 'templateTrust']);
-        for (const key of ['contentSource', 'templateTrust']) {
-            expect(RESERVED_FIELDS.find((f) => f.key === key)?.wired).toBe(false);
-        }
+        const contentSource = RESERVED_FIELDS.find((f) => f.key === 'contentSource');
+        expect(contentSource?.wired).toBe(true);
+        expect(contentSource?.kind).toBe('contentSource');
+        expect(contentSource?.options).toEqual(['static', 'csv', 'template']);
+        const trust = RESERVED_FIELDS.find((f) => f.key === 'templateTrust');
+        expect(trust?.wired).toBe(true);
+        expect(trust?.kind).toBe('templateTrust');
         expect(RESERVED_FIELDS.find((f) => f.key === 'quantizerHint')?.wired).toBe(true);
     });
 });

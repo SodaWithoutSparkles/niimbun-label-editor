@@ -132,4 +132,18 @@ describe('csvRepo wiring', () => {
         // adapter (one DB connection / one migration pass).
         expect(await createCsvRepo(adapter).get('csv-1')).toEqual(record);
     });
+
+    it('creates trustRepo on the same shared adapter during boot', async () => {
+        const adapter = createMemoryAdapter();
+        createIdbAdapterMock.mockReset();
+        createIdbAdapterMock.mockResolvedValueOnce(adapter);
+
+        const store = createAppStore();
+        await store.getState().initPersistence();
+
+        const trustRepo = store.getState().trustRepo;
+        expect(trustRepo).not.toBeNull();
+        await trustRepo!.set('doc-1', 'always');
+        expect(await trustRepo!.get('doc-1')).toBe('always');
+    });
 });

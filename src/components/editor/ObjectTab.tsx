@@ -21,6 +21,8 @@ import type { ContentSource, ImageRef, Node, ShapeKind, ShapeNode } from '../../
 import type { QuantizerId } from '../../core/render';
 import type { NodePatch } from '../../store/storeTypes';
 import { bytesProviderFor } from './usePreparedAssets';
+import { useSampleRowState } from './sampleRowContext';
+import { contentSourceOf } from '../../editor/contentSource';
 import { ImageImportDialog } from './ImageImportDialog';
 
 /**
@@ -109,6 +111,20 @@ type QuantizerOption = keyof typeof QUANTIZER_LABEL_KEYS;
 const isQuantizerOption = (option: string): option is QuantizerOption =>
     option in QUANTIZER_LABEL_KEYS;
 
+/** i18n keys for the `contentSource` kind switcher (literal map, typed keys). */
+const CONTENT_KIND_LABEL_KEYS = {
+    static: 'editor.mfp.contentStatic',
+    csv: 'editor.mfp.contentCsv',
+    template: 'editor.mfp.contentTemplate',
+} as const satisfies Record<ContentSource['kind'], string>;
+
+/** i18n keys for the read-only `templateTrust` state (literal map). */
+const TRUST_STATE_LABEL_KEYS = {
+    ask: 'editor.mfp.trust.ask',
+    always: 'editor.mfp.trust.always',
+    never: 'editor.mfp.trust.never',
+} as const;
+
 /** Human label for one select option. Non-quantizer selects show the raw value. */
 const optionLabel = (fieldKey: string, option: string, t: TFunction): string =>
     fieldKey === 'quantizerHint' && isQuantizerOption(option)
@@ -178,11 +194,26 @@ export const dataContentPatch = (value: string): NodePatch => ({
     data: { kind: 'static', value },
 });
 
-/** The `ContentSource` a text/qr/barcode node carries, for the static editors. */
-export const contentSourceOf = (node: Node): ContentSource | undefined => {
-    if (node.type === 'text') return node.text;
-    if (node.type === 'qr' || node.type === 'barcode') return node.data;
-    return undefined;
+/**
+ * Patch that switches a text/qr/barcode node's `ContentSource` kind. This is the
+ * ONLY path that may rewrite a source to `static`: an edit to the `text`/`data`
+ * field of a csv/template node must never silently discard its column/code and
+ * fallback (must-fix #1). Switching preserves the previous kind's payload where
+ * it maps, and seeds an empty source otherwise.
+ */
+export const contentKindPatch = (node: Node, kind: ContentSource['kind']): NodePatch => {
+    const current = contentSourceOf(node);
+    if (current?.kind === kind) return {};
+    const field = node.type === 'text' ? 'text' : 'data';
+    let next: ContentSource;
+    if (kind === 'static') {
+        next = { kind: 'static', value: current?.kind === 'static' ? current.value : '' };
+    } else if (kind === 'csv') {
+        next = { kind: 'csv', column: current?.kind === 'csv' ? current.column : '', fallback: current?.kind === 'csv' ? current.fallback : '' };
+    } else {
+        next = { kind: 'template', code: current?.kind === 'template' ? current.code : '', fallback: current?.kind === 'template' ? current.fallback : '' };
+    }
+    return { [field]: next } as NodePatch;
 };
 
 /**
@@ -334,6 +365,7 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
 
     const model = useMemo(() => bulkFieldModel(selected), [selected]);
     const first = selected[0];
+    const trust = useSampleRowState()?.trust ?? 'ask';
 
     // A number gesture (slider hold / typing) is bounded by pointer/key end.
     // The baseline is the committed doc; we commit exactly once when the
@@ -554,6 +586,65 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                 return (
                     <SettingRow key={field.key} label={label}>
                         <Toggle checked={booleanValue(first, field.key)} onChange={(value) => setBoolean(field.key, value)} />
+                    </SettingRow>
+                );
+            case 'contentSource': {
+                // Explicit kind switch — the only place a source is rewritten.
+                // Editing the `text`/`data` field above never changes the kind.
+                const current = contentSourceOf(first);
+                if (!current) {
+                    // No carrier prop to rewrite (e.g. an image/shape); say so
+                    // accurately rather than claiming a CSV/template binding.
+                    return (
+                        <SettingRow key={field.key} label={label} description={t('editor.mfp.contentSourceUnavailable')}>
+                            <input disabled className="w-36 rounded border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-500" />
+                        </SettingRow>
+                    );
+                }
+                // `never` disables authoring a NEW template source; an existing
+                // template stays selectable so the user can switch away from it.
+                // `ask` still allows authoring (execution is what needs approval).
+                const options = (field.options ?? ['static', 'csv', 'template']).filter(
+                    (kind) => !(kind === 'template' && trust === 'never' && current.kind !== 'template'),
+                );
+                return (
+                    <SettingRow
+                        key={field.key}
+                        label={label}
+                        description={
+                            current.kind === 'template'
+                                ? trust === 'never'
+                                    ? t('editor.mfp.trustDisabled')
+                                    : trust === 'ask'
+                                      ? t('editor.mfp.templateNeedsApproval')
+                                      : undefined
+                                : undefined
+                        }
+                    >
+                        <Select
+                            value={current.kind}
+                            onChange={(kind) => {
+                                for (const node of selected) updateNode(node.id, contentKindPatch(node, kind as ContentSource['kind']));
+                            }}
+                            options={options.map((kind) => ({
+                                value: kind,
+                                label: kind in CONTENT_KIND_LABEL_KEYS ? t(CONTENT_KIND_LABEL_KEYS[kind as ContentSource['kind']]) : kind,
+                            }))}
+                            className="w-36"
+                            aria-label={label}
+                        />
+                    </SettingRow>
+                );
+            }
+            case 'templateTrust':
+                return (
+                    <SettingRow key={field.key} label={label}>
+                        <span
+                            aria-label={label}
+                            className="rounded border border-gray-600 px-2 py-0.5 text-xs text-gray-200"
+                        >
+                            {t(TRUST_STATE_LABEL_KEYS[trust])}
+                        </span>
                     </SettingRow>
                 );
             case 'select': {

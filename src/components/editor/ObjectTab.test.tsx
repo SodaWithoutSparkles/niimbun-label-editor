@@ -7,6 +7,8 @@ import { createMemoryAdapter } from '../../data/db';
 import { createResourceRepo } from '../../data/resourceRepo';
 import { bytesProviderFor, createResourceAssetDeps } from './usePreparedAssets';
 import type { FontRef, ImageRef, Node } from '../../core/doc/types';
+import { SampleRowContext } from './sampleRowContext';
+import type { SampleRowState } from './useSampleRow';
 import {
     ObjectTab,
     alignTransformPatch,
@@ -589,5 +591,75 @@ describe('ObjectTab — fontFamily / fontId stay consistent (must-fix #2)', () =
         };
         expect(persisted.fontFamily).toBe('Arial');
         expect(persisted.fontId).toBeUndefined();
+    });
+});
+
+const trustState = (trust: 'ask' | 'always' | 'never'): SampleRowState => ({
+    overrides: new Map(),
+    trust,
+    blocked: trust === 'never',
+    needsApproval: trust === 'ask',
+    globalWarnings: [],
+    templateErrors: new Map(),
+    rowCount: 0,
+    error: null,
+});
+
+const renderWithTrust = (node: Node, trust: 'ask' | 'always' | 'never') => {
+    useStore.setState({ currentDoc: doc([node]), selectedNodeIds: [node.id] });
+    return render(
+        <SampleRowContext.Provider value={trustState(trust)}>
+            <ObjectTab selected={[node]} />
+        </SampleRowContext.Provider>,
+    );
+};
+
+describe('ObjectTab — content source switcher + trust (P6)', () => {
+    it('switches a static text source to csv and template through the kind select', () => {
+        const selected = textNode({ text: { kind: 'static', value: 'hi' } });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        fireEvent.change(selectWithOption('csv'), { target: { value: 'csv' } });
+        let persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')! as { text: unknown };
+        expect(persisted.text).toEqual({ kind: 'csv', column: '', fallback: '' });
+
+        // The explicit kind switch is the only path that rewrites the source.
+        fireEvent.change(selectWithOption('template'), { target: { value: 'template' } });
+        persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')! as { text: unknown };
+        expect(persisted.text).toEqual({ kind: 'template', code: '', fallback: '' });
+    });
+
+    it('editing a csv text source never rewrites it to static', () => {
+        const source = { kind: 'csv' as const, column: 'name', fallback: 'x' };
+        const selected = textNode({ text: source });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        // The kind select reflects the bound source.
+        expect(selectWithOption('csv').value).toBe('csv');
+        const field = screen.getByLabelText('Text') as HTMLTextAreaElement;
+        fireEvent.change(field, { target: { value: 'hacked' } });
+        fireEvent.blur(field);
+
+        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')! as { text: unknown };
+        expect(persisted.text).toEqual(source);
+        expect(useStore.getState().docPast).toHaveLength(0);
+    });
+
+    it('shows the read-only template trust state', () => {
+        renderWithTrust(textNode(), 'ask');
+        expect(screen.getByText('Ask each time')).toBeTruthy();
+    });
+
+    it('blocks authoring a new template source when trust is never', () => {
+        renderWithTrust(textNode(), 'never');
+        expect(screen.getByText('Blocked')).toBeTruthy();
+        expect(Array.from(selectWithOption('csv').options).map((option) => option.value)).not.toContain('template');
+
+        // `ask` allows authoring the template option; only execution is gated.
+        cleanup();
+        renderWithTrust(textNode(), 'ask');
+        expect(Array.from(selectWithOption('csv').options).map((option) => option.value)).toContain('template');
     });
 });

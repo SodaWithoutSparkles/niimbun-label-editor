@@ -195,6 +195,38 @@ describe('createTrustGate — policy resolution', () => {
         expect(await repo.get('doc')).toBe('always');
     });
 
+    it('sessionEntries snapshots the overlay without exposing the live map', async () => {
+        const gate = createTrustGate({ repo: makeRepo() });
+        gate.allowOnce('a');
+        gate.denyOnce('b');
+
+        const entries = gate.sessionEntries();
+        expect(entries).toEqual([
+            { docId: 'a', decision: 'always' },
+            { docId: 'b', decision: 'never' },
+        ]);
+
+        // The returned array is a snapshot: a later overlay change must not
+        // mutate it, and the live map is never returned.
+        gate.clearSession();
+        expect(entries).toHaveLength(2);
+        expect(gate.sessionEntries()).toEqual([]);
+    });
+
+    it('sessionEntries reflects allowOnce/denyOnce and remove', async () => {
+        const gate = createTrustGate({ repo: makeRepo() });
+        expect(gate.sessionEntries()).toEqual([]);
+
+        gate.allowOnce('doc');
+        expect(gate.sessionEntries()).toEqual([{ docId: 'doc', decision: 'always' }]);
+
+        gate.denyOnce('doc');
+        expect(gate.sessionEntries()).toEqual([{ docId: 'doc', decision: 'never' }]);
+
+        await gate.remove('doc');
+        expect(gate.sessionEntries()).toEqual([]);
+    });
+
     it('clear resets every stored decision and the session overlay', async () => {
         const repo = makeRepo();
         const gate = createTrustGate({ repo });

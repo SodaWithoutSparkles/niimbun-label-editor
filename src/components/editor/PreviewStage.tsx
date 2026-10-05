@@ -4,9 +4,10 @@ import { Layer, Stage, Transformer } from 'react-konva';
 import type Konva from 'konva';
 import { useStore } from '../../store/useStore';
 import { cn } from '../../utils/cn';
-import { resolve, flattenResolved } from '../../editor/render/resolve';
-import type { ResolvedNode } from '../../editor/render/resolve';
-import type { Node } from '../../core/doc/types';
+import { flattenResolved, resolve } from '../../editor/render/resolve';
+import type { ResolvedContent, ResolvedNode } from '../../editor/render/resolve';
+import type { GlobalWarning } from '../../templates/globals';
+import type { LabelDoc, Node } from '../../core/doc/types';
 import { matrixToKonvaAttrs } from '../../editor/render/konvaFactory';
 import { movePatch, transformEndPatch, preserveAspectFor, transformerTargetSize, dragOriginOf, type DragOrigin } from '../../editor/transformGesture';
 import { nodeSize, pointsExtent, preservesAspectByDefault, DEFAULT_CONTENT_SIZE, type Size } from '../../core/doc/geometry';
@@ -30,14 +31,16 @@ import { selectionAfterClick, nodesInMarquee } from '../../editor/selectionModel
 import { GRID_STEP_HM } from './gridConstants';
 import { ResolvedShape } from './ResolvedShape';
 import { usePreparedAssets } from './usePreparedAssets';
+import { useSampleRowState } from './sampleRowContext';
 import { Overlays, type SnapGuideLine } from './Overlays';
 import { Rulers } from './Rulers';
 
 /**
  * Preview edit surface (ui-spec.md §5). Bound to the bounded viewport engine in
  * `core/viewport`: fit/real/manual zoom, clamped pan, view-only rotation and
- * engine hit-testing. Renders `resolve(doc)` through `ResolvedShape` (which
- * reuses the shared factory's transform decomposition).
+ * engine hit-testing. Renders the sample-row resolved tree (P6 `useSampleRow`)
+ * through `ResolvedShape` (which reuses the shared factory's transform
+ * decomposition).
  *
  * Pointer interaction is browser-only (memory/testing.md): drag/marquee/zoom are
  * exercised by the headed check, while the math they call lives in unit-tested
@@ -48,6 +51,23 @@ const SNAP_THRESHOLD_PX = 6;
 const RULER_GUTTER = 24;
 const ZOOM_MIN = 0.005;
 const ZOOM_MAX = 4;
+
+/** Stable identities for an isolated mount with no sample-row provider. */
+const EMPTY_RESOLVED: ResolvedNode[] = [];
+const EMPTY_WARNINGS: GlobalWarning[] = [];
+
+/**
+ * Resolve the preview's synchronous scene graph from the live `doc` and the
+ * async sample-row override map (W6). The override map supplies evaluated
+ * csv/template content keyed by node id; everything else (geometry, visibility,
+ * groups) is resolved fresh on every call, so a drag/resize repaints immediately
+ * without waiting for the data pre-pass. Extracted so this wiring is unit-tested
+ * without mounting Konva; a missing doc yields the shared empty tree.
+ */
+export const resolvePreviewTree = (
+    doc: LabelDoc | null,
+    overrides: ReadonlyMap<string, ResolvedContent> | undefined,
+): ResolvedNode[] => (doc ? resolve(doc, overrides ? { overrides } : {}) : EMPTY_RESOLVED);
 
 interface MarqueeState {
     start: Point;
@@ -160,7 +180,23 @@ export const PreviewStage: React.FC = () => {
         if (viewport.zoom > 0) setEffectiveZoom(viewport.zoom);
     }, [viewport.zoom, setEffectiveZoom]);
 
-    const resolved = useMemo<ResolvedNode[]>(() => (doc ? resolve(doc) : []), [doc]);
+    // The sample-row resolve pipeline (P6 W6): CSV binding, trust gating,
+    // globals prefetch and template execution for `doc.data.sampleRowIndex`.
+    // Shared with the MFP via context; an isolated mount (no provider) renders
+    // an empty tree rather than running a second pass.
+    //
+    // W6 fix: the async pass supplies only the **override map** (evaluated
+    // csv/template content). The scene graph is resolved **synchronously on
+    // every render** from the live `doc`, so drag/resize/hide/lock/group repaint
+    // immediately instead of waiting for a pass keyed on data-only inputs.
+    const sampleRow = useSampleRowState();
+    const overrides = sampleRow?.overrides;
+    const resolved = useMemo(() => resolvePreviewTree(doc, overrides), [doc, overrides]);
+    const blocked = sampleRow?.blocked ?? false;
+    const needsApproval = sampleRow?.needsApproval ?? false;
+    const templateErrors = sampleRow?.templateErrors;
+    const sampleRowError = sampleRow?.error ?? null;
+    const globalWarnings = sampleRow?.globalWarnings ?? EMPTY_WARNINGS;
     const flatResolved = useMemo(() => flattenResolved(resolved), [resolved]);
     // Decoded image / qr / barcode rasters for the preview (P5). The resolution
     // cap follows the on-screen device scale, so previews never over-decode.
@@ -651,6 +687,60 @@ export const PreviewStage: React.FC = () => {
             </Stage>
 
             {rulersVisible && <Rulers viewport={viewport} backingW={backing.backingW} backingH={backing.backingH} />}
+
+            {blocked && (
+                <div
+                    role="status"
+                    data-testid="template-blocked"
+                    className="pointer-events-none absolute top-2 left-2 z-30 rounded border border-red-700 bg-red-900/80 px-2 py-1 text-xs text-red-100"
+                >
+                    {t('editor.mfp.templateBlocked')}
+                </div>
+            )}
+
+            {needsApproval && (
+                <div
+                    role="status"
+                    data-testid="template-needs-approval"
+                    className="pointer-events-none absolute top-2 left-2 z-30 rounded border border-amber-700 bg-amber-900/80 px-2 py-1 text-xs text-amber-100"
+                >
+                    {t('editor.mfp.templateNeedsApproval')}
+                </div>
+            )}
+
+            {templateErrors && templateErrors.size > 0 && (
+                <div
+                    role="status"
+                    data-testid="template-errors"
+                    className="pointer-events-none absolute top-8 left-2 z-30 max-w-xs rounded border border-red-700 bg-red-900/80 px-2 py-1 text-xs text-red-100"
+                >
+                    {t('editor.mfp.templateErrors', { count: templateErrors.size })}
+                </div>
+            )}
+
+            {sampleRowError && (
+                <div
+                    role="status"
+                    data-testid="sample-row-error"
+                    className="pointer-events-none absolute bottom-2 left-2 z-30 max-w-xs rounded border border-red-700 bg-red-900/80 px-2 py-1 text-xs text-red-100"
+                >
+                    {t('editor.mfp.sampleRowError', { message: sampleRowError })}
+                </div>
+            )}
+
+            {globalWarnings.length > 0 && (
+                <div
+                    role="status"
+                    data-testid="global-warnings"
+                    className="pointer-events-none absolute top-2 right-2 z-30 max-w-xs rounded border border-amber-700 bg-amber-900/80 px-2 py-1 text-xs text-amber-100"
+                >
+                    {globalWarnings.map((warning) => (
+                        <div key={`${warning.name}:${warning.kind}`}>
+                            {t('editor.mfp.globalWarning', { name: warning.name, kind: warning.kind })}
+                        </div>
+                    ))}
+                </div>
+            )}
 
             {marqueeRect && (
                 <div
