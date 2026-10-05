@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { EncodedImage } from '@mmote/niimbluelib';
 import { MockTransport } from './mockTransport';
+import { PrintAbortedError } from './transport';
 import type { PrintJob, PrintPage, PrintProgress, TransportState } from './transport';
 
 /**
@@ -98,15 +99,17 @@ describe('print spike: hardcoded 3-page job through MockTransport', () => {
 
     const { job } = hardcodedJob({ signal: controller.signal });
 
-    // 6. The print rejects with a DOMException named `AbortError`.
+    // 6. The print rejects with a PrintAbortedError named `AbortError` that
+    //    carries the number of copies actually sent before the abort.
     const error = await transport
       .print(job)
       .then(
         () => null,
         (caught: unknown) => caught,
       );
-    expect(error).toBeInstanceOf(DOMException);
-    expect((error as DOMException).name).toBe('AbortError');
+    expect(error).toBeInstanceOf(PrintAbortedError);
+    expect((error as PrintAbortedError).name).toBe('AbortError');
+    expect((error as PrintAbortedError).pagesPrinted).toBe(1);
 
     // It does not stay in `printing`: cleanup returns the transport to `connected`.
     expect(states).toEqual(['printing', 'connected']);

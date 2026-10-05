@@ -1,13 +1,25 @@
-import { beforeAll, describe, expect, it } from 'vitest';
-import { ImageEncoder, PageColorType } from '@mmote/niimbluelib';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { ImageEncoder, PageColorType, type LabelType } from '@mmote/niimbluelib';
 import { installCanvasShim } from '../test/canvasHarness';
 import { createLabelDoc } from '../core/doc/factory';
 import { rasterDimensions } from '../core/render';
 import type { LabelDoc, Node } from '../core/doc/types';
-import { orientForPrint, renderLabelPage } from '../editor/render';
+import type { CsvRecord } from '../data/csvRepo';
+import {
+    orientForPrint,
+    renderLabelPage,
+    type RenderLabelPageOptions,
+    type ResolveContext,
+} from '../editor/render';
 import { MockTransport } from './mockTransport';
 import type { PrintJob, PrintPage } from './transport';
-import { buildLabelPrintJob, printLabel } from './printLabel';
+import {
+    buildCsvPrintJob,
+    buildLabelPrintJob,
+    printLabel,
+    renderOptionsOf,
+    type PrintOverrides,
+} from './printLabel';
 
 beforeAll(() => {
     installCanvasShim();
@@ -238,5 +250,381 @@ describe('printLabel', () => {
 
         expect(result.pagesPrinted).toBe(3);
         expect(transport.jobs[0]!.quantities).toEqual([3]);
+    });
+});
+
+const csvOf = (columns: string[], rows: string[][]): CsvRecord => ({
+    id: 'csv_1',
+    name: 'test.csv',
+    columns,
+    rows,
+});
+
+describe('buildCsvPrintJob', () => {
+    it('grouped: one page per row with $times × copies', async () => {
+        const csv = csvOf(['$times'], [['2'], ['3']]);
+        const job = buildCsvPrintJob(ftagDoc(), csv, { order: 'grouped', copies: 1 });
+
+        expect(job.totalPages).toBe(5);
+        const pages = await collectPages(job);
+        expect(pages.map((page) => page.quantity)).toEqual([2, 3]);
+        expect(pages.reduce((sum, page) => sum + page.quantity, 0)).toBe(job.totalPages);
+    });
+
+    it('interleaved: quantity-1 pages in row order', async () => {
+        const csv = csvOf(['$times'], [['2'], ['3']]);
+        const seen: number[] = [];
+        const job = buildCsvPrintJob(
+            ftagDoc(),
+            csv,
+            { order: 'interleaved', copies: 1 },
+            {
+                prepareRow: async (rowIndex) => {
+                    seen.push(rowIndex);
+                    return {};
+                },
+            },
+        );
+
+        expect(job.totalPages).toBe(5);
+        const pages = await collectPages(job);
+        expect(pages.map((page) => page.quantity)).toEqual([1, 1, 1, 1, 1]);
+        expect(seen).toEqual([0, 0, 1, 1, 1]);
+        expect(pages.reduce((sum, page) => sum + page.quantity, 0)).toBe(job.totalPages);
+    });
+
+    it('multiplies $times by the global copies and skips zero rows', async () => {
+        const csv = csvOf(['$times'], [['2'], ['0'], ['1']]);
+        const job = buildCsvPrintJob(ftagDoc(), csv, { order: 'grouped', copies: 3 });
+
+        // 2×3 + 0 (skipped) + 1×3 = 9
+        expect(job.totalPages).toBe(9);
+        expect((await collectPages(job)).map((page) => page.quantity)).toEqual([6, 3]);
+    });
+
+    it('defaults $times to 1 for absent column / absent / empty / unparsable', async () => {
+        const absentColumn = csvOf(['name'], [['a'], ['b']]);
+        expect(
+            (await collectPages(buildCsvPrintJob(ftagDoc(), absentColumn, { order: 'grouped', copies: 1 }))).map(
+                (page) => page.quantity,
+            ),
+        ).toEqual([1, 1]);
+
+        const cells = csvOf(['$times'], [[''], ['abc'], ['2']]);
+        expect(
+            (await collectPages(buildCsvPrintJob(ftagDoc(), cells, { order: 'grouped', copies: 1 }))).map(
+                (page) => page.quantity,
+            ),
+        ).toEqual([1, 1, 2]);
+
+        // A row shorter than the column list → absent value → 1.
+        const shortRow = csvOf(['$times'], [[]]);
+        expect(
+            (await collectPages(buildCsvPrintJob(ftagDoc(), shortRow, { order: 'grouped', copies: 1 }))).map(
+                (page) => page.quantity,
+            ),
+        ).toEqual([1]);
+    });
+
+    it('no CSV ⇒ a single page carrying the global copies', async () => {
+        const job = buildCsvPrintJob(ftagDoc(), null, { order: 'grouped', copies: 3 });
+
+        expect(job.totalPages).toBe(3);
+        const pages = await collectPages(job);
+        expect(pages).toHaveLength(1);
+        expect(pages[0]!.quantity).toBe(3);
+    });
+
+    it('calls prepareRow lazily, once per page, not upfront', async () => {
+        const csv = csvOf(['$times'], [['1'], ['1']]);
+        const prepareRow = vi.fn(async () => ({}));
+        const job = buildCsvPrintJob(
+            ftagDoc(),
+            csv,
+            { order: 'grouped', copies: 1 },
+            { prepareRow },
+        );
+
+        expect(prepareRow).not.toHaveBeenCalled();
+        const iterator = job.pages[Symbol.asyncIterator]();
+        await iterator.next();
+        expect(prepareRow).toHaveBeenCalledTimes(1);
+        await iterator.next();
+        expect(prepareRow).toHaveBeenCalledTimes(2);
+    });
+
+    it('forwards render-relevant overrides into the render options', async () => {
+        const overrides: PrintOverrides = {
+            dpi: 150,
+            invert: true,
+            mirror: true,
+            offset: { x: 2, y: 3, type: 'inner' },
+        };
+        const render = vi.fn(
+            (doc: LabelDoc, ctx: ResolveContext, opts: RenderLabelPageOptions) =>
+                renderLabelPage(doc, ctx, opts),
+        );
+        const job = buildCsvPrintJob(ftagDoc(), null, { order: 'grouped', copies: 1, overrides }, {
+            render,
+        });
+
+        await collectPages(job);
+
+        expect(render).toHaveBeenCalledTimes(1);
+        const opts = render.mock.calls[0]![2];
+        expect(opts).toMatchObject(overrides);
+    });
+
+    it('carries only-defined task overrides onto the PrintJob', () => {
+        const job = buildCsvPrintJob(ftagDoc(), null, {
+            order: 'grouped',
+            copies: 1,
+            overrides: {
+                density: 4,
+                speed: 0,
+                labelType: 2 as LabelType,
+                pageColor: PageColorType.SingleColor,
+            },
+        });
+
+        expect(job.density).toBe(4);
+        expect(job.speed).toBe(0);
+        expect(job.labelType).toBe(2);
+        expect(job.pageColor).toBe(PageColorType.SingleColor);
+    });
+
+    it('omits unset override keys from the PrintJob', () => {
+        const job = buildCsvPrintJob(ftagDoc(), null, { order: 'grouped', copies: 1 });
+
+        expect(job).not.toHaveProperty('density');
+        expect(job).not.toHaveProperty('speed');
+        expect(job).not.toHaveProperty('labelType');
+        expect(job).not.toHaveProperty('pageColor');
+    });
+
+    it('applies print orientation for the document direction', async () => {
+        const doc = ftagDoc('bottom');
+        const [page] = await collectPages(buildCsvPrintJob(doc, null, { order: 'grouped', copies: 1 }));
+
+        const preview = await renderLabelPage(doc);
+        const oriented = orientForPrint(preview, 'bottom');
+        const expected = ImageEncoder.encodeCanvas(
+            oriented.canvas,
+            PageColorType.SingleColor,
+            oriented.direction,
+        );
+        expect(page!.data.rowsData).toEqual(expected.rowsData);
+    });
+
+    it('invariant 7: with overrides, print bytes ≡ independent render + orient + encode', async () => {
+        const doc = ftagDoc('right');
+        const overrides: PrintOverrides = {
+            dpi: 150,
+            invert: true,
+            offset: { x: 1, y: 2, type: 'inner' },
+        };
+        const [page] = await collectPages(
+            buildCsvPrintJob(doc, null, { order: 'grouped', copies: 1, overrides }),
+        );
+
+        const rendered = await renderLabelPage(doc, {}, overrides);
+        const oriented = orientForPrint(rendered, doc.label.printDirection);
+        const expected = ImageEncoder.encodeCanvas(
+            oriented.canvas,
+            PageColorType.SingleColor,
+            oriented.direction,
+        );
+        expect(page!.data).toEqual(expected);
+    });
+
+    it('D-01: throws if the page sequence would exceed totalPages', async () => {
+        let times = 1;
+        const job = buildCsvPrintJob(
+            ftagDoc(),
+            csvOf(['$times'], [['1']]),
+            { order: 'grouped', copies: 1 },
+            { timesFor: () => times },
+        );
+        expect(job.totalPages).toBe(1);
+
+        // Simulate a non-deterministic source: the generator now yields more
+        // copies than the build-time Σ promised (the callback is documented as
+        // pure/stable; violating that must fail loudly instead of over-sending).
+        times = 5;
+
+        await expect(collectPages(job)).rejects.toThrow(/exceeds totalPages/);
+    });
+
+    it('D-01: throws if the page sequence under-sends totalPages', async () => {
+        let times = 5;
+        const job = buildCsvPrintJob(
+            ftagDoc(),
+            csvOf(['$times'], [['1']]),
+            { order: 'grouped', copies: 1 },
+            { timesFor: () => times },
+        );
+        expect(job.totalPages).toBe(5);
+
+        // The generator now yields fewer copies than the transport was told; a
+        // silent under-send would leave it waiting for pages that never come.
+        times = 1;
+
+        await expect(collectPages(job)).rejects.toThrow(/under-sent/);
+    });
+
+    it('snapshots $times at build time: a later CSV mutation cannot change the sequence', async () => {
+        const csv = csvOf(['$times'], [['1']]);
+        const job = buildCsvPrintJob(ftagDoc(), csv, { order: 'grouped', copies: 1 });
+        expect(job.totalPages).toBe(1);
+
+        // The old implementation read the live cell, so this mutation made the
+        // generator disagree with `totalPages` and trip the D-01 guard. The
+        // build-time snapshot must keep the two in step.
+        csv.rows[0]![0] = '5';
+
+        const pages = await collectPages(job);
+        expect(pages.map((page) => page.quantity)).toEqual([1]);
+        expect(pages.reduce((sum, page) => sum + page.quantity, 0)).toBe(job.totalPages);
+    });
+
+    it('is re-iterable: a second pass yields the identical full sequence', async () => {
+        const csv = csvOf(['$times'], [['2'], ['3']]);
+        const job = buildCsvPrintJob(ftagDoc(), csv, { order: 'grouped', copies: 1 });
+
+        const first = await collectPages(job);
+        const second = await collectPages(job);
+
+        expect(first.map((page) => page.quantity)).toEqual([2, 3]);
+        expect(second.map((page) => page.quantity)).toEqual([2, 3]);
+        expect(second.map((page) => page.data.rowsData)).toEqual(
+            first.map((page) => page.data.rowsData),
+        );
+    });
+
+    it('rejects DoubleColor pageColor (v1 render path is single-plane)', () => {
+        expect(() =>
+            buildCsvPrintJob(ftagDoc(), null, {
+                order: 'grouped',
+                copies: 1,
+                overrides: { pageColor: PageColorType.DoubleColor },
+            }),
+        ).toThrow(RangeError);
+    });
+
+    it('hands the render seam a fresh options object per page', async () => {
+        const seen: RenderLabelPageOptions[] = [];
+        const invertPerPage: Array<boolean | undefined> = [];
+        const csv = csvOf(['$times'], [['1'], ['1']]);
+        const job = buildCsvPrintJob(
+            ftagDoc(),
+            csv,
+            { order: 'grouped', copies: 1, overrides: { invert: true } },
+            {
+                render: async (doc, ctx, opts) => {
+                    seen.push(opts);
+                    invertPerPage.push(opts.invert);
+                    const rendered = await renderLabelPage(doc, ctx, opts);
+                    delete (opts as { invert?: boolean }).invert; // try to poison the next page
+                    return rendered;
+                },
+            },
+        );
+
+        await collectPages(job);
+
+        expect(seen).toHaveLength(2);
+        expect(seen[0]).not.toBe(seen[1]);
+        // Each page must receive its own copy: poisoning page 0's object must
+        // not strip `invert` from page 1's options.
+        expect(invertPerPage).toEqual([true, true]);
+    });
+
+    it('clones the nested offset per page so a seam cannot poison later pages', async () => {
+        const offsets: Array<{ x: number; y: number }> = [];
+        const csv = csvOf(['$times'], [['1'], ['1']]);
+        const job = buildCsvPrintJob(
+            ftagDoc(),
+            csv,
+            { order: 'grouped', copies: 1, overrides: { offset: { x: 1, y: 2, type: 'inner' } } },
+            {
+                render: async (doc, ctx, opts) => {
+                    offsets.push({ x: opts.offset!.x, y: opts.offset!.y });
+                    const rendered = await renderLabelPage(doc, ctx, opts);
+                    // A shallow spread shares the offset object across pages; mutate
+                    // it after rendering to try to leak { x: 999 } into page 1.
+                    opts.offset!.x = 999;
+                    return rendered;
+                },
+            },
+        );
+
+        await collectPages(job);
+
+        // Page 1 must still see the untainted offset (a shared nested object
+        // would have made this [{x:1},{x:999}]).
+        expect(offsets).toEqual([
+            { x: 1, y: 2 },
+            { x: 1, y: 2 },
+        ]);
+    });
+
+    it('renderOptionsOf keeps only render keys (invariant 7: dialog bytes ≡ job bytes)', () => {
+        const options = renderOptionsOf(
+            {
+                density: 4,
+                speed: 0,
+                labelType: 2 as LabelType,
+                pageColor: PageColorType.SingleColor,
+                dpi: 150,
+                invert: true,
+                mirror: false,
+                offset: { x: 1, y: 2, type: 'outer' },
+            },
+            undefined,
+        );
+
+        expect(options).toEqual({
+            dpi: 150,
+            invert: true,
+            mirror: false,
+            offset: { x: 1, y: 2, type: 'outer' },
+        });
+        expect(options).not.toHaveProperty('density');
+        expect(options).not.toHaveProperty('speed');
+        expect(options).not.toHaveProperty('labelType');
+        expect(options).not.toHaveProperty('pageColor');
+    });
+});
+
+describe('$times parsing (build-time snapshot)', () => {
+    const cases: Array<{ name: string; csv: CsvRecord; expected: number[] }> = [
+        { name: 'empty cell defaults to 1', csv: csvOf(['$times'], [['']]), expected: [1] },
+        { name: 'absent times column defaults to 1', csv: csvOf(['name'], [['a']]), expected: [1] },
+        { name: 'short row (absent value) defaults to 1', csv: csvOf(['$times'], [[]]), expected: [1] },
+        { name: 'unparsable text defaults to 1', csv: csvOf(['$times'], [['abc']]), expected: [1] },
+        { name: "parses '2'", csv: csvOf(['$times'], [['2']]), expected: [2] },
+        { name: "trims ' 3 '", csv: csvOf(['$times'], [[' 3 ']]), expected: [3] },
+        { name: "floors '3.9'", csv: csvOf(['$times'], [['3.9']]), expected: [3] },
+        { name: "clamps '-1' to 0 (row skipped)", csv: csvOf(['$times'], [['-1']]), expected: [] },
+        { name: "'0' is skipped", csv: csvOf(['$times'], [['0']]), expected: [] },
+        { name: "radix 10 stops at 'e' in '1e3'", csv: csvOf(['$times'], [['1e3']]), expected: [1] },
+        { name: "radix 10 stops at 'x' in '0x10'", csv: csvOf(['$times'], [['0x10']]), expected: [] },
+    ];
+
+    it.each(cases)('$name', async ({ csv, expected }) => {
+        const job = buildCsvPrintJob(ftagDoc(), csv, { order: 'grouped', copies: 1 });
+        expect(job.totalPages).toBe(expected.reduce((sum, n) => sum + n, 0));
+        expect((await collectPages(job)).map((page) => page.quantity)).toEqual(expected);
+    });
+
+    it('does not wrap a cell above 2^31-1 (Float64Array snapshot); it trips MAX_TOTAL_PAGES', () => {
+        // `Int32Array` wrapped `3000000000` to a negative count, which `Math.max(0, …)`
+        // then turned into 0 — silently skipping the row. The snapshot is a
+        // `Float64Array` now, so the oversized value survives intact and
+        // `planSequence` rejects it via MAX_TOTAL_PAGES (deterministic, loud).
+        const csv = csvOf(['$times'], [['3000000000']]);
+        expect(() => buildCsvPrintJob(ftagDoc(), csv, { order: 'grouped', copies: 1 })).toThrow(
+            RangeError,
+        );
     });
 });

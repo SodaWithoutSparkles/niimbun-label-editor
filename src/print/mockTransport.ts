@@ -1,5 +1,6 @@
 import type { LabelType } from '@mmote/niimbluelib';
 import type { hm } from '../core/hm';
+import { PrintAbortedError } from './transport';
 import type {
   PrinterCapabilities,
   PrinterStatus,
@@ -139,13 +140,16 @@ export class MockTransport implements PrinterTransport {
     };
     this.jobs.push(record);
 
+    let printed = 0;
+
+    // Pre-abort reports 0 (nothing sent); a mid-copy abort reports the copies
+    // already emitted, so the runner can return a truthful count.
     const throwIfAborted = (signal?: AbortSignal): void => {
       if (signal?.aborted) {
-        throw new DOMException('Aborted', 'AbortError');
+        throw new PrintAbortedError(printed);
       }
     };
 
-    let printed = 0;
     try {
       // A pre-aborted signal rejects before the page sequence is pulled, so an
       // empty generator cannot silently resolve with { pagesPrinted: 0 }.

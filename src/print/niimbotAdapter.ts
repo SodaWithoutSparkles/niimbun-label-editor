@@ -14,6 +14,7 @@ import type {
   PrintOptions,
   PrintProgressEvent,
 } from '@mmote/niimbluelib';
+import { PrintAbortedError } from './transport';
 import type {
   PrinterCapabilities,
   PrinterTransport,
@@ -164,7 +165,8 @@ export class NiimbotTransport implements PrinterTransport {
     let printed = 0;
 
     try {
-      throwIfAborted(job.signal);
+      // Pre-job abort reports 0: nothing has been sent to the printer yet.
+      throwIfAborted(job.signal, 0);
 
       // Build options with only defined keys: newPrintTask spreads these over
       // the library defaults, so an explicit `undefined` would overwrite them
@@ -185,6 +187,11 @@ export class NiimbotTransport implements PrinterTransport {
       if (labelType !== undefined) {
         taskOptions.labelType = labelType;
       }
+      // Only D110M_V4 honours `speed`; forward it only when the caller set it so
+      // the library default survives the merge (same discipline as density).
+      if (job.speed !== undefined) {
+        taskOptions.speed = job.speed;
+      }
 
       const task = client.protocol.newPrintTask(taskType, taskOptions);
 
@@ -193,7 +200,9 @@ export class NiimbotTransport implements PrinterTransport {
 
       await task.printInit();
       for await (const page of job.pages) {
-        throwIfAborted(job.signal);
+        // Mid-job abort reports the copies already accumulated (one source page
+        // group at a time), never a guess.
+        throwIfAborted(job.signal, printed);
         if (!Number.isInteger(page.quantity) || page.quantity < 1) {
           throw new Error('Invalid page quantity: ' + page.quantity);
         }
@@ -386,8 +395,8 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function throwIfAborted(signal?: AbortSignal): void {
+function throwIfAborted(signal: AbortSignal | undefined, pagesPrinted: number): void {
   if (signal?.aborted) {
-    throw new DOMException('Aborted', 'AbortError');
+    throw new PrintAbortedError(pagesPrinted);
   }
 }

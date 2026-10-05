@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EncodedImage } from '@mmote/niimbluelib';
 import { MockTransport } from './mockTransport';
+import { PrintAbortedError } from './transport';
 import type { PrintJob, PrintPage, PrinterStatus } from './transport';
 
 // Any runtime import of the library is a bug: type-only imports are erased.
@@ -138,6 +139,46 @@ describe('MockTransport', () => {
 
     expect(states).toEqual(['printing', 'connected']);
     expect(transport.jobs[0].result).toEqual({ pagesPrinted: 1 });
+  });
+
+  it('reports the true copy count in PrintAbortedError on a grouped-quantity abort', async () => {
+    const transport = await connected();
+    const controller = new AbortController();
+    // quantity 5 => five physical copies; abort after the second one.
+    transport.onProgress((progress) => {
+      if (progress.page === 2) controller.abort();
+    });
+
+    const error = await transport
+      .print(jobOf([5], { signal: controller.signal }))
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+
+    expect(error).toBeInstanceOf(PrintAbortedError);
+    expect((error as PrintAbortedError).pagesPrinted).toBe(2);
+    // The generic `name` contract is preserved for cross-runtime handling.
+    expect((error as PrintAbortedError).name).toBe('AbortError');
+    // The recorded result must agree with what actually printed.
+    expect(transport.jobs[0].result).toEqual({ pagesPrinted: 2 });
+  });
+
+  it('reports zero in PrintAbortedError for a pre-aborted signal', async () => {
+    const transport = await connected();
+    const controller = new AbortController();
+    controller.abort();
+
+    const error = await transport
+      .print(jobOf([1], { signal: controller.signal }))
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+
+    expect(error).toBeInstanceOf(PrintAbortedError);
+    expect((error as PrintAbortedError).pagesPrinted).toBe(0);
+    expect(transport.jobs[0].result).toEqual({ pagesPrinted: 0 });
   });
 
   it('rejects a pre-aborted signal without pulling the generator', async () => {

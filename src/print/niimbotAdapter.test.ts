@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { instantiateClient, PageColorType } from '@mmote/niimbluelib';
 import type { EncodedImage, NiimbotAbstractClient } from '@mmote/niimbluelib';
 import { NiimbotTransport } from './niimbotAdapter';
+import { PrintAbortedError } from './transport';
 import type { PrintJob, PrintPage, PrinterStatus, PrintProgress } from './transport';
 
 const encodedImage = (): EncodedImage => ({}) as EncodedImage;
@@ -171,16 +172,48 @@ describe('NiimbotTransport orchestration', () => {
     expect(fake.printEnd).toHaveBeenCalledTimes(1);
   });
 
-  it('throws AbortError on an aborted signal and still calls printEnd', async () => {
+  it('throws PrintAbortedError(0) on a pre-aborted signal and still calls printEnd', async () => {
     const fake = makeFakeClient({ taskType: 'B1' });
     const transport = await connectedTransport(fake);
     const controller = new AbortController();
     controller.abort();
 
-    await expect(
-      transport.print(jobOf([1], { signal: controller.signal })),
-    ).rejects.toMatchObject({ name: 'AbortError' });
+    const error = await transport
+      .print(jobOf([1], { signal: controller.signal }))
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      );
 
+    expect(error).toBeInstanceOf(PrintAbortedError);
+    expect((error as PrintAbortedError).pagesPrinted).toBe(0);
+    // The generic name contract survives for cross-runtime abort handling.
+    expect((error as PrintAbortedError).name).toBe('AbortError');
+    expect(fake.printEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws PrintAbortedError with the accumulated count when aborted mid-job', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = await connectedTransport(fake);
+    const controller = new AbortController();
+
+    let pageCalls = 0;
+    fake.printPage.mockImplementation(async () => {
+      pageCalls += 1;
+      // Abort while the second source page is being sent; the adapter observes
+      // it at the next page boundary and reports the two accounted groups.
+      if (pageCalls === 2) controller.abort();
+    });
+
+    const error = await transport
+      .print(jobOf([1, 1, 1], { signal: controller.signal }))
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+
+    expect(error).toBeInstanceOf(PrintAbortedError);
+    expect((error as PrintAbortedError).pagesPrinted).toBe(2);
     expect(fake.printEnd).toHaveBeenCalledTimes(1);
   });
 
@@ -247,6 +280,19 @@ describe('NiimbotTransport orchestration', () => {
       labelType: 2,
       pageColor: PageColorType.DoubleColor,
     });
+  });
+
+  it('forwards job.speed only when defined (speed is D110M_V4-only)', async () => {
+    const fake = makeFakeClient({ taskType: 'D110M_V4' });
+    const transport = await connectedTransport(fake);
+
+    await transport.print(jobOf([1]));
+    const [, bare] = fake.newPrintTask.mock.calls[0];
+    expect(bare).not.toHaveProperty('speed');
+
+    await transport.print(jobOf([1], { speed: 0 }));
+    const [, withSpeed] = fake.newPrintTask.mock.calls[1];
+    expect(withSpeed.speed).toBe(0);
   });
 
   it('rejects print with Not connected before connecting', async () => {

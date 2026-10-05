@@ -1,6 +1,29 @@
 import type { EncodedImage, LabelType, PageColorType } from '@mmote/niimbluelib';
 import type { hm } from '../core/hm';
 
+/**
+ * Thrown by a transport when a print job is cancelled. Carries the number of
+ * physical copies actually printed before the abort was observed, so the job
+ * runner can report a truthful count instead of guessing.
+ *
+ * `name` is `'AbortError'` so generic runtime handling that matches on
+ * `error.name === 'AbortError'` (never `instanceof DOMException`, which is
+ * unreliable across realms) keeps working. Note the class is intentionally not a
+ * `DOMException`: only the count-bearing shape matters to callers.
+ *
+ * (Declared without a constructor parameter property because the project sets
+ * `erasableSyntaxOnly`.)
+ */
+export class PrintAbortedError extends Error {
+  readonly pagesPrinted: number;
+
+  constructor(pagesPrinted: number) {
+    super('Aborted');
+    this.name = 'AbortError';
+    this.pagesPrinted = pagesPrinted;
+  }
+}
+
 /** One encoded page (niimbluelib bit-plane payload) plus its copy count. */
 export interface PrintPage {
   data: EncodedImage;
@@ -15,6 +38,8 @@ export interface PrintJob {
   /** Lazily consumed one page at a time; never materialize the whole job (invariant 9). */
   pages: AsyncIterable<PrintPage>;
   density?: number;
+  /** Print speed (0 = quality, 1 = normal). Only `D110M_V4` supports it. */
+  speed?: 0 | 1;
   labelType?: LabelType;
   pageColor?: PageColorType;
   /**
@@ -75,7 +100,20 @@ export interface PrinterStatus {
 }
 
 export interface PrintProgress {
-  /** 1-based physical page index (1..pagesTotal). */
+  /**
+   * 1-based **physical copy index** (`1..pagesTotal`), not a source-page index.
+   *
+   * MockTransport emits exactly one event per physical copy. The NIIMBOT adapter
+   * forwards the device's own reported count. On a grouped source page with
+   * `quantity > 1` the copies therefore occupy consecutive indices. The device's
+   * `page` field is **non-monotonic** on `D110M_V4` (reports `1 → 0 → 1`; see
+   * `agent/memory/print-transport.md`), so consumers must clamp it monotonic
+   * rather than trust the raw value.
+   *
+   * ⚠ To be verified on hardware for grouped quantities: every smoke job so far
+   * used `quantity: 1` per page, so the "one event per copy" interpretation of
+   * the device's count is inferred, not yet observed with `quantity > 1`.
+   */
   page: number;
   pagesTotal: number;
   /** 0–100. */
