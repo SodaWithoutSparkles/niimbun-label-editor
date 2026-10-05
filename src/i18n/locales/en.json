@@ -526,5 +526,67 @@
       "label": "CSV preview",
       "empty": "No rows"
     }
+  },
+  "print": {
+    "title": "Print",
+    "pagesTitle": "Pages",
+    "totalPages": "{{pages}} pages total",
+    "order": "Order",
+    "orderGrouped": "Grouped",
+    "orderInterleaved": "Interleaved",
+    "rowCopies": "×{{copies}}",
+    "pageAlt": "Preview of row {{row}}",
+    "pagePlaceholder": "Rendering…",
+    "emptyPages": "No rows to print.",
+    "overridesTitle": "Overrides",
+    "copies": "Copies",
+    "density": "Density",
+    "speed": "Speed",
+    "speedOptions": {
+      "quality": "Quality",
+      "normal": "Normal"
+    },
+    "labelType": "Label type",
+    "labelTypeUnsupported": "{{name}} (unsupported)",
+    "labelTypeNames": {
+      "withGaps": "With gaps",
+      "black": "Black",
+      "continuous": "Continuous",
+      "perforated": "Perforated",
+      "transparent": "Transparent",
+      "pvcTag": "PVC tag",
+      "blackMarkGap": "Black mark gap",
+      "heatShrinkTube": "Heat-shrink tube"
+    },
+    "pageColor": "Page colour",
+    "pageColorSingle": "Single colour",
+    "invert": "Invert",
+    "mirror": "Mirror",
+    "offset": "Offset",
+    "offsetX": "Offset X",
+    "offsetY": "Offset Y",
+    "offsetType": "Offset type",
+    "offsetInner": "Inner",
+    "offsetOuter": "Outer",
+    "warnings": {
+      "interleaved": "Interleaved order will print {{pages}} pages (more than {{cap}}).",
+      "overflow": "Label exceeds the printhead ({{width}} px wide vs {{head}} px). Printing may be clipped.",
+      "mismatch": "Printer reports a different roll or DPI than this label (label {{labelW}}×{{labelH}} hm @ {{labelDpi}} dpi).",
+      "mirrorClipped": "Mirroring discarded {{pixels}} ink pixels outside the printable area."
+    },
+    "progress": {
+      "sending": "Sending…",
+      "printing": "Printing page {{page}} / {{total}}",
+      "percent": "{{percent}}%"
+    },
+    "action": "Print",
+    "cancel": "Cancel",
+    "close": "Close",
+    "outcome": {
+      "success": "Printed {{pages}} pages.",
+      "cancelled": "Cancelled after {{pages}} pages.",
+      "error": "Print failed: {{message}}"
+    },
+    "planError": "This job is too large to plan."
   }
 }
