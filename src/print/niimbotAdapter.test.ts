@@ -31,7 +31,11 @@ interface FakeClient {
 }
 
 function makeFakeClient(
-  options: { taskType?: string; failOnPage?: number } = {},
+  options: {
+    taskType?: string;
+    failOnPage?: number;
+    metadata?: Record<string, unknown>;
+  } = {},
 ): FakeClient {
   const order: string[] = [];
   const handlers: Record<string, (event: unknown) => void> = {};
@@ -94,7 +98,7 @@ function makeFakeClient(
     getRfidInfo: vi.fn(() => ({
       paperInfo: { valid: true, paperWidth: 40, paperHeight: 30 },
     })),
-    getModelMetadata: vi.fn(() => undefined),
+    getModelMetadata: vi.fn(() => options.metadata),
   };
 
   return {
@@ -442,6 +446,111 @@ describe('NiimbotTransport orchestration', () => {
     await expect(transport.print(jobOf([1]))).rejects.toThrow('print failed');
 
     expect(statuses[statuses.length - 1]?.error).toBe('print failed');
+  });
+});
+
+describe('NiimbotTransport capabilities', () => {
+  const metadata = {
+    model: 'B1_PRO',
+    printheadPixels: 567,
+    densityMin: 1,
+    densityMax: 5,
+    densityDefault: 3,
+    paperTypes: [1, 2, 5],
+    dpi: 300,
+    printDirection: 'top',
+  };
+
+  const connectedOf = (statuses: PrinterStatus[]): PrinterStatus | undefined =>
+    statuses.find((status) => status.state === 'connected');
+
+  const connectAndCollect = async (
+    fake: FakeClient,
+  ): Promise<PrinterStatus | undefined> => {
+    const transport = new NiimbotTransport({ createClient: () => fake.client });
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+    await transport.connect();
+    return connectedOf(statuses);
+  };
+
+  it('maps model metadata and the detected print task to capabilities', async () => {
+    const fake = makeFakeClient({ taskType: 'D110M_V4', metadata });
+
+    const connected = await connectAndCollect(fake);
+
+    expect(connected?.capabilities).toEqual({
+      model: 'B1_PRO',
+      taskType: 'D110M_V4',
+      printheadPixels: 567,
+      densityMin: 1,
+      densityMax: 5,
+      densityDefault: 3,
+      paperTypes: [1, 2, 5],
+      doubleColor: true,
+      tubePrinting: true,
+      supportsSpeed: true,
+    });
+  });
+
+  it('reflects printTasksCapabilities for the detected task', async () => {
+    // B1 supports double colour but not tube printing, and not speed.
+    const fake = makeFakeClient({ taskType: 'B1', metadata });
+
+    const connected = await connectAndCollect(fake);
+
+    expect(connected?.capabilities?.doubleColor).toBe(true);
+    expect(connected?.capabilities?.tubePrinting).toBe(false);
+    expect(connected?.capabilities?.supportsSpeed).toBe(false);
+  });
+
+  it('does not throw and reports no task flags for an unknown task type', async () => {
+    // At runtime a client can report a task name the capabilities table lacks
+    // (the declared Record type hides that). connect() must stay connected.
+    const fake = makeFakeClient({ taskType: 'UNKNOWN_TASK', metadata });
+
+    const connected = await connectAndCollect(fake);
+
+    expect(connected?.state).toBe('connected');
+    expect(connected?.capabilities?.taskType).toBe('UNKNOWN_TASK');
+    expect(connected?.capabilities?.doubleColor).toBe(false);
+    expect(connected?.capabilities?.tubePrinting).toBe(false);
+    expect(connected?.capabilities?.supportsSpeed).toBe(false);
+  });
+
+  it('leaves capabilities undefined when model metadata is absent', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+
+    const connected = await connectAndCollect(fake);
+
+    expect(connected?.capabilities).toBeUndefined();
+  });
+
+  it('omits task-type flags when the print task is unidentified', async () => {
+    const fake = makeFakeClient({ taskType: undefined, metadata });
+
+    const connected = await connectAndCollect(fake);
+
+    expect(connected?.capabilities).toMatchObject({
+      model: 'B1_PRO',
+      printheadPixels: 567,
+    });
+    expect(connected?.capabilities).not.toHaveProperty('taskType');
+    expect(connected?.capabilities).not.toHaveProperty('doubleColor');
+    expect(connected?.capabilities).not.toHaveProperty('tubePrinting');
+    expect(connected?.capabilities).not.toHaveProperty('supportsSpeed');
+  });
+
+  it('keeps getDetected working', async () => {
+    const fake = makeFakeClient({ taskType: 'D110M_V4', metadata });
+    const transport = new NiimbotTransport({ createClient: () => fake.client });
+    await transport.connect();
+
+    expect(transport.getDetected()).toMatchObject({
+      model: 'B1_PRO',
+      taskType: 'D110M_V4',
+      printheadPixels: 567,
+    });
   });
 });
 

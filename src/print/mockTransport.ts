@@ -1,17 +1,57 @@
+import type { LabelType } from '@mmote/niimbluelib';
+import type { hm } from '../core/hm';
 import type {
+  PrinterCapabilities,
+  PrinterStatus,
   PrintJob,
   PrintProgress,
   PrintResult,
-  PrinterStatus,
   PrinterTransport,
   TransportState,
 } from './transport';
+
+/** Named niimbluelib `LabelType` values (grep target for the numeric table). */
+const PAPER_WITH_GAPS = 1 as LabelType;
+const PAPER_BLACK = 2 as LabelType;
+const PAPER_TRANSPARENT = 5 as LabelType;
+const DEFAULT_PAPER_TYPES: LabelType[] = [
+  PAPER_WITH_GAPS,
+  PAPER_BLACK,
+  PAPER_TRANSPARENT,
+];
+
+/**
+ * B1_PRO-like capability defaults reported by the mock so the dev harness and
+ * UI tests exercise the gated path. Kept literal so this module stays free of a
+ * runtime `@mmote/niimbluelib` import.
+ */
+const DEFAULT_CAPABILITIES: PrinterCapabilities = {
+  model: 'B1_PRO',
+  taskType: 'D110M_V4',
+  printheadPixels: 567,
+  densityMin: 1,
+  densityMax: 5,
+  densityDefault: 3,
+  paperTypes: DEFAULT_PAPER_TYPES,
+  doubleColor: true,
+  tubePrinting: true,
+  supportsSpeed: true,
+};
 
 export interface MockTransportOptions {
   deviceName?: string;
   dpi?: number;
   connectDelayMs?: number;
   pageDelayMs?: number;
+  /**
+   * Reported capabilities, merged over the B1_PRO-like defaults. Pass `null` to
+   * report none (disables UI gating).
+   */
+  capabilities?: Partial<PrinterCapabilities> | null;
+  /** Printer-reported roll width in hm, surfaced in status when set. */
+  rollWidthHm?: hm;
+  /** Printer-reported roll height in hm, surfaced in status when set. */
+  rollHeightHm?: hm;
 }
 
 /**
@@ -27,6 +67,9 @@ export class MockTransport implements PrinterTransport {
   private readonly dpi: number;
   private readonly connectDelayMs: number;
   private readonly pageDelayMs: number;
+  private readonly capabilities?: PrinterCapabilities;
+  private readonly rollWidthHm?: hm;
+  private readonly rollHeightHm?: hm;
 
   private connected = false;
 
@@ -38,6 +81,22 @@ export class MockTransport implements PrinterTransport {
     this.dpi = options.dpi ?? 300;
     this.connectDelayMs = options.connectDelayMs ?? 0;
     this.pageDelayMs = options.pageDelayMs ?? 0;
+    const merged =
+      options.capabilities === null
+        ? undefined
+        : { ...DEFAULT_CAPABILITIES, ...options.capabilities };
+    // Copy the paper-type array so the module-level default is never aliased.
+    this.capabilities =
+      merged === undefined
+        ? undefined
+        : {
+            ...merged,
+            ...(merged.paperTypes !== undefined
+              ? { paperTypes: [...merged.paperTypes] }
+              : {}),
+          };
+    this.rollWidthHm = options.rollWidthHm;
+    this.rollHeightHm = options.rollHeightHm;
   }
 
   async connect(): Promise<void> {
@@ -135,6 +194,21 @@ export class MockTransport implements PrinterTransport {
       deviceName: this.deviceName,
       dpi: this.dpi,
     };
+    if (this.capabilities !== undefined) {
+      // Fresh capabilities + array per emit: consumers never share state.
+      status.capabilities = {
+        ...this.capabilities,
+        ...(this.capabilities.paperTypes !== undefined
+          ? { paperTypes: [...this.capabilities.paperTypes] }
+          : {}),
+      };
+    }
+    if (this.rollWidthHm !== undefined) {
+      status.rollWidthHm = this.rollWidthHm;
+    }
+    if (this.rollHeightHm !== undefined) {
+      status.rollHeightHm = this.rollHeightHm;
+    }
     for (const listener of this.statusListeners) {
       listener(status);
     }

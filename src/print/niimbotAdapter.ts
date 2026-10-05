@@ -1,4 +1,10 @@
-import { instantiateClient, ResolutionClass, PageColorType } from '@mmote/niimbluelib';
+import {
+  instantiateClient,
+  ResolutionClass,
+  PageColorType,
+  PrintTaskCapability,
+  printTasksCapabilities,
+} from '@mmote/niimbluelib';
 import type {
   CombinedRfidInfo,
   LabelType,
@@ -9,6 +15,7 @@ import type {
   PrintProgressEvent,
 } from '@mmote/niimbluelib';
 import type {
+  PrinterCapabilities,
   PrinterTransport,
   PrintJob,
   PrintResult,
@@ -110,6 +117,7 @@ export class NiimbotTransport implements PrinterTransport {
         batteryPercent: printerInfo.batteryPercents,
         rollWidthHm: hmOf(rfidInfo.paperInfo?.paperWidth),
         rollHeightHm: hmOf(rfidInfo.paperInfo?.paperHeight),
+        capabilities: capabilitiesOf(client),
       };
 
       this.connected = true;
@@ -333,6 +341,41 @@ function dpiOf(info: PrinterInfo): number | undefined {
     return 300;
   }
   return undefined;
+}
+
+/** Map model metadata + the detected print task onto {@link PrinterCapabilities}.
+ * Absent model metadata yields `undefined` (no gating, no crash). Only defined
+ * keys are set, and `paperTypes` is copied so consumers can never mutate the
+ * library metadata (or the shared `lastConnected` status). */
+function capabilitiesOf(client: NiimbotAbstractClient): PrinterCapabilities | undefined {
+  const meta = client.getModelMetadata();
+  if (!meta) {
+    return undefined;
+  }
+
+  const capabilities: PrinterCapabilities = {
+    ...(meta.model !== undefined ? { model: meta.model } : {}),
+    ...(meta.printheadPixels !== undefined ? { printheadPixels: meta.printheadPixels } : {}),
+    ...(meta.densityMin !== undefined ? { densityMin: meta.densityMin } : {}),
+    ...(meta.densityMax !== undefined ? { densityMax: meta.densityMax } : {}),
+    ...(meta.densityDefault !== undefined ? { densityDefault: meta.densityDefault } : {}),
+    ...(meta.paperTypes !== undefined ? { paperTypes: [...meta.paperTypes] } : {}),
+  };
+
+  // Falsy guard matches print(): a null/'' task must never index the table.
+  const taskType = client.getPrintTaskType();
+  if (taskType) {
+    // An unknown task type is absent from the table at runtime (the declared
+    // Record type hides this): default to no capabilities instead of crashing.
+    const taskCaps = printTasksCapabilities[taskType] ?? [];
+    capabilities.taskType = taskType;
+    capabilities.doubleColor = taskCaps.includes(PrintTaskCapability.SupportDoubleColor);
+    capabilities.tubePrinting = taskCaps.includes(PrintTaskCapability.SupportTubePrinting);
+    // Placeholder: the library exposes no speed capability bit; replace when it does.
+    capabilities.supportsSpeed = taskType === 'D110M_V4';
+  }
+
+  return capabilities;
 }
 
 function hmOf(mm: number | undefined): number | undefined {

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EncodedImage } from '@mmote/niimbluelib';
 import { MockTransport } from './mockTransport';
-import type { PrintJob, PrintPage } from './transport';
+import type { PrintJob, PrintPage, PrinterStatus } from './transport';
 
 // Any runtime import of the library is a bug: type-only imports are erased.
 vi.mock('@mmote/niimbluelib', () => {
@@ -217,5 +217,100 @@ describe('MockTransport', () => {
     const transport = new FreshMockTransport();
 
     await expect(transport.connect()).resolves.toBeUndefined();
+  });
+});
+
+describe('MockTransport capabilities', () => {
+  const connectedStatus = async (
+    options: ConstructorParameters<typeof MockTransport>[0] = {},
+  ): Promise<PrinterStatus | undefined> => {
+    const transport = new MockTransport(options);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+    await transport.connect();
+    return statuses.find((status) => status.state === 'connected');
+  };
+
+  it('reports the B1_PRO-like capability defaults', async () => {
+    const connected = await connectedStatus();
+
+    expect(connected?.capabilities).toEqual({
+      model: 'B1_PRO',
+      taskType: 'D110M_V4',
+      printheadPixels: 567,
+      densityMin: 1,
+      densityMax: 5,
+      densityDefault: 3,
+      paperTypes: [1, 2, 5],
+      doubleColor: true,
+      tubePrinting: true,
+      supportsSpeed: true,
+    });
+  });
+
+  it('maps the default paperTypes to the real LabelType values', async () => {
+    // The module keeps a cast-only numeric table; import the real enum here to
+    // close the cast-blind mapping. `importActual` bypasses the throwing mock.
+    const { LabelType } = await vi.importActual<typeof import('@mmote/niimbluelib')>(
+      '@mmote/niimbluelib',
+    );
+    const connected = await connectedStatus();
+
+    expect(connected?.capabilities?.paperTypes).toEqual([
+      LabelType.WithGaps,
+      LabelType.Black,
+      LabelType.Transparent,
+    ]);
+  });
+
+  it('emits an independent paperTypes copy per status', async () => {
+    const transport = new MockTransport();
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    await transport.connect();
+
+    const arrays = statuses
+      .map((status) => status.capabilities?.paperTypes)
+      .filter((paperTypes): paperTypes is NonNullable<typeof paperTypes> => !!paperTypes);
+    expect(arrays.length).toBeGreaterThan(1);
+
+    // Every emit owns its array...
+    expect(new Set(arrays).size).toBe(arrays.length);
+    // ...so mutating one never touches an earlier/later status.
+    arrays[0].push(99 as never);
+    expect(arrays[1]).toEqual([1, 2, 5]);
+  });
+
+  it('merges capability overrides over the defaults', async () => {
+    const connected = await connectedStatus({
+      capabilities: { densityMax: 9, doubleColor: false },
+    });
+
+    expect(connected?.capabilities).toMatchObject({
+      model: 'B1_PRO',
+      densityMax: 9,
+      doubleColor: false,
+    });
+  });
+
+  it('reports no capabilities when disabled with null', async () => {
+    const connected = await connectedStatus({ capabilities: null });
+
+    expect(connected).not.toHaveProperty('capabilities');
+  });
+
+  it('surfaces optional roll dimensions in the status', async () => {
+    const connected = await connectedStatus({ rollWidthHm: 4000, rollHeightHm: 3000 });
+
+    expect(connected?.rollWidthHm).toBe(4000);
+    expect(connected?.rollHeightHm).toBe(3000);
+  });
+
+  it('omits roll dimensions when not configured', async () => {
+    const connected = await connectedStatus();
+
+    expect(connected).not.toHaveProperty('rollWidthHm');
+    expect(connected).not.toHaveProperty('rollHeightHm');
   });
 });

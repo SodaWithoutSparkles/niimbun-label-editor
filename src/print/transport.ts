@@ -36,6 +36,30 @@ export interface PrintResult {
 export type TransportState =
   | 'disconnected' | 'connecting' | 'connected' | 'printing' | 'error';
 
+/** Connected/reported printer capabilities, used to gate print overrides (P7 W0). */
+export interface PrinterCapabilities {
+  /** Printer model, e.g. 'B1_PRO'. */
+  model?: string;
+  /** Print-task type selected for the model, e.g. 'D110M_V4'. */
+  taskType?: string;
+  /** Printhead dot count, e.g. 567 for B1_PRO. */
+  printheadPixels?: number;
+  densityMin?: number;
+  densityMax?: number;
+  densityDefault?: number;
+  /** Supported label/paper types (niimbluelib LabelType values). */
+  paperTypes?: LabelType[];
+  /** Print task supports double-colour pages. */
+  doubleColor?: boolean;
+  /** Print task supports tube printing. */
+  tubePrinting?: boolean;
+  /**
+   * Print task supports the `speed` print option. Only `D110M_V4` does
+   * (the reference app shows the speed control for that task alone).
+   */
+  supportsSpeed?: boolean;
+}
+
 export interface PrinterStatus {
   state: TransportState;
   deviceName?: string;
@@ -46,6 +70,8 @@ export interface PrinterStatus {
   rollHeightHm?: hm;
   batteryPercent?: number;
   error?: string;
+  /** Reported capabilities; absent when the printer model is unknown (no gating). */
+  capabilities?: PrinterCapabilities;
 }
 
 export interface PrintProgress {
