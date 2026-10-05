@@ -13,7 +13,8 @@
 2. `state.md` P6 record + `phase6_action-plan.md` (what P6 shipped and what it deferred).
 3. `agent/memory/csv-templates.md` (P6 CSV/templates/trust), `agent/memory/print-transport.md`
    (transport contract + adapter flow), `agent/memory/objects-assets.md`,
-   `agent/memory/testing.md`, `agent/memory/dialogs.md`.
+   `agent/memory/testing.md`, `agent/memory/dialogs.md`, **`agent/memory/tech-debt.md`**
+   (the debt register — D-01…D-05 are P7-owned).
 4. Reference clone (gitignored): `references/niimblue/src/components/PrintPreview.svelte`
    (per-row render, `$times`, `offset.{x,y,offsetType}`), `canvas_preprocess.ts`, `defaults.ts`.
 
