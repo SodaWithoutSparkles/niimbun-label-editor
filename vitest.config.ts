@@ -3,7 +3,8 @@ import viteConfig from './vite.config'
 
 export default mergeConfig(viteConfig, defineConfig({
   test: {
-    environment: 'happy-dom',
+    // DOM-less by default; DOM tests opt in with `// @vitest-environment happy-dom`.
+    environment: 'node',
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     clearMocks: true,
