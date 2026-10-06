@@ -185,6 +185,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         prepareRow,
         assets,
         overrides: thumbnailOverrides,
+        enabled: open,
     });
 
     const printOverrides = useMemo<PrintOverrides>(

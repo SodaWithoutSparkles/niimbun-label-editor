@@ -25,6 +25,8 @@ export const Header: React.FC = () => {
     // The centre title is the open document's name — the only name the app
     // actually persists. Hidden in the gallery (there is no document to name).
     const docName = useStore(state => state.currentDoc?.meta.name ?? '');
+    const hasDoc = useStore(state => state.currentDoc !== null);
+    const openPrint = useStore(state => state.openPrint);
     const renameDoc = useStore(state => state.renameDoc);
     const saveCurrentLabel = useStore(state => state.saveCurrentLabel);
     const autoSave = useStore(state => state.autoSave);
@@ -146,7 +148,9 @@ export const Header: React.FC = () => {
                 autoSave={autoSave}
                 onSave={handleSave}
                 onToggleAutoSave={toggleAutoSave}
+                onPrint={openPrint}
                 saveDisabled={!isEditor}
+                printDisabled={!isEditor || !hasDoc}
             />
 
             <div className="absolute left-1/2 top-0 h-full -translate-x-1/2 flex items-center max-w-[480px] w-full justify-center px-4">

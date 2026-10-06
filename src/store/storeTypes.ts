@@ -134,6 +134,15 @@ export interface AppState {
     // Document library / shell (docSlice) — never persisted
     view: 'gallery' | 'editor';
     setView: (view: AppState['view']) => void;
+    /**
+     * Print-dialog open flag. Lives in the store (not `EditorShell` local state)
+     * so the header's File ▸ Print… action and the editor's Ctrl/Cmd+P handler
+     * can both open it without prop-drilling. Only ever set while a document is
+     * open in the editor.
+     */
+    isPrintOpen: boolean;
+    openPrint: () => void;
+    closePrint: () => void;
     currentDoc: LabelDoc | null;
     gallery: LabelSummary[];
     galleryLoading: boolean;

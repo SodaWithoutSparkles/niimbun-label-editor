@@ -34,6 +34,13 @@ export const EditorKeyboardShortcuts = () => {
 
             if (state.view !== 'editor') return;
 
+            // Open the print dialog (and suppress the browser's print dialog).
+            if (mod && key === 'p') {
+                event.preventDefault();
+                state.openPrint();
+                return;
+            }
+
             if (mod && key === 'z' && !event.shiftKey) {
                 event.preventDefault();
                 state.undoDoc();

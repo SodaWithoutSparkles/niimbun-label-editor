@@ -2,6 +2,7 @@
   "fileMenu": {
     "title": "File",
     "saveProject": "Save Label",
+    "print": "Print…",
     "autoSave": "Auto-save"
   },
   "bottomBar": {
@@ -280,6 +281,10 @@
   "connection": {
     "connected": "Connected",
     "disconnected": "Disconnected",
+    "connecting": "Connecting…",
+    "error": "Printer error",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
     "statusAria": "Printer connection status"
   },
   "createLabel": {

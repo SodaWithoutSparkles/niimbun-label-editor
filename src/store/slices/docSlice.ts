@@ -54,8 +54,19 @@ export const createDocSlice: StoreSlice = (set, get) => {
             // before the view changes (the timer would otherwise fire with
             // `view !== 'editor'` and silently discard the edit).
             if (get().view === 'editor' && view !== 'editor') void get().flushAutosave();
-            set({ view });
+            // The print dialog is editor-only; leaving the editor closes it so a
+            // later return does not re-open a stale dialog.
+            set({ view, ...(view === 'editor' ? {} : { isPrintOpen: false }) });
         },
+
+        // Print-dialog open flag (see `AppState.isPrintOpen`). Guarded on an open
+        // document: File ▸ Print… and Ctrl/Cmd+P both route through here, and a
+        // dialog with no `currentDoc` must never open.
+        isPrintOpen: false,
+        openPrint: () => {
+            if (get().view === 'editor' && get().currentDoc) set({ isPrintOpen: true });
+        },
+        closePrint: () => set({ isPrintOpen: false }),
 
         // Document library
         currentDoc: null,

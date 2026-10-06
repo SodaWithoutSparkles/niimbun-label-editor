@@ -10,8 +10,11 @@ interface FileMenuProps {
     autoSave: boolean;
     onSave: () => void;
     onToggleAutoSave: () => void;
+    onPrint: () => void;
     /** Save writes the open document; disabled while the gallery is showing. */
     saveDisabled: boolean;
+    /** Print needs an open document in the editor. */
+    printDisabled: boolean;
 }
 
 /**
@@ -27,7 +30,9 @@ export const FileMenu: React.FC<FileMenuProps> = ({
     autoSave,
     onSave,
     onToggleAutoSave,
+    onPrint,
     saveDisabled,
+    printDisabled,
 }) => {
     const { t } = useTranslation();
     return (
@@ -47,6 +52,12 @@ export const FileMenu: React.FC<FileMenuProps> = ({
                         label={t('fileMenu.saveProject')}
                         disabled={saveDisabled}
                         onClick={() => { onSave(); onCloseMenu(); }}
+                    />
+                    <MenuItem
+                        label={t('fileMenu.print')}
+                        shortcut="Ctrl+P"
+                        disabled={printDisabled}
+                        onClick={() => { onPrint(); onCloseMenu(); }}
                     />
                     <MenuItem
                         label={t('fileMenu.autoSave')}
