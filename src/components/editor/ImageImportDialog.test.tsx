@@ -32,6 +32,11 @@ const fillUrl = (url: string) => {
 };
 
 describe('ImageImportDialog (P5)', () => {
+    it('titles the replace variant distinctly (replace-in-place #2)', () => {
+        render(<ImageImportDialog open variant="replace" onClose={vi.fn()} onImported={vi.fn()} />);
+        expect(screen.getByText('Replace image')).toBeTruthy();
+    });
+
     it('shows a localised failure message for an import error (must-fix #4)', async () => {
         mockedImportImageUrl.mockRejectedValue(new Error('importImageUrl: fetch failed (404)'));
         render(<ImageImportDialog open onClose={vi.fn()} onImported={vi.fn()} />);

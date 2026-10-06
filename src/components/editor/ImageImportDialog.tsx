@@ -27,9 +27,21 @@ interface ImageImportDialogProps {
     open: boolean;
     onClose: () => void;
     onImported: (ref: ImageRef) => void;
+    /**
+     * `insert` (default) registers a fresh asset; `replace` re-uses this dialog
+     * to source a replacement for an existing asset. The `onImported` contract is
+     * identical — the caller decides whether to add or patch the ref — so the
+     * variant only changes the localised title.
+     */
+    variant?: 'insert' | 'replace';
 }
 
-export const ImageImportDialog: React.FC<ImageImportDialogProps> = ({ open, onClose, onImported }) => {
+export const ImageImportDialog: React.FC<ImageImportDialogProps> = ({
+    open,
+    onClose,
+    onImported,
+    variant = 'insert',
+}) => {
     const { t } = useTranslation();
     const resourceRepo = useStore((state) => state.resourceRepo);
     const [mode, setMode] = useState<ImportMode>('file');
@@ -107,7 +119,11 @@ export const ImageImportDialog: React.FC<ImageImportDialogProps> = ({ open, onCl
             open={open}
             onClose={handleClose}
             closeDisabled={busy}
-            title={t('editor.insert.imageImportTitle')}
+            title={t(
+                variant === 'replace'
+                    ? 'editor.insert.imageImportReplaceTitle'
+                    : 'editor.insert.imageImportTitle',
+            )}
             size="sm"
             footer={
                 <>

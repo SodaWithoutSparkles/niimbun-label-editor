@@ -57,6 +57,27 @@ describe('uniformFactor / sizeFactors', () => {
             sy: 3,
         });
     });
+
+    it('uses an explicit uniform scale verbatim (no max-collapse bias)', () => {
+        // A corner gesture supplies its exact live factor, so a target box that
+        // was rounded to a slightly non-uniform pair cannot bias the result.
+        expect(sizeFactors({ w: 100, h: 33 }, { w: 150, h: 50 }, true, 1.5)).toEqual({
+            sx: 1.5,
+            sy: 1.5,
+        });
+        // The fallback (no explicit factor) still collapses a direct call.
+        expect(sizeFactors({ w: 100, h: 33 }, { w: 150, h: 50 }, true)).toEqual({
+            sx: 50 / 33,
+            sy: 50 / 33,
+        });
+    });
+
+    it('ignores uniformScale for a free (side-anchor) resize', () => {
+        expect(sizeFactors({ w: 100, h: 50 }, { w: 200, h: 50 }, false, 2)).toEqual({
+            sx: 2,
+            sy: 1,
+        });
+    });
 });
 
 describe('resizeNodeGeometry — aspect vs free', () => {

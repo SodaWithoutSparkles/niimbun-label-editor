@@ -3,7 +3,7 @@ import type Konva from 'konva';
 import { createLabelDoc } from '../../core/doc/factory';
 import type { ContentSource, Node } from '../../core/doc/types';
 import type { ResolvedContent } from '../../editor/render/resolve';
-import { isTransformerTarget, resolvePreviewTree } from './PreviewStage';
+import { isTransformerTarget, resolvePreviewTree, transformerTargetIds } from './PreviewStage';
 
 /**
  * W6 wiring: `PreviewStage` feeds the shared sample-row **override map** into
@@ -78,5 +78,39 @@ describe('isTransformerTarget — Transformer anchor guard (task 12)', () => {
     it('returns false for a null/undefined target', () => {
         expect(isTransformerTarget(null)).toBe(false);
         expect(isTransformerTarget(undefined)).toBe(false);
+    });
+});
+
+describe('transformerTargetIds — groups excluded from the Transformer (#13/D-10)', () => {
+    const group: Node = {
+        id: 'g',
+        parentId: null,
+        type: 'group',
+        visible: true,
+        locked: false,
+        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+    };
+    const rect: Node = {
+        id: 'r',
+        parentId: null,
+        type: 'shape',
+        shape: 'rectangle',
+        visible: true,
+        locked: false,
+        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+    };
+
+    it('drops selected groups but keeps the leaves', () => {
+        expect(transformerTargetIds(['g', 'r'], [group, rect])).toEqual(['r']);
+    });
+
+    it('keeps a selection with no groups intact', () => {
+        expect(transformerTargetIds(['r'], [group, rect])).toEqual(['r']);
+    });
+
+    it('keeps ids with no matching node (only groups are dropped here)', () => {
+        // The downstream `.filter(Boolean)` on the Konva refs drops unknown ids;
+        // this helper only filters groups.
+        expect(transformerTargetIds(['g', 'missing'], [group])).toEqual(['missing']);
     });
 });

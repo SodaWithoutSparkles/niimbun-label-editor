@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '../../i18n';
 import { useStore } from '../../store/useStore';
 import { createLabelDoc } from '../../core/doc/factory';
 import { createMemoryAdapter } from '../../data/db';
 import { createResourceRepo } from '../../data/resourceRepo';
+import { importImageFile } from '../../editor/assetImport';
 import { bytesProviderFor, createResourceAssetDeps } from './usePreparedAssets';
 import type { FontRef, ImageRef, Node } from '../../core/doc/types';
 import { SampleRowContext } from './sampleRowContext';
@@ -22,6 +23,12 @@ import {
     textContentPatch,
     textContentValue,
 } from './ObjectTab';
+
+vi.mock('../../editor/assetImport', () => ({
+    importImageFile: vi.fn(),
+    importImageUrl: vi.fn(),
+    importFontFile: vi.fn(),
+}));
 
 const node = (value: Record<string, unknown>): Node => value as unknown as Node;
 
@@ -43,7 +50,8 @@ const doc = (nodes: Node[]) =>
 
 afterEach(() => {
     cleanup();
-    useStore.setState({ currentDoc: null, selectedNodeIds: [], docPast: [] });
+    vi.mocked(importImageFile).mockReset();
+    useStore.setState({ currentDoc: null, selectedNodeIds: [], docPast: [], resourceRepo: null });
 });
 
 describe('size mapping (must-fix #1)', () => {
@@ -489,6 +497,80 @@ describe('ObjectTab — asset name/alt rename (P5)', () => {
         const nodeRef = state.currentDoc!.nodes.find((n) => n.id === 't')! as { fontId?: string };
         expect(ref.name).toBe('Heading font');
         expect(nodeRef.fontId).toBe('font-1');
+    });
+});
+
+describe('ObjectTab — replace image in place (#2)', () => {
+    it('patches the existing ref source, keeps the node imageId, one undo entry', async () => {
+        const selected = imageNode({ imageId: 'img-1' });
+        useStore.setState({
+            currentDoc: withResources([selected], [imageRef]),
+            selectedNodeIds: ['a'],
+            resourceRepo: createResourceRepo(createMemoryAdapter()),
+        });
+        const replacement: ImageRef = {
+            imageId: 'img-2',
+            name: 'new.png',
+            source: { kind: 'local', mediaType: 'image/png', resourceId: 'img-2', fingerprint: 'fp' },
+            widthPx: 640,
+            heightPx: 480,
+        };
+        vi.mocked(importImageFile).mockResolvedValue({ ref: replacement, bytes: new Uint8Array() });
+
+        render(<ObjectTab selected={[selected]} />);
+        fireEvent.click(screen.getByRole('button', { name: 'Replace image' }));
+
+        // The dialog opens in replace mode; its hidden image picker auto-imports.
+        const imageInput = document.querySelector(
+            'input[type="file"][accept="image/*"]',
+        ) as HTMLInputElement;
+        expect(imageInput).toBeTruthy();
+        fireEvent.change(imageInput, {
+            target: { files: [new File(['x'], 'new.png', { type: 'image/png' })] },
+        });
+
+        await waitFor(() => expect(useStore.getState().docPast).toHaveLength(1));
+
+        const state = useStore.getState();
+        // No new ref: the existing entry was patched, so nothing is orphaned.
+        expect(state.currentDoc!.resources.images).toHaveLength(1);
+        const ref = state.currentDoc!.resources.images[0]!;
+        expect(ref.imageId).toBe('img-1');
+        expect(ref.source).toEqual(replacement.source);
+        expect(ref.widthPx).toBe(640);
+        expect(ref.heightPx).toBe(480);
+        // Name/alt belong to the asset identity and are preserved.
+        expect(ref.name).toBe('logo.png');
+        expect(ref.alt).toBe('a logo');
+
+        // The node still references the same asset id.
+        const nodeRef = state.currentDoc!.nodes.find((n) => n.id === 'a')! as { imageId: string };
+        expect(nodeRef.imageId).toBe('img-1');
+
+        // One undo entry fully reverts the replacement.
+        state.undoDoc();
+        const reverted = useStore.getState().currentDoc!.resources.images[0]!;
+        expect(reverted.source).toEqual(imageRef.source);
+        expect(reverted.widthPx).toBe(100);
+        expect(reverted.heightPx).toBe(50);
+
+        // The replace target is cleared when the dialog closes, so a later
+        // insert can never silently patch this ref again (SF1).
+        expect(document.querySelector('dialog h2')?.textContent).toBe('Import image');
+    });
+
+    it('clears the replace target after cancel (a later open is an insert)', () => {
+        const selected = imageNode({ imageId: 'img-1' });
+        useStore.setState({ currentDoc: withResources([selected], [imageRef]), selectedNodeIds: ['a'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        // Replace mode is armed and shown.
+        fireEvent.click(screen.getByRole('button', { name: 'Replace image' }));
+        expect(document.querySelector('dialog h2')?.textContent).toBe('Replace image');
+
+        // Cancelling must drop the replace target too, not just close the dialog.
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+        expect(document.querySelector('dialog h2')?.textContent).toBe('Import image');
     });
 });
 

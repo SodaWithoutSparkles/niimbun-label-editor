@@ -41,6 +41,15 @@ interface ObjectTabProps {
     selected: readonly Node[];
 }
 
+/**
+ * The image import dialog's mode, or `null` when it is closed. `insert`
+ * registers a fresh asset and assigns it to the selection; `replace` patches
+ * the named existing ref in place (the node keeps its `imageId`). Modelling
+ * both as one state makes "insert ⇒ no replace target" structural, so a stale
+ * replace id can never leak into an insert.
+ */
+type ImageDialogState = { mode: 'insert' } | { mode: 'replace'; imageId: string };
+
 const FIELD_LABEL_KEYS = {
     x: 'editor.mfp.field.x',
     y: 'editor.mfp.field.y',
@@ -359,7 +368,7 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     const updateFontRef = useStore((state) => state.updateFontRef);
 
     const [fontBadgeMap, setFontBadgeMap] = useState<ReadonlyMap<string, FontBadge>>(new Map());
-    const [imageDialogOpen, setImageDialogOpen] = useState(false);
+    const [imageDialog, setImageDialog] = useState<ImageDialogState | null>(null);
     const [fontError, setFontError] = useState<string | undefined>(undefined);
     const fontInputRef = useRef<HTMLInputElement>(null);
 
@@ -421,8 +430,22 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
         for (const node of selected) updateNode(node.id, patchFor(node));
     };
 
-    /** Register an imported image and assign it to every selected image node. */
+    /**
+     * Handle a completed import. In insert mode the new ref is registered and
+     * assigned to every selected image node; in replace mode the imported
+     * provenance/dimensions patch the existing ref in place, so the node keeps
+     * its `imageId`, no orphan ref is created, and the edit is exactly one undo
+     * entry.
+     */
     const handleImageImported = (ref: ImageRef) => {
+        if (imageDialog?.mode === 'replace') {
+            updateImageRef(imageDialog.imageId, {
+                source: ref.source,
+                widthPx: ref.widthPx,
+                heightPx: ref.heightPx,
+            });
+            return;
+        }
         addImageRef(ref);
         for (const node of selected) {
             if (node.type === 'image') updateNode(node.id, { imageId: ref.imageId });
@@ -682,7 +705,7 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                             />
                             <button
                                 type="button"
-                                onClick={() => setImageDialogOpen(true)}
+                                onClick={() => setImageDialog({ mode: 'insert' })}
                                 className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
                             >
                                 {t('editor.mfp.importImage')}
@@ -818,6 +841,19 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                             else if (firstFontRef) updateFontRef(firstFontRef.fontId, patch);
                         }}
                     />
+                    {firstImageRef && (
+                        <SettingRow label={t('editor.mfp.field.imageId')}>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setImageDialog({ mode: 'replace', imageId: firstImageRef.imageId });
+                                }}
+                                className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                            >
+                                {t('editor.mfp.replaceImage')}
+                            </button>
+                        </SettingRow>
+                    )}
                 </section>
             )}
 
@@ -836,8 +872,9 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                 }}
             />
             <ImageImportDialog
-                open={imageDialogOpen}
-                onClose={() => setImageDialogOpen(false)}
+                open={imageDialog !== null}
+                variant={imageDialog?.mode === 'replace' ? 'replace' : 'insert'}
+                onClose={() => setImageDialog(null)}
                 onImported={handleImageImported}
             />
         </div>

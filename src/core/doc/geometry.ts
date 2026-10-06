@@ -11,8 +11,9 @@ import type { Node, ShapeNode, TextNode } from './types';
  *
  * Aspect-preserving is the default for circles/ellipses, QR and images; free
  * resize is opted into by `preserveAspect: false`. Rect/text/line/polygon
- * resize freely by default. The aspect used to derive the uniform factor is the
- * node's *current* local box (`target` supplies only the dragged corners).
+ * resize freely by default. The factor is measured against the node's *current*
+ * local box (`target` supplies only the dragged corners); a uniform gesture may
+ * pass its exact scale via `uniformScale` so rounding cannot bias the commit.
  */
 
 export interface Size {
@@ -23,6 +24,14 @@ export interface Size {
 export interface ResizeOptions {
     /** Defaults to `true` for circle/ellipse/qr/image, `false` otherwise. */
     preserveAspect?: boolean;
+    /**
+     * The live gesture's single uniform scale, when the caller knows it exactly
+     * (a Transformer **corner** drag, where Konva holds `scaleX == scaleY`).
+     * When supplied with `preserveAspect`, both axes use this factor verbatim,
+     * so rounding the target box can never bias the commit away from the live
+     * gesture. See `sizeFactors`.
+     */
+    uniformScale?: number;
 }
 
 /** The uniform factor used for cornerRadius / fontSize / strokeWidth. */
@@ -54,20 +63,22 @@ export const nodeSize = (node: Node): Size =>
     node.size ?? { w: DEFAULT_CONTENT_SIZE, h: DEFAULT_CONTENT_SIZE };
 
 /**
- * Compute the `(sx, sy)` axis factors for a target box. When `preserveAspect` is
- * set (or defaulted on for this node kind) the two factors collapse to a single
- * uniform factor derived from whichever axis moved more, so an ellipse/QR/image
- * stays proportional.
+ * Compute the `(sx, sy)` axis factors for a target box.
  *
- * Aspect-lock asymmetry (accepted): collapsing to `Math.max` means dragging one
- * axis *in* while the other stays put is a no-op (the larger — identity — factor
- * wins). That is deliberate: the node never shrinks below its current box from a
- * single-axis inward drag, and a genuine shrink requires both axes to move in.
+ * Free resize returns the two independent axis factors. Aspect-preserving is
+ * only requested for a **genuinely uniform** gesture — a Transformer *corner*
+ * drag, where Konva holds the ratio and therefore the live `scaleX == scaleY`
+ * (so `rawX == rawY`). The gesture path passes that exact `uniformScale`; when
+ * it does, both axes use it verbatim. The `Math.max(rawX, rawY)` fallback only
+ * serves direct callers that cannot supply the factor — it is deliberately
+ * **not** a post-hoc snap: collapsing a non-uniform (side-anchor) gesture to
+ * `Math.max` was #13, because the anchored edge is no longer held on release.
  */
 export const sizeFactors = (
     size: Size,
     target: Size,
     preserveAspect: boolean,
+    uniformScale?: number,
 ): { sx: number; sy: number } => {
     // A zero-extent axis has no ratio to derive; fall back to 1 so the other
     // axis (and any downstream uniform factor) still behaves, and so a collapsed
@@ -75,7 +86,7 @@ export const sizeFactors = (
     const rawX = size.w === 0 ? 1 : target.w / size.w;
     const rawY = size.h === 0 ? 1 : target.h / size.h;
     if (!preserveAspect) return { sx: rawX, sy: rawY };
-    const f = Math.max(rawX, rawY);
+    const f = uniformScale ?? Math.max(rawX, rawY);
     return { sx: f, sy: f };
 };
 
@@ -138,14 +149,14 @@ export const resizeNodeGeometry = (
 
     const preserveAspect = opts.preserveAspect ?? preservesAspectByDefault(node);
     const size = nodeSize(node);
-    const { sx, sy } = sizeFactors(size, target, preserveAspect);
+    const { sx, sy } = sizeFactors(size, target, preserveAspect, opts.uniformScale);
 
     if (node.type === 'shape') {
         const shape = node as ShapeNode;
         if (shape.shape === 'line' || shape.shape === 'polygon') {
             // Scale against the points' own bounding box, not `size`/the render
             // fallback, so `(sx, sy)` is proportional to the real geometry.
-            const { sx: px, sy: py } = sizeFactors(pointBaseExtent(shape), target, preserveAspect);
+            const { sx: px, sy: py } = sizeFactors(pointBaseExtent(shape), target, preserveAspect, opts.uniformScale);
             return {
                 ...shape,
                 points: scalePoints(shape.points ?? [], px, py),

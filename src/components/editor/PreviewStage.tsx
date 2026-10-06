@@ -9,7 +9,7 @@ import type { ResolvedContent, ResolvedNode } from '../../editor/render/resolve'
 import type { GlobalWarning } from '../../templates/globals';
 import type { LabelDoc, Node } from '../../core/doc/types';
 import { matrixToKonvaAttrs } from '../../editor/render/konvaFactory';
-import { movePatch, transformEndPatch, preserveAspectFor, transformerTargetSize, dragOriginOf, type DragOrigin } from '../../editor/transformGesture';
+import { movePatch, transformEndPatch, commitPreservesAspect, transformerTargetSize, dragOriginOf, type DragOrigin } from '../../editor/transformGesture';
 import { nodeSize, pointsExtent, preservesAspectByDefault, DEFAULT_CONTENT_SIZE, type Size } from '../../core/doc/geometry';
 import { type Mat2D } from '../../core/doc/derive';
 import { resolveGuides } from '../../editor/render/guides';
@@ -112,6 +112,23 @@ export function isTransformerTarget(target: Konva.Node | null | undefined): bool
     return !!target?.findAncestor?.('Transformer', true);
 }
 
+/**
+ * The selected node ids the Transformer may attach to, with groups filtered
+ * out. `resizeNodeGeometry` is a no-op for a group (D-10), so attaching one
+ * would only translate/rotate it and open a dead undo entry on release; the
+ * filter keeps that impossible even if a group id ever reaches the selection.
+ * (The preview hit-test can select a group — its resolved bounds are the
+ * children's union — so this is a live guard, not dead code.) Exported so the
+ * exclusion is unit-tested without mounting Konva.
+ */
+export function transformerTargetIds(
+    selectedIds: readonly string[],
+    nodes: readonly Node[],
+): string[] {
+    const groupIds = new Set(nodes.filter((node) => node.type === 'group').map((node) => node.id));
+    return selectedIds.filter((id) => !groupIds.has(id));
+}
+
 export const PreviewStage: React.FC = () => {
     const { t } = useTranslation();
     const doc = useStore((state) => state.currentDoc);
@@ -152,6 +169,13 @@ export const PreviewStage: React.FC = () => {
     const modifierRef = useRef(false);
     /** A Transformer gesture is live (armed at transformstart, cleared at end). */
     const transformingRef = useRef(false);
+    /**
+     * The anchor the live Transformer gesture started on. Konva tears its own
+     * active anchor (`_movingAnchorName`) down while ending the gesture, so
+     * capture it at `transformstart` rather than rely on that teardown ordering
+     * — the commit needs it to know corner (aspect) vs side (free-stretch) (#13).
+     */
+    const activeAnchorRef = useRef<string | null>(null);
 
     const backing = useMemo(
         () => (doc ? { backingW: doc.label.backingW, backingH: doc.label.backingH } : null),
@@ -248,12 +272,14 @@ export const PreviewStage: React.FC = () => {
     useEffect(() => {
         const transformer = transformerRef.current;
         if (!transformer) return;
-        const nodes = selectedNodeIds
+        // Attach only the resizable leaves: `transformerTargetIds` drops groups,
+        // for which `resizeNodeGeometry` is a no-op (D-10).
+        const nodes = transformerTargetIds(selectedNodeIds, doc?.nodes ?? [])
             .map((id) => nodeRefs.current.get(id))
             .filter((node): node is Konva.Node => Boolean(node));
         transformer.nodes(nodes);
         transformer.getLayer()?.batchDraw();
-    }, [selectedNodeIds, resolved]);
+    }, [selectedNodeIds, resolved, doc]);
 
     // Live Transformer ratio matches the aspect rule applied at commit (§13):
     // uniform for a single ellipse/image/QR, free otherwise (mixed selections
@@ -559,9 +585,13 @@ export const PreviewStage: React.FC = () => {
      * boxed content, `points` bbox for line/polygon (`Konva.Line.width()` is
      * `undefined`).
      *
-     * `preserveAspect` follows the plan default per node type and is inverted by
-     * a shift/alt press so the UI can opt out (ellipse/image/QR preserve;
-     * rect/line/polygon/text are free).
+     * Anchor policy (#13): Konva applies `keepRatio` **only** to the four corner
+     * anchors, so a corner gesture is uniform live while a side-anchor gesture
+     * free-stretches. The commit mirrors that exactly — corner keeps the ratio,
+     * side stays free — and passes the live uniform factor so the release can
+     * never snap to `Math.max(rawX, rawY)`. `commitPreservesAspect` resolves the
+     * corner case from the observed live scales, so an aspect node's corner stays
+     * uniform even when a modifier is held.
      */
     const handleTransformEnd = useCallback(
         () => {
@@ -570,32 +600,72 @@ export const PreviewStage: React.FC = () => {
             // `transformend` carries no reliable modifier state, so the last
             // shift/alt press is tracked on a ref (see the key effect below).
             const inverted = modifierRef.current;
+            // Konva tears its active anchor (`_movingAnchorName`) down as part of
+            // ending the gesture, so read it from the value captured at
+            // `transformstart` rather than depend on the teardown ordering.
+            const anchor = activeAnchorRef.current;
             for (const id of selectedNodeIds) {
                 const konvaNode = nodeRefs.current.get(id);
                 const source = doc.nodes.find((entry) => entry.id === id);
-                if (!konvaNode || !source) continue;
+                // Groups are not attached to the Transformer (D-10); skip them.
+                if (!konvaNode || !source || source.type === 'group') continue;
                 // Read geometry from the live node: the Transformer mutates the
                 // Konva node's scale/rotation in place during a gesture, while
                 // the document stays at the pre-gesture baseline.
                 const base = nodeBaseExtent(source);
                 const target = transformerTargetSize(base, konvaNode.scaleX(), konvaNode.scaleY());
+                // The live gesture's actual uniform/free choice, read straight
+                // off the scales: `|scaleX| == |scaleY|` exactly when Konva held
+                // the ratio (a corner with `keepRatio` on or Shift). This is what
+                // `commitPreservesAspect` trusts, so Alt (centred scaling without
+                // forcing the ratio) can never lock a gesture that ran free.
+                //
+                // Keep the **signed** scales for the commit and the magnitudes
+                // for the aspect/uniform checks: dragging a handle past the
+                // opposite edge mirrors the node (Konva `flipEnabled` defaults
+                // true), and the sign must reach `transformEndPatch` or the
+                // mirror reverts on release.
+                const liveScaleX = konvaNode.scaleX();
+                const liveScaleY = konvaNode.scaleY();
+                const scaleX = Math.abs(liveScaleX);
+                const scaleY = Math.abs(liveScaleY);
+                const liveUniform = Math.abs(scaleX - scaleY) <= 1e-6 * Math.max(1, scaleX, scaleY);
+                // Mirror the live ratio decision exactly — see
+                // `commitPreservesAspect`: an aspect-default node's corner always
+                // ran uniform (`keepRatio` on), so `liveUniform` is authoritative
+                // there; a non-aspect corner locked only when a modifier forced
+                // it, guarded by `liveUniform` to separate Shift from Alt.
+                const preserveAspect = commitPreservesAspect(
+                    source,
+                    anchor,
+                    inverted,
+                    selectedNodesPreserveAspect,
+                    liveUniform,
+                );
                 updateNodeTransient(
                     id,
                     transformEndPatch(
                         source,
                         { w: Math.round(target.w), h: Math.round(target.h) },
-                        preserveAspectFor(source, inverted),
+                        preserveAspect,
                         {
                             x: konvaNode.x(),
                             y: konvaNode.y(),
                             rotDeg: konvaNode.rotation(),
+                            // Signed: a flipped gesture must stay flipped.
+                            scaleX: liveScaleX,
+                            scaleY: liveScaleY,
                         },
+                        // Hand the exact live uniform factor (magnitude) to the
+                        // resize so rounding the target box cannot bias the
+                        // commit.
+                        preserveAspect ? scaleX : undefined,
                     ),
                 );
             }
             commitDoc();
         },
-        [doc, selectedNodeIds, updateNodeTransient, commitDoc],
+        [doc, selectedNodeIds, selectedNodesPreserveAspect, updateNodeTransient, commitDoc],
     );
 
     // A page reload/close inside the autosave debounce would otherwise drop the
@@ -696,6 +766,10 @@ export const PreviewStage: React.FC = () => {
                         keepRatio={selectedNodesPreserveAspect}
                         onTransformStart={() => {
                             transformingRef.current = true;
+                            // Capture the anchor now: Konva tears its active
+                            // anchor down while ending the gesture.
+                            const transformer = transformerRef.current;
+                            activeAnchorRef.current = transformer ? transformer.getActiveAnchor() : null;
                         }}
                         onTransformEnd={handleTransformEnd}
                         borderStroke="#3b82f6"
