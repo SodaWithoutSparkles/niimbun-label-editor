@@ -94,6 +94,19 @@ Printing a **25 mm** label on the **567-dot (~48 mm)** printhead left-aligns con
 - `printEnd()` returns `Promise<boolean>`; `false` = refused. Surface it as status `error`, don't swallow.
 - `@mmote/niimbluelib` is **CJS-only** but resolves cleanly under rolldown-vite (verified: full `bun run build` + a lib bundle). Adapter + lib ≈ 222 kB / 40 kB gzip (Capacitor deps tree-shaken down to a small chunk).
 
+## P7 print UI (batch print) — gotchas
+
+- **Entry points:** `src/print/appTransport.ts` (`getAppTransport`/`getAppJobRunner` singletons, `?mock=1` → MockTransport) · `src/components/print/PrintDialog.tsx` (+ `usePrintJob`, `usePrintThumbnails`, `PrintPageList`) · `FileMenu` **Print…** / `Ctrl/Cmd+P` (editor-only, `isPrintOpen` in the store) · dev harness `?printcsv=1` (`PrintCsvSmoke.tsx`, with `window.__printCsvSmoke`).
+- **`buildCsvPrintJob`** (`printLabel.ts`): `$times` is snapshotted (`printTimes.ts`, `Float64Array`) so the generator and `totalPages` can't desync; `pages` is **re-iterable**; over/under-send guarded; `renderOptionsOf` is the shared override split (invariant 7). `PrintOverrides.pageColor: DoubleColor` throws (v1 is single-plane Mono).
+- **Abort/cancel:** transports throw `PrintAbortedError { pagesPrinted }` (name stays `AbortError`); the runner resolves `{ cancelled: true, pagesPrinted }`. `printEnd()` stays in the transport `finally` — never call it elsewhere.
+- **Progress:** `pageFeedProgress` is **always 0** on D110M_V4, so the runner uses `max(pagePrintProgress, pageFeedProgress)` and forces a terminal 100% on resolve. `PrintProgress.page` is documented as a 1-based **physical copy index** — inferred, **verify on hardware for grouped `quantity > 1`** (D-27).
+- **Orientation:** the encoder's `'left'` is 90° **CW** (verified `image_encoder.js:38`); `orientForPrint` pre-rotates 180° for `bottom`/`right` (D-04 resolved). Preview ≡ print relies on `orientForPrint` being applied in both paths.
+- **Overrides order:** `quantize → invert → mirror → post-clip → offset`; a clip after `mirror` can discard ink → `RenderedLabelPage.notices: [{ kind:'mirror-clipped-ink', lostPx }]` surfaces it.
+- **React gotchas that cost a real bug (caught only headed):**
+  - **StrictMode `mountedRef` latch** — an effect whose cleanup sets `mountedRef.current = false` must also set it `true` in setup; StrictMode's replay otherwise leaves it `false` forever and every async result is silently dropped (thumbnails stuck on "Rendering…").
+  - **Cache identity** — a rebuild effect must key on **content** (doc/csv/override *values*), not on function/object identities; unstable `prepareRow`/`overrides` recreate the cache every render and starve it.
+  - Stubbed unit tests cannot see either class — the `?printcsv=1` headed check found it.
+
 ## Conventions
 
 - Deps are added with `bun add` in the phase that needs them (`@mmote/niimbluelib@0.47.0` was P1). Never npm.

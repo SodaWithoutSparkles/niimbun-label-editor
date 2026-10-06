@@ -36,3 +36,9 @@ Fix, kept as inline guards in `Modal.tsx`:
 - Centre deterministically: `fixed inset-0 m-auto h-fit` + a definite width capped by `max-w-*` — do not rely on UA `margin:auto` or UA insets.
 
 **Rule: any change to `Modal`, or any new `<dialog>`-based component, needs a real browser pass. A reviewer reading source cannot see this class of cascade bug.**
+
+## Automation gotchas (headed checks)
+
+- **Closed dialogs stay in the DOM.** `Modal` portals every mounted dialog to `document.body` and hides it with `:not([open])`. So `document.querySelectorAll('button')` sees buttons from **closed** dialogs too — an unscoped `.find(text === 'Cancel')` can click the wrong (hidden) dialog. Scope to the open one: `document.querySelector('dialog[open]')` then query within.
+- **Do not mount a dialog closed if its children do expensive/data work.** A closed-but-mounted dialog's hooks still run (this caused a trust-prompt-while-closed bug in P7). Mount only while open, and/or gate the hook on `open`.
+- `ab`'s `find role button click --name …` is unreliable on these dialog buttons; a scoped DOM `eval` click (`dialog[open]` → button → `.click()`) is reliable.
