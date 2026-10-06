@@ -224,12 +224,12 @@ prefetch around the visible window, concurrency-capped, superseded requests drop
 
 | WS | Area | Files | Status |
 | -- | ---- | ----- | ------ |
-| W0 | Printer capabilities on the contract + mock + adapter | `src/print/{transport,niimbotAdapter,mockTransport}.ts` (+tests) | pending |
-| W1 | Sequence generator (grouped/interleaved, `$times`, lazy, warning) | `src/print/sequence.ts` (new, +test) | pending |
-| W2 | Render overrides (`dpi`/invert/mirror/offset) + print orientation + overflow | `renderLabelPage.ts`, `src/editor/render/printOrientation.ts` (new, +tests) | pending |
-| W3 | CSV print job + job runner (progress, cancel, one-job guard, D-01) | `src/print/printLabel.ts`, `src/print/jobRunner.ts` (new, +tests) | pending |
-| W4 | Print dialog: virtualized LRU thumbnails + override panel + gating | `src/components/print/*` (new, +tests) | pending |
-| W5 | App wiring: shared transport + status→store + Print action + dialog mount | `App`/`Header`/`FileMenu`/`ConnectionChip`/store | pending |
+| W0 | Printer capabilities on the contract + mock + adapter | `src/print/{transport,niimbotAdapter,mockTransport}.ts` (+tests) | **DONE** — `7866aae` |
+| W1 | Sequence generator (grouped/interleaved, `$times`, lazy, warning) | `src/print/sequence.ts` (new, +test) | **DONE** — `0ef7274` |
+| W2 | Render overrides (`dpi`/invert/mirror/offset) + print orientation + overflow | `renderLabelPage.ts`, `src/editor/render/printOrientation.ts` (new, +tests) | **DONE** — `1cb74d2` |
+| W3 | CSV print job + job runner (progress, cancel, one-job guard, D-01) | `src/print/printLabel.ts`, `src/print/jobRunner.ts` (new, +tests) | **DONE** — `865e0d1` |
+| W4 | Print dialog: virtualized LRU thumbnails + override panel + gating | `src/components/print/*` (new, +tests) | **DONE** — `919199f` (thumbnails `7d2f159`) |
+| W5 | App wiring: shared transport + status→store + Print action + dialog mount | `App`/`Header`/`FileMenu`/`ConnectionChip`/store | **PENDING** |
 
 **Sequencing:** O1–O5 → **W0 + W1 + W2 in parallel** (disjoint files) → review → **W3 + W4**
 (W3 needs W1+W2; W4 needs W0/W2/W3 interfaces) → review → **W5** wiring → gate → headed Mock
@@ -323,4 +323,14 @@ Fix rounds ≤2 per area; deadlock → escalate to the owner.
 
 ## 8. Status / records
 
-_(updated as phases land)_
+**Paused 2026-10-06 after Round B.** Rounds A + B committed and reviewed (0 blocking on re-review).
+Full gate green. **Next action: W5 wiring**, then the gate (headed Mock 100-label job + cancel,
+owner hardware smoke — covers D-24).
+
+- Commits: `7866aae` W0 · `0ef7274` W1 · `1cb74d2` W2 · `865e0d1` W3 · `7d2f159` thumbnails ·
+  `919199f` W4 · `c2a2a4e` docs.
+- Review: Round A `review`+`experimental-review` → fix → re-review **0 blocking**; Round B same →
+  `review-fast` **0 blocking** → residual fixes.
+- Owner-smoke check: `PrintProgress.page` granularity for grouped `quantity > 1`.
+- W4 nits to revisit: `prepareAssets` decode cache is dpi-unaware (full-res entries held in the
+  print path's cache too); RFID roll-size mismatch not yet surfaced.
