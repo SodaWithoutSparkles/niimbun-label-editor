@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { ImageEncoder, PageColorType, type LabelType } from '@mmote/niimbluelib';
 import { installCanvasShim } from '../test/canvasHarness';

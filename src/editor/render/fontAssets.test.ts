@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLabelDoc } from '../../core/doc/factory';
 import type { FontRef, LabelDoc } from '../../core/doc/types';

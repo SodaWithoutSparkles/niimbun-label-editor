@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
 import { createTemplateContext, type TemplateContext, type TemplateWorkerOutbound } from './engine';
 import { evaluateSource, installTemplateWorker, type TemplateWorkerScope } from './worker';

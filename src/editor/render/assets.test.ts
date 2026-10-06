@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadImage } from '@napi-rs/canvas';
 import { toCanvas } from 'bwip-js/browser';

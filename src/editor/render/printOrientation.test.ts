@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { beforeAll, describe, expect, it } from 'vitest';
 import { installCanvasShim } from '../../test/canvasHarness';
 import type { RenderedLabelPage } from './renderLabelPage';

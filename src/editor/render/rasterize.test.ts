@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { beforeAll, describe, expect, it } from 'vitest';
 import Konva from 'konva';
 import { installCanvasShim } from '../../test/canvasHarness';

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest';
 import { CSV_ROW_CAP, parseCsvFile, parseCsvText, type CsvWarning } from './csvImport';
 
