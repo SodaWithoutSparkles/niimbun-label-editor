@@ -162,16 +162,32 @@ export interface TreeRow {
     effectiveLocked: boolean;
 }
 
+export interface TreeRowsOptions {
+    /**
+     * Emit front-most siblings first at every level (Photoshop layer order).
+     * Parents still precede their own children. Defaults to `false` (array
+     * order, back-to-front) so existing callers are unaffected.
+     */
+    frontToBack?: boolean;
+}
+
 /**
  * Flat, depth-first tree rows for the Object / layers panel. Hidden nodes are
  * included (dimmed via `effectiveVisible`) so the user can re-show them.
+ *
+ * Sibling order is array order (back-to-front) by default; pass
+ * `{ frontToBack: true }` to list the front-most sibling first at every level.
+ * A global `.reverse()` is *not* equivalent — it would flip parents below their
+ * own children — hence the per-level option.
  */
-export const treeRows = (doc: LabelDoc): TreeRow[] => {
+export const treeRows = (doc: LabelDoc, options: TreeRowsOptions = {}): TreeRow[] => {
     const byId = nodeLookup(doc.nodes);
     const rows: TreeRow[] = [];
     const seen = new Set<string>();
     const walk = (parentId: string | null, depth: number): void => {
-        for (const node of childrenFromParentId(doc.nodes, parentId)) {
+        const children = childrenFromParentId(doc.nodes, parentId);
+        const ordered = options.frontToBack ? [...children].reverse() : children;
+        for (const node of ordered) {
             if (seen.has(node.id)) continue;
             seen.add(node.id);
             rows.push({

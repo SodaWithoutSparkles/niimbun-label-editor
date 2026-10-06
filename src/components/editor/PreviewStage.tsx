@@ -100,6 +100,18 @@ const nodeBaseExtent = (node: Node): Size =>
         ? pointsExtent(node.points ?? [])
         : nodeSize(node);
 
+/**
+ * True when a pointer event's target belongs to the Transformer (an anchor,
+ * rotater or border), which runs its own resize/rotate gesture. Konva's anchor
+ * mousedown does not `cancelBubble` (Transformer.js), so the Stage handler also
+ * sees it; without this guard the anchor centre lands inside the node AABB and
+ * the move/marquee logic hijacks the resize (task 12). Exported so the guard is
+ * unit-tested without mounting Konva.
+ */
+export function isTransformerTarget(target: Konva.Node | null | undefined): boolean {
+    return !!target?.findAncestor?.('Transformer', true);
+}
+
 export const PreviewStage: React.FC = () => {
     const { t } = useTranslation();
     const doc = useStore((state) => state.currentDoc);
@@ -228,12 +240,11 @@ export const PreviewStage: React.FC = () => {
     // Keep the latest bounds reachable from `beginDrag` without a stale closure.
     nodeBoundsRef.current = nodeBoundsById;
 
-    // Reset stale refs on each document change.
-    useEffect(() => {
-        nodeRefs.current.clear();
-    }, [doc]);
+    // Attach the Transformer to the selected nodes with live refs. Stale refs
+    // need no manual clearing: the `registerRef` callback refs delete an entry
+    // when their shape unmounts and re-register it on (re)mount, so wiping the
+    // map here would only race React's re-attach and detach the anchors.
 
-    // Attach the Transformer to the selected nodes with live refs.
     useEffect(() => {
         const transformer = transformerRef.current;
         if (!transformer) return;
@@ -287,6 +298,14 @@ export const PreviewStage: React.FC = () => {
         (event: Konva.KonvaEventObject<PointerEvent>) => {
             const stage = stageRef.current;
             if (!stage || !doc) return;
+
+            // A Transformer anchor/rotater/border handles its own gesture. Konva's
+            // anchor mousedown does not cancelBubble (Transformer.js), so the
+            // Stage handler also sees it; without this early return the anchor
+            // centre lands inside the node AABB and the move/marquee logic below
+            // hijacks the resize (task 12).
+            if (isTransformerTarget(event.target)) return;
+
             const world = pointerWorld(stage);
             if (!world) return;
 
@@ -681,7 +700,7 @@ export const PreviewStage: React.FC = () => {
                         onTransformEnd={handleTransformEnd}
                         borderStroke="#3b82f6"
                         anchorStroke="#3b82f6"
-                        anchorSize={8}
+                        anchorSize={10}
                     />
                 </Layer>
             </Stage>

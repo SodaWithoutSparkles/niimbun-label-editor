@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, createEvent, fireEvent, render, screen } from '@testing-library/react';
 import '../../i18n';
 import { useStore } from '../../store/useStore';
 import { createLabelDoc } from '../../core/doc/factory';
@@ -62,5 +62,177 @@ describe('LayersPanel', () => {
         fireEvent.click(eye);
         const state = useStore.getState();
         expect(state.currentDoc?.nodes.some((entry) => entry.visible === false)).toBe(true);
+    });
+
+    it('reorders front-to-back: dropping the back node above the front row makes it front-most', () => {
+        const shapes = (ids: string[]) =>
+            createLabelDoc({
+                id: 'doc-3',
+                now: 1_700_000_000,
+                backingW: 3000,
+                backingH: 2000,
+                nodes: ids.map((id, index) =>
+                    node({
+                        id,
+                        parentId: null,
+                        type: 'shape',
+                        shape: 'rectangle',
+                        visible: true,
+                        locked: false,
+                        transform: { x: index * 100, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                        size: { w: 500, h: 500 },
+                    }),
+                ),
+            });
+        // Array order is back-to-front: a (back), b, c (front). The list shows
+        // c, b, a. Drag 'a' onto the top half of 'c' → it should land in front
+        // of 'c', i.e. last in the array.
+        useStore.setState({ currentDoc: shapes(['a', 'b', 'c']) });
+        render(<LayersPanel />);
+        const rows = screen.getAllByRole('listitem');
+        expect(rows).toHaveLength(3);
+        fireEvent.dragStart(rows[2]!);
+        // happy-dom's DragEvent ignores the `clientY` init, so set it directly.
+        const drop = createEvent.drop(rows[0]!);
+        Object.defineProperty(drop, 'clientY', { value: -1 });
+        fireEvent(rows[0]!, drop);
+        const ids = useStore
+            .getState()
+            .currentDoc!.nodes.filter((entry) => entry.parentId === null)
+            .map((entry) => entry.id);
+        expect(ids).toEqual(['b', 'c', 'a']);
+    });
+
+    it('reorders back-to-front: dropping a node below a sibling lands it behind (index)', () => {
+        const shapes = (ids: string[]) =>
+            createLabelDoc({
+                id: 'doc-4',
+                now: 1_700_000_000,
+                backingW: 3000,
+                backingH: 2000,
+                nodes: ids.map((id, index) =>
+                    node({
+                        id,
+                        parentId: null,
+                        type: 'shape',
+                        shape: 'rectangle',
+                        visible: true,
+                        locked: false,
+                        transform: { x: index * 100, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                        size: { w: 500, h: 500 },
+                    }),
+                ),
+            });
+        // List shows c, b, a. Drop front-most 'c' onto the bottom half of 'a'
+        // (before=false) → array index of 'a' (0), i.e. behind everything.
+        useStore.setState({ currentDoc: shapes(['a', 'b', 'c']) });
+        render(<LayersPanel />);
+        const rows = screen.getAllByRole('listitem');
+        fireEvent.dragStart(rows[0]!);
+        const drop = createEvent.drop(rows[2]!);
+        Object.defineProperty(drop, 'clientY', { value: 1 });
+        fireEvent(rows[2]!, drop);
+        const ids = useStore
+            .getState()
+            .currentDoc!.nodes.filter((entry) => entry.parentId === null)
+            .map((entry) => entry.id);
+        expect(ids).toEqual(['c', 'a', 'b']);
+    });
+
+    it('reparents into a group: dropping a node onto a group appends it as the last child', () => {
+        useStore.setState({
+            currentDoc: createLabelDoc({
+                id: 'doc-into-group',
+                now: 1_700_000_000,
+                backingW: 3000,
+                backingH: 2000,
+                nodes: [
+                    node({
+                        id: 's',
+                        parentId: null,
+                        type: 'shape',
+                        shape: 'rectangle',
+                        visible: true,
+                        locked: false,
+                        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                        size: { w: 500, h: 500 },
+                    }),
+                    node({
+                        id: 'g',
+                        parentId: null,
+                        type: 'group',
+                        visible: true,
+                        locked: false,
+                        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    }),
+                    node({
+                        id: 'k',
+                        parentId: 'g',
+                        type: 'shape',
+                        shape: 'rectangle',
+                        visible: true,
+                        locked: false,
+                        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                        size: { w: 500, h: 500 },
+                    }),
+                ],
+            }),
+        });
+        render(<LayersPanel />);
+        // Rows are g, k, s (front-to-back). Drag 's' (the last row, outside the
+        // group) onto the group row's bottom half → parentId 'g', clamped to the
+        // end of its children.
+        const rows = screen.getAllByRole('listitem');
+        const groupRow = rows.find((row) => row.querySelector('[aria-label="Collapse group"]'))!;
+        const draggedRow = rows[rows.length - 1]!;
+        expect(draggedRow).not.toBe(groupRow);
+        fireEvent.dragStart(draggedRow);
+        const drop = createEvent.drop(groupRow);
+        Object.defineProperty(drop, 'clientY', { value: 1 });
+        fireEvent(groupRow, drop);
+        const moved = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 's')!;
+        expect(moved.parentId).toBe('g');
+        const childIds = useStore
+            .getState()
+            .currentDoc!.nodes.filter((entry) => entry.parentId === 'g')
+            .map((entry) => entry.id);
+        expect(childIds).toEqual(['k', 's']);
+    });
+
+    it('collapses a group to hide its descendant rows, then expands it again', () => {
+        useStore.setState({
+            currentDoc: createLabelDoc({
+                id: 'doc-group',
+                now: 1_700_000_000,
+                backingW: 3000,
+                backingH: 2000,
+                nodes: [
+                    node({
+                        id: 'g',
+                        parentId: null,
+                        type: 'group',
+                        visible: true,
+                        locked: false,
+                        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    }),
+                    node({
+                        id: 'k',
+                        parentId: 'g',
+                        type: 'shape',
+                        shape: 'rectangle',
+                        visible: true,
+                        locked: false,
+                        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                        size: { w: 500, h: 500 },
+                    }),
+                ],
+            }),
+        });
+        render(<LayersPanel />);
+        expect(screen.getAllByRole('listitem')).toHaveLength(2);
+        fireEvent.click(screen.getByRole('button', { name: 'Collapse group' }));
+        expect(screen.getAllByRole('listitem')).toHaveLength(1);
+        fireEvent.click(screen.getByRole('button', { name: 'Expand group' }));
+        expect(screen.getAllByRole('listitem')).toHaveLength(2);
     });
 });

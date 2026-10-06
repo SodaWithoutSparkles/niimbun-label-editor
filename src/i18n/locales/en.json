@@ -364,7 +364,6 @@
       "imageImportUrlPlaceholder": "https://example.com/image.png",
       "imageImportAction": "Import",
       "imageImporting": "Importing…",
-      "imageImportNoFile": "Choose an image file first.",
       "imageImportNoUrl": "Enter an image URL first.",
       "imageImportNeedsStorage": "File imports need local storage, which is unavailable.",
       "imageImportFailed": "Import failed. Check the file or URL and try again. ({{detail}})"
@@ -389,7 +388,9 @@
       "lock": "Lock",
       "unlock": "Unlock",
       "inheritedHidden": "Hidden by a parent",
-      "inheritedLocked": "Locked by a parent"
+      "inheritedLocked": "Locked by a parent",
+      "expandGroup": "Expand group",
+      "collapseGroup": "Collapse group"
     },
     "mfp": {
       "object": "Object",

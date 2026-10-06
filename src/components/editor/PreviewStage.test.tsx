@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import type Konva from 'konva';
 import { createLabelDoc } from '../../core/doc/factory';
 import type { ContentSource, Node } from '../../core/doc/types';
 import type { ResolvedContent } from '../../editor/render/resolve';
-import { resolvePreviewTree } from './PreviewStage';
+import { isTransformerTarget, resolvePreviewTree } from './PreviewStage';
 
 /**
  * W6 wiring: `PreviewStage` feeds the shared sample-row **override map** into
@@ -55,5 +56,27 @@ describe('resolvePreviewTree — PreviewStage sample-row wiring', () => {
 
     it('returns the shared empty tree for a missing document', () => {
         expect(resolvePreviewTree(null, undefined)).toEqual([]);
+    });
+});
+
+describe('isTransformerTarget — Transformer anchor guard (task 12)', () => {
+    /** Minimal Konva.Node stand-in whose `findAncestor` matches `ancestor`. */
+    const fakeTarget = (ancestor: string | null): Konva.Node =>
+        ({
+            findAncestor: (selector: string) => (selector === ancestor ? {} : null),
+        }) as unknown as Konva.Node;
+
+    it('returns true when the target sits inside the Transformer', () => {
+        expect(isTransformerTarget(fakeTarget('Transformer'))).toBe(true);
+    });
+
+    it('returns false when the target has no Transformer ancestor', () => {
+        expect(isTransformerTarget(fakeTarget(null))).toBe(false);
+        expect(isTransformerTarget(fakeTarget('Layer'))).toBe(false);
+    });
+
+    it('returns false for a null/undefined target', () => {
+        expect(isTransformerTarget(null)).toBe(false);
+        expect(isTransformerTarget(undefined)).toBe(false);
     });
 });

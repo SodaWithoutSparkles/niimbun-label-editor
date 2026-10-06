@@ -36,10 +36,26 @@ const UnionSilhouette: React.FC<{ regions: readonly UnionSubpath[] }> = ({ regio
 const GridLines: React.FC<{ w: hm; h: hm; step: hm }> = ({ w, h, step }) => {
     const lines: React.ReactNode[] = [];
     for (let x = step; x < w; x += step) {
-        lines.push(<Line key={`gx-${x}`} points={[x, 0, x, h]} stroke={GRID_STROKE} strokeWidth={1} />);
+        lines.push(
+            <Line
+                key={`gx-${x}`}
+                points={[x, 0, x, h]}
+                stroke={GRID_STROKE}
+                strokeWidth={1}
+                strokeScaleEnabled={false}
+            />,
+        );
     }
     for (let y = step; y < h; y += step) {
-        lines.push(<Line key={`gy-${y}`} points={[0, y, w, y]} stroke={GRID_STROKE} strokeWidth={1} />);
+        lines.push(
+            <Line
+                key={`gy-${y}`}
+                points={[0, y, w, y]}
+                stroke={GRID_STROKE}
+                strokeWidth={1}
+                strokeScaleEnabled={false}
+            />,
+        );
     }
     return <>{lines}</>;
 };
@@ -86,8 +102,8 @@ export const Overlays: React.FC<OverlaysProps> = ({
     return (
         <>
             <Layer listening={false} {...layerAttrs}>
-                {showGrid && <GridLines w={doc.label.backingW} h={doc.label.backingH} step={gridStepHm} />}
                 {unionPaths.length > 0 && <UnionSilhouette regions={unionPaths} />}
+                {showGrid && <GridLines w={doc.label.backingW} h={doc.label.backingH} step={gridStepHm} />}
                 {guides.map((guide) => (
                     <Line
                         key={guide.id}

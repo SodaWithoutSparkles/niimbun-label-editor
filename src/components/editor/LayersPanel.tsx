@@ -1,6 +1,19 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Eye, EyeOff, Lock, Unlock, Type, Square, Image as ImageIcon, Boxes, QrCode, Barcode } from 'lucide-react';
+import {
+    Eye,
+    EyeOff,
+    Lock,
+    Unlock,
+    Type,
+    Square,
+    Image as ImageIcon,
+    Boxes,
+    QrCode,
+    Barcode,
+    ChevronDown,
+    ChevronRight,
+} from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { cn } from '../../utils/cn';
 import { treeRows, type TreeRow } from '../../editor/selectors';
@@ -8,7 +21,9 @@ import type { NodeType } from '../../core/doc/types';
 
 /**
  * Object / layers panel (ui-spec.md §7) — right column, row B. Photoshop-style
- * list from `selectors.treeRows`; top of the list is the front-most node.
+ * list from `selectors.treeRows` with `{ frontToBack: true }`; top of the list
+ * is the front-most node, and group rows carry a chevron that collapses their
+ * descendants.
  *
  * Per-row eye + lock toggle the node's **own** flags; inherited state dims the
  * row (`effectiveVisible` / `effectiveLocked`). Selection mirrors the canvas and
@@ -34,11 +49,35 @@ export const LayersPanel: React.FC = () => {
     const updateNode = useStore((state) => state.updateNode);
     const reparentNode = useStore((state) => state.reparentNode);
     const [dropTarget, setDropTarget] = useState<string | null>(null);
+    const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
     const dragId = useRef<string | null>(null);
 
-    const rows = useMemo(() => (doc ? [...treeRows(doc)].reverse() : []), [doc]);
+    const rows = useMemo(() => {
+        if (!doc) return [];
+        const all = treeRows(doc, { frontToBack: true });
+        // Hide descendants of collapsed groups. `all` is depth-first pre-order,
+        // so a subtree is exactly the run of rows deeper than the group.
+        const visible: TreeRow[] = [];
+        let hiddenBelowDepth: number | null = null;
+        for (const row of all) {
+            if (hiddenBelowDepth !== null && row.depth > hiddenBelowDepth) continue;
+            hiddenBelowDepth = null;
+            visible.push(row);
+            if (row.type === 'group' && collapsedGroups.has(row.id)) hiddenBelowDepth = row.depth;
+        }
+        return visible;
+    }, [doc, collapsedGroups]);
 
     if (!doc) return null;
+
+    const toggleCollapsed = (id: string) => {
+        setCollapsedGroups((current) => {
+            const next = new Set(current);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
 
     const onRowPointerDown = (event: React.PointerEvent, id: string) => {
         if (event.shiftKey || event.ctrlKey || event.metaKey) toggleSelectNode(id);
@@ -53,12 +92,17 @@ export const LayersPanel: React.FC = () => {
         const rowNode = doc.nodes.find((node) => node.id === row.id);
         if (!rowNode) return;
         const parentId = rowNode.parentId;
-        const siblings = doc.nodes.filter((node) => node.parentId === parentId);
+        // The rows list is front-to-back (front-most sibling first) while the
+        // `nodes[]` array is back-to-front (array order = z-order), so a drop
+        // "before" a row in the list lands one index *later* in the array.
+        // Indices are computed against the siblings with the dragged node
+        // already removed, which is the array `reparentNode` inserts into.
+        const siblings = doc.nodes.filter((node) => node.parentId === parentId && node.id !== id);
         const index = siblings.findIndex((node) => node.id === row.id);
         const target =
             row.type === 'group' && !before
                 ? { parentId: row.id, index: Number.MAX_SAFE_INTEGER }
-                : { parentId, index: before ? index : index + 1 };
+                : { parentId, index: before ? index + 1 : index };
         reparentNode(id, target.parentId, target.index);
     };
 
@@ -109,6 +153,35 @@ export const LayersPanel: React.FC = () => {
                                 )}
                                 style={{ paddingLeft: 4 + row.depth * 12 }}
                             >
+                                {row.type === 'group' ? (
+                                    <button
+                                        type="button"
+                                        aria-label={
+                                            collapsedGroups.has(row.id)
+                                                ? t('editor.layers.expandGroup')
+                                                : t('editor.layers.collapseGroup')
+                                        }
+                                        aria-expanded={!collapsedGroups.has(row.id)}
+                                        title={
+                                            collapsedGroups.has(row.id)
+                                                ? t('editor.layers.expandGroup')
+                                                : t('editor.layers.collapseGroup')
+                                        }
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            toggleCollapsed(row.id);
+                                        }}
+                                        className="shrink-0 text-gray-400 hover:text-white"
+                                    >
+                                        {collapsedGroups.has(row.id) ? (
+                                            <ChevronRight size={13} />
+                                        ) : (
+                                            <ChevronDown size={13} />
+                                        )}
+                                    </button>
+                                ) : (
+                                    <span className="w-[13px] shrink-0" aria-hidden />
+                                )}
                                 <button
                                     type="button"
                                     aria-label={row.visible ? t('editor.layers.hide') : t('editor.layers.show')}

@@ -1,4 +1,4 @@
-import React, { useId, useMemo } from 'react';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import { SUPPORTED_LANGUAGES } from '../../i18n/languages';
@@ -30,6 +30,24 @@ export const GeneralSection: React.FC = () => {
     const toggleAutoSave = useStore((state) => state.toggleAutoSave);
     const screenDpi = useStore((state) => state.screenDpi);
     const setScreenDpi = useStore((state) => state.setScreenDpi);
+    // Local draft so typing (including clearing the field) never hits the store;
+    // the store clamps/rounds once, on blur or Enter (EditorStatusBar pattern).
+    const [screenDpiDraft, setScreenDpiDraft] = useState(String(screenDpi));
+
+    // Keep the draft in step with the committed value (external change / reset).
+    useEffect(() => {
+        setScreenDpiDraft(String(screenDpi));
+    }, [screenDpi]);
+
+    /** Commit the typed DPI; an unparseable value reverts to the committed one. */
+    const commitScreenDpi = () => {
+        const parsed = Number.parseFloat(screenDpiDraft);
+        if (!Number.isFinite(parsed)) {
+            setScreenDpiDraft(String(screenDpi));
+            return;
+        }
+        setScreenDpi(parsed);
+    };
 
     // Data-driven off the runtime allow-list so it cannot drift from validation.
     const languageOptions = useMemo(
@@ -65,10 +83,14 @@ export const GeneralSection: React.FC = () => {
                     type="number"
                     min={SCREEN_DPI_MIN}
                     max={SCREEN_DPI_MAX}
-                    value={String(screenDpi)}
-                    onChange={(value) => {
-                        const parsed = Number.parseFloat(value);
-                        if (Number.isFinite(parsed)) setScreenDpi(parsed);
+                    value={screenDpiDraft}
+                    onChange={setScreenDpiDraft}
+                    onBlur={commitScreenDpi}
+                    onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                            event.preventDefault();
+                            commitScreenDpi();
+                        }
                     }}
                     className="w-24"
                 />

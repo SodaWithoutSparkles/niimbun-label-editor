@@ -226,4 +226,18 @@ describe('selectors — tree rows', () => {
         });
         expect(treeRows(doc)[0]!.name).toBe('Title');
     });
+
+    it('frontToBack lists the front-most sibling first at every level, keeping parents above their children', () => {
+        const doc = makeDoc();
+        // Siblings array order is back-to-front: root-level [group, textB] and
+        // group children [textA, shapeA]. Front-to-back flips each level only —
+        // a global reverse would wrongly place children above their group.
+        expect(treeRows(doc, { frontToBack: true }).map((row) => [row.id, row.depth])).toEqual([
+            ['root', 0],
+            ['textB', 1],
+            ['group', 1],
+            ['shapeA', 2],
+            ['textA', 2],
+        ]);
+    });
 });

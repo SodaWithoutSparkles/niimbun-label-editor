@@ -33,11 +33,14 @@ export const ImageImportDialog: React.FC<ImageImportDialogProps> = ({ open, onCl
     const { t } = useTranslation();
     const resourceRepo = useStore((state) => state.resourceRepo);
     const [mode, setMode] = useState<ImportMode>('file');
-    const [file, setFile] = useState<File | null>(null);
     const [url, setUrl] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | undefined>(undefined);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    // Synchronous in-flight guard: `runImport` is reachable from the picker's
+    // `onChange`, so reading `busy` from the render closure could admit a second
+    // concurrent import before React re-renders.
+    const busyRef = useRef(false);
     // Set once the dialog leaves the open state, so an import that settles after
     // dismissal can never insert/commit (must-fix #5).
     const cancelledRef = useRef(false);
@@ -50,22 +53,25 @@ export const ImageImportDialog: React.FC<ImageImportDialogProps> = ({ open, onCl
         }
         cancelledRef.current = false;
         setMode('file');
-        setFile(null);
         setUrl('');
         setBusy(false);
+        busyRef.current = false;
         setError(undefined);
     }, [open]);
 
-    const runImport = async () => {
-        if (busy) return;
+    const runImport = async (selectedFile?: File) => {
+        if (busyRef.current) return;
+        busyRef.current = true;
         setBusy(true);
         setError(undefined);
         try {
             let ref: ImageRef;
             if (mode === 'file') {
-                if (!file) throw new ImportValidationError(t('editor.insert.imageImportNoFile'));
+                // File mode is only reached from the picker's `onChange`, which
+                // always supplies a file.
+                if (!selectedFile) return;
                 if (!resourceRepo) throw new ImportValidationError(t('editor.insert.imageImportNeedsStorage'));
-                ref = (await importImageFile(file, resourceRepo, {})).ref;
+                ref = (await importImageFile(selectedFile, resourceRepo, {})).ref;
             } else {
                 const trimmed = url.trim();
                 if (!trimmed) throw new ImportValidationError(t('editor.insert.imageImportNoUrl'));
@@ -84,6 +90,7 @@ export const ImageImportDialog: React.FC<ImageImportDialogProps> = ({ open, onCl
                     : t('editor.insert.imageImportFailed', { detail: messageOf(caught) }),
             );
         } finally {
+            busyRef.current = false;
             setBusy(false);
         }
     };
@@ -114,7 +121,15 @@ export const ImageImportDialog: React.FC<ImageImportDialogProps> = ({ open, onCl
                     </button>
                     <button
                         type="button"
-                        onClick={() => void runImport()}
+                        onClick={() => {
+                            // File mode: open the OS picker; the chosen file is
+                            // auto-imported from the input's `onChange`.
+                            if (mode === 'file') {
+                                fileInputRef.current?.click();
+                                return;
+                            }
+                            void runImport();
+                        }}
                         disabled={busy}
                         className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 disabled:opacity-50"
                     >
@@ -149,8 +164,13 @@ export const ImageImportDialog: React.FC<ImageImportDialogProps> = ({ open, onCl
                         type="file"
                         accept="image/*"
                         aria-label={t('editor.insert.imageImportFile')}
-                        onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                        className="block w-full text-sm text-gray-300"
+                        className="hidden"
+                        onChange={(event) => {
+                            const selected = event.target.files?.[0];
+                            // Reset so re-picking the same file fires `change` again.
+                            event.target.value = '';
+                            if (selected) void runImport(selected);
+                        }}
                     />
                 ) : (
                     <Input
