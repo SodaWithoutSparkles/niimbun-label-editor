@@ -117,3 +117,61 @@ export const printheadOverflow = (
     const headSize = direction === 'left' || direction === 'right' ? heightPx : widthPx;
     return headSize > printheadPixels;
 };
+
+/**
+ * Ink-beyond-printhead check (D-31) — the **content** half of the dec-18
+ * warning. {@link printheadOverflow} is a pure size check, so a *blank* label
+ * that is wider than the head still warns even though nothing would be clipped.
+ * This predicate says whether any ink actually falls past `printheadPixels`.
+ *
+ * Axis mirrors {@link printheadOverflow}: `top`/`bottom` compare the width, so
+ * the over-width region is the columns `x >= printheadPixels`; `left`/`right`
+ * compare the height, so the over-height region is the rows
+ * `y >= printheadPixels`. The scan **early-exits on the first ink pixel** and
+ * returns `false` when there is no such region (`undefined` head size, or the
+ * raster is not actually over) — a missing reported head size disables the
+ * warning, exactly like the size check.
+ *
+ * A pixel is ink when **any** of its RGB channels is `< 128`. The quantized mono
+ * raster is exact `0/255`, so all channels agree; testing every channel also
+ * keeps this correct for a future `RedBlack` raster (an R-only test would miss
+ * red ink). Pure and DOM-free so it can run on a `RenderedLabelPage.rgba`
+ * directly.
+ */
+export const hasInkBeyondPrinthead = (
+    page: Pick<RenderedLabelPage, 'rgba' | 'widthPx' | 'heightPx'>,
+    direction: LabelPrintDirection,
+    printheadPixels: number | undefined,
+): boolean => {
+    if (printheadPixels === undefined) return false;
+    const { rgba, widthPx, heightPx } = page;
+    const { data } = rgba;
+    const sideways = direction === 'left' || direction === 'right';
+    const headSize = sideways ? heightPx : widthPx;
+    if (headSize <= printheadPixels) return false;
+
+    // Any dark channel counts as ink: mono is exact 0/255 in every channel, and
+    // this also stays correct for a future RedBlack raster (red ink would be
+    // missed by an R-only test).
+    const isInk = (base: number): boolean =>
+        data[base]! < 128 || data[base + 1]! < 128 || data[base + 2]! < 128;
+
+    if (!sideways) {
+        // top/bottom: feed axis is height; the head spans the width.
+        for (let y = 0; y < heightPx; y++) {
+            const row = y * widthPx;
+            for (let x = printheadPixels; x < widthPx; x++) {
+                if (isInk((row + x) * 4)) return true;
+            }
+        }
+        return false;
+    }
+    // left/right: feed axis is width; the head spans the height.
+    for (let y = printheadPixels; y < heightPx; y++) {
+        const row = y * widthPx;
+        for (let x = 0; x < widthPx; x++) {
+            if (isInk((row + x) * 4)) return true;
+        }
+    }
+    return false;
+};

@@ -193,6 +193,10 @@ export const usePrintThumbnails = (
             const ctx = prepare ? await prepare(rowIndex) : {};
             const currentAssets = assetsRef.current;
             const currentOverrides = overridesRef.current;
+            // Preview convention: thumbnails show the **logical/label** orientation
+            // (not the transport pre-rotation), matching niim.blue's preview. Only
+            // the encoded/print page applies `orientForPrint` (the 180°/90° bake
+            // plus encoder feed direction); do not rotate the preview here.
             const rendered = await (renderPageRef.current ?? renderLabelPage)(doc, ctx, {
                 dpi: THUMBNAIL_DPI,
                 ...(currentAssets !== undefined ? { assets: currentAssets } : {}),

@@ -6,10 +6,19 @@ import { Input, Select, SettingRow, Toggle } from '../common/forms';
 import { rasterDimensions } from '../../core/render';
 import type { LabelDoc } from '../../core/doc/types';
 import type { CsvRecord } from '../../data/csvRepo';
-import type { AssetDeps, ResolveContext } from '../../editor/render';
-import { printheadOverflow } from '../../editor/render/printOrientation';
+import {
+    renderLabelPage,
+    type AssetDeps,
+    type RenderLabelPageOptions,
+    type ResolveContext,
+} from '../../editor/render';
+import {
+    hasInkBeyondPrinthead,
+    printheadOverflow,
+    type LabelPrintDirection,
+} from '../../editor/render/printOrientation';
 import { planSequence, type PrintOrder } from '../../print/sequence';
-import { buildCsvPrintJob, type PrintOverrides } from '../../print/printLabel';
+import { buildCsvPrintJob, renderOptionsOf, type PrintOverrides } from '../../print/printLabel';
 import type { JobProgress, JobRunner } from '../../print/jobRunner';
 import type { PrinterStatus } from '../../print/transport';
 import { usePrintThumbnails, type PrintThumbnailOverrides } from './usePrintThumbnails';
@@ -46,6 +55,12 @@ export interface PrintDialogProps {
     runner: JobRunner;
     /** Capabilities + reported roll size/dpi gate the controls and warnings. */
     printerStatus: PrinterStatus;
+    /**
+     * Store-agnostic print-direction setter (D-30): the select reports the chosen
+     * `doc.label.printDirection` and `EditorShell`/the dev harness persists it.
+     * Omitted = the control still renders (read-only value) but does nothing.
+     */
+    onPrintDirectionChange?: (direction: LabelPrintDirection) => void;
 }
 
 type Outcome =
@@ -77,6 +92,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     assets,
     runner,
     printerStatus,
+    onPrintDirectionChange,
 }) => {
     const { t } = useTranslation();
     const capabilities = printerStatus.capabilities;
@@ -212,6 +228,66 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         ],
     );
 
+    // D-31: `printheadOverflow` above is only the cheap **size** trigger. A blank
+    // over-width label must not warn, so once it trips we lazily render the page
+    // at the document dpi through the shared path (invariant 7) and warn only if
+    // ink actually lands past the head. `renderOptionsOf` applies the *identical*
+    // override split the print job uses, so the sample matches what would print.
+    //
+    // The sample uses the **first active record's** `prepareRow` context. CSV
+    // content is per-row, so a later row with narrower ink can only over-warn
+    // (never miss a clip), which is acceptable for a non-blocking warning. The
+    // check is recomputed only while the size check trips (and the dialog is
+    // open); the effect re-runs on the doc + override values.
+    const inkRenderOptions = useMemo<RenderLabelPageOptions>(
+        () => renderOptionsOf(printOverrides, assets),
+        [printOverrides, assets],
+    );
+    const firstActiveRowIndex = activeRows[0];
+    const [inkOverflow, setInkOverflow] = useState(false);
+
+    useEffect(() => {
+        if (!open || !overflows || firstActiveRowIndex === undefined) {
+            setInkOverflow(false);
+            return;
+        }
+        // Clear the previous verdict: while the new async render is in flight a
+        // stale "may be clipped" warning must not linger.
+        setInkOverflow(false);
+        let cancelled = false;
+        void (async () => {
+            try {
+                const ctx = prepareRow ? await prepareRow(firstActiveRowIndex) : {};
+                const page = await renderLabelPage(doc, ctx, inkRenderOptions);
+                if (!cancelled) {
+                    setInkOverflow(
+                        hasInkBeyondPrinthead(
+                            page,
+                            doc.label.printDirection,
+                            capabilities?.printheadPixels,
+                        ),
+                    );
+                }
+            } catch {
+                // A render failure must never leave a stale warning up.
+                if (!cancelled) setInkOverflow(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        open,
+        overflows,
+        firstActiveRowIndex,
+        prepareRow,
+        doc,
+        inkRenderOptions,
+        capabilities?.printheadPixels,
+    ]);
+
+    const showOverflow = overflows && inkOverflow;
+
     const handleProgress = (next: JobProgress): void => {
         setProgress((previous) => ({
             ...next,
@@ -264,7 +340,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         0,
     );
     const hasWarnings =
-        overflows ||
+        showOverflow ||
         plan?.warning !== undefined ||
         mismatch !== undefined ||
         notices.length > 0;
@@ -419,6 +495,35 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                 aria-label={t('print.labelType')}
                             />
                         </SettingRow>
+                        <SettingRow label={t('print.printDirection')}>
+                            <Select
+                                value={doc.label.printDirection}
+                                onChange={(value) => {
+                                    if (
+                                        value === 'top' ||
+                                        value === 'left' ||
+                                        value === 'bottom' ||
+                                        value === 'right'
+                                    ) {
+                                        onPrintDirectionChange?.(value);
+                                    }
+                                }}
+                                options={[
+                                    { value: 'top', label: t('print.printDirectionOptions.top') },
+                                    { value: 'left', label: t('print.printDirectionOptions.left') },
+                                    {
+                                        value: 'bottom',
+                                        label: t('print.printDirectionOptions.bottom'),
+                                    },
+                                    {
+                                        value: 'right',
+                                        label: t('print.printDirectionOptions.right'),
+                                    },
+                                ]}
+                                className="w-36"
+                                aria-label={t('print.printDirection')}
+                            />
+                        </SettingRow>
                         <SettingRow label={t('print.pageColor')}>
                             <Select
                                 value="single"
@@ -477,7 +582,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
 
                 {hasWarnings && (
                     <div className="space-y-1">
-                        {overflows && (
+                        {showOverflow && (
                             <p
                                 data-testid="print-warning-overflow"
                                 role="alert"

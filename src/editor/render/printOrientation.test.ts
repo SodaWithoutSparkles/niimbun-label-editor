@@ -2,7 +2,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { installCanvasShim } from '../../test/canvasHarness';
 import type { RenderedLabelPage } from './renderLabelPage';
-import { orientForPrint, preRotationDegrees, encoderDirection, printheadOverflow } from './printOrientation';
+import { orientForPrint, preRotationDegrees, encoderDirection, printheadOverflow, hasInkBeyondPrinthead } from './printOrientation';
 
 beforeAll(() => {
     installCanvasShim();
@@ -119,5 +119,78 @@ describe('printheadOverflow', () => {
 
     it('does not warn when the head exactly matches the raster axis', () => {
         expect(printheadOverflow(567, 100, 'top', 567)).toBe(false);
+    });
+});
+
+describe('hasInkBeyondPrinthead', () => {
+    /** A white page with black (ink) pixels wherever `ink(x, y)` is true. */
+    const inkPage = (
+        widthPx: number,
+        heightPx: number,
+        ink: (x: number, y: number) => boolean,
+    ): Pick<RenderedLabelPage, 'rgba' | 'widthPx' | 'heightPx'> => {
+        const data = new Uint8ClampedArray(widthPx * heightPx * 4).fill(255);
+        for (let y = 0; y < heightPx; y++) {
+            for (let x = 0; x < widthPx; x++) {
+                if (!ink(x, y)) continue;
+                const base = (y * widthPx + x) * 4;
+                data[base] = 0;
+                data[base + 1] = 0;
+                data[base + 2] = 0;
+            }
+        }
+        return { rgba: { data, width: widthPx, height: heightPx }, widthPx, heightPx };
+    };
+
+    it('is non-blocking without a reported printhead size', () => {
+        expect(hasInkBeyondPrinthead(inkPage(600, 100, () => true), 'top', undefined)).toBe(false);
+        expect(hasInkBeyondPrinthead(inkPage(100, 600, () => true), 'left', undefined)).toBe(false);
+    });
+
+    it('returns false when the raster does not actually overflow the head', () => {
+        // Ink everywhere, but the axis is not wider than the head.
+        expect(hasInkBeyondPrinthead(inkPage(500, 100, () => true), 'top', 567)).toBe(false);
+        expect(hasInkBeyondPrinthead(inkPage(100, 500, () => true), 'left', 567)).toBe(false);
+        expect(hasInkBeyondPrinthead(inkPage(567, 100, () => false), 'top', 567)).toBe(false);
+    });
+
+    it('returns false for a blank over-width raster (D-31 false positive)', () => {
+        expect(hasInkBeyondPrinthead(inkPage(600, 100, () => false), 'top', 567)).toBe(false);
+        expect(hasInkBeyondPrinthead(inkPage(100, 600, () => false), 'left', 567)).toBe(false);
+    });
+
+    it('scans columns x >= head for top/bottom and finds ink only there', () => {
+        const withinHead = inkPage(600, 100, (x) => x < 567);
+        expect(hasInkBeyondPrinthead(withinHead, 'top', 567)).toBe(false);
+        expect(hasInkBeyondPrinthead(withinHead, 'bottom', 567)).toBe(false);
+
+        const atBoundary = inkPage(600, 100, (x) => x === 567);
+        expect(hasInkBeyondPrinthead(atBoundary, 'top', 567)).toBe(true);
+
+        const far = inkPage(600, 100, (x) => x === 599);
+        expect(hasInkBeyondPrinthead(far, 'top', 567)).toBe(true);
+    });
+
+    it('scans rows y >= head for left/right (axis swap) and finds ink only there', () => {
+        // Ink below the head row only: no overflow under top/bottom, overflow
+        // under left/right.
+        const belowHeadRow = inkPage(100, 600, (_x, y) => y >= 567);
+        expect(hasInkBeyondPrinthead(belowHeadRow, 'top', 567)).toBe(false);
+        expect(hasInkBeyondPrinthead(belowHeadRow, 'left', 567)).toBe(true);
+        expect(hasInkBeyondPrinthead(belowHeadRow, 'right', 567)).toBe(true);
+
+        const withinHeadRows = inkPage(100, 600, (_x, y) => y < 567);
+        expect(hasInkBeyondPrinthead(withinHeadRows, 'left', 567)).toBe(false);
+        expect(hasInkBeyondPrinthead(withinHeadRows, 'right', 567)).toBe(false);
+    });
+
+    it('treats a pixel as ink when only one RGB channel is dark', () => {
+        const page = inkPage(600, 100, () => false);
+        const base = (0 * 600 + 599) * 4;
+        // Blue-only dark pixel is still ink (mono raster, defensively robust).
+        page.rgba.data[base] = 255;
+        page.rgba.data[base + 1] = 255;
+        page.rgba.data[base + 2] = 0;
+        expect(hasInkBeyondPrinthead(page, 'top', 567)).toBe(true);
     });
 });

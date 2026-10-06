@@ -430,6 +430,16 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             commit(next, doc);
         },
 
+        setPrintDirection: (direction) => {
+            const doc = get().currentDoc;
+            if (!doc) return;
+            // A no-op change must not create an undo entry (mirrors commitDoc).
+            if (doc.label.printDirection === direction) return;
+            const next = cloneDoc(doc);
+            next.label.printDirection = direction;
+            commit(next, doc);
+        },
+
         setDocCsv: (csv) => {
             const doc = get().currentDoc;
             if (!doc) return;

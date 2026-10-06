@@ -216,6 +216,11 @@ export interface AppState {
     /** Set the preview sample row (`doc.data.sampleRowIndex`) as one undo entry. */
     setSampleRowIndex: (index: number) => void;
     /**
+     * Set the print feed direction (`doc.label.printDirection`) as one undo
+     * entry. A no-op write (same direction) creates no history entry.
+     */
+    setPrintDirection: (direction: LabelDoc['label']['printDirection']) => void;
+    /**
      * Attach (`{ csvId, name }`) or clear (`null`) `doc.data.csv` as one undo
      * entry. The `CsvRef` is built here as `local` with `resourceId === csvId`,
      * so a caller cannot attach a non-local or mismatched source. A blank

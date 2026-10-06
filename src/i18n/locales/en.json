@@ -573,6 +573,13 @@
     "offsetType": "Offset type",
     "offsetInner": "Inner",
     "offsetOuter": "Outer",
+    "printDirection": "Print direction",
+    "printDirectionOptions": {
+      "top": "Top",
+      "left": "Left",
+      "bottom": "Bottom",
+      "right": "Right"
+    },
     "warnings": {
       "interleaved": "Interleaved order will print {{pages}} pages (more than {{cap}}).",
       "overflow": "Label exceeds the printhead ({{width}} px wide vs {{head}} px). Printing may be clipped.",

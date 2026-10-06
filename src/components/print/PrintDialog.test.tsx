@@ -1,33 +1,48 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { LabelType, type EncodedImage } from '@mmote/niimbluelib';
 import '../../i18n';
+import { rasterDimensions } from '../../core/render';
 import { createLabelDoc } from '../../core/doc/factory';
+import type { LabelDoc } from '../../core/doc/types';
 import type { CsvRecord } from '../../data/csvRepo';
+import type { RenderedLabelPage } from '../../editor/render';
 import type { JobProgress, JobRunResult, JobRunner } from '../../print/jobRunner';
 import type { PrintJob, PrinterCapabilities, PrinterStatus } from '../../print/transport';
 import { PrintDialog } from './PrintDialog';
 
-const { buildCsvPrintJobMock } = vi.hoisted(() => ({ buildCsvPrintJobMock: vi.fn() }));
+const { buildCsvPrintJobMock, renderLabelPageMock } = vi.hoisted(() => ({
+    buildCsvPrintJobMock: vi.fn(),
+    renderLabelPageMock: vi.fn(),
+}));
 
-vi.mock('../../print/printLabel', () => ({ buildCsvPrintJob: buildCsvPrintJobMock }));
+vi.mock('../../print/printLabel', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../print/printLabel')>();
+    return { ...actual, buildCsvPrintJob: buildCsvPrintJobMock };
+});
 
 // No real canvas in happy-dom: the shared render path is stubbed to a data URL.
+// The page is sized to the document's raster so the D-31 ink predicate can run
+// against it; `ink` selects all-black (ink everywhere) or all-white (blank).
 vi.mock('../../editor/render', async (importOriginal) => {
     const actual = await importOriginal<typeof import('../../editor/render')>();
-    return {
-        ...actual,
-        renderLabelPage: vi.fn(async () => ({
-            rgba: { data: new Uint8ClampedArray(4), width: 1, height: 1 },
-            widthPx: 1,
-            heightPx: 1,
-            canvas: {
-                toDataURL: () => 'data:image/png;base64,stub',
-            } as unknown as HTMLCanvasElement,
-        })),
-    };
+    return { ...actual, renderLabelPage: renderLabelPageMock };
 });
+
+const fakeRenderedPage = (doc: LabelDoc, ink: boolean): RenderedLabelPage => {
+    const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+    const data = new Uint8ClampedArray(dims.widthPx * dims.heightPx * 4).fill(ink ? 0 : 255);
+    return {
+        rgba: { data, width: dims.widthPx, height: dims.heightPx },
+        widthPx: dims.widthPx,
+        heightPx: dims.heightPx,
+        canvas: {
+            toDataURL: () => 'data:image/png;base64,stub',
+        } as unknown as HTMLCanvasElement,
+    };
+};
 
 type BuildOpts = { order: string; copies: number; overrides?: unknown };
 
@@ -48,6 +63,9 @@ beforeEach(() => {
     buildCsvPrintJobMock.mockImplementation(
         (_doc: unknown, _csv: unknown, opts: BuildOpts) => makeFakeJob(opts),
     );
+    renderLabelPageMock.mockReset();
+    // Default: an inked raster (so an over-width doc warns). Blank tests override.
+    renderLabelPageMock.mockImplementation(async (doc: LabelDoc) => fakeRenderedPage(doc, true));
 });
 
 afterEach(cleanup);
@@ -185,17 +203,48 @@ describe('PrintDialog — capability gating', () => {
 });
 
 describe('PrintDialog — warnings', () => {
-    it('shows a prominent printhead-overflow warning for a label wider than the head', () => {
+    it('shows a prominent printhead-overflow warning when ink lands beyond the head', async () => {
         renderDialog({
             doc: wideDoc(),
             runner: new FakeRunner(),
             printerStatus: statusOf(B1_PRO),
         });
 
-        expect(screen.getByTestId('print-warning-overflow')).toBeInTheDocument();
+        expect(await screen.findByTestId('print-warning-overflow')).toBeInTheDocument();
     });
 
-    it('does not warn when the label fits within the printhead', () => {
+    it('does not warn for a blank over-width label (D-31 false positive fixed)', async () => {
+        // A blank 50 mm raster on the 567-dot head has no ink beyond the head:
+        // the size check trips but the warning must stay hidden. Defer the render
+        // so the test proves the warning stays hidden *after* the async effect
+        // settles, not merely while it is still in flight.
+        let resolveRender: (page: RenderedLabelPage) => void = () => undefined;
+        renderLabelPageMock.mockImplementation(
+            () =>
+                new Promise<RenderedLabelPage>((resolve) => {
+                    resolveRender = resolve;
+                }),
+        );
+        renderDialog({
+            doc: wideDoc(),
+            runner: new FakeRunner(),
+            printerStatus: statusOf(B1_PRO),
+        });
+
+        await waitFor(() => expect(renderLabelPageMock).toHaveBeenCalled());
+        // Pending: the size check tripped but no ink verdict has landed yet.
+        expect(screen.queryByTestId('print-warning-overflow')).not.toBeInTheDocument();
+
+        // Resolve the blank page and flush the effect's settlement.
+        await act(async () => {
+            resolveRender(fakeRenderedPage(wideDoc(), false));
+            await Promise.resolve();
+        });
+        // Settled blank verdict: still no warning.
+        expect(screen.queryByTestId('print-warning-overflow')).not.toBeInTheDocument();
+    });
+
+    it('does not run the doc-dpi ink check when the label fits within the printhead', () => {
         renderDialog({
             doc: narrowDoc(),
             runner: new FakeRunner(),
@@ -203,6 +252,12 @@ describe('PrintDialog — warnings', () => {
         });
 
         expect(screen.queryByTestId('print-warning-overflow')).not.toBeInTheDocument();
+        // The ink check is lazy: no size overflow means no doc-dpi render. (The
+        // thumbnail cache shares this seam, but always passes `dpi: 50`.)
+        const inkCheckCalls = renderLabelPageMock.mock.calls.filter(
+            ([, , opts]) => (opts as { dpi?: number } | undefined)?.dpi === undefined,
+        );
+        expect(inkCheckCalls).toHaveLength(0);
     });
 
     it('warns on a reported roll/dpi mismatch', () => {
@@ -284,5 +339,51 @@ describe('PrintDialog — progress, cancel and order', () => {
             expect(screen.getByTestId('print-outcome')).toHaveTextContent('Printed 2 pages.'),
         );
         expect(screen.getByTestId('print-progress-bar')).toHaveStyle({ width: '100%' });
+    });
+});
+
+describe('PrintDialog — print direction (D-30)', () => {
+    it('reports direction changes and the new value reaches the built job', async () => {
+        const runner = new FakeRunner();
+        const onChange = vi.fn();
+
+        const Harness = () => {
+            const [doc, setDoc] = useState(() => wideDoc());
+            return (
+                <PrintDialog
+                    open
+                    onClose={() => {}}
+                    doc={doc}
+                    csv={null}
+                    runner={runner}
+                    printerStatus={statusOf(B1_PRO)}
+                    onPrintDirectionChange={(direction) => {
+                        onChange(direction);
+                        setDoc((previous) => ({
+                            ...previous,
+                            label: { ...previous.label, printDirection: direction },
+                        }));
+                    }}
+                />
+            );
+        };
+
+        render(<Harness />);
+        expect(screen.getByLabelText('Print direction')).toHaveValue('top');
+
+        fireEvent.change(screen.getByLabelText('Print direction'), {
+            target: { value: 'bottom' },
+        });
+
+        expect(onChange).toHaveBeenCalledWith('bottom');
+        await waitFor(() => expect(screen.getByLabelText('Print direction')).toHaveValue('bottom'));
+
+        // The changed direction on the doc prop is what `buildCsvPrintJob`
+        // receives; `orientForPrint` reads it when the job runs.
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(buildCsvPrintJobMock.mock.calls[0]![0]).toMatchObject({
+            label: { printDirection: 'bottom' },
+        });
     });
 });

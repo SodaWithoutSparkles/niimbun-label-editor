@@ -79,3 +79,27 @@ describe('setSampleRowIndex', () => {
         expect(store.getState().docPast).toHaveLength(1);
     });
 });
+
+describe('setPrintDirection', () => {
+    it('writes doc.label.printDirection as one undoable change', () => {
+        const store = createAppStore();
+        store.setState({ currentDoc: doc() });
+        const before = store.getState().currentDoc!;
+        expect(before.label.printDirection).toBe('top');
+
+        store.getState().setPrintDirection('bottom');
+        expect(store.getState().currentDoc?.label.printDirection).toBe('bottom');
+        // Immutable update: the previous doc is replaced, not mutated in place.
+        expect(store.getState().currentDoc).not.toBe(before);
+        expect(before.label.printDirection).toBe('top');
+        expect(store.getState().docPast).toHaveLength(1);
+
+        // No-op write does not add another undo entry.
+        store.getState().setPrintDirection('bottom');
+        expect(store.getState().docPast).toHaveLength(1);
+
+        // Undo restores the previous direction.
+        store.getState().undoDoc();
+        expect(store.getState().currentDoc?.label.printDirection).toBe('top');
+    });
+});

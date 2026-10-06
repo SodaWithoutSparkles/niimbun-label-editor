@@ -26,6 +26,7 @@ import { createLabelDoc } from '../../core/doc/factory';
 import type { LabelDoc, Node } from '../../core/doc/types';
 import type { CsvRecord } from '../../data/csvRepo';
 import type { ResolveContext } from '../../editor/render';
+import type { LabelPrintDirection } from '../../editor/render/printOrientation';
 import { prepareResolvedContent } from '../../editor/render/prepareContent';
 import { MockTransport } from '../../print/mockTransport';
 import { createJobRunner, type JobRunResult, type JobRunner } from '../../print/jobRunner';
@@ -129,6 +130,15 @@ export function PrintCsvSmoke() {
     const [status, setStatus] = useState<PrinterStatus>(INITIAL_STATUS);
     const [lastResult, setLastResult] = useState<JobRunResult | null>(null);
     const [isBusy, setIsBusy] = useState(false);
+    // Local doc so the harness can exercise the print-direction control without
+    // touching the store (a real setter would be `setPrintDirection`).
+    const [doc, setDoc] = useState<LabelDoc>(SAMPLE_DOC);
+    const handlePrintDirectionChange = useCallback((direction: LabelPrintDirection): void => {
+        setDoc((previous) => ({
+            ...previous,
+            label: { ...previous.label, printDirection: direction },
+        }));
+    }, []);
 
     // Wrap the real runner so the harness can surface the result/busy state
     // without changing the runner contract the dialog consumes.
@@ -176,11 +186,13 @@ export function PrintCsvSmoke() {
     }, [transport]);
 
     // CSV-only per-row prep (decision 42): no template engine, no trust gate.
+    // Resolves against the current `doc` (not the module sample) so a
+    // print-direction change flows into row prep too.
     const prepareRow = useCallback(
         async (rowIndex: number): Promise<ResolveContext> => ({
-            overrides: await prepareResolvedContent({ doc: SAMPLE_DOC, csv: CSV, rowIndex }),
+            overrides: await prepareResolvedContent({ doc, csv: CSV, rowIndex }),
         }),
-        [],
+        [doc],
     );
 
     const recordedJobs = transport.jobs.length;
@@ -212,11 +224,12 @@ export function PrintCsvSmoke() {
             <PrintDialog
                 open
                 onClose={() => {}}
-                doc={SAMPLE_DOC}
+                doc={doc}
                 csv={CSV}
                 prepareRow={prepareRow}
                 runner={runner}
                 printerStatus={status}
+                onPrintDirectionChange={handlePrintDirectionChange}
             />
         </div>
     );
