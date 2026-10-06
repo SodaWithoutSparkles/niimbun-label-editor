@@ -4,10 +4,11 @@ In-process tests exist so logic verification does not need a browser.
 
 ## Stack
 
-`vitest` + `happy-dom`, configured in `vitest.config.ts` (merges `vite.config.ts`
-via `mergeConfig`). Explicit `import { describe, it, expect } from 'vitest'` — no
-`globals: true`, so `tsconfig.json` needs no change. `src/test/setup.ts` wires
-`@testing-library/jest-dom/vitest` and clears `localStorage` after each test.
+`vitest`, configured in `vitest.config.ts` (merges `vite.config.ts` via
+`mergeConfig`). Explicit `import { describe, it, expect } from 'vitest'` — no
+`globals: true`, so `tsconfig.json` needs no change. `src/test/setup.ts` loads
+`@testing-library/jest-dom/vitest` **only when a DOM exists** and clears
+`localStorage` after each test.
 
 - `bun run test` (watch) / `bun run test:run` (one-shot). **Never `bun test`** — that
   runs Bun's own runner, not Vitest.
@@ -16,6 +17,29 @@ via `mergeConfig`). Explicit `import { describe, it, expect } from 'vitest'` —
   peers Vite 8 and breaks).
 - Tests live in `src/**/*.{test,spec}.{ts,tsx}` and ARE typechecked by `tsc` in the
   build — keep them clean under `noUnusedLocals/Parameters`.
+
+## Test environment — `node` by default, happy-dom opt-in
+
+Vitest's default env is `node` (DOM-less). A test that touches the DOM declares
+it on **line 1**:
+
+```ts
+// @vitest-environment happy-dom
+```
+
+Needs the docblock: anything that renders React (`@testing-library/react`), uses
+`document`/`window`/`Konva`/canvas (incl. `installCanvasShim`), or asserts
+jest-dom matchers. Must NOT have it: pure logic/data/store/util tests. (Vitest 5
+has no `environmentMatchGlobs`; per-file is the mechanism.)
+
+Why: Vitest builds the DOM env **once per test file**. Before this split the
+global `happy-dom` was created 105× and took ~50% of tracked time; only ~41 files
+actually need it. Default `node` + opt-in removed that hint. `konvaFactory.test.ts`
+needs it too — it patches `HTMLCanvasElement` in `beforeAll` and otherwise
+silently skips. Keep default `pool` (`forks`) + `isolate`: on the 2-CPU box
+`pool: 'threads'` (~43 s) and `--no-isolate` (~75 s) were both slower than forks
+(~19–30 s), and `vmThreads` failed 8 files (cross-realm `Class extends undefined`,
+missing `CompressionStream`).
 
 ## What can / cannot be tested here
 
