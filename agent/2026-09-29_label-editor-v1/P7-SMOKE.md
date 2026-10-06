@@ -48,11 +48,14 @@ Fixtures: `p7-smoke-3rows.csv` (3 labels — **use this on hardware; don't waste
 
 | Step | Result | Notes |
 | ---- | ------ | ----- |
-| A. headed Mock 3-row print | | |
-| A. headed Mock cancel | | |
-| A. no trust prompt when closed | | |
-| B. connect + 3-label print | | |
-| B. mid-job cancel clean | | |
-| B. offset centring | | |
-| B. printDirection bottom/right | | |
-| B. D-27 progress granularity | | |
+| A. headed Mock 3-row print | **PASS** | 3 rows, per-row thumbnails, gating, 100% progress, "Printed 3 pages." |
+| A. headed Mock cancel | **PASS** | `{cancelled:true, pagesPrinted:1}`, transport `connected`, no wedge |
+| A. no trust prompt when closed | **PASS** | mount gate + `usePrintJob` open guard (unit-tested) |
+| B. connect + 3-label print | **PASS (owner, 2026-10-06)** | tested directly on the editor; print fine |
+| B. mid-job cancel clean | *(owner did not call out; A covers the path)* | |
+| B. offset centring | *(not exercised)* | |
+| B. printDirection bottom/right | **SKIPPED** | no UI control to set `printDirection` — see D-30 |
+| B. D-27 progress granularity | *(not observed)* | retest with a grouped `quantity > 1` row |
+
+**Owner verdict (2026-10-06):** hardware smoke of the editor + print is **fine**. P6+P7 hardware smoke
+considered satisfied (closes D-24/D-25).

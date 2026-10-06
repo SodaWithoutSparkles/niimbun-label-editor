@@ -31,12 +31,19 @@ chore = do opportunistically, not phase-blocking.
 | D-21 | preview | `useSampleRow` `resolveKeyOf` runs one `JSON.stringify` per node per pointermove tick | negligible garbage on drag | chore (revisit if profiling) |
 | D-22 | preview | `GlobalDataTab` draft-reseed effect keys on the spec object identity, so it re-runs on every doc commit (`structuredClone`) | wasteful but values match (React bails) | chore |
 | D-23 | test-infra | `vitest.config.ts` keeps `testTimeout: 15000` for all tests; without it the real-canvas `renderLabelPage`/`rasterize` suites flake to 22–28 s under parallel load | slower failure feedback globally | chore (per-file scoping needs ≥2 files; keep until canvas tests are lighter) |
-| D-24 | workflow | P6 hardware smoke skipped; **folded into P7's print-UI smoke** | P6 not yet hardware-verified end-to-end | P7 (owner smoke, pending) |
-| D-25 | editor | `?print=1` / `?hardware=1` dev harnesses were the only print entry points; W5 adds the user path | verify the real path headed before closing | P7 (headed check, pending) |
+| D-24 | workflow | P6 hardware smoke skipped; folded into P7's print-UI smoke | — | **CLOSED** (owner smoke 2026-10-06) |
+| D-25 | editor | `?print=1` / `?hardware=1` dev harnesses were the only print entry points; W5 adds the user path | — | **CLOSED** (owner smoke 2026-10-06) |
 | D-26 | doc-format | export writes `inline`/`remote`/`local`/`external` provenance policy undecided (P5 chose `local`/`remote` for import) | export portability unknown | P8 |
-| D-27 | print | `PrintProgress.page` assumed to be a 1-based **physical copy index** for grouped `quantity > 1`; only inferred from the mock + single-copy smoke | progress/cancel count could be wrong on hardware with grouped copies | P7 owner smoke (confirm or fix) |
+| D-27 | print | `PrintProgress.page` assumed to be a 1-based **physical copy index** for grouped `quantity > 1`; only inferred from the mock + single-copy smoke | progress/cancel count could be wrong on hardware with grouped copies | P7 owner smoke — UNCONFIRMED (not observed) |
 | D-28 | print | `prepareAssets` decode cache (`resolveCached`) is dpi-unaware — a 50 dpi thumbnail pass still holds full-resolution decodes in the shared print-path cache | memory held above the thumbnail LRU's intent | P8 (dpi-aware cache or separate thumbnail cache) |
+| D-31 | print | printhead-overflow warning fires whenever the raster is wider than the head, even if the over-width area is **blank** — a blank 50 mm label on a 567-dot head shows "may be clipped" | false-positive warning; owner-reported 2026-10-06 | P7 follow-up / P8 (only warn if ink exists beyond `printheadPixels`) |
+| D-30 | editor | **no UI to set `printDirection`** — the doc field exists and `orientForPrint` handles `bottom`/`right`, but nothing exposes it (owner could not find a control to test the pre-rotation) | D-04 fix is unreachable from the UI | P8 (a label/print setting control) |
 | D-29 | test-infra | suite wall-clock is bounded by the heavy real-canvas suites (`renderLabelPage.test.ts` ~25 s) and per-file worker startup (`Isolate 105 workers · ~1.2 s each`); the node-default/happy-dom-opt-in split removed the happy-dom cost (50%→35% of tracked) but not wall time | full-suite wall ~19–30 s, high variance on the 2-CPU box | chore (split/streamline the canvas suites; `pool: 'threads'` and `--no-isolate` are *slower* here) |
+
+**Owner UI-test round (2026-10-06):** `agent/known-issues/2026-10-06_round-1.md` is a separate
+backlog of editor/UI issues found while smoke-testing P7 (image import + edit, node resize +
+WYSIWYG, polygon tool, View→grid, quantizer strength/threshold config, screen-DPI calibration,
+layer ordering, a central warning centre). None are P7-blocking; triage into the next UI sweep.
 
 ## Escalation rule
 
