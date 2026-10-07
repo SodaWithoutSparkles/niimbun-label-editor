@@ -46,7 +46,7 @@ const pickFile = (input: HTMLInputElement, file: File) => {
 
 afterEach(() => {
     cleanup();
-    useStore.setState({ currentDoc: null, csvRepo: null, docPast: [], docFuture: [] });
+    useStore.setState({ currentDoc: null, csvRepo: null, docPast: [], docFuture: [], editorWarnings: {} });
 });
 
 describe('DataSourceTab', () => {
@@ -180,5 +180,33 @@ describe('DataSourceTab', () => {
         await waitFor(() => expect(useStore.getState().currentDoc!.meta.id).toBe('doc-b'));
         expect(useStore.getState().currentDoc!.data.csv).toBeUndefined();
         expect(useStore.getState().docPast).toHaveLength(0);
+    });
+
+    it('publishes parse warnings to the warning center and clears them on detach', async () => {
+        const csvRepo = createCsvRepo(createMemoryAdapter());
+        const doc = emptyDoc();
+        useStore.setState({ currentDoc: doc, csvRepo });
+        vi.mocked(parseCsvFile).mockResolvedValueOnce(
+            parsed({ warnings: [{ kind: 'empty' }, { kind: 'rows-capped', cap: 5, total: 9 }] }),
+        );
+
+        const view = render(<DataSourceTab doc={doc} />);
+        pickFile(
+            screen.getByLabelText('Choose file') as HTMLInputElement,
+            new File(['a'], 'a.csv', { type: 'text/csv' }),
+        );
+
+        await waitFor(() => expect(useStore.getState().currentDoc!.data.csv).toBeDefined());
+        const csvId = useStore.getState().currentDoc!.data.csv!.csvId;
+        const group = useStore.getState().editorWarnings.csv;
+        expect(group?.docId).toBe(doc.meta.id);
+        expect(group?.scopeId).toBe(csvId);
+        expect(group?.warnings.map((warning) => warning.kind)).toEqual(['csv-empty', 'csv-rows-capped']);
+
+        // The component receives the doc as a prop; rerender with the attached
+        // document (as `MfpPanel` would) to exercise the detach path.
+        view.rerender(<DataSourceTab doc={useStore.getState().currentDoc!} />);
+        fireEvent.click(screen.getByText('Detach'));
+        expect(useStore.getState().editorWarnings.csv).toBeUndefined();
     });
 });

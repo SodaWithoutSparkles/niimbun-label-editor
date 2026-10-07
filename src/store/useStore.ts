@@ -8,6 +8,7 @@ import { createToolsSlice } from './slices/toolsSlice';
 import { createDocSlice } from './slices/docSlice';
 import { createEditorSlice } from './slices/editorSlice';
 import { createSelectionSlice } from './slices/selectionSlice';
+import { createWarningsSlice } from './slices/warningsSlice';
 import { createViewSlice } from './slices/viewSlice';
 import {
     DEFAULT_SCREEN_DPI,
@@ -114,6 +115,7 @@ export const createAppStore = (storage?: Storage) => {
                     ...createDocSlice(set, get, api),
                     ...createEditorSlice(set, get, api),
                     ...createSelectionSlice(set, get, api),
+                    ...createWarningsSlice(set, get, api),
                     ...createViewSlice(set, get, api),
                 };
                 if (legacy.autoSave !== undefined) state.autoSave = legacy.autoSave;

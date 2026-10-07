@@ -6,6 +6,7 @@ import { newLabelId } from '../../core/doc/factory';
 import { parseCsvFile, type CsvWarning } from '../../data/csvImport';
 import type { CsvRecord } from '../../data/csvRepo';
 import type { LabelDoc } from '../../core/doc/types';
+import type { EditorWarning } from '../../editor/warnings';
 import { CsvPreviewTable } from './CsvPreviewTable';
 import { Select, SettingRow } from '../common/forms';
 
@@ -42,12 +43,28 @@ const warningMessage = (warning: CsvWarning, t: TFunction): string => {
     return t(WARNING_KEYS['parse-error']);
 };
 
+/**
+ * Map raw parse warnings to the warning-center entries published under `csv`.
+ * The `message` on `parse-error` is a raw PapaParse diagnostic and is
+ * deliberately dropped: the center renders localized copy from `kind` alone.
+ */
+const toEditorWarnings = (warnings: readonly CsvWarning[]): EditorWarning[] =>
+    warnings.map((warning, index) => {
+        if (warning.kind === 'rows-capped') {
+            return { id: `csv:rows-capped:${index}`, kind: 'csv-rows-capped', cap: warning.cap, total: warning.total };
+        }
+        if (warning.kind === 'empty') return { id: `csv:empty:${index}`, kind: 'csv-empty' };
+        return { id: `csv:parse-error:${index}`, kind: 'csv-parse-error' };
+    });
+
 export const DataSourceTab: React.FC<DataSourceTabProps> = ({ doc }) => {
     const { t } = useTranslation();
     const csvRepo = useStore((state) => state.csvRepo);
     const attachCsv = useStore((state) => state.attachCsv);
     const setDocCsv = useStore((state) => state.setDocCsv);
     const setSampleRowIndex = useStore((state) => state.setSampleRowIndex);
+    const setEditorWarnings = useStore((state) => state.setEditorWarnings);
+    const clearEditorWarnings = useStore((state) => state.clearEditorWarnings);
     const fileInputRef = useRef<HTMLInputElement>(null);
     // In-flight guard for `handleFile`. A ref, not the `attaching` render value:
     // two file picks dispatched before the re-render both read `attaching ===
@@ -58,11 +75,25 @@ export const DataSourceTab: React.FC<DataSourceTabProps> = ({ doc }) => {
     const [loading, setLoading] = useState(false);
     const [attaching, setAttaching] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [warnings, setWarnings] = useState<CsvWarning[]>([]);
+    /**
+     * Parse warnings for one (doc, CSV) pair. Keyed rather than bare so a
+     * document/CSV switch can never display (or republish) another scope's
+     * warnings; the inline list and the warning-center group both derive from
+     * the pair that still matches the open document.
+     */
+    const [parseWarnings, setParseWarnings] = useState<{
+        docId: string;
+        csvId: string;
+        warnings: CsvWarning[];
+    } | null>(null);
 
     const csvId = doc.data.csv?.csvId;
     const rowIndex = doc.data.sampleRowIndex;
     const docId = doc.meta.id;
+    const warnings =
+        parseWarnings && parseWarnings.docId === docId && parseWarnings.csvId === csvId
+            ? parseWarnings.warnings
+            : [];
 
     // Guard async work that outlives the mount / the open document: a parse or
     // `put` that settles after an unmount or a doc switch must not attach to, or
@@ -102,6 +133,13 @@ export const DataSourceTab: React.FC<DataSourceTabProps> = ({ doc }) => {
         };
     }, [csvRepo, csvId]);
 
+    // CSV parse warnings are published to the warning center at parse time (see
+    // `handleFile`/`handleDetach`) rather than derived from component state. The
+    // MFP unmounts an inactive tab, so state/local effects cannot keep the group
+    // alive across a tab switch — and the group must outlive this component to
+    // be visible in the Warnings tab. The group carries the `(docId, csvId)`
+    // scope, so a stale group is filtered out rather than shown for a new scope.
+
     const handleFile = async (file: File) => {
         if (!csvRepo) {
             setError(t('editor.mfp.csvNeedsStorage'));
@@ -115,7 +153,7 @@ export const DataSourceTab: React.FC<DataSourceTabProps> = ({ doc }) => {
         attachingRef.current = true;
         setAttaching(true);
         setError(null);
-        setWarnings([]);
+        setParseWarnings(null);
         try {
             const parsed = await parseCsvFile(file);
             const nextId = newLabelId();
@@ -137,7 +175,15 @@ export const DataSourceTab: React.FC<DataSourceTabProps> = ({ doc }) => {
             // the status bar reads `Row: 0`). Orphaned records are reclaimed by a
             // later cleanup pass, not the write path.
             attachCsv({ csvId: nextId, name: file.name });
-            setWarnings(parsed.warnings);
+            setParseWarnings({ docId: originDocId, csvId: nextId, warnings: parsed.warnings });
+            // Publish at parse time so the warning center keeps the entries after
+            // this tab unmounts. An empty parse still writes the group, clearing a
+            // previously-attached CSV's entries.
+            setEditorWarnings('csv', {
+                docId: originDocId,
+                scopeId: nextId,
+                warnings: toEditorWarnings(parsed.warnings),
+            });
         } catch {
             if (mountedRef.current && docIdRef.current === originDocId) {
                 setError(t('editor.mfp.csvStoreFailed'));
@@ -150,7 +196,10 @@ export const DataSourceTab: React.FC<DataSourceTabProps> = ({ doc }) => {
 
     const handleDetach = () => {
         setError(null);
-        setWarnings([]);
+        setParseWarnings(null);
+        // Scoped clear: only the group published for the attached table is
+        // dropped, so a newer group (e.g. StrictMode re-fire) survives.
+        if (csvId !== undefined) clearEditorWarnings('csv', csvId);
         // Clearing the ref is undoable; the stored bytes are intentionally kept so
         // an undo can restore the attachment. The orphan sweep reclaims them later
         // (the `csvs` store is not part of undo).

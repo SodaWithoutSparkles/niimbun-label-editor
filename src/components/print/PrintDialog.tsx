@@ -21,6 +21,8 @@ import { planSequence, type PrintOrder } from '../../print/sequence';
 import { buildCsvPrintJob, renderOptionsOf, type PrintOverrides } from '../../print/printLabel';
 import type { JobProgress, JobRunner } from '../../print/jobRunner';
 import type { PrinterStatus } from '../../print/transport';
+import { useStore } from '../../store/useStore';
+import type { EditorWarning } from '../../editor/warnings';
 import { usePrintThumbnails, type PrintThumbnailOverrides } from './usePrintThumbnails';
 import { PrintPageList } from './PrintPageList';
 import {
@@ -95,6 +97,8 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     onPrintDirectionChange,
 }) => {
     const { t } = useTranslation();
+    const setEditorWarnings = useStore((state) => state.setEditorWarnings);
+    const clearEditorWarnings = useStore((state) => state.clearEditorWarnings);
     const capabilities = printerStatus.capabilities;
 
     const [order, setOrder] = useState<PrintOrder>('grouped');
@@ -287,6 +291,26 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     ]);
 
     const showOverflow = overflows && inkOverflow;
+    const mirrorLostPx = notices.reduce(
+        (sum, notice) => (notice.kind === 'mirror-clipped-ink' ? sum + notice.lostPx : sum),
+        0,
+    );
+    useEffect(() => {
+        if (!open) {
+            clearEditorWarnings('print');
+            return;
+        }
+        const warnings: EditorWarning[] = [];
+        if (showOverflow && capabilities?.printheadPixels !== undefined) {
+            warnings.push({ id: 'print:overflow', kind: 'print-overflow', width: orientedWidthPx, head: capabilities.printheadPixels });
+        }
+        if (plan?.warning) warnings.push({ id: 'print:interleaved', kind: 'print-interleaved', pages: plan.warning.pages, cap: plan.warning.cap });
+        if (mismatch) warnings.push({ id: 'print:mismatch', kind: 'print-mismatch', labelW: mismatch.labelW, labelH: mismatch.labelH, labelDpi: mismatch.labelDpi });
+        if (policyOverflowCount > 0) warnings.push({ id: 'print:policy-overflow', kind: 'print-policy-overflow', count: policyOverflowCount });
+        if (notices.length > 0) warnings.push({ id: 'print:mirror-clipped', kind: 'print-mirror-clipped', pixels: mirrorLostPx });
+        setEditorWarnings('print', { docId: doc.meta.id, warnings });
+        return () => setEditorWarnings('print', null);
+    }, [open, showOverflow, capabilities?.printheadPixels, orientedWidthPx, plan?.warning, mismatch, policyOverflowCount, notices, mirrorLostPx, doc.meta.id, setEditorWarnings]);
 
     const handleProgress = (next: JobProgress): void => {
         setProgress((previous) => ({
@@ -335,10 +359,6 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     });
 
     const printDisabled = busy || runner.isBusy() || plan === null || plan.totalPages === 0;
-    const mirrorLostPx = notices.reduce(
-        (sum, notice) => (notice.kind === 'mirror-clipped-ink' ? sum + notice.lostPx : sum),
-        0,
-    );
     const hasWarnings =
         showOverflow ||
         plan?.warning !== undefined ||

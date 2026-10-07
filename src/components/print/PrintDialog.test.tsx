@@ -11,6 +11,7 @@ import type { CsvRecord } from '../../data/csvRepo';
 import type { RenderedLabelPage } from '../../editor/render';
 import type { JobProgress, JobRunResult, JobRunner } from '../../print/jobRunner';
 import type { PrintJob, PrinterCapabilities, PrinterStatus } from '../../print/transport';
+import { useStore } from '../../store/useStore';
 import { PrintDialog } from './PrintDialog';
 
 const { buildCsvPrintJobMock, renderLabelPageMock } = vi.hoisted(() => ({
@@ -68,7 +69,10 @@ beforeEach(() => {
     renderLabelPageMock.mockImplementation(async (doc: LabelDoc) => fakeRenderedPage(doc, true));
 });
 
-afterEach(cleanup);
+afterEach(() => {
+    cleanup();
+    useStore.setState({ editorWarnings: {} });
+});
 
 class FakeRunner implements JobRunner {
     busy = false;
@@ -289,6 +293,31 @@ describe('PrintDialog — warnings', () => {
 
         fireEvent.change(screen.getByLabelText('Order'), { target: { value: 'interleaved' } });
         expect(screen.getByTestId('print-warning-interleaved')).toBeInTheDocument();
+    });
+
+    it('publishes document-level warnings to the shared center and clears on unmount', async () => {
+        const doc = wideDoc();
+        const view = render(
+            <PrintDialog
+                open
+                onClose={vi.fn()}
+                doc={doc}
+                csv={null}
+                runner={new FakeRunner()}
+                printerStatus={statusOf(B1_PRO)}
+            />,
+        );
+
+        // The overflow verdict lands after the async ink check.
+        expect(await screen.findByTestId('print-warning-overflow')).toBeInTheDocument();
+        await waitFor(() => {
+            const group = useStore.getState().editorWarnings.print;
+            expect(group?.docId).toBe(doc.meta.id);
+            expect(group?.warnings.map((warning) => warning.kind)).toContain('print-overflow');
+        });
+
+        view.unmount();
+        expect(useStore.getState().editorWarnings.print).toBeUndefined();
     });
 });
 

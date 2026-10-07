@@ -7,7 +7,8 @@ import { cn } from '../../utils/cn';
 import { flattenResolved, resolve } from '../../editor/render/resolve';
 import type { ResolvedContent, ResolvedNode } from '../../editor/render/resolve';
 import type { GlobalWarning } from '../../templates/globals';
-import type { LabelDoc, Node } from '../../core/doc/types';
+import { buildFontWarnings, buildPreviewWarnings } from '../../editor/previewWarnings';
+import type { LabelDoc, Node, TextNode } from '../../core/doc/types';
 import { matrixToKonvaAttrs } from '../../editor/render/konvaFactory';
 import { movePatch, transformEndPatch, commitPreservesAspect, transformerTargetSize, dragOriginOf, type DragOrigin } from '../../editor/transformGesture';
 import { nodeSize, pointsExtent, preservesAspectByDefault, DEFAULT_CONTENT_SIZE, type Size } from '../../core/doc/geometry';
@@ -31,7 +32,8 @@ import { finishPolygonPoints, snapPolygonPoint, type PolygonPoint } from '../../
 import { selectionAfterClick, nodesInMarquee } from '../../editor/selectionModel';
 import { GRID_STEP_HM } from './gridConstants';
 import { ResolvedShape } from './ResolvedShape';
-import { usePreparedAssets } from './usePreparedAssets';
+import { bytesProviderFor, usePreparedAssets } from './usePreparedAssets';
+import { fontBadges } from '../../editor/render/fontAssets';
 import { useSampleRowState } from './sampleRowContext';
 import { Overlays, type SnapGuideLine } from './Overlays';
 import { Rulers } from './Rulers';
@@ -137,6 +139,8 @@ export const PreviewStage: React.FC = () => {
     const selectNode = useStore((state) => state.selectNode);
     const selectNodes = useStore((state) => state.selectNodes);
     const clearNodeSelection = useStore((state) => state.clearNodeSelection);
+    const setEditorWarnings = useStore((state) => state.setEditorWarnings);
+    const clearEditorWarnings = useStore((state) => state.clearEditorWarnings);
     const activeTool = useStore((state) => state.activeTool);
     const clearActiveTool = useStore((state) => state.clearActiveTool);
     const addNode = useStore((state) => state.addNode);
@@ -152,6 +156,7 @@ export const PreviewStage: React.FC = () => {
     const manualZoom = useStore((state) => state.manualZoom);
     const setEffectiveZoom = useStore((state) => state.setEffectiveZoom);
     const screenDpi = useStore((state) => state.screenDpi);
+    const resourceRepo = useStore((state) => state.resourceRepo);
 
     const containerRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<Konva.Stage>(null);
@@ -246,17 +251,80 @@ export const PreviewStage: React.FC = () => {
         if (!doc) return map;
         const imageNames = new Map(doc.resources.images.map((ref) => [ref.imageId, ref.name] as const));
         for (const node of flatResolved) {
-            if (node.type === 'image') map.set(node.id, imageNames.get(node.imageId) ?? (node.imageId || node.id));
-            else if (node.type === 'qr' || node.type === 'barcode') map.set(node.id, node.id);
+            if (node.type === 'image') map.set(node.id, imageNames.get(node.imageId) || node.name || node.imageId || node.id);
+            else if (node.type === 'qr' || node.type === 'barcode') map.set(node.id, node.name ?? node.id);
         }
         return map;
     }, [doc, flatResolved]);
+
     const targets = useMemo<HitTestable[]>(
         () => flatResolved.map((node) => ({ id: node.id, bounds: node.bounds, visible: node.visible, locked: node.locked })),
         [flatResolved],
     );
     const guides = useMemo(() => (doc ? resolveGuides(doc) : []), [doc]);
     const keepOutIds = useMemo(() => (doc ? nodesIntersectNonPrintable(doc) : []), [doc]);
+    // Preview warnings are aggregated by the pure `buildPreviewWarnings` and
+    // published under `preview`, scoped to the document id. The effect owns the
+    // cleanup: on doc change/unmount it drops only the group it published, so a
+    // re-mounted producer can never clear a newer group.
+    useEffect(() => {
+        if (!doc) {
+            clearEditorWarnings('preview');
+            return;
+        }
+        const docId = doc.meta.id;
+        setEditorWarnings('preview', {
+            docId,
+            scopeId: docId,
+            warnings: buildPreviewWarnings(doc, {
+                assetWarnings: warnings,
+                assetLabels,
+                keepOutIds,
+                globalWarnings,
+                templateErrors,
+                blocked,
+                needsApproval,
+                sampleRowError,
+            }),
+        });
+        return () => clearEditorWarnings('preview', docId);
+    }, [doc, warnings, keepOutIds, assetLabels, globalWarnings, templateErrors, blocked, needsApproval, sampleRowError, setEditorWarnings, clearEditorWarnings]);
+    // Font availability is a preview-scope producer (the tab is a pure reader).
+    // It runs on the always-mounted stage, is scoped to the document id, and
+    // swallows provider failures. StrictMode-safe: the cancelled flag drops a
+    // stale pass, and the cleanup removes only this document's group.
+    //
+    // Keyed on the stable font inputs — the document id, the font resource set
+    // and the fontIds text nodes actually reference — rather than whole-doc
+    // identity. `updateNodeTransient` mints a new `currentDoc` on every
+    // pointer-move, so a `doc`-keyed effect re-ran `fontBadges` (IndexedDB
+    // reads) and cleared+republished the group every frame of a drag.
+    const referencedFontKeys = useMemo(() => (doc?.nodes ?? [])
+        .filter((node): node is TextNode => node.type === 'text' && !!node.fontId)
+        .map((node) => `${node.id}:${node.fontId}`)
+        .sort()
+        .join('\n'), [doc]);
+    useEffect(() => {
+        if (!doc) {
+            clearEditorWarnings('fonts');
+            return;
+        }
+        const docId = doc.meta.id;
+        let cancelled = false;
+        const bytes = resourceRepo ? bytesProviderFor(resourceRepo) : { getBytes: async () => null };
+        fontBadges(doc, bytes)
+            .then((badges) => {
+                if (cancelled) return;
+                setEditorWarnings('fonts', { docId, scopeId: docId, warnings: buildFontWarnings(doc, badges) });
+            })
+            .catch(() => {
+                if (!cancelled) setEditorWarnings('fonts', { docId, scopeId: docId, warnings: [] });
+            });
+        return () => {
+            cancelled = true;
+            clearEditorWarnings('fonts', docId);
+        };
+    }, [doc?.meta.id, doc?.resources.fonts, referencedFontKeys, resourceRepo, setEditorWarnings, clearEditorWarnings]);
     /** World bounds per resolved node — used for keep-out badges and drag snap. */
     const nodeBoundsById = useMemo(() => {
         const map = new Map<string, ViewRect>();
@@ -616,7 +684,8 @@ export const PreviewStage: React.FC = () => {
         [backing, innerSize, viewport],
     );
 
-    // Esc cancels an armed action and clears selection.
+    // Esc cancels an armed action and clears selection; Enter finishes a
+    // half-drawn polygon (the effect handles both keyboard paths).
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
             if (document.querySelector('dialog[open]')) return;

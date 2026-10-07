@@ -56,7 +56,7 @@ Arm `shape:polygon` → accumulate world points on click (no node until finish);
 
 `BaseNode.quantizerParams? {threshold?: int 0–255; strength?: 0–4}` → validate/clamp/repair → per-policy options → `renderLabelPage` masks deduped by `(quantizer, params)`, cap at 8, excess nodes use global defaults with a print-preview warning → Object-tab numeric fields + i18n/tests. Editor canvas stays unquantized (dither appears in print previews). ✅ complete (2026-10-08).
 
-### P6 — warning center (#6 + #5 text)
+### P6 — warning center (#6 + #5 text) — ✅ complete (2026-10-08)
 
 5th MFP tab "Warnings" (next to JS). Aggregate: asset warnings (`missing|invalid|too-small` — lift from component-local `usePreparedAssets` to shared context/slice), keep-out, global-data warnings, template errors; print doc-level warnings (incl. in-flight ink-aware overflow) as **non-jumpable** entries. Entries `{id, kind, nodeId?}`; per-kind detailed i18n text; jump via `selectNode` (`selectionSlice.ts:16`). Node badge stays the generic ⚠ (owner). Do NOT reuse `NotificationCenter` (auto-dismiss). QR = arbitrary text. Host options for aggregation: extend `SampleRowContext` or a small `warnings` slice — coordinator picks with review. ~5–8 files. Owner screenshot-check of the tab.
 

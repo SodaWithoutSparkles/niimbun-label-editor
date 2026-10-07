@@ -6,24 +6,26 @@ import { ObjectTab } from './ObjectTab';
 import { DataSourceTab } from './DataSourceTab';
 import { GlobalDataTab } from './GlobalDataTab';
 import { JsTab } from './JsTab';
+import { WarningsTab } from './WarningsTab';
 import { carriesContentSource } from '../../editor/contentSource';
 import type { Node } from '../../core/doc/types';
 
 /**
  * Multi-function panel (ui-spec.md §8) — row B, spanning the insert rail and
  * preview. Tabs: Object (always, default; bulk mode on multi-select), Data
- * source (CSV attach/preview + sample row), Global data (O6), and JS (the
- * selected node's content source). Every tab scrolls internally because the
- * panel height is limited.
+ * source (CSV attach/preview + sample row), Global data (O6), JS (the
+ * selected node's content source), and Warnings (the aggregated P6 warning
+ * center). Every tab scrolls internally because the panel height is limited.
  */
 
-type MfpTab = 'object' | 'data' | 'globals' | 'js';
+type MfpTab = 'object' | 'data' | 'globals' | 'js' | 'warnings';
 
 const TAB_LABEL_KEYS = {
     object: 'editor.mfp.object',
     data: 'editor.mfp.dataSource',
     globals: 'editor.mfp.globalData',
     js: 'editor.mfp.js',
+    warnings: 'editor.mfp.warnings',
 } as const;
 
 export const MfpPanel: React.FC = () => {
@@ -41,8 +43,8 @@ export const MfpPanel: React.FC = () => {
     const canAuthorSource = selected.some((node) => carriesContentSource(node));
 
     const tabs: MfpTab[] = canAuthorSource
-        ? ['object', 'data', 'globals', 'js']
-        : ['object', 'data', 'globals'];
+        ? ['object', 'data', 'globals', 'js', 'warnings']
+        : ['object', 'data', 'globals', 'warnings'];
     const activeTab: MfpTab = tabs.includes(tab) ? tab : 'object';
 
     return (
@@ -71,6 +73,7 @@ export const MfpPanel: React.FC = () => {
                 {activeTab === 'data' && doc && <DataSourceTab doc={doc} />}
                 {activeTab === 'globals' && doc && <GlobalDataTab doc={doc} />}
                 {activeTab === 'js' && <JsTab selected={selected} />}
+                {activeTab === 'warnings' && <WarningsTab />}
             </div>
         </div>
     );

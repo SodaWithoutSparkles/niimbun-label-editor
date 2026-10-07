@@ -12,6 +12,7 @@ import type { ResourceRepo } from '../data/resourceRepo';
 import type { TrustRepo } from '../data/trustRepo';
 import type { TrustGate } from '../core/trust';
 import type { PrinterStatus } from '../print/transport';
+import type { EditorWarningGroup, EditorWarningSource } from '../editor/warnings';
 
 /** Input for the `createLabel` store action — forwarded to `createLabelDoc`. */
 export interface CreateLabelSpec {
@@ -130,6 +131,11 @@ export interface AppState {
     addNotification: (notification: Omit<Notification, 'id'> & { id?: string }) => string;
     removeNotification: (id: string) => void;
     clearNotifications: () => void;
+
+    // Live editor warnings, grouped by source and scoped to a document.
+    editorWarnings: Partial<Record<EditorWarningSource, EditorWarningGroup>>;
+    setEditorWarnings: (source: EditorWarningSource, group: EditorWarningGroup | null) => void;
+    clearEditorWarnings: (source: EditorWarningSource, scopeId?: string) => void;
 
     // Document library / shell (docSlice) — never persisted
     view: 'gallery' | 'editor';
