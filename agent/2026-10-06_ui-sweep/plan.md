@@ -2,7 +2,7 @@
 
 - Date: 2026-10-06. Owner: you. Driver: `coordinator` (this plan is the handoff).
 - Source: `agent/known-issues/2026-10-06_round-1.md` (14 items) + `agent/known-issues/2026-10-06_round-1-investigation.md` (root causes, receipts, decisions).
-- Baseline: `main` @ `9b8d4a5` (D-31/D-30 landed there — ink-aware overflow warning + print-direction control). Suite was 1204 green at `1b26bd3`; re-verify at P1 start.
+- Baseline: `main` @ `9b8d4a5` (D-31/D-30 landed there — ink-aware overflow warning + print-direction control). Suite was 1204 green at `1b26bd3`; P1 start verified at 1213 tests.
 - Precondition (D-31/D-30 WIP) **satisfied** — `9b8d4a5`. Its files are now clean to touch.
 - Commit strategy (owner, 2026-10-06): **semantic commit at the end of each phase** (`fix(editor): …` / `feat(editor): …`), coordinator asks before each. Phase docs (`phase{N}_action-plan.md`) commit with their phase; `state.md` stays gitignored.
 - Excluded: #4 false clipping (= D-31, in flight) · D-30 (in flight) · serpentine UI (owner chose threshold+strength only).
@@ -54,7 +54,7 @@ Arm `shape:polygon` → accumulate world points on click (no node until finish);
 
 ### P5 — quantizer per-node params (#3)
 
-`BaseNode.quantizerParams? {threshold?: int 0–255; strength?: 0–4}` → validate clamp+repair → per-policy options seam (`policy.ts`, `pipeline.ts`: options per policy index, not one shared `opts`) → `renderLabelPage` policy mask keyed `(id, params)` + dedupe/cap-8 + overflow warn → inspector numeric fields (new `FieldKind`) + nested read/write (`ObjectTab.tsx`) → i18n → tests (validate/policy/renderLabelPage/inspectorModel/ObjectTab). ~8–10 files. Editor canvas stays unquantized (print previews show dither).
+`BaseNode.quantizerParams? {threshold?: int 0–255; strength?: 0–4}` → validate/clamp/repair → per-policy options → `renderLabelPage` masks deduped by `(quantizer, params)`, cap at 8, excess nodes use global defaults with a print-preview warning → Object-tab numeric fields + i18n/tests. Editor canvas stays unquantized (dither appears in print previews). ✅ complete (2026-10-08).
 
 ### P6 — warning center (#6 + #5 text)
 

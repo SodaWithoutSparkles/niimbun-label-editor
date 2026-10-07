@@ -232,6 +232,22 @@ describe('shape style defaults shown by the inspector (#8)', () => {
     });
 });
 
+describe('per-node quantizer params', () => {
+    it('edits bounded threshold and strength values through the Object tab', () => {
+        const selected = textNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        fireEvent.click(screen.getByText('128'));
+        fireEvent.change(screen.getAllByRole('spinbutton')[0]!, { target: { value: '200' } });
+        fireEvent.click(screen.getAllByText('1').at(-1)!);
+        fireEvent.change(screen.getAllByRole('spinbutton')[1]!, { target: { value: '2.5' } });
+        fireEvent.pointerUp(document);
+
+        expect(useStore.getState().currentDoc!.nodes[0]?.quantizerParams).toEqual({ threshold: 200, strength: 2.5 });
+    });
+});
+
 describe('text content authoring (must-fix #3)', () => {
     it('reads and writes a static ContentSource', () => {
         expect(textContentValue(textNode())).toBe('');

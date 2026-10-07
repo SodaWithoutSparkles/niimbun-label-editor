@@ -39,6 +39,7 @@ export {
     type PolicyMask,
     type PolicyNode,
     type QuantizerPolicies,
+    type QuantizerPolicy,
 } from './policy';
 
 export { quantizeRgba, type QuantizeRequest } from './pipeline';

@@ -88,6 +88,8 @@ const FIELD_LABEL_KEYS = {
     symbology: 'editor.mfp.field.symbology',
     contentSource: 'editor.mfp.field.contentSource',
     quantizerHint: 'editor.mfp.field.quantizerHint',
+    quantizerThreshold: 'editor.mfp.field.quantizerThreshold',
+    quantizerStrength: 'editor.mfp.field.quantizerStrength',
     templateTrust: 'editor.mfp.field.templateTrust',
 } as const;
 
@@ -158,6 +160,8 @@ const numberValue = (node: Node, key: string): number => {
     // The render path defaults an absent stroke width; mirror it so the slider
     // shows the real value instead of 0.
     if (key === 'strokeWidth') return node.strokeWidth ?? DEFAULT_SHAPE_STROKE_WIDTH;
+    if (key === 'quantizerThreshold') return node.quantizerParams?.threshold ?? 128;
+    if (key === 'quantizerStrength') return node.quantizerParams?.strength ?? 1;
     const value = (node as unknown as Record<string, unknown>)[key];
     return typeof value === 'number' ? value : 0;
 };
@@ -507,7 +511,22 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     const setNumber = (key: string, value: number) => {
         gestureRef.current = true;
         for (const node of selected) {
-            if (isTransformKey(key)) updateNodeTransient(node.id, transformPatch(node, key, value));
+            if (key === 'quantizerThreshold' || key === 'quantizerStrength') {
+                const current = useStore.getState().currentDoc?.nodes.find((entry) => entry.id === node.id) ?? node;
+                const option = key === 'quantizerThreshold' ? 'threshold' : 'strength';
+                const range = option === 'threshold' ? [0, 255] : [0, 4];
+                const rounded = option === 'threshold' ? Math.round(value) : value;
+                const bounded = Math.max(range[0]!, Math.min(range[1]!, Number.isFinite(rounded) ? rounded : 0));
+                const params = { ...current.quantizerParams };
+                if (option === 'threshold') {
+                    if (bounded === 128) delete params.threshold;
+                    else params.threshold = bounded;
+                } else if (bounded === 1) delete params.strength;
+                else params.strength = bounded;
+                updateNodeTransient(node.id, {
+                    quantizerParams: Object.keys(params).length ? params : undefined,
+                });
+            } else if (isTransformKey(key)) updateNodeTransient(node.id, transformPatch(node, key, value));
             else if (key === 'sizeW' || key === 'sizeH') updateNodeTransient(node.id, sizePatch(node, key, value));
             else updateNodeTransient(node.id, { [key]: value } as never);
         }
@@ -593,8 +612,8 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                             value={numberValue(first, field.key)}
                             onChange={(value) => setNumber(field.key, value)}
                             min={field.key === 'fontSize' ? 1 : field.key === 'x' || field.key === 'y' ? -10000 : 0}
-                            max={field.key === 'fontSize' ? 2000 : 100000}
-                            step={1}
+                            max={field.key === 'fontSize' ? 2000 : field.key === 'quantizerThreshold' ? 255 : field.key === 'quantizerStrength' ? 4 : 100000}
+                            step={field.key === 'quantizerStrength' ? 0.1 : 1}
                             label={label}
                         />
                     </SettingRow>

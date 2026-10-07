@@ -354,6 +354,8 @@
       "rectangle": "Rectangle",
       "ellipse": "Ellipse",
       "polygon": "Polygon",
+      "polygonHint_one": "{{count}} point — click to add points; double-click or Enter to finish; Esc to cancel.",
+      "polygonHint_other": "{{count}} points — click to add points; double-click or Enter to finish; Esc to cancel.",
       "qr": "QR",
       "barcode": "Barcode",
       "disabledEngine": "Not available yet",
@@ -516,6 +518,8 @@
         "symbology": "Symbology",
         "contentSource": "Content source",
         "quantizerHint": "Quantizer",
+        "quantizerThreshold": "Threshold",
+        "quantizerStrength": "Dither strength",
         "templateTrust": "Template trust"
       }
     },
@@ -589,7 +593,8 @@
       "interleaved": "Interleaved order will print {{pages}} pages (more than {{cap}}).",
       "overflow": "Label exceeds the printhead ({{width}} px wide vs {{head}} px). Printing may be clipped.",
       "mismatch": "Printer reports a different roll or DPI than this label (label {{labelW}}×{{labelH}} hm @ {{labelDpi}} dpi).",
-      "mirrorClipped": "Mirroring discarded {{pixels}} ink pixels outside the printable area."
+      "mirrorClipped": "Mirroring discarded {{pixels}} ink pixels outside the printable area.",
+      "policyOverflow": "{{count}} distinct per-node dither policies exceeded the 8-policy limit; excess nodes use the default policy."
     },
     "progress": {
       "sending": "Sending…",

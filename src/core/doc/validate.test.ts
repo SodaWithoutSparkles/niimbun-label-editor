@@ -307,6 +307,24 @@ describe('isNode — geometry fields (P3 §13)', () => {
     });
 });
 
+describe('isNode — quantizerParams', () => {
+    it('accepts in-range values, clamps out-of-range values, and drops invalid optionals with repairs', () => {
+        expect(isNode(baseNode({ quantizerParams: { threshold: 33, strength: 2.5 } }))?.quantizerParams).toEqual({
+            threshold: 33,
+            strength: 2.5,
+        });
+        const repairs: string[] = [];
+        const repaired = isNode(baseNode({ quantizerParams: { threshold: 999, strength: -2 } }), repairs);
+        expect(repaired?.quantizerParams).toEqual({ threshold: 255, strength: 0 });
+        expect(repairs).toContain('node.quantizerParams.threshold: clamped to 0–255');
+        expect(repairs).toContain('node.quantizerParams.strength: clamped to 0–4');
+        const invalidRepairs: string[] = [];
+        expect(isNode(baseNode({ quantizerParams: { threshold: 'bad', strength: Number.NaN } }), invalidRepairs)?.quantizerParams).toBeUndefined();
+        expect(invalidRepairs).toContain('node.quantizerParams.threshold: invalid value dropped');
+        expect(invalidRepairs).toContain('node.quantizerParams.strength: invalid value dropped');
+    });
+});
+
 describe('isNode — quantizerHint (P4)', () => {
     it('keeps a known quantizer id', () => {
         expect(isNode(baseNode({ quantizerHint: 'atkinson' }))?.quantizerHint).toBe('atkinson');

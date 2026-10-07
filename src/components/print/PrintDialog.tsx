@@ -195,7 +195,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         [invert, mirror, parsedOffset],
     );
 
-    const { urlFor, prefetch, notices } = usePrintThumbnails({
+    const { urlFor, prefetch, notices, policyOverflowCount } = usePrintThumbnails({
         doc,
         csv,
         prepareRow,
@@ -343,7 +343,8 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         showOverflow ||
         plan?.warning !== undefined ||
         mismatch !== undefined ||
-        notices.length > 0;
+        notices.length > 0 ||
+        policyOverflowCount > 0;
 
     const outcomeText = (value: Outcome): string => {
         if (value.kind === 'success') {
@@ -615,6 +616,11 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                     labelH: mismatch.labelH,
                                     labelDpi: mismatch.labelDpi,
                                 })}
+                            </p>
+                        )}
+                        {policyOverflowCount > 0 && (
+                            <p data-testid="print-warning-policy-overflow" role="alert" className="rounded border border-amber-700 bg-amber-900/30 px-2 py-1 text-xs text-amber-200">
+                                {t('print.warnings.policyOverflow', { count: policyOverflowCount })}
                             </p>
                         )}
                         {notices.length > 0 && (

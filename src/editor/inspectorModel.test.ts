@@ -104,6 +104,20 @@ describe('inspectorModel — field descriptors', () => {
         expect(BARCODE_FIELDS.find((f) => f.key === 'size')?.reason).toBe('size');
     });
 
+    it('wires per-node quantizer params as numeric fields', () => {
+        expect(keys(RESERVED_FIELDS)).toEqual([
+            'contentSource', 'quantizerHint', 'quantizerThreshold', 'quantizerStrength', 'templateTrust',
+        ]);
+        expect(RESERVED_FIELDS.find((field) => field.key === 'quantizerThreshold')).toMatchObject({
+            kind: 'number',
+            wired: true,
+        });
+        expect(RESERVED_FIELDS.find((field) => field.key === 'quantizerStrength')).toMatchObject({
+            kind: 'number',
+            wired: true,
+        });
+    });
+
     it('wires quantizerHint as a select over the quantizer registry', () => {
         const field = RESERVED_FIELDS.find((f) => f.key === 'quantizerHint');
         expect(field?.wired).toBe(true);
@@ -157,7 +171,7 @@ describe('inspectorModel — field descriptors', () => {
     });
 
     it('wires contentSource and templateTrust (P6)', () => {
-        expect(keys(RESERVED_FIELDS)).toEqual(['contentSource', 'quantizerHint', 'templateTrust']);
+        expect(keys(RESERVED_FIELDS)).toEqual(['contentSource', 'quantizerHint', 'quantizerThreshold', 'quantizerStrength', 'templateTrust']);
         const contentSource = RESERVED_FIELDS.find((f) => f.key === 'contentSource');
         expect(contentSource?.wired).toBe(true);
         expect(contentSource?.kind).toBe('contentSource');

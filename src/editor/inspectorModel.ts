@@ -202,6 +202,8 @@ export const RESERVED_FIELDS: readonly FieldDescriptor[] = [
     { key: 'contentSource', scope: 'reserved', kind: 'contentSource', wired: true, options: ['static', 'csv', 'template'] },
     // Per-object dither policy: absent ⇒ the node type's default policy.
     { key: 'quantizerHint', scope: 'reserved', kind: 'select', wired: true, options: QUANTIZER_HINT_OPTIONS },
+    { key: 'quantizerThreshold', scope: 'reserved', kind: 'number', wired: true },
+    { key: 'quantizerStrength', scope: 'reserved', kind: 'number', wired: true },
     // Read-only template trust state for the open document.
     { key: 'templateTrust', scope: 'reserved', kind: 'templateTrust', wired: true },
 ];

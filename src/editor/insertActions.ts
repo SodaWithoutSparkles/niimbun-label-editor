@@ -8,10 +8,9 @@ import {
 import type { ImageRef, Node, ShapeKind } from '../core/doc/types';
 
 /**
- * One-shot insert defaults (ui-spec.md §4). A rail action arms, the user clicks
- * a point, and a node of a sensible default size is created there
- * (click-to-place, then resize via handles). Pure data — the store's `addNode`
- * mints the id, so the placeholder `id` here is overwritten.
+ * Insert defaults (ui-spec.md §4). Most rail actions place one node on click;
+ * polygon stays armed while its vertices are collected. Pure data — the store's
+ * `addNode` mints the id, so the placeholder `id` here is overwritten.
  *
  * Sizes are hm (hundredths of a mm). They are deliberate defaults, not a design
  * decision; the user resizes with the Transformer.
@@ -39,6 +38,21 @@ const DEFAULT_BARCODE_BOX = { w: 2000 as hm, h: 800 as hm };
 /** Default static payloads for the armed qr / barcode inserts (P5). */
 export const DEFAULT_QR_PAYLOAD = 'https://example.com';
 export const DEFAULT_BARCODE_PAYLOAD = '123456789012';
+
+export const createPolygonNode = (worldPoints: [hm, hm][]): Node => {
+    const x = Math.min(...worldPoints.map(([pointX]) => pointX)) as hm;
+    const y = Math.min(...worldPoints.map(([, pointY]) => pointY)) as hm;
+    return {
+        ...base(x, y),
+        type: 'shape',
+        shape: 'polygon',
+        points: worldPoints.map(([pointX, pointY]) => [pointX - x, pointY - y]),
+        closed: true,
+        fill: DEFAULT_SHAPE_FILL,
+        stroke: DEFAULT_SHAPE_STROKE,
+        strokeWidth: DEFAULT_SHAPE_STROKE_WIDTH,
+    };
+};
 
 /** Shape kinds a rail action can arm; `null` for non-shape actions. */
 export const shapeKindForAction = (action: InsertAction): ShapeKind | null => {
@@ -113,16 +127,7 @@ export const createNodeForInsert = (action: InsertAction, x: hm, y: hm): Node | 
                 strokeWidth: DEFAULT_SHAPE_STROKE_WIDTH,
             };
         case 'shape:polygon':
-            return {
-                ...common,
-                type: 'shape',
-                shape: 'polygon',
-                points: [[0, 0], [1200, 0], [1200, 1200], [0, 1200]],
-                closed: true,
-                fill: DEFAULT_SHAPE_FILL,
-                stroke: DEFAULT_SHAPE_STROKE,
-                strokeWidth: DEFAULT_SHAPE_STROKE_WIDTH,
-            };
+            return null;
         case 'shape:rectangle':
         case 'shape:ellipse':
             // Fill defaults to `'transparent'` (no fill), seeded so the inspector

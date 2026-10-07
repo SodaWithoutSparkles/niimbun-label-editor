@@ -29,6 +29,7 @@ export const DEFAULT_POLICY_BY_TYPE: Readonly<Partial<Record<string, QuantizerId
 export interface PolicyNode {
     type?: string;
     quantizerHint?: QuantizerId;
+    quantizerParams?: QuantizeOptions;
 }
 
 /** Explicit hint wins; else the per-type default; else the global pass. */
@@ -49,7 +50,12 @@ export interface PolicyMask {
 }
 
 /** Policy index (>= 1) → quantizer. `0` is the global quantizer. */
-export type QuantizerPolicies = ReadonlyMap<number, Quantizer>;
+export interface QuantizerPolicy {
+    quantizer: Quantizer;
+    options?: QuantizeOptions;
+}
+
+export type QuantizerPolicies = ReadonlyMap<number, Quantizer | QuantizerPolicy>;
 
 /** A fresh RGBA copy of `source` to run one quantizer pass without side effects. */
 const copyFrom = (source: Uint8ClampedArray, width: number, height: number): RgbaBuffer => ({
@@ -92,7 +98,8 @@ export const applyPolicy = (
     const { width, height, data } = rgba;
     const source = new Uint8ClampedArray(data);
     const out = new Uint8ClampedArray(source);
-    const global = policiesById.get(0);
+    const globalEntry = policiesById.get(0);
+    const global = typeof globalEntry === 'function' ? globalEntry : globalEntry?.quantizer;
 
     if (!global) {
         throw new Error('applyPolicy: policiesById must contain index 0 (the global quantizer)');
@@ -111,10 +118,12 @@ export const applyPolicy = (
         }
 
         for (const index of indices) {
-            const quantizer = policiesById.get(index);
-            if (!quantizer) continue;
+            const entry = policiesById.get(index);
+            if (!entry) continue;
+            const quantizer = typeof entry === 'function' ? entry : entry.quantizer;
+            const options = typeof entry === 'function' ? opts : { ...opts, ...entry.options };
             const work = copyFrom(source, width, height);
-            quantizer(work, opts);
+            quantizer(work, options);
             for (let p = 0; p < width * height; p++) {
                 if (mask.data[p] !== index) continue;
                 const i = p * 4;

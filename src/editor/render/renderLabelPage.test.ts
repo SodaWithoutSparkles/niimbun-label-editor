@@ -187,6 +187,38 @@ describe('renderLabelPage — shared preview/print path', () => {
         expect(page.rgba.height).toBe(dims.heightPx);
     });
 
+    it('deduplicates per-node params and reports palette overflow without failing the render', async () => {
+        const nodes: Node[] = Array.from({ length: 10 }, (_, index) => ({
+            id: `t${index}`,
+            parentId: null,
+            type: 'text',
+            visible: true,
+            locked: false,
+            transform: { x: index * 10, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+            text: { kind: 'static', value: 'X' },
+            size: { w: 500, h: 500 },
+            fontSize: 400,
+            quantizerParams: { threshold: index < 2 ? 100 : 100 + index },
+        } as Node));
+        const doc = smallDoc(fullRegions, nodes);
+        const page = await renderLabelPage(doc);
+        expect(page.policyOverflowCount).toBe(1);
+    });
+
+    it('uses the global quantizer for a policy equal to the global id', async () => {
+        const textWithParams: Node = {
+            id: 't', parentId: null, type: 'text', visible: true, locked: false,
+            transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+            text: { kind: 'static', value: 'X' }, size: { w: 500, h: 500 }, fontSize: 400,
+            quantizerParams: { threshold: 220 },
+        };
+        const doc = smallDoc(fullRegions, [textWithParams]);
+        const page = await renderLabelPage(doc, {}, { quantizer: 'threshold' });
+        const built = await buildPolicyMask(resolve(doc), nodeLookup(doc.nodes), { widthPx: 100, heightPx: 80 }, doc.label.dpi);
+        expect(built).toBeDefined();
+        expect(page.policyOverflowCount).toBeUndefined();
+    });
+
     it('renders ink inside the union and blanks everything outside it', async () => {
         const doc = smallDoc(leftHalfRegions, smallNodes());
         const page = await renderLabelPage(doc);

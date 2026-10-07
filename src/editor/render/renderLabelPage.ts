@@ -11,8 +11,8 @@ import {
     resolveQuantizer,
     type ColorSpace,
     type PolicyMask,
-    type Quantizer,
     type QuantizerId,
+    type QuantizerPolicy,
     type QuantizerPolicies,
     type RgbaBuffer,
 } from '../../core/render';
@@ -65,6 +65,8 @@ export interface RenderLabelPageOptions {
     serpentine?: boolean;
     /** Per-pixel projection. Defaults to Mono (the only v1 color space). */
     colorSpace?: ColorSpace;
+    /** Global params inherited by nodes without an explicit per-node override. */
+    quantizerDefaults?: { threshold?: number; strength?: number };
     /**
      * Async asset dependencies (image bytes, fonts, resolution cap). When
      * present, image/qr/barcode leaves are prepared first; absent, those leaves
@@ -91,6 +93,8 @@ export interface RenderLabelPageOptions {
 }
 
 export interface RenderedLabelPage {
+    /** Number of nodes that used the global policy after exceeding the eight-policy palette. */
+    policyOverflowCount?: number;
     /** Final 1-bit black/white RGBA (exact `0`/`255` channels). */
     rgba: RgbaBuffer;
     widthPx: number;
@@ -121,12 +125,6 @@ export interface RenderNotice {
     lostPx: number;
 }
 
-/** A built policy mask plus the quantizers its indices resolve to. */
-export interface PolicyMaskResult {
-    mask: PolicyMask;
-    /** Index `0` is reserved for the global quantizer; indices start at 1. */
-    policies: QuantizerPolicies;
-}
 
 /** Refuse to allocate absurd rasters (invariant 9). Common canvas limit is ~16M px. */
 export const MAX_RASTER_PIXELS = 16_000_000;
@@ -205,12 +203,22 @@ const paintCoverage = (node: Konva.Shape, color: string): void => {
  * antialiased boundary pixels are resolved by an alpha ≥ 128 coverage test and
  * nearest key colour; interiors of overlapping opaque coverage are exact.
  */
+export interface PolicyMaskResult {
+    mask: PolicyMask;
+    policies: QuantizerPolicies;
+    overflowCount: number;
+}
+
+const policyKeyOf = (id: QuantizerId, params: { threshold: number; strength: number }): string =>
+    `${id}:${params.threshold}:${params.strength}`;
+
 export const buildPolicyMask = async (
     nodes: readonly ResolvedNode[],
     byId: ReadonlyMap<string, Node>,
     dims: { widthPx: number; heightPx: number },
     dpi: number,
     assets?: ReadonlyMap<string, PreparedAsset>,
+    defaults?: { threshold?: number; strength?: number },
 ): Promise<PolicyMaskResult | undefined> => {
     // This is re-exported public surface; fail clearly before touching Konva.
     if (!Number.isFinite(dpi) || dpi <= 0) {
@@ -229,10 +237,10 @@ export const buildPolicyMask = async (
         );
     }
 
-    const policyIds: QuantizerId[] = [];
-    const indexByPolicy = new Map<QuantizerId, number>();
+    const policiesByKey = new Map<string, { id: QuantizerId; options: { threshold: number; strength: number } }>();
+    const indexByPolicyKey = new Map<string, number>();
     const carriers: { node: ResolvedNode; value: number }[] = [];
-    let anyPolicy = false;
+    let overflowCount = 0;
 
     for (const node of flattenResolved(nodes)) {
         if (node.type === 'group') continue;
@@ -252,30 +260,35 @@ export const buildPolicyMask = async (
             continue;
         }
         const policy = resolveQuantizer({ type: source.type, quantizerHint: source.quantizerHint });
-        if (policy) {
-            let index = indexByPolicy.get(policy);
-            if (index === undefined) {
-                index = policyIds.length + 1;
-                indexByPolicy.set(policy, index);
-                policyIds.push(policy);
-            }
-            carriers.push({ node, value: index });
-            anyPolicy = true;
-        } else {
+        if (!policy) {
             carriers.push({ node, value: 0 });
+            continue;
         }
+        const params = {
+            threshold: source.quantizerParams?.threshold ?? defaults?.threshold ?? 128,
+            strength: source.quantizerParams?.strength ?? defaults?.strength ?? 1,
+        };
+        const key = policyKeyOf(policy, params);
+        let index = indexByPolicyKey.get(key);
+        if (index === undefined) {
+            if (policiesByKey.size >= KEY_COLORS.length) {
+                overflowCount++;
+                carriers.push({ node, value: 0 });
+                continue;
+            }
+            index = policiesByKey.size + 1;
+            indexByPolicyKey.set(key, index);
+            policiesByKey.set(key, { id: policy, options: { threshold: params.threshold ?? 128, strength: params.strength ?? 1 } });
+        }
+        carriers.push({ node, value: index });
     }
-    if (!anyPolicy) return undefined;
-    if (policyIds.length > KEY_COLORS.length) {
-        throw new Error(
-            `buildPolicyMask: ${policyIds.length} distinct policies exceed the ${KEY_COLORS.length}-colour key palette`,
-        );
-    }
+    if (policiesByKey.size === 0) return undefined;
 
+    const policyEntries = [...policiesByKey.values()];
     // Value k → key colour; index 0 is the global key.
     const keyColors: (readonly [number, number, number])[] = [
         GLOBAL_KEY,
-        ...KEY_COLORS.slice(0, policyIds.length),
+        ...KEY_COLORS.slice(0, policyEntries.length),
     ];
 
     const { widthPx, heightPx } = dims;
@@ -359,10 +372,17 @@ export const buildPolicyMask = async (
 
         stage.destroy();
 
-        const policies: Map<number, Quantizer> = new Map(
-            policyIds.map((id, i) => [i + 1, QUANTIZERS[id]] as const),
+        const policies: Map<number, QuantizerPolicy> = new Map(
+            policyEntries.map(({ id, options }, index) => [
+                index + 1,
+                { quantizer: QUANTIZERS[id], ...(options ? { options } : {}) },
+            ] as const),
         );
-        return { mask: { data: mask, width: widthPx, height: heightPx }, policies };
+        return {
+            mask: { data: mask, width: widthPx, height: heightPx },
+            policies,
+            overflowCount,
+        };
     } finally {
         Konva.pixelRatio = previousPixelRatio;
     }
@@ -478,7 +498,10 @@ export const renderLabelPage = async (
     const { imageData } = await rasterizeResolved(nodes, rasterOpts, assets);
 
     const byId = nodeLookup(doc.nodes);
-    const policy = await buildPolicyMask(nodes, byId, { widthPx, heightPx }, dpi, assets);
+    const policy = await buildPolicyMask(nodes, byId, { widthPx, heightPx }, dpi, assets, {
+        threshold: opts.quantizerDefaults?.threshold ?? opts.threshold ?? 128,
+        strength: opts.quantizerDefaults?.strength ?? opts.strength ?? 1,
+    });
 
     const hmPerPx = HM_PER_INCH / dpi;
     // Pre-clip: the diffusion pass sees a white surround outside the union.
@@ -532,7 +555,7 @@ export const renderLabelPage = async (
     // `{0,0}` is a no-op: skip the extra-canvas round trip and return the base
     // raster (same `canvas` identity).
     if (!offset || (offset.x === 0 && offset.y === 0)) {
-        return { rgba: imageData, widthPx, heightPx, canvas, warnings, ...(notices ? { notices } : {}) };
+        return { rgba: imageData, widthPx, heightPx, canvas, warnings, ...(policy?.overflowCount ? { policyOverflowCount: policy.overflowCount } : {}), ...(notices ? { notices } : {}) };
     }
     // Offset x/y are device px, so they must be integers (and finite: NaN/
     // Infinity fail `Number.isInteger`). Validate before any offset allocation.
@@ -587,6 +610,7 @@ export const renderLabelPage = async (
         heightPx: outHeightPx,
         canvas: outCanvas,
         warnings,
+        ...(policy?.overflowCount ? { policyOverflowCount: policy.overflowCount } : {}),
         ...(notices ? { notices } : {}),
     };
 };

@@ -352,6 +352,27 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
     if (strokeWidth !== undefined) base.strokeWidth = strokeWidth;
     const quantizerHint = toQuantizerHint(value.quantizerHint, repairs);
     if (quantizerHint !== undefined) base.quantizerHint = quantizerHint;
+    if (value.quantizerParams !== undefined) {
+        if (isRecord(value.quantizerParams)) {
+            const raw = value.quantizerParams;
+            const params: { threshold?: number; strength?: number } = {};
+            if (raw.threshold !== undefined) {
+                if (isFiniteNumber(raw.threshold)) params.threshold = Math.max(0, Math.min(255, Math.round(raw.threshold)));
+                else repairs?.push('node.quantizerParams.threshold: invalid value dropped');
+                if (isFiniteNumber(raw.threshold) && params.threshold !== raw.threshold) {
+                    repairs?.push('node.quantizerParams.threshold: clamped to 0–255');
+                }
+            }
+            if (raw.strength !== undefined) {
+                if (isFiniteNumber(raw.strength)) params.strength = Math.max(0, Math.min(4, raw.strength));
+                else repairs?.push('node.quantizerParams.strength: invalid value dropped');
+                if (isFiniteNumber(raw.strength) && params.strength !== raw.strength) {
+                    repairs?.push('node.quantizerParams.strength: clamped to 0–4');
+                }
+            }
+            if (Object.keys(params).length) base.quantizerParams = params;
+        } else repairs?.push('node.quantizerParams: invalid value dropped');
+    }
 
     switch (value.type) {
         case 'group':

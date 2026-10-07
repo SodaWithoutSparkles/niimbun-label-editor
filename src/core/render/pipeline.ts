@@ -34,7 +34,9 @@ export const quantizeRgba = (
     request: QuantizeRequest,
     opts?: QuantizeOptions,
 ): RgbaBuffer => {
-    const policiesById = new Map<number, Quantizer>([[0, request.globalQuantizer]]);
+    const policiesById: Map<number, Quantizer | { quantizer: Quantizer; options?: QuantizeOptions }> = new Map([
+        [0, request.globalQuantizer],
+    ]);
     for (const [index, quantizer] of request.policies ?? []) {
         policiesById.set(index, quantizer);
     }

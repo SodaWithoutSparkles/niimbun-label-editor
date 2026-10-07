@@ -80,10 +80,23 @@ export const roundNode = (node: Node): Node => {
         base.size = { w: nonNegativeHm(node.size.w), h: nonNegativeHm(node.size.h) };
     }
     if (node.strokeWidth !== undefined) base.strokeWidth = nonNegativeHm(node.strokeWidth);
+    if (node.quantizerParams) {
+        base.quantizerParams = {
+            ...(node.quantizerParams.threshold !== undefined && Number.isFinite(node.quantizerParams.threshold)
+                ? { threshold: Math.max(0, Math.min(255, Math.round(node.quantizerParams.threshold))) }
+                : {}),
+            ...(node.quantizerParams.strength !== undefined && Number.isFinite(node.quantizerParams.strength)
+                ? { strength: Math.round(Math.max(0, Math.min(4, node.quantizerParams.strength)) * 100) / 100 }
+                : {}),
+        };
+    }
     if (node.type === 'text') {
         const rounded = base as typeof node;
         if (node.fontSize !== undefined) rounded.fontSize = Math.max(1, safeRoundHm(node.fontSize));
         return rounded;
+    }
+    if (node.quantizerParams && Object.keys(base.quantizerParams ?? {}).length === 0) {
+        delete base.quantizerParams;
     }
     if (node.type === 'shape') {
         const rounded = base as typeof node;

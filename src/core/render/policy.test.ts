@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { monoLuminance, type ColorSpace, type RgbaBuffer } from './colorspace';
-import { floydSteinberg, threshold, type Quantizer } from './quantize';
+import { floydSteinberg, threshold, type QuantizeOptions, type Quantizer } from './quantize';
 import { applyPolicy, DEFAULT_POLICY_BY_TYPE, resolveQuantizer, type PolicyMask } from './policy';
 import { quantizeRgba } from './pipeline';
 
@@ -97,6 +97,21 @@ describe('applyPolicy / quantizeRgba', () => {
         expect(() => applyPolicy(clone(ramp), undefined, new Map([[1, threshold]]))).toThrow(
             /must contain index 0/,
         );
+    });
+
+    it('passes policy-specific threshold and strength options', () => {
+        const optionsSeen: (QuantizeOptions | undefined)[] = [];
+        const record: Quantizer = (rgba, opts) => {
+            optionsSeen.push(opts);
+            return threshold(rgba, opts);
+        };
+        const mask: PolicyMask = { data: new Uint8Array(16).fill(1), width: 4, height: 4 };
+        quantizeRgba(clone(ramp), {
+            globalQuantizer: threshold,
+            policies: new Map([[1, { quantizer: record, options: { threshold: 200, strength: 2 } }]]),
+            mask,
+        });
+        expect(optionsSeen[0]).toMatchObject({ threshold: 200, strength: 2 });
     });
 
     it('applies each policy to its masked pixels', () => {

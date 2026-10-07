@@ -4,6 +4,7 @@ import { INSERT_ACTIONS, normalizeInsertAction } from '../store/slices/toolsSlic
 import {
     createImageNodeForRef,
     createNodeForInsert,
+    createPolygonNode,
     DEFAULT_BARCODE_PAYLOAD,
     DEFAULT_QR_PAYLOAD,
     shapeKindForAction,
@@ -29,7 +30,7 @@ describe('createNodeForInsert', () => {
 
     it('covers every insert action except select with a node', () => {
         for (const action of INSERT_ACTIONS) {
-            if (action === 'select') expect(createNodeForInsert(action, 0, 0)).toBeNull();
+            if (action === 'select' || action === 'shape:polygon') expect(createNodeForInsert(action, 0, 0)).toBeNull();
             else expect(createNodeForInsert(action, 0, 0)).not.toBeNull();
         }
     });
@@ -39,7 +40,7 @@ describe('createNodeForInsert', () => {
     });
 
     it('seeds the real static shape style defaults (#8)', () => {
-        for (const action of ['shape:rectangle', 'shape:ellipse', 'shape:polygon'] as const) {
+        for (const action of ['shape:rectangle', 'shape:ellipse'] as const) {
             const node = createNodeForInsert(action, 0, 0);
             expect(node, action).toMatchObject({
                 fill: 'transparent',
@@ -55,6 +56,19 @@ describe('createNodeForInsert', () => {
         const line = createNodeForInsert('shape:line', 0, 0);
         expect(line).toMatchObject({ fill: 'transparent', stroke: '#374151', strokeWidth: 50 });
         expect(line?.type === 'shape' && line.fill).toBe('transparent');
+    });
+
+    it('creates a closed polygon from world-space points with local geometry', () => {
+        expect(createPolygonNode([[100, 200], [600, 200], [300, 800]])).toMatchObject({
+            type: 'shape',
+            shape: 'polygon',
+            closed: true,
+            transform: { x: 100, y: 200 },
+            points: [[0, 0], [500, 0], [200, 600]],
+            fill: 'transparent',
+            stroke: '#374151',
+            strokeWidth: 50,
+        });
     });
 
     it('seeds the P5 qr / barcode defaults', () => {

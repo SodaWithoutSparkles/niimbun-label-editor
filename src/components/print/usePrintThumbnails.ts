@@ -81,6 +81,8 @@ export interface PrintThumbnails {
     prefetch(center: number, radius: number): void;
     /** Non-fatal render notices observed so far (e.g. `mirror-clipped-ink`). */
     notices: readonly RenderNotice[];
+    /** Worst per-page fallback count when the eight-policy palette is exceeded. */
+    policyOverflowCount: number;
     /** Test/introspection: number of resolved thumbnails. */
     readonly size: number;
 }
@@ -138,6 +140,7 @@ export const usePrintThumbnails = (
 
     const [urls, setUrls] = useState<ReadonlyMap<number, string>>(() => new Map());
     const [notices, setNotices] = useState<readonly RenderNotice[]>([]);
+    const [policyOverflowCount, setPolicyOverflowCount] = useState(0);
 
     const cacheRef = useRef<ThumbnailCache | null>(null);
     const generationRef = useRef(0);
@@ -182,6 +185,7 @@ export const usePrintThumbnails = (
             cacheRef.current = null;
             setUrls(new Map());
             setNotices([]);
+            setPolicyOverflowCount(0);
             return;
         }
 
@@ -205,6 +209,9 @@ export const usePrintThumbnails = (
                 ...(currentOverrides?.offset ? { offset: currentOverrides.offset } : {}),
             });
 
+            if (rendered.policyOverflowCount && generation === generationRef.current && mountedRef.current) {
+                setPolicyOverflowCount((previous) => Math.max(previous, rendered.policyOverflowCount ?? 0));
+            }
             const renderedNotices = rendered.notices;
             if (
                 renderedNotices !== undefined &&
@@ -226,6 +233,7 @@ export const usePrintThumbnails = (
         // Drop previews from the superseded cache; they no longer match the doc.
         setUrls(new Map());
         setNotices([]);
+        setPolicyOverflowCount(0);
 
         return () => {
             cache.dispose();
@@ -270,5 +278,5 @@ export const usePrintThumbnails = (
         cacheRef.current?.prefetch(center, radius);
     }, []);
 
-    return { urlFor, prefetch, notices, size: urls.size };
+    return { urlFor, prefetch, notices, policyOverflowCount, size: urls.size };
 };

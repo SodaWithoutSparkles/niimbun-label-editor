@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Layer, Stage, Transformer } from 'react-konva';
+import { Layer, Line, Stage, Transformer } from 'react-konva';
 import type Konva from 'konva';
 import { useStore } from '../../store/useStore';
 import { cn } from '../../utils/cn';
@@ -26,7 +26,8 @@ import {
     type Viewport,
 } from '../../core/viewport';
 import { resolveZoom, centeredViewport, zoomAt } from '../../editor/viewportController';
-import { createNodeForInsert } from '../../editor/insertActions';
+import { createNodeForInsert, createPolygonNode } from '../../editor/insertActions';
+import { finishPolygonPoints, snapPolygonPoint, type PolygonPoint } from '../../editor/polygonDrawing';
 import { selectionAfterClick, nodesInMarquee } from '../../editor/selectionModel';
 import { GRID_STEP_HM } from './gridConstants';
 import { ResolvedShape } from './ResolvedShape';
@@ -163,6 +164,8 @@ export const PreviewStage: React.FC = () => {
     const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1, rotation: 0 });
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
     const [snapLines, setSnapLines] = useState<SnapGuideLine[]>([]);
+    const [polygonPoints, setPolygonPoints] = useState<PolygonPoint[]>([]);
+    const [polygonCursor, setPolygonCursor] = useState<PolygonPoint | null>(null);
     const dragRef = useRef<DragState | null>(null);
     const panRef = useRef<{ startScreen: Point; startPan: Point } | null>(null);
     /** Last shift/alt state; `transformend` has no event modifiers of its own. */
@@ -261,6 +264,12 @@ export const PreviewStage: React.FC = () => {
         return map;
     }, [flatResolved]);
     const keepOutBounds = nodeBoundsById;
+    const polygonDraftPoint = useMemo(() => {
+        if (!polygonCursor) return null;
+        return snapEnabled && doc
+            ? snapPolygonPoint(polygonCursor, doc, [...nodeBoundsById.values()], SNAP_THRESHOLD_PX / viewport.zoom, GRID_STEP_HM)
+            : polygonCursor;
+    }, [polygonCursor, snapEnabled, doc, nodeBoundsById, viewport.zoom]);
     // Keep the latest bounds reachable from `beginDrag` without a stale closure.
     nodeBoundsRef.current = nodeBoundsById;
 
@@ -304,6 +313,29 @@ export const PreviewStage: React.FC = () => {
         [viewport],
     );
 
+    const finishPolygon = useCallback((): boolean => {
+        const points = finishPolygonPoints(polygonPoints);
+        if (!points) {
+            setPolygonPoints([]);
+            setPolygonCursor(null);
+            clearActiveTool();
+            return false;
+        }
+        const id = addNode(createPolygonNode(points));
+        if (id) selectNode(id);
+        setPolygonPoints([]);
+        setPolygonCursor(null);
+        clearActiveTool();
+        return true;
+    }, [polygonPoints, addNode, selectNode, clearActiveTool]);
+
+    useEffect(() => {
+        if (activeTool !== 'shape:polygon') {
+            setPolygonPoints([]);
+            setPolygonCursor(null);
+        }
+    }, [activeTool]);
+
     const beginDrag = useCallback(
         (world: Point, ids: readonly string[]) => {
             const origins = new Map<string, DragOrigin>();
@@ -344,7 +376,21 @@ export const PreviewStage: React.FC = () => {
             }
             if (event.evt.button !== 0) return;
 
-            // Armed insert action: place, select, disarm.
+            // Polygon is a multi-click drawing gesture; all other inserts remain one-shot.
+            if (activeTool === 'shape:polygon') {
+                const raw = screenToHm(stage.getPointerPosition()!, viewport);
+                const point: PolygonPoint = [raw.x, raw.y];
+                const snapped = snapEnabled && doc
+                    ? snapPolygonPoint(point, doc, [...nodeBoundsById.values()], SNAP_THRESHOLD_PX / viewport.zoom, GRID_STEP_HM)
+                    : point;
+                if (polygonPoints.length >= 3 && Math.hypot(snapped[0] - polygonPoints[0][0], snapped[1] - polygonPoints[0][1]) <= SNAP_THRESHOLD_PX / viewport.zoom) {
+                    finishPolygon();
+                } else {
+                    setPolygonPoints((points) => [...points, snapped]);
+                    setPolygonCursor(snapped);
+                }
+                return;
+            }
             if (activeTool !== 'select') {
                 const point = screenToHm(stage.getPointerPosition()!, viewport);
                 const node = createNodeForInsert(activeTool, point.x, point.y);
@@ -375,7 +421,7 @@ export const PreviewStage: React.FC = () => {
             const pointer = stage.getPointerPosition();
             if (pointer) setMarquee({ start: pointer, current: pointer });
         },
-        [doc, pointerWorld, viewport, activeTool, addNode, selectNode, clearActiveTool, selectedNodeIds, selectNodes, clearNodeSelection, beginDrag, targets],
+        [doc, pointerWorld, viewport, activeTool, addNode, selectNode, clearActiveTool, selectedNodeIds, selectNodes, clearNodeSelection, beginDrag, targets, snapEnabled, nodeBoundsById, polygonPoints, finishPolygon],
     );
 
     const handlePointerMove = useCallback(() => {
@@ -383,6 +429,15 @@ export const PreviewStage: React.FC = () => {
         if (!stage) return;
         const pointer = stage.getPointerPosition();
         if (!pointer) return;
+
+        if (activeTool === 'shape:polygon' && polygonPoints.length > 0) {
+            const world = screenToHm(pointer, viewport);
+            const point: PolygonPoint = [world.x, world.y];
+            setPolygonCursor(snapEnabled && doc
+                ? snapPolygonPoint(point, doc, [...nodeBoundsById.values()], SNAP_THRESHOLD_PX / viewport.zoom, GRID_STEP_HM)
+                : point);
+            return;
+        }
 
         const pan = panRef.current;
         if (pan) {
@@ -469,7 +524,7 @@ export const PreviewStage: React.FC = () => {
                 updateNodeTransient(id, movePatch(origin, dx, dy));
             }
         }
-    }, [doc, marquee, viewport, snapEnabled, selectedNodeIds, backing, innerSize, nodeBoundsById, updateNodeTransient]);
+    }, [doc, marquee, viewport, snapEnabled, selectedNodeIds, backing, innerSize, nodeBoundsById, updateNodeTransient, activeTool, polygonPoints]);
 
     /**
      * Finalize any armed pointer gesture: release pan, drop snap guides and
@@ -564,14 +619,21 @@ export const PreviewStage: React.FC = () => {
     // Esc cancels an armed action and clears selection.
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
-            if (event.key !== 'Escape') return;
             if (document.querySelector('dialog[open]')) return;
+            if (event.key === 'Enter' && activeTool === 'shape:polygon') {
+                event.preventDefault();
+                finishPolygon();
+                return;
+            }
+            if (event.key !== 'Escape') return;
+            setPolygonPoints([]);
+            setPolygonCursor(null);
             clearActiveTool();
             clearNodeSelection();
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [clearActiveTool, clearNodeSelection]);
+    }, [clearActiveTool, clearNodeSelection, activeTool, finishPolygon]);
 
     /**
      * Batch a Transformer gesture into **one** undo entry (must-fix #3): apply
@@ -733,6 +795,9 @@ export const PreviewStage: React.FC = () => {
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
+                onDblClick={() => {
+                    if (activeTool === 'shape:polygon') finishPolygon();
+                }}
                 onWheel={handleWheel}
             >
                 {/* Background overlays (silhouette, grid, guides, keep-out) first,
@@ -748,6 +813,17 @@ export const PreviewStage: React.FC = () => {
                     layerAttrs={sceneAttrs}
                 />
                 <Layer ref={layerRef} {...sceneAttrs}>
+                    {polygonPoints.length > 0 && polygonDraftPoint && (
+                        <Line
+                            points={[...polygonPoints.flatMap(([x, y]) => [x, y]), polygonDraftPoint[0], polygonDraftPoint[1]]}
+                            stroke="#2563eb"
+                            strokeWidth={30}
+                            lineCap="round"
+                            lineJoin="round"
+                            dash={[80, 50]}
+                            listening={false}
+                        />
+                    )}
                     {resolved.map((node) => (
                         <ResolvedShape
                             key={node.id}
@@ -818,6 +894,12 @@ export const PreviewStage: React.FC = () => {
                     className="pointer-events-none absolute bottom-2 left-2 z-30 max-w-xs rounded border border-red-700 bg-red-900/80 px-2 py-1 text-xs text-red-100"
                 >
                     {t('editor.mfp.sampleRowError', { message: sampleRowError })}
+                </div>
+            )}
+
+            {activeTool === 'shape:polygon' && (
+                <div role="status" className="pointer-events-none absolute bottom-2 right-2 z-30 rounded border bg-white/90 px-2 py-1 text-xs text-gray-700">
+                    {t('editor.insert.polygonHint', { count: polygonPoints.length })}
                 </div>
             )}
 

@@ -135,6 +135,18 @@ describe('integer hm invariant', () => {
         assertIntegerGeometry(createLabelDoc({ backingW: 12.4, backingH: 8.8 }));
     });
 
+    it('rounds quantizer params and drops malformed optional values', () => {
+        const imageNode = {
+            id: 'i', parentId: null, type: 'image' as const, imageId: 'img', visible: true, locked: false,
+            transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+            quantizerParams: { threshold: 300.4, strength: 1.234 },
+        };
+        const doc = createLabelDoc({ nodes: [imageNode] });
+        expect(doc.nodes[0]?.quantizerParams).toEqual({ threshold: 255, strength: 1.23 });
+        const invalid = createLabelDoc({ nodes: [{ ...imageNode, quantizerParams: { threshold: Number.NaN } }] });
+        expect(invalid.nodes[0]?.quantizerParams).toBeUndefined();
+    });
+
     it('rounds caller-supplied float regions (regression: factory bypassed hm rounding)', () => {
         const doc = createLabelDoc({
             backingW: 2500.4,
