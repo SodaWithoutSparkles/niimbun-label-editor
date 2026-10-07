@@ -73,7 +73,7 @@ export const SYSTEM_FONTS: readonly string[] = [
  * Why a `wired: false` field is disabled, so the panel can show the *right*
  * reason instead of one blanket message. `null` for wired fields.
  */
-export type FieldReason = 'trust' | 'image' | 'qr' | 'barcode' | 'content' | 'size';
+export type FieldReason = 'trust' | 'image' | 'qr' | 'barcode' | 'content' | 'size' | 'style';
 
 export interface FieldDescriptor {
     /** Stable field id — the node prop it edits, or a reserved key. */
@@ -131,28 +131,30 @@ export const TEXT_FIELDS: readonly FieldDescriptor[] = [
     { key: 'fontSize', scope: 'text', kind: 'number', wired: true },
     // The renderer reads `fontStyle` but ignores weight/spacing/direction, so
     // advertising them as wired would let a user edit a field nothing acts on.
-    { key: 'fontWeight', scope: 'text', kind: 'select', wired: false, options: ['normal', 'bold'], reason: 'content' },
+    // They are `style` stubs, not CSV/template content bindings.
+    { key: 'fontWeight', scope: 'text', kind: 'select', wired: false, options: ['normal', 'bold'], reason: 'style' },
     { key: 'fontStyle', scope: 'text', kind: 'select', wired: true, options: ['normal', 'italic'] },
     { key: 'align', scope: 'text', kind: 'select', wired: true, options: ['left', 'center', 'right'] },
-    { key: 'letterSpacing', scope: 'text', kind: 'number', wired: false, reason: 'content' },
-    { key: 'direction', scope: 'text', kind: 'select', wired: false, options: ['ltr', 'rtl'], reason: 'content' },
+    { key: 'letterSpacing', scope: 'text', kind: 'number', wired: false, reason: 'style' },
+    { key: 'direction', scope: 'text', kind: 'select', wired: false, options: ['ltr', 'rtl'], reason: 'style' },
 ];
 
 export const SHAPE_FIELDS: readonly FieldDescriptor[] = [
     { key: 'shape', scope: 'shape', kind: 'select', wired: true, options: ['line', 'rectangle', 'ellipse', 'polygon'] },
     // `size` is a `{w, h}` box (see TEXT_FIELDS); edited via sizeW/sizeH.
     { key: 'size', scope: 'shape', kind: 'stub', wired: false, reason: 'size' },
-    { key: 'points', scope: 'shape', kind: 'stub', wired: false, reason: 'content' },
+    // Point editing (vertex handles) ships with the shape tool later; the raw
+    // `points` cloud is not edited here yet. Not a CSV/content binding.
+    { key: 'points', scope: 'shape', kind: 'stub', wired: false, reason: 'style' },
     { key: 'closed', scope: 'shape', kind: 'boolean', wired: true },
-    // The resolver draws rectangles without a corner radius, so this is a stub
-    // until the shape renderer honours it (#13).
-    { key: 'cornerRadius', scope: 'shape', kind: 'number', wired: false, reason: 'content' },
-    // The resolver draws shapes with fixed stroke/fill constants and never reads
-    // these node props, so they are honestly unwired until the renderer honours
-    // them (P4/P5 style pass).
-    { key: 'stroke', scope: 'shape', kind: 'color', wired: false, reason: 'content' },
-    { key: 'fill', scope: 'shape', kind: 'color', wired: false, reason: 'content' },
-    { key: 'strokeWidth', scope: 'shape', kind: 'number', wired: false, reason: 'content' },
+    // Rectangle corner radius: persisted, scaled on resize, and honoured by both
+    // renderers (`Konva.Rect.cornerRadius`).
+    { key: 'cornerRadius', scope: 'shape', kind: 'number', wired: true },
+    // Real static style (#8): the resolver defaults these and both renderers
+    // read them, so the fields are wired.
+    { key: 'stroke', scope: 'shape', kind: 'color', wired: true },
+    { key: 'fill', scope: 'shape', kind: 'color', wired: true },
+    { key: 'strokeWidth', scope: 'shape', kind: 'number', wired: true },
 ];
 
 

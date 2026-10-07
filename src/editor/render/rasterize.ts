@@ -13,9 +13,12 @@ import { createKonvaNode } from './konvaFactory';
  * (`dpi / HM_PER_INCH`), so every child composes in hm exactly as `resolve`
  * measured it. A white background covers the full raster.
  *
- * Konva/`createKonvaNode` leave shapes unstyled; v1 documents carry no colour and
- * no fill, so `applyInkDefaults` gives unfilled shapes/text black ink (the
- * documented v1 default). Lines without a fill are stroked.
+ * Konva/`createKonvaNode` carry each resolved shape's `fill`/`stroke`/
+ * `strokeWidth` (all in hm) and text's resolved geometry. `applyInkDefaults` only
+ * supplies the missing **text** ink default (text is created without a `fill`).
+ * Shapes keep their resolved style: a shape with no `fill` stays unfilled, and a
+ * stroke width is in hm and scaled by the stage exactly as the preview scales it
+ * (preview ≡ print).
  *
  * The returned pixels are the payload. `stage.destroy()` frees the Konva layer
  * canvas (Konva's `releaseCanvasOnDestroy` zeroes it), so callers must not keep
@@ -88,28 +91,22 @@ export const prepareTextFonts = async (nodes: readonly ResolvedNode[]): Promise<
 };
 
 /**
- * Give an unstyled plain-Konva node the v1 default ink. Text already defaults to
- * black; filled shape kinds get a black fill; an open line is stroked instead.
+ * Give an unstyled plain-Konva node the default ink it still needs. Only **text**
+ * needs one: `createKonvaNode` builds a `Konva.Text` without a `fill`, so an
+ * empty fill becomes black (the documented text default).
  *
- * Open-line strokes use `strokeScaleEnabled(false)` plus a **device-px**
- * `strokeWidth` (≥ 1). Without it Konva interprets the width in hm and the stage
- * scale shrinks a line to ~0.12 px at 300 dpi, which `threshold` then maps to
- * white — lines printed as nothing.
+ * Shapes are deliberately left alone: they carry their resolved `fill` (possibly
+ * `'transparent'`) and `stroke`/`strokeWidth` (in hm) from the factory. Forcing a
+ * fill would defeat the transparent no-fill default, and overriding the stroke
+ * width in device px would make the printed line diverge from the preview.
  */
-export const DEFAULT_LINE_STROKE_WIDTH = 1;
-
 export const applyInkDefaults = (node: Konva.Node): void => {
     // A prepared image/qr/barcode is a `Konva.Image` (a `Konva.Shape`): its
     // pixels are the ink. Filling it black would erase the asset completely.
     if (node instanceof Konva.Image) return;
-    if (node instanceof Konva.Line && !node.closed()) {
-        if (!node.stroke()) node.stroke('black');
-        node.strokeScaleEnabled(false);
-        node.strokeWidth(Math.max(DEFAULT_LINE_STROKE_WIDTH, node.strokeWidth()));
-        return;
-    }
-    if (node instanceof Konva.Shape) {
-        if (!node.fill()) node.fill('black');
+    // Text is a `Konva.Shape` too, so it must be handled before the shape case.
+    if (node instanceof Konva.Text && !node.fill()) {
+        node.fill('black');
     }
 };
 

@@ -6,7 +6,7 @@ import { createLabelDoc } from '../../core/doc/factory';
 import type { Mat2D } from '../../core/doc/derive';
 import { resolve } from './resolve';
 import type { PreparedAsset } from './assets';
-import { createKonvaNode, matrixToKonvaAttrs } from './konvaFactory';
+import { createKonvaNode, matrixToKonvaAttrs, shapeStyleAttrs, type ResolvedShapeNode } from './konvaFactory';
 
 const node = (value: Record<string, unknown>): Node => value as unknown as Node;
 
@@ -181,6 +181,49 @@ describe('createKonvaNode — plain Konva, no react-konva', () => {
         expect(img.y()).toBe(0);
         expect(img.width()).toBe(1000);
         expect(img.height()).toBe(1000);
+    });
+});
+
+describe('shape static style — preview ≡ print (#8)', () => {
+    it('createKonvaNode reads the resolved fill/stroke/strokeWidth/cornerRadius', () => {
+        const rect = createKonvaNode(byId('r')) as Konva.Rect;
+        expect(rect.fill(), 'no fill resolves to the explicit transparent string').toBe('transparent');
+        expect(rect.stroke()).toBe('#374151');
+        expect(rect.strokeWidth()).toBe(50);
+        expect(rect.cornerRadius()).toBe(0);
+
+        const ellipse = createKonvaNode(byId('e')) as Konva.Ellipse;
+        expect(ellipse.fill()).toBe('transparent');
+        expect(ellipse.stroke()).toBe('#374151');
+        expect(ellipse.strokeWidth()).toBe(50);
+
+        const line = createKonvaNode(byId('l')) as Konva.Line;
+        expect(line.fill(), 'open line has transparent fill').toBe('transparent');
+        expect(line.stroke()).toBe('#374151');
+        expect(line.strokeWidth()).toBe(50);
+
+        const polygon = createKonvaNode(byId('p')) as Konva.Line;
+        expect(polygon.fill(), 'closed polygon has transparent fill by default').toBe('transparent');
+        expect(polygon.closed()).toBe(true);
+    });
+
+    it('shapeStyleAttrs is the single source both renderers read', () => {
+        // The preview (`ResolvedShape.tsx`) and the print factory both call this,
+        // so the two renderers cannot diverge on style. `fill` is always a real
+        // string; `'transparent'` is the no-fill value.
+        const rect = byId('r') as ResolvedShapeNode;
+        expect(shapeStyleAttrs(rect)).toStrictEqual({
+            fill: 'transparent',
+            stroke: '#374151',
+            strokeWidth: 50,
+            cornerRadius: 0,
+        });
+        const line = byId('l') as ResolvedShapeNode;
+        expect(shapeStyleAttrs(line)).toStrictEqual({
+            fill: 'transparent',
+            stroke: '#374151',
+            strokeWidth: 50,
+        });
     });
 });
 

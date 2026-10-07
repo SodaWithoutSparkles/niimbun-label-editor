@@ -8,11 +8,15 @@ import {
     localMatrix,
     nodeLookup,
 } from '../../core/doc/derive';
-import type { ContentSource, LabelDoc, Node, TextNode } from '../../core/doc/types';
+import type { ContentSource, LabelDoc, Node, ShapeNode, TextNode } from '../../core/doc/types';
 import {
     DEFAULT_BARCODE_SYMBOLOGY,
     DEFAULT_IMAGE_FIT,
     DEFAULT_QR_ERROR_CORRECTION,
+    DEFAULT_SHAPE_FILL,
+    DEFAULT_SHAPE_STROKE,
+    DEFAULT_SHAPE_STROKE_WIDTH,
+    isClosedShape,
     type BarcodeSymbology,
     type ImageFit,
     type QrErrorCorrection,
@@ -51,6 +55,25 @@ export type TextAlign = TextNode['align'] & ('left' | 'center' | 'right');
 export { DEFAULT_CONTENT_SIZE, DEFAULT_FONT_SIZE } from '../../core/doc/geometry';
 export const DEFAULT_FONT_FAMILY = 'sans-serif';
 export const DEFAULT_EMPTY_TEXT = '{empty}';
+export {
+    DEFAULT_SHAPE_FILL,
+    DEFAULT_SHAPE_STROKE,
+    DEFAULT_SHAPE_STROKE_WIDTH,
+    isClosedShape,
+} from '../../core/doc/objects';
+
+/**
+ * Resolve a shape's static style (#8). Absent fields take the documented
+ * defaults: `DEFAULT_SHAPE_FILL` (`'transparent'`, i.e. no fill),
+ * `DEFAULT_SHAPE_STROKE` at `DEFAULT_SHAPE_STROKE_WIDTH`. Applying the defaults
+ * here (not in either renderer) is what makes preview ≡ print by construction.
+ * `fill` is always a real string, so the inspector and both renderers agree.
+ */
+const shapeStyle = (node: ShapeNode): ResolvedShapeStyle => ({
+    fill: node.fill ?? DEFAULT_SHAPE_FILL,
+    stroke: node.stroke ?? DEFAULT_SHAPE_STROKE,
+    strokeWidth: node.strokeWidth ?? DEFAULT_SHAPE_STROKE_WIDTH,
+});
 
 export interface ResolvedBase {
     id: string;
@@ -95,26 +118,40 @@ export interface ResolvedText extends ResolvedBase {
     paddingHm: hm;
 }
 
-export interface ResolvedLine extends ResolvedBase {
+/**
+ * Static shape style carried by every resolved shape leaf (#8). `fill` is always
+ * a real string (`'transparent'` = no fill); `stroke`/`strokeWidth` are always
+ * present with the resolver's defaults applied.
+ */
+export interface ResolvedShapeStyle {
+    /** Fill colour; `'transparent'` = no fill. Never absent. */
+    fill: string;
+    stroke: string;
+    strokeWidth: number;
+}
+
+export interface ResolvedLine extends ResolvedBase, ResolvedShapeStyle {
     type: 'line';
     points: [hm, hm][];
     closed: boolean;
 }
 
-export interface ResolvedRectangle extends ResolvedBase {
+export interface ResolvedRectangle extends ResolvedBase, ResolvedShapeStyle {
     type: 'rectangle';
     w: hm;
     h: hm;
+    /** Corner radius in hm (`0` = square). */
+    cornerRadius: hm;
 }
 
 /** Local origin is the ellipse centre (unlike rect/text, whose origin is top-left). */
-export interface ResolvedEllipse extends ResolvedBase {
+export interface ResolvedEllipse extends ResolvedBase, ResolvedShapeStyle {
     type: 'ellipse';
     rx: hm;
     ry: hm;
 }
 
-export interface ResolvedPolygon extends ResolvedBase {
+export interface ResolvedPolygon extends ResolvedBase, ResolvedShapeStyle {
     type: 'polygon';
     points: [hm, hm][];
     closed: boolean;
@@ -337,6 +374,8 @@ export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[]
                             type: 'rectangle',
                             w,
                             h,
+                            cornerRadius: node.cornerRadius ?? 0,
+                            ...shapeStyle(node),
                             bounds: transformedBounds(rectCorners(0, 0, w, h), base.transform),
                         };
                     }
@@ -352,17 +391,20 @@ export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[]
                             type: 'ellipse',
                             rx,
                             ry,
+                            ...shapeStyle(node),
                             bounds: transformedBounds(rectCorners(-rx, -ry, w, h), base.transform),
                         };
                     }
                     case 'line':
                     case 'polygon': {
                         const points = node.points ?? [];
+                        const closed = isClosedShape(node.shape, node.closed);
                         return {
                             ...base,
                             type: node.shape,
                             points,
-                            closed: node.closed ?? node.shape === 'polygon',
+                            closed,
+                            ...shapeStyle(node),
                             bounds: transformedBounds(points, base.transform),
                         };
                     }

@@ -52,6 +52,8 @@ const rect = (id: string, x: number, y: number, w: number, h: number): Node =>
         locked: false,
         transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
         size: { w, h },
+        // Explicit black fill so the rect is an ink source (default is transparent).
+        fill: '#000000',
     });
 
 /** An F-tag spare doc with a filled rect + text inside the flag region (real ink). */

@@ -5,8 +5,10 @@
  * validation (`validate.ts` derives its allowed sets from them) and the editor
  * UI (dropdowns render exactly these values). Extending a set is a one-line add
  * here — validation and UI follow automatically. Keep this module pure: no
- * imports, no side effects, so it can be consumed from anywhere.
+ * runtime imports, no side effects, so it can be consumed from anywhere.
  */
+
+import type { ShapeKind } from './types';
 
 export const BARCODE_SYMBOLOGIES = [
     'code128',
@@ -48,3 +50,46 @@ export const DEFAULT_IMAGE_FIT: ImageFit = 'contain';
 export const QR_ERROR_CORRECTIONS = ['L', 'M', 'Q', 'H'] as const;
 export type QrErrorCorrection = (typeof QR_ERROR_CORRECTIONS)[number];
 export const DEFAULT_QR_ERROR_CORRECTION: QrErrorCorrection = 'M';
+
+/**
+ * Static shape style defaults (#8). Single source of truth for both the resolver
+ * (which applies them when a node omits the field) and the insert factory (which
+ * seeds them explicitly so the inspector shows a real value).
+ *
+ * "No fill" is the explicit string `'transparent'` — a real, round-trippable
+ * colour the inspector and both renderers agree on — not an absent field. Every
+ * shape strokes `#374151` at `50` hm (0.5 mm). Colours are plain strings in
+ * `ColorPicker`'s emitted format (`#rrggbb`/`#rrggbbaa`/hex or `transparent`),
+ * so a round-trip through the inspector is stable.
+ */
+/** The no-paint colour: deposits no ink as either a fill or a stroke. */
+export const TRANSPARENT_COLOR = 'transparent';
+export const DEFAULT_SHAPE_FILL = TRANSPARENT_COLOR;
+export const DEFAULT_SHAPE_STROKE = '#374151';
+export const DEFAULT_SHAPE_STROKE_WIDTH = 50;
+
+/**
+ * True when a fill colour deposits ink. The single source of the no-fill rule
+ * for the render path: `'transparent'`, an absent fill, or an empty string all
+ * deposit nothing (Konva reads `''` as no fill too — `!!this.fill()`). Note the
+ * inspector does **not** share this predicate; it uses `colorDefault`.
+ */
+export const hasFill = (fill: string | undefined): boolean =>
+    !!fill && fill !== DEFAULT_SHAPE_FILL;
+
+/**
+ * True when a stroke colour deposits ink. Symmetric with {@link hasFill}: an
+ * explicit `'transparent'` (or an absent/empty) stroke paints nothing, so the
+ * mask must not claim an outline band the raster leaves white (M2:
+ * mask-topmost == raster-topmost). The default `#374151` stroke is real ink.
+ */
+export const hasStroke = (stroke: string | undefined): boolean =>
+    !!stroke && stroke !== TRANSPARENT_COLOR;
+
+/**
+ * True for a shape whose outline encloses an area (rectangle / ellipse, or a
+ * line/polygon whose `closed` flag is set — a polygon defaults to closed). The
+ * single source of the closed-ness rule, reused by `resolve`.
+ */
+export const isClosedShape = (shape: ShapeKind, closed?: boolean): boolean =>
+    shape === 'rectangle' || shape === 'ellipse' || (closed ?? shape === 'polygon');

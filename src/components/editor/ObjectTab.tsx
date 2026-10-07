@@ -14,6 +14,9 @@ import {
     DEFAULT_BARCODE_SYMBOLOGY,
     DEFAULT_IMAGE_FIT,
     DEFAULT_QR_ERROR_CORRECTION,
+    DEFAULT_SHAPE_FILL,
+    DEFAULT_SHAPE_STROKE,
+    DEFAULT_SHAPE_STROKE_WIDTH,
 } from '../../core/doc/objects';
 import { fontBadges, type FontBadge } from '../../editor/render/fontAssets';
 import { importFontFile } from '../../editor/assetImport';
@@ -101,6 +104,7 @@ const REASON_KEYS: Record<FieldReason, string> = {
     barcode: 'editor.mfp.barcodeDisabled',
     content: 'editor.mfp.contentSourceDisabled',
     size: 'editor.mfp.sizeDisabled',
+    style: 'editor.mfp.styleDisabled',
 };
 
 /**
@@ -151,6 +155,9 @@ const numberValue = (node: Node, key: string): number => {
     }
     if (key === 'sizeW') return node.size?.w ?? 0;
     if (key === 'sizeH') return node.size?.h ?? 0;
+    // The render path defaults an absent stroke width; mirror it so the slider
+    // shows the real value instead of 0.
+    if (key === 'strokeWidth') return node.strokeWidth ?? DEFAULT_SHAPE_STROKE_WIDTH;
     const value = (node as unknown as Record<string, unknown>)[key];
     return typeof value === 'number' ? value : 0;
 };
@@ -158,6 +165,20 @@ const numberValue = (node: Node, key: string): number => {
 const stringValue = (node: Node, key: string): string => {
     const value = (node as unknown as Record<string, unknown>)[key];
     return typeof value === 'string' ? value : '';
+};
+
+/**
+ * Effective colour shown by a `kind:'color'` field when the node omits it. The
+ * render path applies these defaults, so the swatch mirrors them instead of
+ * falling back to black. A shape's no-fill value is the explicit
+ * `DEFAULT_SHAPE_FILL` (`'transparent'`) — for every shape, closed or open. Any
+ * other colour field has no default and is a programming error, so it throws
+ * rather than showing black.
+ */
+export const colorDefault = (node: Node, key: string): string => {
+    if (key === 'fill') return DEFAULT_SHAPE_FILL;
+    if (key === 'stroke') return DEFAULT_SHAPE_STROKE;
+    throw new Error(`colorDefault: no default colour for field "${key}" on ${node.type}`);
 };
 
 const booleanValue = (node: Node, key: string): boolean => {
@@ -563,7 +584,11 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
         switch (field.kind) {
             case 'number':
                 return (
-                    <SettingRow key={field.key} label={label}>
+                    <SettingRow
+                        key={field.key}
+                        label={label}
+                        description={field.key === 'strokeWidth' ? t('editor.mfp.field.strokeWidthHint') : undefined}
+                    >
                         <PopoverSlider
                             value={numberValue(first, field.key)}
                             onChange={(value) => setNumber(field.key, value)}
@@ -746,7 +771,12 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
             case 'color':
                 return (
                     <SettingRow key={field.key} label={label}>
-                        <ColorPicker color={stringValue(first, field.key) || '#000000'} onChange={(value) => setColor(field.key, value)} supportsAlpha menuAlign="right" />
+                        <ColorPicker
+                            color={stringValue(first, field.key) || colorDefault(first, field.key)}
+                            onChange={(value) => setColor(field.key, value)}
+                            supportsAlpha
+                            menuAlign="right"
+                        />
                     </SettingRow>
                 );
             default:

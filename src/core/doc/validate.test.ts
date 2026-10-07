@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     isAssetRef,
+    isColorString,
     isHm,
     isLabelDoc,
     isNode,
@@ -248,6 +249,29 @@ describe('isNode — geometry fields (P3 §13)', () => {
         expect(node?.type === 'shape' && node.cornerRadius).toBe(6);
         const negative = isNode(baseNode({ shape: 'rectangle', cornerRadius: -3 }));
         expect(negative?.type === 'shape' && negative.cornerRadius).toBe(0);
+    });
+
+    it('accepts valid fill/stroke colours and drops invalid ones with a repair (#8)', () => {
+        // ColorPicker's emitted formats: 3/4/6/8-digit hex and `transparent`.
+        for (const ok of ['#abc', '#abcd', '#AABBCC', '#AABBCCDD', '#374151', 'transparent']) {
+            expect(isColorString(ok), ok).toBe(true);
+        }
+        for (const bad of ['red', 'rgb(1,2,3)', '#12', '', 7, null]) {
+            expect(isColorString(bad), String(bad)).toBe(false);
+        }
+
+        const node = isNode(baseNode({ shape: 'rectangle', fill: '#ffffff', stroke: '#374151' }));
+        expect(node?.type === 'shape' && node.fill).toBe('#ffffff');
+        expect(node?.type === 'shape' && node.stroke).toBe('#374151');
+
+        // Invalid optionals are dropped (absent) with a repair — never fatal.
+        const repairs: string[] = [];
+        const repaired = isNode(baseNode({ shape: 'rectangle', fill: 'red', stroke: 7 }), repairs);
+        expect(repaired).toBeDefined();
+        expect(repaired?.type === 'shape' && repaired.fill).toBeUndefined();
+        expect(repaired?.type === 'shape' && repaired.stroke).toBeUndefined();
+        expect(repairs).toContain('node.fill: invalid colour dropped');
+        expect(repairs).toContain('node.stroke: invalid colour dropped');
     });
 
     it('accepts points for line/polygon, defaults polygon.closed, drops size', () => {

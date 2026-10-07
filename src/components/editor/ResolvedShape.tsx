@@ -1,7 +1,11 @@
 import React from 'react';
 import { Ellipse, Group as KonvaGroup, Image as KonvaImage, Line, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
-import { fitImageAttrs, matrixToKonvaAttrs } from '../../editor/render/konvaFactory';
+import {
+    fitImageAttrs,
+    matrixToKonvaAttrs,
+    shapeStyleAttrs,
+} from '../../editor/render/konvaFactory';
 import type { AssetWarning, PreparedAsset } from '../../editor/render/assets';
 import type { ResolvedNode } from '../../editor/render/resolve';
 
@@ -114,7 +118,11 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                     strokeWidth={selected ? 1 : 0}
                 />
             );
-        case 'rectangle':
+        case 'rectangle': {
+            // Only the attrs the selection highlight does not override: `fill`
+            // (`'transparent'` = no fill) and `cornerRadius`. `stroke`/
+            // `strokeWidth` are set below.
+            const { fill, cornerRadius } = shapeStyleAttrs(node);
             return (
                 <Rect
                     ref={ref}
@@ -122,11 +130,17 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                     width={node.w}
                     height={node.h}
                     listening={false}
-                    stroke={stroke ?? '#374151'}
-                    strokeWidth={selected ? 2 : 1}
+                    fill={fill}
+                    cornerRadius={cornerRadius}
+                    // Editor affordance only: a selected/warn node overrides the
+                    // visible stroke. The print factory never sees this highlight.
+                    stroke={stroke ?? node.stroke}
+                    strokeWidth={selected ? Math.max(node.strokeWidth, 2) : node.strokeWidth}
                 />
             );
-        case 'ellipse':
+        }
+        case 'ellipse': {
+            const { fill } = shapeStyleAttrs(node);
             return (
                 <Ellipse
                     ref={ref}
@@ -134,12 +148,15 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                     radiusX={node.rx}
                     radiusY={node.ry}
                     listening={false}
-                    stroke={stroke ?? '#374151'}
-                    strokeWidth={selected ? 2 : 1}
+                    fill={fill}
+                    stroke={stroke ?? node.stroke}
+                    strokeWidth={selected ? Math.max(node.strokeWidth, 2) : node.strokeWidth}
                 />
             );
+        }
         case 'line':
-        case 'polygon':
+        case 'polygon': {
+            const { fill } = shapeStyleAttrs(node);
             return (
                 <Line
                     ref={ref}
@@ -147,10 +164,12 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                     points={flatten(node.points)}
                     closed={node.closed}
                     listening={false}
-                    stroke={stroke ?? '#374151'}
-                    strokeWidth={selected ? 2 : 1}
+                    fill={fill}
+                    stroke={stroke ?? node.stroke}
+                    strokeWidth={selected ? Math.max(node.strokeWidth, 2) : node.strokeWidth}
                 />
             );
+        }
         case 'image':
         case 'qr':
         case 'barcode': {

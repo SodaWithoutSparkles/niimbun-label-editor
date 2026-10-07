@@ -38,6 +38,25 @@ describe('createNodeForInsert', () => {
         expect([...SHAPE_ACTIONS]).toEqual(['shape:line', 'shape:rectangle', 'shape:ellipse', 'shape:polygon']);
     });
 
+    it('seeds the real static shape style defaults (#8)', () => {
+        for (const action of ['shape:rectangle', 'shape:ellipse', 'shape:polygon'] as const) {
+            const node = createNodeForInsert(action, 0, 0);
+            expect(node, action).toMatchObject({
+                fill: 'transparent',
+                stroke: '#374151',
+                strokeWidth: 50,
+            });
+            // No fill is seeded as the explicit `'transparent'` string.
+            expect(node?.type === 'shape' && node.fill, `${action} has transparent fill`).toBe(
+                'transparent',
+            );
+        }
+        // Open shape: transparent fill, and the stroke defaults are seeded.
+        const line = createNodeForInsert('shape:line', 0, 0);
+        expect(line).toMatchObject({ fill: 'transparent', stroke: '#374151', strokeWidth: 50 });
+        expect(line?.type === 'shape' && line.fill).toBe('transparent');
+    });
+
     it('seeds the P5 qr / barcode defaults', () => {
         const qr = createNodeForInsert('qr', 0, 0);
         expect(qr?.type === 'qr' && qr.data).toEqual({ kind: 'static', value: DEFAULT_QR_PAYLOAD });

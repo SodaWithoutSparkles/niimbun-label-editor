@@ -16,7 +16,7 @@
 | 3 | Quantizer params **per node**: `threshold` + `strength` (no serpentine). Respect the 8-distinct-policy palette cap (`renderLabelPage.ts:255`) — dedupe rounded params, warn on overflow. Preview≡print by construction (single `renderLabelPage` seam). |
 | 5/6 | Node keeps a generic ⚠ icon; **detailed per-kind text lives in the warning center**. Warning center = **5th MFP tab, next to JS**. **QR data is arbitrary text — never treat/validate as URL** (no URL heuristics; URLs are one use case). |
 | 7 | Polygon = **click-to-add-points**, double-click/Enter finishes, Esc cancels (disarm already exists). |
-| 8 | **Real static style support now**: `fill`/`stroke`/`strokeWidth` honored end-to-end (schema → validate → resolve → BOTH renderers → inspector). Defaults: closed shapes get a visible default fill (white — verify visually with owner at phase review); stroke default = current `#374151`; `strokeWidth` default 1. Invalid optionals dropped with repair, never fatal. |
+| 8 | **Real static style support now**: `fill`/`stroke`/`strokeWidth` honored end-to-end (schema → validate → resolve → BOTH renderers → inspector). Defaults (**revised 2026-10-08**): fill = **no fill** (`'transparent'`), stroke `#374151`, `strokeWidth` **50 hm (0.5 mm)**. Invalid optionals dropped with repair, never fatal. |
 | 9 | Grid step **stays 5 mm** (`GRID_STEP_HM=500`). Fix = un-occlude (paint after silhouette) + `strokeScaleEnabled={false}`. |
 | 10 | Draft state committed on blur/Enter (copy `EditorStatusBar.commitDraft` pattern, `EditorStatusBar.tsx:40-98`). Store untouched. |
 | 11 | Calibration = ruler + slider + live number dialog on the shared `Modal`, writes existing `setScreenDpi`. Raw number field stays. |

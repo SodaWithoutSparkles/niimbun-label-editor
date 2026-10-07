@@ -7,6 +7,7 @@ import type { LabelDoc, Node } from '../../core/doc/types';
 import { rasterDimensions } from '../../core/render';
 import { resolve } from './resolve';
 import { rasterizeResolved } from './rasterize';
+import { createKonvaNode } from './konvaFactory';
 
 beforeAll(() => {
     installCanvasShim();
@@ -43,6 +44,9 @@ const smallDoc = (nodes?: Node[]): LabelDoc =>
                     locked: false,
                     transform: { x: 200, y: 1000, rotDeg: 0, scaleX: 1, scaleY: 1 },
                     size: { w: 800, h: 600 },
+                    // Explicit black so this remains an ink source regardless of
+                    // the (transparent) shape-style default.
+                    fill: '#000000',
                 }),
                 node({
                     id: 'e',
@@ -53,6 +57,7 @@ const smallDoc = (nodes?: Node[]): LabelDoc =>
                     locked: false,
                     transform: { x: 1600, y: 400, rotDeg: 0, scaleX: 1, scaleY: 1 },
                     size: { w: 800, h: 400 },
+                    fill: '#000000',
                 }),
             ],
     });
@@ -124,7 +129,7 @@ describe('rasterizeResolved — offscreen Konva on a real canvas', () => {
         expect(dark).toBeGreaterThan(0);
     });
 
-    it('renders a visible line (device-px stroke, not a sub-pixel hm stroke)', async () => {
+    it('renders a visible line from the resolved hm stroke width', async () => {
         const doc = smallDoc([
             node({
                 id: 'l',
@@ -146,6 +151,104 @@ describe('rasterizeResolved — offscreen Konva on a real canvas', () => {
             if (imageData.data[i]! < 128) dark++;
         }
         expect(dark, 'the line rasterizes as real ink').toBeGreaterThan(20);
+    });
+
+    it('honours an explicit closed-shape stroke width at raster scale (#8)', async () => {
+        const doc = smallDoc([
+            node({
+                id: 'r',
+                parentId: null,
+                type: 'shape',
+                shape: 'rectangle',
+                visible: true,
+                locked: false,
+                transform: { x: 500, y: 500, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                size: { w: 1000, h: 1000 },
+                fill: '#ffffff',
+                stroke: '#000000',
+                strokeWidth: 100, // 1 mm — clearly visible
+            }),
+        ]);
+        const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+        const { imageData } = await rasterizeResolved(resolve(doc), { ...dims, dpi: doc.label.dpi });
+
+        let dark = 0;
+        for (let i = 0; i < imageData.data.length; i += 4) {
+            if (imageData.data[i]! < 128) dark++;
+        }
+        expect(dark, 'the explicit stroke rasterizes as ink').toBeGreaterThan(20);
+    });
+
+    it('prints an open line at the resolved hm stroke width (BLOCKER 1: preview ≡ print)', async () => {
+        // A horizontal open line with an explicit 1 mm stroke. The print path
+        // must interpret `strokeWidth` in hm and scale it by the raster scale
+        // (`dpi / HM_PER_INCH`), exactly as the preview scales it by zoom — no
+        // device-px override. The ink band height therefore ≈ scale × width px.
+        const strokeWidth = 100; // 1 mm
+        const doc = smallDoc([
+            node({
+                id: 'l',
+                parentId: null,
+                type: 'shape',
+                shape: 'line',
+                visible: true,
+                locked: false,
+                transform: { x: 100, y: 1000, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                points: [[0, 0], [2000, 0]],
+                closed: false,
+                stroke: '#000000',
+                strokeWidth,
+            }),
+        ]);
+        const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+        const resolved = resolve(doc);
+        const { imageData } = await rasterizeResolved(resolved, { ...dims, dpi: doc.label.dpi });
+
+        const scale = doc.label.dpi / 2540; // hm → px
+        const expectedPx = scale * strokeWidth; // ≈ 11.8 px at 300 dpi
+        const x = Math.round(1000 * scale); // mid-line, away from the caps
+
+        let band = 0;
+        for (let y = 0; y < dims.heightPx; y++) {
+            const i = (y * dims.widthPx + x) * 4;
+            if (imageData.data[i]! < 128) band++;
+        }
+        // Allow ±2 px for antialiasing at the band edges.
+        expect(band, 'ink band height matches dpi/HM_PER_INCH × strokeWidth').toBeGreaterThanOrEqual(
+            Math.floor(expectedPx) - 2,
+        );
+        expect(band).toBeLessThanOrEqual(Math.ceil(expectedPx) + 2);
+
+        // Preview reads the same resolved value the print path scales.
+        const printed = createKonvaNode(resolved[0]!) as Konva.Line;
+        expect(printed.strokeWidth()).toBe(strokeWidth);
+        expect(printed.strokeScaleEnabled(), 'no device-px override in print').toBe(true);
+    });
+
+    it('default 50 hm stroke is visible at 300 dpi (owner-flagged, #8)', async () => {
+        // 50 hm = 0.5 mm → 300 × 0.5 / 25.4 ≈ 5.9 px. A default-styled closed
+        // shape has `'transparent'` fill, so its stroke is the only ink; the
+        // resolved default width must be large enough to deposit some.
+        const doc = smallDoc([
+            node({
+                id: 'r',
+                parentId: null,
+                type: 'shape',
+                shape: 'rectangle',
+                visible: true,
+                locked: false,
+                transform: { x: 500, y: 500, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                size: { w: 1000, h: 1000 },
+            }),
+        ]);
+        const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+        const { imageData } = await rasterizeResolved(resolve(doc), { ...dims, dpi: doc.label.dpi });
+
+        let dark = 0;
+        for (let i = 0; i < imageData.data.length; i += 4) {
+            if (imageData.data[i]! < 128) dark++;
+        }
+        expect(dark, 'default 50 hm stroke deposits ink at 300 dpi').toBeGreaterThan(0);
     });
 
     it('stays widthPx×heightPx and identical at devicePixelRatio 2 (A)', async () => {

@@ -57,6 +57,9 @@ const text = (id: string, x: number, y: number, value: string): Node =>
         fontSize: 400,
     });
 
+// These helpers stand in for an **ink source**: they set an explicit black fill
+// so the raster/clip/override tests below are independent of the shape style
+// default (a shape with no fill resolves to `'transparent'`).
 const rect = (id: string, x: number, y: number, w: number, h: number, hint?: string): Node =>
     node({
         id,
@@ -67,6 +70,7 @@ const rect = (id: string, x: number, y: number, w: number, h: number, hint?: str
         locked: false,
         transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
         size: { w, h },
+        fill: '#000000',
         ...(hint ? { quantizerHint: hint } : {}),
     });
 
@@ -80,6 +84,7 @@ const ellipse = (id: string, cx: number, cy: number, w: number, h: number): Node
         locked: false,
         transform: { x: cx, y: cy, rotDeg: 0, scaleX: 1, scaleY: 1 },
         size: { w, h },
+        fill: '#000000',
     });
 
 const image = (id: string, x: number, y: number, w: number, h: number): Node =>
@@ -337,6 +342,9 @@ describe('renderLabelPage — shared preview/print path', () => {
                     locked: false,
                     transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
                     size: { w: 2000, h: 2000 },
+                    // Explicit fill so the leaf is an ink/coverage source (the
+                    // default is transparent).
+                    fill: '#000000',
                     quantizerHint: 'threshold',
                 }),
             ],
@@ -574,6 +582,93 @@ describe('renderLabelPage — shared preview/print path', () => {
                 : 0;
         expect(covered).toBeGreaterThan(0);
         expect(covered).toBeLessThan(bboxArea);
+    });
+
+    it('a transparent-fill shape claims only its stroke band (mask == raster ink)', async () => {
+        const doc = createLabelDoc({
+            backingW: 4000,
+            backingH: 2000,
+            dpi: 254,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 4000, h: 2000 }],
+            nodes: [
+                node({
+                    id: 'r',
+                    parentId: null,
+                    type: 'shape',
+                    shape: 'rectangle',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    size: { w: 2000, h: 2000 },
+                    // Explicit no-fill value: the mask must NOT treat it as ink.
+                    fill: 'transparent',
+                    stroke: '#000000',
+                    strokeWidth: 100,
+                    quantizerHint: 'threshold',
+                }),
+            ],
+        });
+        const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+        const resolved = resolve(doc);
+        const built = await buildPolicyMask(resolved, nodeLookup(doc.nodes), dims, doc.label.dpi);
+        expect(built).toBeDefined();
+        if (!built) return;
+        const width = dims.widthPx;
+        // Rect 2000×2000 hm → 200×200 px at 254 dpi (scale 0.1); stroke 100 hm →
+        // a 10 px band centred on the outline (≈5 px each side).
+        expect(built.mask.data[100 * width + 100], 'interior of a transparent shape is uncovered').toBe(0);
+        expect(built.mask.data[100 * width + 2], 'stroke band near the edge is covered').toBe(1);
+
+        // The same shape deposits no interior ink: the mask footprint equals the
+        // raster ink, so mask-topmost == raster-topmost (M2) still holds.
+        const { imageData } = await rasterizeResolved(resolved, { ...dims, dpi: doc.label.dpi });
+        // The raster paints an opaque white background, so alpha is 255
+        // everywhere: a dark RGB channel is the only meaningful ink test.
+        const inkAt = (x: number, y: number): boolean =>
+            imageData.data[(y * width + x) * 4]! < 128;
+        expect(inkAt(100, 100), 'transparent fill deposits no interior ink').toBe(false);
+        expect(inkAt(2, 100), 'the stroke band is the only ink').toBe(true);
+    });
+
+    it('a transparent-stroke shape claims no mask band and deposits no ink', async () => {
+        const doc = createLabelDoc({
+            backingW: 4000,
+            backingH: 2000,
+            dpi: 254,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 4000, h: 2000 }],
+            nodes: [
+                node({
+                    id: 'r',
+                    parentId: null,
+                    type: 'shape',
+                    shape: 'rectangle',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    size: { w: 2000, h: 2000 },
+                    // Both fill and stroke invisible: the mask must claim nothing.
+                    fill: 'transparent',
+                    stroke: 'transparent',
+                    strokeWidth: 100,
+                    quantizerHint: 'threshold',
+                }),
+            ],
+        });
+        const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+        const resolved = resolve(doc);
+        const built = await buildPolicyMask(resolved, nodeLookup(doc.nodes), dims, doc.label.dpi);
+        // The shape resolves a policy, so a mask is built — it just stays empty.
+        expect(built).toBeDefined();
+        if (!built) return;
+        const width = dims.widthPx;
+        expect(built.mask.data[100 * width + 2], 'no stroke band near the edge').toBe(0);
+        expect(built.mask.data[100 * width + 100], 'no interior coverage').toBe(0);
+
+        const { imageData } = await rasterizeResolved(resolved, { ...dims, dpi: doc.label.dpi });
+        const inkAt = (x: number, y: number): boolean =>
+            imageData.data[(y * width + x) * 4]! < 128;
+        expect(inkAt(2, 100), 'transparent stroke deposits no ink').toBe(false);
+        expect(inkAt(100, 100), 'transparent fill deposits no interior ink').toBe(false);
     });
 
     it('stays widthPx×heightPx and identical at devicePixelRatio 2 (A)', async () => {

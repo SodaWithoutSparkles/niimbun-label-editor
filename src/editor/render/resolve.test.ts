@@ -274,6 +274,108 @@ describe('resolve — geometry fallbacks', () => {
     });
 });
 
+describe('resolve — shape static style (#8)', () => {
+    const resolvedShape = (over: Record<string, unknown>) => {
+        const doc = createLabelDoc({
+            id: 'doc-style',
+            now: 1_700_000_000,
+            backingW: 3000,
+            backingH: 2000,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 3000, h: 2000 }],
+            nodes: [
+                node({
+                    id: 's',
+                    parentId: null,
+                    type: 'shape',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    ...over,
+                }),
+            ],
+        });
+        return resolve(doc)[0]!;
+    };
+
+    it('defaults a closed shape to transparent fill, #374151 stroke, width 50, radius 0', () => {
+        const rect = resolvedShape({ shape: 'rectangle', size: { w: 100, h: 100 } });
+        expect(rect).toMatchObject({
+            type: 'rectangle',
+            fill: 'transparent',
+            stroke: '#374151',
+            strokeWidth: 50,
+            cornerRadius: 0,
+        });
+        expect((rect as { fill?: string }).fill).toBe('transparent');
+    });
+
+    it('gives an ellipse the same transparent-fill default', () => {
+        const ellipse = resolvedShape({ shape: 'ellipse', size: { w: 100, h: 100 } });
+        expect(ellipse).toMatchObject({
+            type: 'ellipse',
+            fill: 'transparent',
+            stroke: '#374151',
+            strokeWidth: 50,
+        });
+        expect((ellipse as { fill?: string }).fill).toBe('transparent');
+    });
+
+    it('defaults an open line to transparent fill', () => {
+        const line = resolvedShape({ shape: 'line', points: [[0, 0], [100, 0]], closed: false });
+        expect(line).toMatchObject({
+            type: 'line',
+            fill: 'transparent',
+            stroke: '#374151',
+            strokeWidth: 50,
+        });
+        expect((line as { fill?: string }).fill).toBe('transparent');
+    });
+
+    it('does not fill a closed polygon or a closed line (default is transparent)', () => {
+        const poly = resolvedShape({
+            shape: 'polygon',
+            points: [[0, 0], [100, 0], [100, 100]],
+            closed: true,
+        });
+        expect(poly).toMatchObject({ type: 'polygon', closed: true, fill: 'transparent' });
+        expect((poly as { fill?: string }).fill).toBe('transparent');
+        const closedLine = resolvedShape({
+            shape: 'line',
+            points: [[0, 0], [100, 0], [100, 100]],
+            closed: true,
+        });
+        expect(closedLine).toMatchObject({ type: 'line', closed: true, fill: 'transparent' });
+        expect((closedLine as { fill?: string }).fill).toBe('transparent');
+    });
+
+    it('honours explicit fill/stroke/strokeWidth/cornerRadius', () => {
+        const rect = resolvedShape({
+            shape: 'rectangle',
+            size: { w: 100, h: 100 },
+            fill: '#ff0000',
+            stroke: '#00ff00',
+            strokeWidth: 4,
+            cornerRadius: 5,
+        });
+        expect(rect).toMatchObject({
+            fill: '#ff0000',
+            stroke: '#00ff00',
+            strokeWidth: 4,
+            cornerRadius: 5,
+        });
+    });
+
+    it('honours an explicit fill on an open shape (default only applies when absent)', () => {
+        const line = resolvedShape({
+            shape: 'line',
+            points: [[0, 0], [100, 0]],
+            closed: false,
+            fill: '#123456',
+        });
+        expect((line as { fill?: string }).fill).toBe('#123456');
+    });
+});
+
 describe('resolve — content overrides (P6 W2)', () => {
     const overridesFor = (id: string, text: string): Map<string, { text: string; placeholder: boolean }> =>
         new Map([[id, { text, placeholder: false }]]);

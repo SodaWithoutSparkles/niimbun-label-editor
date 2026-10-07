@@ -50,18 +50,37 @@ describe('inspectorModel — field descriptors', () => {
     });
 
     it('honestly marks fields the renderer cannot act on as unwired', () => {
-        // The resolver ignores these props, so advertising them as wired would
-        // let a user edit a field nothing reads (should-fix #13).
-        const unactionable = ['fontWeight', 'letterSpacing', 'direction', 'fill', 'stroke', 'strokeWidth', 'cornerRadius'];
+        // The resolver ignores these text props, so advertising them as wired
+        // would let a user edit a field nothing reads (should-fix #13). Their
+        // reason is `style`, not the misleading CSV/template `content` message.
+        const unactionable = ['fontWeight', 'letterSpacing', 'direction'];
         for (const key of unactionable) {
             const field = [...TEXT_FIELDS, ...SHAPE_FIELDS].find((f) => f.key === key);
             expect(field?.wired, key).toBe(false);
+            expect(field?.reason, key).toBe('style');
         }
         // The ones the renderer *does* read stay wired.
         for (const key of ['fontFamily', 'fontSize', 'fontStyle', 'align', 'closed', 'shape']) {
             const field = [...TEXT_FIELDS, ...SHAPE_FIELDS].find((f) => f.key === key);
             expect(field?.wired, key).toBe(true);
         }
+    });
+
+    it('wires the real static shape style fields (#8)', () => {
+        // #8: the resolver + both renderers now honour these, so they are wired.
+        for (const key of ['fill', 'stroke', 'strokeWidth', 'cornerRadius']) {
+            const field = SHAPE_FIELDS.find((f) => f.key === key);
+            expect(field?.wired, key).toBe(true);
+        }
+        expect(SHAPE_FIELDS.find((f) => f.key === 'fill')?.kind).toBe('color');
+        expect(SHAPE_FIELDS.find((f) => f.key === 'stroke')?.kind).toBe('color');
+        expect(SHAPE_FIELDS.find((f) => f.key === 'strokeWidth')?.kind).toBe('number');
+        expect(SHAPE_FIELDS.find((f) => f.key === 'cornerRadius')?.kind).toBe('number');
+        // `points` stays a stub, but with the honest `style` reason — not the
+        // misleading CSV `content` message.
+        const points = SHAPE_FIELDS.find((f) => f.key === 'points');
+        expect(points?.wired).toBe(false);
+        expect(points?.reason).toBe('style');
     });
 
     it('tags every unwired field with the engine that owns it', () => {

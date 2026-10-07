@@ -1,5 +1,10 @@
 import type { hm } from '../core/hm';
 import type { InsertAction } from '../store/slices/toolsSlice';
+import {
+    DEFAULT_SHAPE_FILL,
+    DEFAULT_SHAPE_STROKE,
+    DEFAULT_SHAPE_STROKE_WIDTH,
+} from '../core/doc/objects';
 import type { ImageRef, Node, ShapeKind } from '../core/doc/types';
 
 /**
@@ -96,7 +101,17 @@ export const createNodeForInsert = (action: InsertAction, x: hm, y: hm): Node | 
                 size: { ...DEFAULT_BARCODE_BOX },
             };
         case 'shape:line':
-            return { ...common, type: 'shape', shape: 'line', points: [[0, 0], [1500, 0]] };
+            // Open shape: no fill (`'transparent'`). The stroke/width defaults
+            // are seeded so the inspector shows the real values (#8).
+            return {
+                ...common,
+                type: 'shape',
+                shape: 'line',
+                points: [[0, 0], [1500, 0]],
+                fill: DEFAULT_SHAPE_FILL,
+                stroke: DEFAULT_SHAPE_STROKE,
+                strokeWidth: DEFAULT_SHAPE_STROKE_WIDTH,
+            };
         case 'shape:polygon':
             return {
                 ...common,
@@ -104,10 +119,23 @@ export const createNodeForInsert = (action: InsertAction, x: hm, y: hm): Node | 
                 shape: 'polygon',
                 points: [[0, 0], [1200, 0], [1200, 1200], [0, 1200]],
                 closed: true,
+                fill: DEFAULT_SHAPE_FILL,
+                stroke: DEFAULT_SHAPE_STROKE,
+                strokeWidth: DEFAULT_SHAPE_STROKE_WIDTH,
             };
         case 'shape:rectangle':
         case 'shape:ellipse':
-            return { ...common, type: 'shape', shape: shapeKindForAction(action)!, size: { ...DEFAULT_BOX } };
+            // Fill defaults to `'transparent'` (no fill), seeded so the inspector
+            // shows a real, round-trippable colour.
+            return {
+                ...common,
+                type: 'shape',
+                shape: shapeKindForAction(action)!,
+                size: { ...DEFAULT_BOX },
+                fill: DEFAULT_SHAPE_FILL,
+                stroke: DEFAULT_SHAPE_STROKE,
+                strokeWidth: DEFAULT_SHAPE_STROKE_WIDTH,
+            };
         default:
             return null;
     }

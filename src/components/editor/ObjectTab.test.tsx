@@ -15,6 +15,7 @@ import {
     ObjectTab,
     alignTransformPatch,
     clampSizeHm,
+    colorDefault,
     dataContentPatch,
     dataContentValue,
     fontFamilyPatch,
@@ -204,6 +205,32 @@ const shapeNode = (over: Record<string, unknown> = {}): Node =>
         size: { w: 400, h: 300 },
         ...over,
     });
+
+describe('shape style defaults shown by the inspector (#8)', () => {
+    it('shows the resolved default colour when the node omits the field', () => {
+        // A shape's no-fill value is the explicit `'transparent'` string, never a
+        // black or white swatch, for closed and open shapes alike.
+        expect(colorDefault(shapeNode(), 'fill')).toBe('transparent');
+        expect(colorDefault(shapeNode(), 'stroke')).toBe('#374151');
+        expect(
+            colorDefault(shapeNode({ shape: 'line', points: [[0, 0], [100, 0]], closed: false }), 'fill'),
+        ).toBe('transparent');
+        expect(colorDefault(shapeNode({ shape: 'polygon', closed: true }), 'fill')).toBe('transparent');
+        // An unknown colour field has no default and must not silently show black.
+        expect(() => colorDefault(shapeNode(), 'notAColour')).toThrow();
+    });
+
+    it('renders wired fill/stroke controls for a shape (no disabled stub)', () => {
+        const selected = shapeNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['s'] });
+        render(<ObjectTab selected={[selected]} />);
+        expect(screen.getByText('Fill')).toBeTruthy();
+        expect(screen.getByText('Stroke')).toBeTruthy();
+        expect(screen.getByText('Stroke width')).toBeTruthy();
+        // The misleading CSV message must not appear for shape style fields.
+        expect(screen.queryByText(/bound to a CSV or template/i)).toBeNull();
+    });
+});
 
 describe('text content authoring (must-fix #3)', () => {
     it('reads and writes a static ContentSource', () => {

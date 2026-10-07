@@ -2,7 +2,13 @@ import Konva from 'konva';
 import type { Mat2D } from '../../core/doc/derive';
 import type { ImageFit } from '../../core/doc/objects';
 import type { PreparedAsset } from './assets';
-import type { ResolvedNode } from './resolve';
+import type {
+    ResolvedEllipse,
+    ResolvedLine,
+    ResolvedNode,
+    ResolvedPolygon,
+    ResolvedRectangle,
+} from './resolve';
 
 /**
  * Plain-Konva node factory (plan decision 9 — shared with P4 later).
@@ -45,6 +51,36 @@ const withTransform = <T extends Konva.Node>(node: T, m: Mat2D): T => {
     node.setAttrs(matrixToKonvaAttrs(m));
     return node;
 };
+
+/** A resolved shape leaf (the four kinds that carry `ResolvedShapeStyle`). */
+export type ResolvedShapeNode =
+    | ResolvedLine
+    | ResolvedRectangle
+    | ResolvedEllipse
+    | ResolvedPolygon;
+
+/** Konva fill/stroke attrs for a resolved shape leaf. `fill` is always a string. */
+export interface ShapeStyleAttrs {
+    fill: string;
+    stroke: string;
+    strokeWidth: number;
+    cornerRadius?: number;
+}
+
+/**
+ * The **one** mapping from a resolved shape leaf to its Konva style attrs (#8).
+ * The preview (`ResolvedShape.tsx`) and the print factory both read this, so
+ * `fill`/`stroke`/`strokeWidth`/`cornerRadius` start identical — preview ≡ print
+ * by construction. The preview then overrides `stroke`/`strokeWidth` **only** for
+ * the editor's selection/warn highlight, never for print. No Konva default or
+ * local constant is consulted here; `resolve` already applied the defaults.
+ */
+export const shapeStyleAttrs = (node: ResolvedShapeNode): ShapeStyleAttrs => ({
+    fill: node.fill,
+    stroke: node.stroke,
+    strokeWidth: node.strokeWidth,
+    ...(node.type === 'rectangle' ? { cornerRadius: node.cornerRadius } : {}),
+});
 
 const flattenPoints = (points: readonly [number, number][]): number[] => {
     const out: number[] = [];
@@ -169,23 +205,35 @@ export const createKonvaNode = (
                 node.localTransform,
             );
         case 'line':
-            return withTransform(
-                new Konva.Line({ points: flattenPoints(node.points), closed: node.closed }),
-                node.localTransform,
-            );
         case 'polygon':
             return withTransform(
-                new Konva.Line({ points: flattenPoints(node.points), closed: node.closed }),
+                new Konva.Line({
+                    points: flattenPoints(node.points),
+                    closed: node.closed,
+                    ...shapeStyleAttrs(node),
+                }),
                 node.localTransform,
             );
         case 'rectangle':
             return withTransform(
-                new Konva.Rect({ x: 0, y: 0, width: node.w, height: node.h }),
+                new Konva.Rect({
+                    x: 0,
+                    y: 0,
+                    width: node.w,
+                    height: node.h,
+                    ...shapeStyleAttrs(node),
+                }),
                 node.localTransform,
             );
         case 'ellipse':
             return withTransform(
-                new Konva.Ellipse({ x: 0, y: 0, radiusX: node.rx, radiusY: node.ry }),
+                new Konva.Ellipse({
+                    x: 0,
+                    y: 0,
+                    radiusX: node.rx,
+                    radiusY: node.ry,
+                    ...shapeStyleAttrs(node),
+                }),
                 node.localTransform,
             );
     }

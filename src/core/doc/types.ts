@@ -98,6 +98,14 @@ export interface ShapeNode extends BaseNode {
     points?: [hm, hm][];
     /** Polygon close flag. */
     closed?: boolean;
+    /**
+     * Fill colour (#8). Plain string in `ColorPicker`'s emitted format (hex or
+     * `transparent`). Absent ⇒ `DEFAULT_SHAPE_FILL` (`'transparent'`, i.e. no
+     * fill); the resolver always emits a real string.
+     */
+    fill?: string;
+    /** Outline colour (#8). Same format as `fill`; absent ⇒ `#374151`. */
+    stroke?: string;
 }
 export interface QrNode extends BaseNode {
     type: 'qr';

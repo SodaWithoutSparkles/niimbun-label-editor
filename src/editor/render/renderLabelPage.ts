@@ -1,5 +1,6 @@
 import Konva from 'konva';
 import { nodeLookup } from '../../core/doc/derive';
+import { hasFill, hasStroke } from '../../core/doc/objects';
 import type { LabelDoc, Node } from '../../core/doc/types';
 import {
     HM_PER_INCH,
@@ -20,7 +21,6 @@ import { applyRegionClip } from './clip';
 import { createKonvaNode, fitImageAttrs, matrixToKonvaAttrs } from './konvaFactory';
 import { prepareResolvedAssets } from './prepareAssets';
 import {
-    DEFAULT_LINE_STROKE_WIDTH,
     prepareTextFonts,
     rasterizeResolved,
     type RasterizeOptions,
@@ -154,20 +154,34 @@ const GLOBAL_KEY: readonly [number, number, number] = [0, 0, 0];
 
 const rgb = (color: readonly [number, number, number]): string => `rgb(${color[0]},${color[1]},${color[2]})`;
 
-/** Paint a node's actual coverage (glyphs / filled shape / stroked line) in `color`. */
+/**
+ * Paint a node's **actual coverage** (glyphs / filled shape / stroked outline) in
+ * `color`, matching the raster exactly.
+ *
+ * Text fills its glyphs. A shape mirrors its resolved style: the stroke and the
+ * fill are each painted only when they deposit ink — a `'transparent'` (no-fill
+ * or no-stroke) shape must claim just the parts the raster actually deposits, or
+ * the mask would cover pixels the raster leaves white (M2: mask-topmost ==
+ * raster-topmost).
+ */
 const paintCoverage = (node: Konva.Shape, color: string): void => {
-    if (node instanceof Konva.Line && !node.closed()) {
-        node.fillEnabled(false);
-        node.strokeEnabled(true);
-        node.stroke(color);
-        // Match `applyInkDefaults`: a device-px stroke, so the mask registers the
-        // same line the raster does (a hm stroke would shrink to sub-pixel).
-        node.strokeScaleEnabled(false);
-        node.strokeWidth(Math.max(DEFAULT_LINE_STROKE_WIDTH, node.strokeWidth()));
+    if (node instanceof Konva.Text) {
+        node.strokeEnabled(false);
+        node.fill(color);
         return;
     }
-    node.strokeEnabled(false);
-    node.fill(color);
+    // NOTE: `hasFill` is a *presence* test, not an *ink* test: a light `#eeeeee`
+    // or low-alpha `#00000040` fill is claimed at full mask coverage while
+    // `threshold` may render it white. Pre-existing; tracked as follow-up debt.
+    if (hasFill(node.fill() as string | undefined)) node.fill(color);
+    else node.fillEnabled(false);
+    // Symmetric no-stroke rule: an invisible stroke must not claim a band.
+    if (hasStroke(node.stroke() as string | undefined)) {
+        node.strokeEnabled(true);
+        node.stroke(color);
+    } else {
+        node.strokeEnabled(false);
+    }
 };
 
 /**

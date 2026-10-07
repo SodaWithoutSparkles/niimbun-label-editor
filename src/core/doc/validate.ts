@@ -53,6 +53,16 @@ const isFiniteNumber = (value: unknown): value is number =>
 const isOneOf = <T extends string>(value: unknown, allowed: readonly T[]): value is T =>
     isString(value) && (allowed as readonly string[]).includes(value);
 
+/**
+ * `ColorPicker` emits `#rgb`/`#rgba`/`#rrggbb`/`#rrggbbaa` hex (with optional
+ * alpha) or the literal `transparent` (alpha 0). Accept exactly those so a
+ * round-trip through the inspector is stable and no other CSS syntax slips in.
+ */
+const HEX_COLOR = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+export const isColorString = (value: unknown): value is string =>
+    isString(value) && (value === 'transparent' || HEX_COLOR.test(value));
+
 const NODE_TYPES: readonly NodeType[] = ['group', 'text', 'image', 'shape', 'qr', 'barcode'];
 const SHAPE_KINDS: readonly ShapeKind[] = ['line', 'rectangle', 'ellipse', 'polygon'];
 // Derived from the registry so a newly added quantizer is accepted automatically.
@@ -299,6 +309,23 @@ const toOptionalEnum = <T extends string>(
     return undefined;
 };
 
+/**
+ * Optional colour string. A missing (`undefined`) optional returns `undefined`
+ * silently; a present-but-invalid value is dropped (absent) and recorded as a
+ * repair rather than failing the document — an absent colour always means "use
+ * the render default", which is a safe fallback.
+ */
+const toOptionalColor = (
+    value: unknown,
+    repairs: string[] | undefined,
+    message: string,
+): string | undefined => {
+    if (value === undefined) return undefined;
+    if (isColorString(value)) return value;
+    repairs?.push(message);
+    return undefined;
+};
+
 export const isNode = (value: unknown, repairs?: string[]): Node | undefined => {
     if (!isRecord(value)) return undefined;
     if (!isString(value.id) || value.id.length === 0) return undefined;
@@ -360,6 +387,16 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
         }
         case 'shape': {
             if (!isOneOf(value.shape, SHAPE_KINDS)) return undefined;
+            const fill = toOptionalColor(value.fill, repairs, 'node.fill: invalid colour dropped');
+            const stroke = toOptionalColor(
+                value.stroke,
+                repairs,
+                'node.stroke: invalid colour dropped',
+            );
+            const style = {
+                ...(fill !== undefined ? { fill } : {}),
+                ...(stroke !== undefined ? { stroke } : {}),
+            };
             switch (value.shape) {
                 case 'line':
                 case 'polygon': {
@@ -390,6 +427,7 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
                             shape: value.shape,
                             points: [[0, 0], [w, h]],
                             closed: value.shape === 'polygon',
+                            ...style,
                         };
                     }
                     const points: [hm, hm][] = [];
@@ -406,10 +444,11 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
                         shape: value.shape,
                         points,
                         closed: value.closed === true || (value.closed === undefined && value.shape === 'polygon'),
+                        ...style,
                     };
                 }
                 case 'rectangle': {
-                    const node: Node = { ...base, type: 'shape', shape: 'rectangle' };
+                    const node: Node = { ...base, type: 'shape', shape: 'rectangle', ...style };
                     const cornerRadius = toOptionalHm(value.cornerRadius);
                     if (cornerRadius !== undefined) {
                         node.cornerRadius = cornerRadius;
@@ -417,7 +456,7 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
                     return node;
                 }
                 case 'ellipse':
-                    return { ...base, type: 'shape', shape: 'ellipse' };
+                    return { ...base, type: 'shape', shape: 'ellipse', ...style };
             }
             return undefined;
         }

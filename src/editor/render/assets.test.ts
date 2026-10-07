@@ -615,6 +615,9 @@ describe('renderLabelPage — image asset seam', () => {
                     locked: false,
                     transform: { x: 100, y: 100, rotDeg: 0, scaleX: 1, scaleY: 1 },
                     size: { w: 800, h: 800 },
+                    // Explicit black so the rect is an ink source regardless of
+                    // the (transparent) shape-style default.
+                    fill: '#000000',
                 }),
                 barcodeNode('bc', 'x'),
             ],
