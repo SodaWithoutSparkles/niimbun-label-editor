@@ -59,16 +59,25 @@ describe('createNodeForInsert', () => {
     });
 
     it('creates a closed polygon from world-space points with local geometry', () => {
-        expect(createPolygonNode([[100, 200], [600, 200], [300, 800]])).toMatchObject({
+        const node = createPolygonNode([[100, 200], [600, 200], [300, 800]]);
+        expect(node).toMatchObject({
             type: 'shape',
             shape: 'polygon',
             closed: true,
             transform: { x: 100, y: 200 },
-            points: [[0, 0], [500, 0], [200, 600]],
             fill: 'transparent',
             stroke: '#374151',
             strokeWidth: 50,
         });
+        // Assert the full point list: `toMatchObject` alone would let an extra
+        // (e.g. closing) vertex slip through.
+        expect(node?.type === 'shape' && node.points).toEqual([[0, 0], [500, 0], [200, 600]]);
+    });
+
+    it('returns null for fewer than three vertices (no Infinity transform)', () => {
+        expect(createPolygonNode([])).toBeNull();
+        expect(createPolygonNode([[10, 20]])).toBeNull();
+        expect(createPolygonNode([[10, 20], [30, 40]])).toBeNull();
     });
 
     it('seeds the P5 qr / barcode defaults', () => {

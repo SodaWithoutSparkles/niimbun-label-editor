@@ -1,8 +1,10 @@
 # Phase 4 — polygon draw mode (#7)
 
 - Objective: replace the broken one-click polygon insert with a point-based drawing workflow.
-- Status: complete; TypeScript clean, focused tests 23/23 green, full suite 1275/1275 green.
-- Commit: `feat(editor): add polygon drawing tool`.
+- Status: complete + reviewed + fixed (2026-10-08). `tsc` clean · full suite 115 files / 1343 tests green.
+- Commits: `feat(editor): add polygon and quantizer controls` (`773ec1d`) + `fix(editor): polygon draw review fixes (#7)`.
+- **Reviews:** `experimental-review` → CHANGES-NEEDED (4 MUST-FIX: dblclick appended a vertex; middle-drag pan dead mid-draft; Enter/Esc hijacked text inputs; no interaction tests) → fix → re-review **APPROVE** → residual (`onPointerCancel` inert) fixed.
+- Coverage note: the original "23/23" counted pre-existing PreviewStage tests; real new coverage is `polygonDrawing.test.ts` + `PreviewStage.interaction.test.tsx` (mounts the Konva Stage).
 
 ## Tasks
 

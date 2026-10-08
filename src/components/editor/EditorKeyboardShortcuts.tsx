@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useStore } from '../../store/useStore';
 import { normalizeInsertAction, type InsertAction } from '../../store/slices/toolsSlice';
 import { effectiveLockedMap, effectiveVisibleMap, rootNodes } from '../../editor/selectors';
+import { isTypingTarget } from '../../utils/keyboardTarget';
 
 /**
  * Editor keyboard shortcuts (ui-spec.md §3/§4/§10). Undo/redo/clone/delete/group
@@ -25,8 +26,7 @@ export const EditorKeyboardShortcuts = () => {
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
             if (document.querySelector('dialog[open]')) return;
-            const target = event.target as HTMLElement;
-            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+            if (isTypingTarget(event)) return;
 
             const state = useStore.getState();
             const mod = event.ctrlKey || event.metaKey;

@@ -28,8 +28,10 @@ import {
 } from '../../core/viewport';
 import { resolveZoom, centeredViewport, zoomAt } from '../../editor/viewportController';
 import { createNodeForInsert, createPolygonNode } from '../../editor/insertActions';
-import { finishPolygonPoints, snapPolygonPoint, type PolygonPoint } from '../../editor/polygonDrawing';
+import { finishPolygonPoints, snapPolygonPointIfEnabled, type PolygonPoint } from '../../editor/polygonDrawing';
 import { selectionAfterClick, nodesInMarquee } from '../../editor/selectionModel';
+import { DEFAULT_SHAPE_STROKE, DEFAULT_SHAPE_STROKE_WIDTH } from '../../core/doc/objects';
+import { isTypingTarget } from '../../utils/keyboardTarget';
 import { GRID_STEP_HM } from './gridConstants';
 import { ResolvedShape } from './ResolvedShape';
 import { bytesProviderFor, usePreparedAssets } from './usePreparedAssets';
@@ -45,9 +47,10 @@ import { Rulers } from './Rulers';
  * through `ResolvedShape` (which reuses the shared factory's transform
  * decomposition).
  *
- * Pointer interaction is browser-only (memory/testing.md): drag/marquee/zoom are
- * exercised by the headed check, while the math they call lives in unit-tested
- * pure modules (`viewportController`, `selectionModel`, `core/viewport`).
+ * Pointer interaction has automated coverage (`PreviewStage.interaction.test.tsx`),
+ * which mounts the stage on the canvas shim and fires Konva events directly; the
+ * math the handlers call still lives in unit-tested pure modules
+ * (`viewportController`, `selectionModel`, `core/viewport`).
  */
 
 const SNAP_THRESHOLD_PX = 6;
@@ -334,9 +337,22 @@ export const PreviewStage: React.FC = () => {
     const keepOutBounds = nodeBoundsById;
     const polygonDraftPoint = useMemo(() => {
         if (!polygonCursor) return null;
-        return snapEnabled && doc
-            ? snapPolygonPoint(polygonCursor, doc, [...nodeBoundsById.values()], SNAP_THRESHOLD_PX / viewport.zoom, GRID_STEP_HM)
+        // Clamp to the backing like a committed click (see `handlePointerDown`)
+        // so the dashed preview never runs off-label while every vertex stays legal.
+        const cursor: PolygonPoint = doc
+            ? [
+                  Math.min(Math.max(polygonCursor[0], 0), doc.label.backingW),
+                  Math.min(Math.max(polygonCursor[1], 0), doc.label.backingH),
+              ]
             : polygonCursor;
+        return snapPolygonPointIfEnabled(
+            cursor,
+            doc,
+            [...nodeBoundsById.values()],
+            SNAP_THRESHOLD_PX / viewport.zoom,
+            GRID_STEP_HM,
+            snapEnabled,
+        );
     }, [polygonCursor, snapEnabled, doc, nodeBoundsById, viewport.zoom]);
     // Keep the latest bounds reachable from `beginDrag` without a stale closure.
     nodeBoundsRef.current = nodeBoundsById;
@@ -383,13 +399,14 @@ export const PreviewStage: React.FC = () => {
 
     const finishPolygon = useCallback((): boolean => {
         const points = finishPolygonPoints(polygonPoints);
-        if (!points) {
+        const node = points ? createPolygonNode(points) : null;
+        if (!node) {
             setPolygonPoints([]);
             setPolygonCursor(null);
             clearActiveTool();
             return false;
         }
-        const id = addNode(createPolygonNode(points));
+        const id = addNode(node);
         if (id) selectNode(id);
         setPolygonPoints([]);
         setPolygonCursor(null);
@@ -397,12 +414,25 @@ export const PreviewStage: React.FC = () => {
         return true;
     }, [polygonPoints, addNode, selectNode, clearActiveTool]);
 
+    /** Drop a half-drawn polygon without disarming the tool. */
+    const resetPolygonDraft = useCallback(() => {
+        setPolygonPoints([]);
+        setPolygonCursor(null);
+    }, []);
+
     useEffect(() => {
         if (activeTool !== 'shape:polygon') {
             setPolygonPoints([]);
             setPolygonCursor(null);
         }
     }, [activeTool]);
+
+    // A draft armed on label A must never leak into label B. Keyed on the doc
+    // id (not whole-doc identity): a transient drag repaints `currentDoc` but
+    // keeps the same id, so this must not fire mid-gesture.
+    useEffect(() => {
+        resetPolygonDraft();
+    }, [doc?.meta.id, resetPolygonDraft]);
 
     const beginDrag = useCallback(
         (world: Point, ids: readonly string[]) => {
@@ -447,13 +477,29 @@ export const PreviewStage: React.FC = () => {
             // Polygon is a multi-click drawing gesture; all other inserts remain one-shot.
             if (activeTool === 'shape:polygon') {
                 const raw = screenToHm(stage.getPointerPosition()!, viewport);
-                const point: PolygonPoint = [raw.x, raw.y];
-                const snapped = snapEnabled && doc
-                    ? snapPolygonPoint(point, doc, [...nodeBoundsById.values()], SNAP_THRESHOLD_PX / viewport.zoom, GRID_STEP_HM)
-                    : point;
+                // The Stage spans the whole pane, so a click in the grey surround
+                // must not add an out-of-label vertex (round-1 keep-out warning).
+                // Clamp to the backing rather than dropping the click.
+                const point: PolygonPoint = [
+                    Math.min(Math.max(raw.x, 0), doc.label.backingW),
+                    Math.min(Math.max(raw.y, 0), doc.label.backingH),
+                ];
+                const snapped = snapPolygonPointIfEnabled(
+                    point,
+                    doc,
+                    [...nodeBoundsById.values()],
+                    SNAP_THRESHOLD_PX / viewport.zoom,
+                    GRID_STEP_HM,
+                    snapEnabled,
+                );
                 if (polygonPoints.length >= 3 && Math.hypot(snapped[0] - polygonPoints[0][0], snapped[1] - polygonPoints[0][1]) <= SNAP_THRESHOLD_PX / viewport.zoom) {
                     finishPolygon();
-                } else {
+                    return;
+                }
+                // A double-click's second pointerdown (`detail === 2`) must not
+                // append a vertex: dedupe only removes *adjacent* duplicates, so
+                // a sliver spike would otherwise survive. `onDblClick` finishes.
+                if (event.evt.detail < 2) {
                     setPolygonPoints((points) => [...points, snapped]);
                     setPolygonCursor(snapped);
                 }
@@ -498,15 +544,10 @@ export const PreviewStage: React.FC = () => {
         const pointer = stage.getPointerPosition();
         if (!pointer) return;
 
-        if (activeTool === 'shape:polygon' && polygonPoints.length > 0) {
-            const world = screenToHm(pointer, viewport);
-            const point: PolygonPoint = [world.x, world.y];
-            setPolygonCursor(snapEnabled && doc
-                ? snapPolygonPoint(point, doc, [...nodeBoundsById.values()], SNAP_THRESHOLD_PX / viewport.zoom, GRID_STEP_HM)
-                : point);
-            return;
-        }
-
+        // Panning owns the pointer while armed. This must precede the polygon
+        // cursor branch: the pointerdown handler arms `panRef` on middle-button
+        // even mid-draft, so a middle-drag has to keep panning (and not be
+        // shadowed by the draft's early return).
         const pan = panRef.current;
         if (pan) {
             // Clamp pan so the label can never leave the viewport (plan §3).
@@ -523,6 +564,22 @@ export const PreviewStage: React.FC = () => {
                     ),
                 );
             }
+            return;
+        }
+
+        if (activeTool === 'shape:polygon' && polygonPoints.length > 0) {
+            const world = screenToHm(pointer, viewport);
+            const point: PolygonPoint = [world.x, world.y];
+            setPolygonCursor(
+                snapPolygonPointIfEnabled(
+                    point,
+                    doc,
+                    [...nodeBoundsById.values()],
+                    SNAP_THRESHOLD_PX / viewport.zoom,
+                    GRID_STEP_HM,
+                    snapEnabled,
+                ),
+            );
             return;
         }
 
@@ -636,17 +693,28 @@ export const PreviewStage: React.FC = () => {
         commitDoc();
     }, [commitDoc]);
 
+    // `pointercancel` (e.g. a touch scroll taking over) abandons the whole
+    // gesture: finalize it like a release, then drop any half-drawn polygon
+    // draft. `finalizeGesture` alone must not do this — it also runs on every
+    // `pointerup`, and the multi-click polygon gesture legitimately spans
+    // releases. Konva's Stage never fires a `pointercancel` event, so this
+    // window listener is the only cancel path.
+    const handlePointerCancel = useCallback(() => {
+        finalizeGesture();
+        resetPolygonDraft();
+    }, [finalizeGesture, resetPolygonDraft]);
+
     // Window-level finalizer so a pointer released outside the stage content
     // (over the MFP/rail) still ends the gesture. Matched add/remove keeps
     // StrictMode's double-invoke from double-registering.
     useEffect(() => {
         window.addEventListener('pointerup', finalizeGesture);
-        window.addEventListener('pointercancel', finalizeGesture);
+        window.addEventListener('pointercancel', handlePointerCancel);
         return () => {
             window.removeEventListener('pointerup', finalizeGesture);
-            window.removeEventListener('pointercancel', finalizeGesture);
+            window.removeEventListener('pointercancel', handlePointerCancel);
         };
-    }, [finalizeGesture]);
+    }, [finalizeGesture, handlePointerCancel]);
 
     const handlePointerUp = useCallback(() => {
         if (marquee) {
@@ -684,11 +752,14 @@ export const PreviewStage: React.FC = () => {
         [backing, innerSize, viewport],
     );
 
-    // Esc cancels an armed action and clears selection; Enter finishes a
-    // half-drawn polygon (the effect handles both keyboard paths).
+    // Enter finishes a half-drawn polygon; Esc cancels the draft and clears the
+    // selection. Both bail while a modal is open or the user is typing in a text
+    // control, so neither key ever hijacks an input (Esc must not nuke the draft
+    // or the selection mid-typing).
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
             if (document.querySelector('dialog[open]')) return;
+            if (isTypingTarget(event)) return;
             if (event.key === 'Enter' && activeTool === 'shape:polygon') {
                 event.preventDefault();
                 finishPolygon();
@@ -864,6 +935,7 @@ export const PreviewStage: React.FC = () => {
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
+                onPointerLeave={resetPolygonDraft}
                 onDblClick={() => {
                     if (activeTool === 'shape:polygon') finishPolygon();
                 }}
@@ -884,12 +956,24 @@ export const PreviewStage: React.FC = () => {
                 <Layer ref={layerRef} {...sceneAttrs}>
                     {polygonPoints.length > 0 && polygonDraftPoint && (
                         <Line
-                            points={[...polygonPoints.flatMap(([x, y]) => [x, y]), polygonDraftPoint[0], polygonDraftPoint[1]]}
-                            stroke="#2563eb"
-                            strokeWidth={30}
+                            // Close the draft back to the first vertex so the
+                            // closing edge is visible while drawing. Path:
+                            // v0→…→vn→cursor→v0.
+                            points={[
+                                ...polygonPoints.flatMap(([x, y]) => [x, y]),
+                                polygonDraftPoint[0],
+                                polygonDraftPoint[1],
+                                polygonPoints[0][0],
+                                polygonPoints[0][1],
+                            ]}
+                            // Same style source as `createPolygonNode`, so the
+                            // draft previews the committed polygon's ink.
+                            stroke={DEFAULT_SHAPE_STROKE}
+                            strokeWidth={DEFAULT_SHAPE_STROKE_WIDTH}
                             lineCap="round"
                             lineJoin="round"
-                            dash={[80, 50]}
+                            // Dashed to read as a draft, not a committed shape.
+                            dash={[DEFAULT_SHAPE_STROKE_WIDTH * 2, DEFAULT_SHAPE_STROKE_WIDTH]}
                             listening={false}
                         />
                     )}

@@ -39,7 +39,11 @@ const DEFAULT_BARCODE_BOX = { w: 2000 as hm, h: 800 as hm };
 export const DEFAULT_QR_PAYLOAD = 'https://example.com';
 export const DEFAULT_BARCODE_PAYLOAD = '123456789012';
 
-export const createPolygonNode = (worldPoints: [hm, hm][]): Node => {
+export const createPolygonNode = (worldPoints: [hm, hm][]): Node | null => {
+    // A polygon needs three distinct vertices; on fewer the min/max below yield
+    // `Infinity`/`-Infinity` and a meaningless transform. Guarded here so the
+    // factory is safe on its own, not only behind `finishPolygonPoints`.
+    if (worldPoints.length < 3) return null;
     const x = Math.min(...worldPoints.map(([pointX]) => pointX)) as hm;
     const y = Math.min(...worldPoints.map(([, pointY]) => pointY)) as hm;
     return {
