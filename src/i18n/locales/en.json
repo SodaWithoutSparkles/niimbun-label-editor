@@ -117,7 +117,16 @@
       "language": "Language",
       "autoSave": "Auto-save",
       "screenDpi": "Screen DPI",
-      "screenDpiDescription": "Screen density used for real-size zoom. Default 96."
+      "screenDpiDescription": "Screen density used for real-size zoom. Default 96.",
+      "calibrate": "Calibrate",
+      "calibrationTitle": "Screen DPI calibration",
+      "calibrationDescription": "Lay a real ruler on the screen, then drag the slider until the bar below is exactly as long as the ruler.",
+      "calibrationReference": "{{mm}} mm reference",
+      "calibrationRulerAria": "Calibration ruler, {{mm}} mm",
+      "calibrationCurrent": "Current DPI: {{dpi}}",
+      "calibrationValueText": "{{dpi}} DPI",
+      "calibrationDecrease": "Decrease DPI",
+      "calibrationIncrease": "Increase DPI"
     },
     "shortcuts": {
       "label": "Keyboard Shortcuts",

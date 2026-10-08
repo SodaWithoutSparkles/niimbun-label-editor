@@ -19,7 +19,7 @@
 | 8 | **Real static style support now**: `fill`/`stroke`/`strokeWidth` honored end-to-end (schema → validate → resolve → BOTH renderers → inspector). Defaults (**revised 2026-10-08**): fill = **no fill** (`'transparent'`), stroke `#374151`, `strokeWidth` **50 hm (0.5 mm)**. Invalid optionals dropped with repair, never fatal. |
 | 9 | Grid step **stays 5 mm** (`GRID_STEP_HM=500`). Fix = un-occlude (paint after silhouette) + `strokeScaleEnabled={false}`. |
 | 10 | Draft state committed on blur/Enter (copy `EditorStatusBar.commitDraft` pattern, `EditorStatusBar.tsx:40-98`). Store untouched. |
-| 11 | Calibration = ruler + slider + live number dialog on the shared `Modal`, writes existing `setScreenDpi`. Raw number field stays. |
+| 11 | Calibration = ruler + slider + live number dialog on the shared `Modal`, writes existing `setScreenDpi`. Raw number field stays. **Added 2026-10-08:** ±1 nudge buttons (a 376-step slider is too coarse for final alignment). |
 | 12/13 | **Corner anchors = keep aspect; side anchors = free stretch** (normal-user expectation). The commit must match the live gesture exactly — anchor-aware, **no post-hoc `Math.max` aspect collapse**. `anchorSize` 8→10. Groups excluded from Transformer resize until D-10 (impl default, flag at review). |
 | 14 | Front-most child first (Photoshop convention) + **collapsed-group affordance** (expand/collapse group rows). |
 
@@ -60,7 +60,7 @@ Arm `shape:polygon` → accumulate world points on click (no node until finish);
 
 5th MFP tab "Warnings" (next to JS). Aggregate: asset warnings (`missing|invalid|too-small` — lift from component-local `usePreparedAssets` to shared context/slice), keep-out, global-data warnings, template errors; print doc-level warnings (incl. in-flight ink-aware overflow) as **non-jumpable** entries. Entries `{id, kind, nodeId?}`; per-kind detailed i18n text; jump via `selectNode` (`selectionSlice.ts:16`). Node badge stays the generic ⚠ (owner). Do NOT reuse `NotificationCenter` (auto-dismiss). QR = arbitrary text. Host options for aggregation: extend `SampleRowContext` or a small `warnings` slice — coordinator picks with review. ~5–8 files. Owner screenshot-check of the tab.
 
-### P7 — calibration dialog (#11)
+### P7 — calibration dialog (#11) — ✅ complete (2026-10-08)
 
 `CalibrationDialog` on shared `Modal` (not `dialogService` — prompt-only). On-screen ruler length `mm / 25.4 * dpi` (inverse of `realZoom`, `core/viewport.ts:103`); slider + live number; writes existing `setScreenDpi` (clamped/persisted as today). Calibrate button next to the dpi input (`GeneralSection.tsx`). i18n + test + **headed browser pass** (`agent/memory/dialogs.md` preflight pitfall).
 

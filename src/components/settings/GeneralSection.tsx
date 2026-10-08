@@ -4,6 +4,7 @@ import { useStore } from '../../store/useStore';
 import { SUPPORTED_LANGUAGES } from '../../i18n/languages';
 import { normalizeLanguage } from '../../store/preferenceValidation';
 import { Input, Select, SettingRow, Toggle } from '../common/forms';
+import { CalibrationDialog } from './CalibrationDialog';
 import { SCREEN_DPI_MAX, SCREEN_DPI_MIN } from '../../store/storeDefaults';
 
 /**
@@ -33,6 +34,7 @@ export const GeneralSection: React.FC = () => {
     // Local draft so typing (including clearing the field) never hits the store;
     // the store clamps/rounds once, on blur or Enter (EditorStatusBar pattern).
     const [screenDpiDraft, setScreenDpiDraft] = useState(String(screenDpi));
+    const [calibrationOpen, setCalibrationOpen] = useState(false);
 
     // Keep the draft in step with the committed value (external change / reset).
     useEffect(() => {
@@ -78,23 +80,37 @@ export const GeneralSection: React.FC = () => {
                 description={t('settings.general.screenDpiDescription')}
                 htmlFor={screenDpiId}
             >
-                <Input
-                    id={screenDpiId}
-                    type="number"
-                    min={SCREEN_DPI_MIN}
-                    max={SCREEN_DPI_MAX}
-                    value={screenDpiDraft}
-                    onChange={setScreenDpiDraft}
-                    onBlur={commitScreenDpi}
-                    onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                            event.preventDefault();
-                            commitScreenDpi();
-                        }
-                    }}
-                    className="w-24"
-                />
+                <div className="flex items-center gap-2">
+                    <Input
+                        id={screenDpiId}
+                        type="number"
+                        min={SCREEN_DPI_MIN}
+                        max={SCREEN_DPI_MAX}
+                        value={screenDpiDraft}
+                        onChange={setScreenDpiDraft}
+                        onBlur={commitScreenDpi}
+                        onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                                event.preventDefault();
+                                commitScreenDpi();
+                            }
+                        }}
+                        className="w-24"
+                    />
+                    <button
+                        type="button"
+                        onClick={() => setCalibrationOpen(true)}
+                        className="rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 transition-colors hover:bg-gray-700"
+                    >
+                        {t('settings.general.calibrate')}
+                    </button>
+                </div>
             </SettingRow>
+
+            {/* Mounted only while open: a closed dialog's hooks still run. */}
+            {calibrationOpen && (
+                <CalibrationDialog open onClose={() => setCalibrationOpen(false)} />
+            )}
         </div>
     );
 };
