@@ -19,10 +19,10 @@ chore = do opportunistically, not phase-blocking.
 | D-09 | editor | `PreviewStage` drag adds a world delta to a parent-local transform — wrong inside a scaled/rotated group | misplacement when editing inside transformed groups | post-v1 (group scale/rotate is parked) |
 | D-10 | editor | group Transformer resize discards scale (group scale is post-v1); should skip transform for groups | confusing no-op resize UI on groups | post-v1 |
 | D-11 | editor | align control writes a junk `align` key onto shape/image nodes | stray field in the doc | chore |
-| D-12 | editor | image import writes **two** undo entries (`addImageRef` + `addNode`) | one undo doesn't fully revert an image add | chore (batch when convenient) |
+| D-12 | editor | image import writes **two** undo entries (`addImageRef` + `addNode`); the P2 replace path (`updateImageRef`) updates the ref in place (one entry, no orphan), so only the initial add is affected | one undo doesn't fully revert an image add | chore (batch when convenient) |
 | D-13 | assets | remote images need **CORS** to render/print; a non-CORS URL import fails with a localised error | UX + potential print failure | P8 (proxy/fetch policy note) |
 | D-14 | assets | imported-font badge headed check never done (unit-tested only) | unverified browser path | P7/P8 headed pass |
-| D-15 | assets | `prepareAssets` min-module floor 0.25 mm is conservative; small boxes render at scale 1 with a `too-small` warning | conservative warnings | post-v1 tuning |
+| D-15 | assets | `prepareAssets` min-module floor 0.25 mm is conservative; small boxes render at scale 1 with a `too-small` warning | conservative warnings | post-v1 tuning (P6 added per-kind text in the warning center, so the badge is no longer ambiguous) |
 | D-16 | assets | `bwip-js` is large (~250–280 KB gzip) and serves QR + barcodes | bundle size | P8 (code-split if needed) |
 | D-17 | CSV | orphan `CsvRecord` sweep deferred — the P6 write path no longer deletes (it must not, since `csvs` isn't undoable) | unreferenced tables accumulate in IDB | P7/P8 (cleanup pass) |
 | D-18 | CSV | `ParsedCsv.rowCount` = **retained** count, not total; total only in the `rows-capped` warning | a consumer reading it as "total" would be wrong | documented; keep an eye |
@@ -38,10 +38,16 @@ chore = do opportunistically, not phase-blocking.
 | D-28 | print | `prepareAssets` decode cache (`resolveCached`) is dpi-unaware — a 50 dpi thumbnail pass still holds full-resolution decodes in the shared print-path cache | memory held above the thumbnail LRU's intent | P8 (dpi-aware cache or separate thumbnail cache) |
 | D-29 | test-infra | suite wall-clock is bounded by the heavy real-canvas suites (`renderLabelPage.test.ts` ~25 s) and per-file worker startup (`Isolate 105 workers · ~1.2 s each`); the node-default/happy-dom-opt-in split removed the happy-dom cost (50%→35% of tracked) but not wall time | full-suite wall ~19–30 s, high variance on the 2-CPU box | chore (split/streamline the canvas suites; `pool: 'threads'` and `--no-isolate` are *slower* here) |
 
-**Owner UI-test round (2026-10-06):** `agent/known-issues/2026-10-06_round-1.md` is a separate
-backlog of editor/UI issues found while smoke-testing P7 (image import + edit, node resize +
-WYSIWYG, polygon tool, View→grid, quantizer strength/threshold config, screen-DPI calibration,
-layer ordering, a central warning centre). None are P7-blocking; triage into the next UI sweep.
+| D-32 | editor | polygon draw finishes on raw `event.evt.detail < 2`, which also drops a deliberate fast corner click (<500 ms, few px) and can commit a shape with a missing vertex | rare lost vertex on quick sharp corners | post-v1 (time+distance gate) |
+| D-33 | editor | `Modal` captures the opener in a passive effect, so a nested dialog can't use `autoFocus` without breaking focus restore; the P7 `CalibrationDialog` leaves its slider un-autofocused | keyboard users must Tab to the slider | chore (rework Modal focus capture) |
+| D-34 | render/test | P3 policy coverage-mask tests assert colour presence, not the resulting threshold ink for light/low-alpha fills | weaker print-parity regression guard | chore |
+| D-35 | editor | warning center: the CSV inline amber list is component state (lost on tab switch) while the store group persists; print warnings clear when the print dialog closes | two views can briefly disagree | chore (source the inline list from the store group) |
+
+**Owner UI-test round (2026-10-06):** `agent/known-issues/2026-10-06_round-1.md` (14 items) was
+**fully addressed by the ui-sweep P1–P7** (2026-10-08): #1/#9/#10/#12/#14 (P1), #2/#13 (P2),
+#8 (P3), #7 (P4), #3 (P5), #5/#6 (P6), #11 (P7); #4 was the excluded D-31 (ink-aware overflow).
+Every phase passed `experimental-review`; P4/P5/P6/P7 went through fix rounds. The remaining
+owner step is the manual browser verification of P4/P5/P6/P7.
 
 ## Escalation rule
 
