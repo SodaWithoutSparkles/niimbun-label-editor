@@ -140,13 +140,41 @@ describe('resizeNodeGeometry — uniform-dependent fields', () => {
         expect((resized as ShapeNode).cornerRadius).toBe(10);
     });
 
-    it('strokeWidth scales by the uniform factor when present', () => {
+    it('strokeWidth is invariant across resize (rect and line/polygon)', () => {
+        // A resize changes geometry only — never the ink width.
         const rect = shapeNode('rectangle', { size: { w: 100, h: 100 }, strokeWidth: 10 });
         const resized = resizeNodeGeometry(rect, { w: 200, h: 200 });
-        expect((resized as ShapeNode).strokeWidth).toBe(20);
+        expect(resized.size).toEqual({ w: 200, h: 200 });
+        expect((resized as ShapeNode).strokeWidth).toBe(10);
+
         // Absent stays absent.
         const bare = shapeNode('rectangle', { size: { w: 100, h: 100 } });
         expect((resizeNodeGeometry(bare, { w: 200, h: 200 }) as ShapeNode).strokeWidth).toBeUndefined();
+
+        // Line/polygon: the points scale, the stroke width holds.
+        const line = shapeNode('line', {
+            points: [[0, 0], [100, 100]],
+            size: { w: 100, h: 100 },
+            strokeWidth: 7,
+        });
+        const resizedLine = resizeNodeGeometry(line, { w: 2000, h: 1000 }, { preserveAspect: false });
+        expect((resizedLine as ShapeNode).points).toEqual([[0, 0], [2000, 1000]]);
+        expect((resizedLine as ShapeNode).strokeWidth).toBe(7);
+
+        // image/qr/barcode branch: the box scales, the stroke width holds. Cover
+        // both a free and an aspect-preserving resize (the third `scaleStroke`
+        // removal lived in this branch).
+        const image = imageNode({ size: { w: 100, h: 50 }, strokeWidth: 5 });
+        const freeImage = resizeNodeGeometry(image, { w: 200, h: 200 }, { preserveAspect: false });
+        expect((freeImage as ImageNode).size).toEqual({ w: 200, h: 200 });
+        expect((freeImage as ImageNode).strokeWidth).toBe(5);
+
+        const aspectImage = resizeNodeGeometry(image, { w: 200, h: 200 }, { preserveAspect: true });
+        expect((aspectImage as ImageNode).strokeWidth).toBe(5);
+
+        // Absent stays absent for the image branch too.
+        const bareImage = imageNode({ size: { w: 100, h: 50 } });
+        expect((resizeNodeGeometry(bareImage, { w: 200, h: 200 }) as ImageNode).strokeWidth).toBeUndefined();
     });
 });
 

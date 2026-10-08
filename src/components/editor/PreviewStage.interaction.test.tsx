@@ -6,6 +6,7 @@ import '../../i18n';
 import { installCanvasShim } from '../../test/canvasHarness';
 import { useStore } from '../../store/useStore';
 import { createLabelDoc } from '../../core/doc/factory';
+import type { Node } from '../../core/doc/types';
 import { PreviewStage } from './PreviewStage';
 
 /**
@@ -215,5 +216,128 @@ describe('PreviewStage polygon draw mode (#7)', () => {
         expect(state.currentDoc?.nodes).toHaveLength(0);
         expect(state.activeTool).toBe('shape:polygon');
         expect(state.selectedNodeIds).toEqual(['keep-me']);
+    });
+});
+
+/**
+ * Bug 1 regression: Konva's Transformer mutates the selected node's own
+ * `scaleX`/`scaleY` in place and never resets them. On the commit re-render
+ * react-konva skips re-applying the unchanged `scaleX: 1` prop (strict mode
+ * off), so without the explicit reset the node keeps the gesture scale `k` and
+ * renders at `base·k²` (rect lands past the pointer, text goes "wide putin",
+ * QR group distorts).
+ */
+describe('PreviewStage resize commit resets the Konva node scale (Bug 1)', () => {
+    const rectangleNode = (): Node => ({
+        id: 'r',
+        parentId: null,
+        type: 'shape',
+        shape: 'rectangle',
+        visible: true,
+        locked: false,
+        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        size: { w: 1000, h: 800 },
+    });
+
+    const mountSelectedRect = () => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({
+                id: 'doc-1',
+                now: 1_700_000_000,
+                backingW: 4000,
+                backingH: 3000,
+                nodes: [rectangleNode()],
+            }),
+            selectedNodeIds: ['r'],
+            activeTool: 'select',
+            snapEnabled: false,
+        });
+        render(<PreviewStage />);
+        const stage = Konva.stages[Konva.stages.length - 1] as Konva.Stage;
+        if (!stage) throw new Error('PreviewStage did not mount a Konva stage');
+        return stage;
+    };
+
+    it('restores the node scale to 1 while committing one undo entry', () => {
+        const stage = mountSelectedRect();
+        const transformer = stage.findOne('Transformer') as Konva.Transformer;
+        expect(transformer).toBeTruthy();
+        // The attached node is the selected rect (the Transformer only hosts
+        // anchor Rects, so this is unambiguous).
+        const rect = transformer.nodes()[0] as Konva.Rect;
+        expect(rect, 'the Transformer must attach to the selected rect').toBeTruthy();
+
+        act(() => {
+            // Mimic the post-drag state: Konva leaves its live scale on the node.
+            rect.scaleX(1.5);
+            rect.scaleY(1.5);
+            transformer.fire('transformstart', {});
+            transformer.fire('transformend', {});
+        });
+
+        // With the fix the node's own scale is reset, so the committed
+        // geometry is the only source of size. Without it, react-konva skips
+        // the unchanged `scaleX: 1` prop and this stays 1.5.
+        expect(rect.scaleX()).toBe(1);
+        expect(rect.scaleY()).toBe(1);
+
+        const state = useStore.getState();
+        const node = state.currentDoc!.nodes.find((entry) => entry.id === 'r')!;
+        expect(node.size).toEqual({ w: 1500, h: 1200 });
+        expect(node.transform.scaleX).toBe(1);
+        expect(node.transform.scaleY).toBe(1);
+        expect(state.docPast).toHaveLength(1);
+    });
+
+    it('preserves a vertical flip sign while baking the magnitude into the box', () => {
+        const stage = mountSelectedRect();
+        const transformer = stage.findOne('Transformer') as Konva.Transformer;
+        const rect = transformer.nodes()[0] as Konva.Rect;
+
+        act(() => {
+            // A realistic vertical flip: Konva's `Util.decompose` never yields a
+            // negative `scaleX`, so only `scaleY` carries the sign.
+            rect.scaleY(-1.5);
+            transformer.fire('transformstart', {});
+            transformer.fire('transformend', {});
+        });
+
+        // The reset collapses the live scale to its sign (-1), not to +1.
+        expect(rect.scaleY()).toBe(-1);
+
+        const state = useStore.getState();
+        const node = state.currentDoc!.nodes.find((entry) => entry.id === 'r')!;
+        expect(node.size).toEqual({ w: 1000, h: 1200 });
+        expect(node.transform.scaleY).toBe(-1);
+        expect(node.transform.scaleX).toBe(1);
+    });
+
+    it('restores the committed scale when a transform is cancelled (no transformend)', () => {
+        const stage = mountSelectedRect();
+        const transformer = stage.findOne('Transformer') as Konva.Transformer;
+        const rect = transformer.nodes()[0] as Konva.Rect;
+
+        act(() => {
+            // Mimic a live gesture: Konva leaves its scale on the node.
+            rect.scaleX(1.5);
+            rect.scaleY(1.5);
+            transformer.fire('transformstart', {});
+        });
+        expect(rect.scaleX()).toBe(1.5);
+
+        act(() => {
+            // Konva's Transformer only binds move/up events, so `pointercancel`
+            // never fires `transformend`; the cancel path must clean up itself.
+            window.dispatchEvent(new Event('pointercancel'));
+        });
+
+        expect(rect.scaleX()).toBe(1);
+        expect(rect.scaleY()).toBe(1);
+
+        const state = useStore.getState();
+        const node = state.currentDoc!.nodes.find((entry) => entry.id === 'r')!;
+        expect(node.size).toEqual({ w: 1000, h: 800 });
+        expect(state.docPast).toHaveLength(0);
     });
 });

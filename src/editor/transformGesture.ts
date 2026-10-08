@@ -82,7 +82,7 @@ export const isCornerAnchor = (anchor: string | null | undefined): boolean =>
 /**
  * Patch that combines a free/aspect-locked resize with the node's final
  * position + rotation, as one op. Resize bakes the **magnitude** into
- * `size`/`points`/`strokeWidth`/`fontSize`/`cornerRadius`; the transform takes
+ * `size`/`points`/`fontSize`/`cornerRadius`; the transform takes
  * the **live** decomposed x/y/rotDeg and collapses the live scale to its
  * **sign** (`-1`/`1`, never the magnitude — that is baked into geometry).
  *
@@ -108,18 +108,16 @@ export const transformEndPatch = (
     const resized = resizeNodeGeometry(node, target, { preserveAspect, uniformScale });
     // `resizeNodeGeometry` returns a new node; take its geometry fields and fold
     // in the live transform (translation included — dropping x/y was the jump).
-    const { size, points, cornerRadius, strokeWidth, fontSize } = resized as Node & {
+    const { size, points, cornerRadius, fontSize } = resized as Node & {
         size?: Size;
         points?: [number, number][];
         cornerRadius?: number;
-        strokeWidth?: number;
         fontSize?: number;
     };
     return {
         ...(size !== undefined ? { size } : {}),
         ...(points !== undefined ? { points } : {}),
         ...(cornerRadius !== undefined ? { cornerRadius } : {}),
-        ...(strokeWidth !== undefined ? { strokeWidth } : {}),
         ...(fontSize !== undefined ? { fontSize } : {}),
         transform: {
             // Konva's live x/y already holds the anchored edge; commit it as-is.

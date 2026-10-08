@@ -34,7 +34,7 @@ export interface ResizeOptions {
     uniformScale?: number;
 }
 
-/** The uniform factor used for cornerRadius / fontSize / strokeWidth. */
+/** The uniform factor used for cornerRadius / fontSize. */
 export const uniformFactor = (sx: number, sy: number): number => Math.min(sx, sy);
 
 /** Round to integer hm and clamp at 0 (sizes can collapse but never invert). */
@@ -130,8 +130,9 @@ const pointBaseExtent = (shape: ShapeNode): Size => {
 /**
  * Resize `node` to `target` and return a **new** node. Never mutates the input.
  *
- * - rect/ellipse/image/qr/barcode: `size` scales; `cornerRadius` /
- *   `strokeWidth` scale by the uniform factor.
+ * - rect/ellipse/image/qr/barcode: `size` scales; `cornerRadius` scales by the
+ *   uniform factor. `strokeWidth` is deliberately invariant (a resize must not
+ *   thicken or thin the ink).
  * - text: `size` (the box) scales; `fontSize` scales by the uniform factor.
  *   Free resize (preserveAspect `false`) changes the box only, leaving
  *   `fontSize` untouched.
@@ -160,7 +161,6 @@ export const resizeNodeGeometry = (
             return {
                 ...shape,
                 points: scalePoints(shape.points ?? [], px, py),
-                ...scaleStroke(shape, px, py),
             };
         }
         const next: ShapeNode = {
@@ -170,7 +170,7 @@ export const resizeNodeGeometry = (
         if (shape.cornerRadius !== undefined) {
             next.cornerRadius = clampSize(shape.cornerRadius * uniformFactor(sx, sy));
         }
-        return { ...next, ...scaleStroke(shape, sx, sy) };
+        return next;
     }
 
     if (node.type === 'text') {
@@ -193,16 +193,5 @@ export const resizeNodeGeometry = (
         ...node,
         size: { w: clampSize(size.w * sx), h: clampSize(size.h * sy) },
     };
-    return { ...next, ...scaleStroke(node, sx, sy) };
-};
-
-/** Scale a present `strokeWidth` by the uniform factor; omit when absent. */
-const scaleStroke = (
-    node: Node,
-    sx: number,
-    sy: number,
-): { strokeWidth?: number } => {
-    const strokeWidth = (node as { strokeWidth?: number }).strokeWidth;
-    if (strokeWidth === undefined) return {};
-    return { strokeWidth: clampSize(strokeWidth * uniformFactor(sx, sy)) };
+    return next;
 };

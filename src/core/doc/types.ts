@@ -45,7 +45,7 @@ export interface BaseNode {
      * written before geometry existed remain valid (backward compatible).
      */
     size?: NodeSize;
-    /** Stroke width in hm (shapes). Optional; scales uniformly on resize. */
+    /** Stroke width in hm (shapes). Optional; invariant across resize (a handle changes geometry, not line width). */
     strokeWidth?: number;
     /**
      * Optional per-object dither policy. When absent, the node's `type` selects

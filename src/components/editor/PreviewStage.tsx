@@ -700,9 +700,27 @@ export const PreviewStage: React.FC = () => {
     // releases. Konva's Stage never fires a `pointercancel` event, so this
     // window listener is the only cancel path.
     const handlePointerCancel = useCallback(() => {
+        // Konva's Transformer only listens for mousemove/touchmove/mouseup/
+        // touchend, so a `pointercancel` never fires `transformend`: the live
+        // scale `k` would stay on the node (and `commitDoc` is a no-op for a
+        // transform). Capture the flag before `finalizeGesture` clears it, then
+        // re-apply each selected node's committed (pre-gesture) transform.
+        const wasTransforming = transformingRef.current;
         finalizeGesture();
+        if (wasTransforming && doc) {
+            for (const id of selectedNodeIds) {
+                const konvaNode = nodeRefs.current.get(id);
+                const source = doc.nodes.find((entry) => entry.id === id);
+                if (!konvaNode || !source || source.type === 'group') continue;
+                konvaNode.position({ x: source.transform.x, y: source.transform.y });
+                konvaNode.rotation(source.transform.rotDeg);
+                konvaNode.scale({ x: source.transform.scaleX, y: source.transform.scaleY });
+            }
+            transformerRef.current?.forceUpdate();
+            layerRef.current?.batchDraw();
+        }
         resetPolygonDraft();
-    }, [finalizeGesture, resetPolygonDraft]);
+    }, [doc, selectedNodeIds, finalizeGesture, resetPolygonDraft]);
 
     // Window-level finalizer so a pointer released outside the stage content
     // (over the MFP/rail) still ends the gesture. Matched add/remove keeps
@@ -829,6 +847,17 @@ export const PreviewStage: React.FC = () => {
                 // mirror reverts on release.
                 const liveScaleX = konvaNode.scaleX();
                 const liveScaleY = konvaNode.scaleY();
+                // Konva's Transformer mutates the selected node's own scale in
+                // place during a gesture and never resets it. On the commit
+                // re-render React-Konva skips re-applying an unchanged
+                // `scaleX`/`scaleY` prop (strict mode off), so the node would
+                // keep the gesture scale `k` and render at `base·k²`. Reset the
+                // node's own scale here — preserving the flip sign — so the
+                // committed geometry is the single source of the size. The
+                // Transformer's chrome re-sync here relies on the commit
+                // re-render re-running the attach effect; `forceUpdate` is called
+                // explicitly below so the reset is not merely incidental.
+                konvaNode.scale({ x: Math.sign(liveScaleX) || 1, y: Math.sign(liveScaleY) || 1 });
                 const scaleX = Math.abs(liveScaleX);
                 const scaleY = Math.abs(liveScaleY);
                 const liveUniform = Math.abs(scaleX - scaleY) <= 1e-6 * Math.max(1, scaleX, scaleY);
@@ -866,6 +895,10 @@ export const PreviewStage: React.FC = () => {
                 );
             }
             commitDoc();
+            // Explicit chrome re-sync: the reset above relies on the commit
+            // re-render (and the attach effect) rather than any guarantee from
+            // the node's `*Change` events, so force it here.
+            transformerRef.current?.forceUpdate();
         },
         [doc, selectedNodeIds, selectedNodesPreserveAspect, updateNodeTransient, commitDoc],
     );
