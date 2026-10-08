@@ -495,6 +495,19 @@ describe('editorSlice — document operations', () => {
         expect(Object.hasOwn(node, 'quantizerHint')).toBe(false);
     });
 
+    it('clearing quantizerParams removes the key (ObjectTab params clear)', () => {
+        const withParams: Node = { ...textNode('a'), quantizerParams: { threshold: 200, strength: 2.5 } };
+        const store = setupStore(makeDoc([withParams]));
+        expect(store.getState().currentDoc!.nodes[0]!.quantizerParams).toEqual({ threshold: 200, strength: 2.5 });
+
+        store.getState().updateNodeTransient('a', { quantizerParams: undefined });
+        store.getState().commitDoc();
+
+        const node = store.getState().currentDoc!.nodes[0]! as Node & Record<string, unknown>;
+        expect(node.quantizerParams).toBeUndefined();
+        expect(Object.hasOwn(node, 'quantizerParams')).toBe(false);
+    });
+
     it('groupNodes requires at least two ids', () => {
         const store = setupStore(makeDoc([textNode('a'), textNode('b')]));
         expect(store.getState().groupNodes(['a'])).toBeNull();

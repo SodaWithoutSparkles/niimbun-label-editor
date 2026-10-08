@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { roundNode } from './factory';
+import type { Node } from './types';
 import {
     isAssetRef,
     isColorString,
@@ -322,6 +324,39 @@ describe('isNode — quantizerParams', () => {
         expect(isNode(baseNode({ quantizerParams: { threshold: 'bad', strength: Number.NaN } }), invalidRepairs)?.quantizerParams).toBeUndefined();
         expect(invalidRepairs).toContain('node.quantizerParams.threshold: invalid value dropped');
         expect(invalidRepairs).toContain('node.quantizerParams.strength: invalid value dropped');
+    });
+
+    it('rounds strength to 2 dp and does not log a false clamp for a pure round', () => {
+        const repairs: string[] = [];
+        const node = isNode(
+            baseNode({ quantizerParams: { threshold: 128.5, strength: 1.23456 } }),
+            repairs,
+        );
+        // 128.5 → 129 and 1.23456 → 1.23 are rounds, not clamps: no repair.
+        expect(node?.quantizerParams).toEqual({ threshold: 129, strength: 1.23 });
+        expect(repairs.join(' ')).not.toContain('clamped');
+    });
+
+    it('is stable through serialize → parse → serialize (path-independent rounding)', () => {
+        // 2.5076 is deliberately non-canonical: both the validate and factory
+        // paths must converge on the same 2 dp value, 2.51.
+        const rawNode = baseNode({ id: 'q', quantizerParams: { threshold: 200, strength: 2.5076 } });
+        const raw = validRaw({ nodes: [rawNode] });
+        const first = isLabelDoc(raw);
+        expect(first.ok).toBe(true);
+        if (!first.ok) return;
+        // `validate` agrees with `factory.roundNode` for the same input.
+        expect(first.doc.nodes[0]?.quantizerParams).toEqual(
+            roundNode(rawNode as unknown as Node).quantizerParams,
+        );
+        expect(first.doc.nodes[0]?.quantizerParams).toEqual({ threshold: 200, strength: 2.51 });
+        const second = isLabelDoc(JSON.parse(JSON.stringify(first.doc)));
+        expect(second.ok).toBe(true);
+        if (!second.ok) return;
+        expect(second.doc.nodes[0]?.quantizerParams).toEqual(first.doc.nodes[0]?.quantizerParams);
+        // Re-serializing the parsed doc must be byte-identical: a JSON import and
+        // an `updateNode` edit converge on the same 2 dp value.
+        expect(JSON.stringify(second.doc)).toBe(JSON.stringify(first.doc));
     });
 });
 

@@ -319,6 +319,21 @@ describe('PrintDialog — warnings', () => {
         view.unmount();
         expect(useStore.getState().editorWarnings.print).toBeUndefined();
     });
+
+    it('warns when the palette overflowed and publishes it to the warning center', async () => {
+        const doc = narrowDoc();
+        renderLabelPageMock.mockImplementation(async (d: LabelDoc) => ({
+            ...fakeRenderedPage(d, true),
+            policyOverflowCount: 2,
+        }));
+        renderDialog({ doc, runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+
+        expect(await screen.findByTestId('print-warning-policy-overflow')).toBeInTheDocument();
+        await waitFor(() => {
+            const group = useStore.getState().editorWarnings.print;
+            expect(group?.warnings.map((warning) => warning.kind)).toContain('print-policy-overflow');
+        });
+    });
 });
 
 describe('PrintDialog — progress, cancel and order', () => {

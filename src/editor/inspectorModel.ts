@@ -1,5 +1,5 @@
 import type { Node, NodeType } from '../core/doc/types';
-import { QUANTIZERS } from '../core/render';
+import { QUANTIZERS, resolveQuantizer } from '../core/render';
 import { BARCODE_SYMBOLOGIES, IMAGE_FITS, QR_ERROR_CORRECTIONS } from '../core/doc/objects';
 
 /**
@@ -189,6 +189,14 @@ export const BARCODE_FIELDS: readonly FieldDescriptor[] = [
  * Order comes from the `QUANTIZERS` registry (single source of truth).
  */
 export const QUANTIZER_HINT_OPTIONS: readonly string[] = ['', ...Object.keys(QUANTIZERS)];
+
+/**
+ * Whether a node's `quantizerParams` (`quantizerThreshold`/`quantizerStrength`)
+ * can affect the render. A node with no `quantizerHint` and no per-type default
+ * policy (e.g. a shape) resolves no quantizer, so the params are inert; the
+ * Object tab hides the two fields rather than presenting a silent no-op.
+ */
+export const quantizerParamsApply = (node: Node): boolean => resolveQuantizer(node) !== undefined;
 
 /**
  * Extra fields whose owning engine ships later, plus the wired per-object

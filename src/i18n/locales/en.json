@@ -602,7 +602,8 @@
       "overflow": "Label exceeds the printhead ({{width}} px wide vs {{head}} px). Printing may be clipped.",
       "mismatch": "Printer reports a different roll or DPI than this label (label {{labelW}}×{{labelH}} hm @ {{labelDpi}} dpi).",
       "mirrorClipped": "Mirroring discarded {{pixels}} ink pixels outside the printable area.",
-      "policyOverflow": "{{count}} distinct per-node dither policies exceeded the 8-policy limit; excess nodes use the default policy."
+      "policyOverflow_one": "{{count}} object fell back to the default dither policy (per-node policy limit reached).",
+      "policyOverflow_other": "{{count}} objects fell back to the default dither policy (per-node policy limit reached)."
     },
     "progress": {
       "sending": "Sending…",

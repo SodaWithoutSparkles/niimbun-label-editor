@@ -246,6 +246,25 @@ describe('per-node quantizer params', () => {
 
         expect(useStore.getState().currentDoc!.nodes[0]?.quantizerParams).toEqual({ threshold: 200, strength: 2.5 });
     });
+
+    it('hides threshold/strength for a node that resolves no quantizer (shape without a hint)', () => {
+        const selected = shapeNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['s'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        // The quantizer select is still offered, but the inert params are hidden.
+        expect(screen.queryByText('Dither strength')).toBeNull();
+        expect(screen.queryByText('128')).toBeNull();
+    });
+
+    it('shows threshold/strength once the node resolves a quantizer (shape with a hint)', () => {
+        const selected = shapeNode({ quantizerHint: 'threshold' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['s'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        expect(screen.getByText('Dither strength')).toBeTruthy();
+        expect(screen.getByText('128')).toBeTruthy();
+    });
 });
 
 describe('text content authoring (must-fix #3)', () => {

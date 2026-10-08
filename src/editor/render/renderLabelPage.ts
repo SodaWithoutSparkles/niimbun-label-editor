@@ -65,8 +65,6 @@ export interface RenderLabelPageOptions {
     serpentine?: boolean;
     /** Per-pixel projection. Defaults to Mono (the only v1 color space). */
     colorSpace?: ColorSpace;
-    /** Global params inherited by nodes without an explicit per-node override. */
-    quantizerDefaults?: { threshold?: number; strength?: number };
     /**
      * Async asset dependencies (image bytes, fonts, resolution cap). When
      * present, image/qr/barcode leaves are prepared first; absent, those leaves
@@ -237,8 +235,7 @@ export const buildPolicyMask = async (
         );
     }
 
-    const policiesByKey = new Map<string, { id: QuantizerId; options: { threshold: number; strength: number } }>();
-    const indexByPolicyKey = new Map<string, number>();
+    const policiesByKey = new Map<string, { id: QuantizerId; options: { threshold: number; strength: number }; index: number }>();
     const carriers: { node: ResolvedNode; value: number }[] = [];
     let overflowCount = 0;
 
@@ -269,18 +266,17 @@ export const buildPolicyMask = async (
             strength: source.quantizerParams?.strength ?? defaults?.strength ?? 1,
         };
         const key = policyKeyOf(policy, params);
-        let index = indexByPolicyKey.get(key);
-        if (index === undefined) {
+        let entry = policiesByKey.get(key);
+        if (entry === undefined) {
             if (policiesByKey.size >= KEY_COLORS.length) {
                 overflowCount++;
                 carriers.push({ node, value: 0 });
                 continue;
             }
-            index = policiesByKey.size + 1;
-            indexByPolicyKey.set(key, index);
-            policiesByKey.set(key, { id: policy, options: { threshold: params.threshold ?? 128, strength: params.strength ?? 1 } });
+            entry = { id: policy, options: params, index: policiesByKey.size + 1 };
+            policiesByKey.set(key, entry);
         }
-        carriers.push({ node, value: index });
+        carriers.push({ node, value: entry.index });
     }
     if (policiesByKey.size === 0) return undefined;
 
@@ -373,8 +369,8 @@ export const buildPolicyMask = async (
         stage.destroy();
 
         const policies: Map<number, QuantizerPolicy> = new Map(
-            policyEntries.map(({ id, options }, index) => [
-                index + 1,
+            policyEntries.map(({ id, options, index }) => [
+                index,
                 { quantizer: QUANTIZERS[id], ...(options ? { options } : {}) },
             ] as const),
         );
@@ -499,8 +495,8 @@ export const renderLabelPage = async (
 
     const byId = nodeLookup(doc.nodes);
     const policy = await buildPolicyMask(nodes, byId, { widthPx, heightPx }, dpi, assets, {
-        threshold: opts.quantizerDefaults?.threshold ?? opts.threshold ?? 128,
-        strength: opts.quantizerDefaults?.strength ?? opts.strength ?? 1,
+        threshold: opts.threshold ?? 128,
+        strength: opts.strength ?? 1,
     });
 
     const hmPerPx = HM_PER_INCH / dpi;

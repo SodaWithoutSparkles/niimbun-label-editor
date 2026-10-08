@@ -147,6 +147,29 @@ describe('integer hm invariant', () => {
         expect(invalid.nodes[0]?.quantizerParams).toBeUndefined();
     });
 
+    it('drops an empty/invalid quantizerParams on a text node (early-return regression)', () => {
+        const textNode = {
+            id: 't', parentId: null, type: 'text' as const, visible: true, locked: false,
+            transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+            text: { kind: 'static' as const, value: 'hi' },
+        };
+        // The delete used to sit after the text early return, so a text node
+        // kept the inert key. It must be dropped here too.
+        expect(
+            createLabelDoc({ nodes: [{ ...textNode, quantizerParams: {} }] }).nodes[0]?.quantizerParams,
+        ).toBeUndefined();
+        expect(
+            createLabelDoc({ nodes: [{ ...textNode, quantizerParams: { threshold: Number.NaN } }] }).nodes[0]
+                ?.quantizerParams,
+        ).toBeUndefined();
+        // A valid text-node params object still survives and rounds identically.
+        expect(
+            createLabelDoc({
+                nodes: [{ ...textNode, quantizerParams: { threshold: 200.6, strength: 2.345 } }],
+            }).nodes[0]?.quantizerParams,
+        ).toEqual({ threshold: 201, strength: 2.35 });
+    });
+
     it('rounds caller-supplied float regions (regression: factory bypassed hm rounding)', () => {
         const doc = createLabelDoc({
             backingW: 2500.4,

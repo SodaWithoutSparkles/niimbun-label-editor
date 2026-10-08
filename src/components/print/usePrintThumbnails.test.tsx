@@ -16,7 +16,7 @@ afterEach(cleanup);
 
 const doc = createLabelDoc({ backingW: 2500, backingH: 7800, dpi: 300 });
 
-const fakePage = (notices?: RenderNotice[]): RenderedLabelPage =>
+const fakePage = (notices?: RenderNotice[], policyOverflowCount?: number): RenderedLabelPage =>
     ({
         rgba: { data: new Uint8ClampedArray(4), width: 1, height: 1 },
         widthPx: 1,
@@ -25,6 +25,7 @@ const fakePage = (notices?: RenderNotice[]): RenderedLabelPage =>
             toDataURL: () => 'data:image/png;base64,stub',
         } as unknown as HTMLCanvasElement,
         ...(notices ? { notices } : {}),
+        ...(policyOverflowCount ? { policyOverflowCount } : {}),
     }) as RenderedLabelPage;
 
 const makeRender = (page: RenderedLabelPage) =>
@@ -89,6 +90,46 @@ describe('usePrintThumbnails', () => {
         });
         await waitFor(() => expect(result.current.notices).toHaveLength(1));
         expect(result.current.notices[0]).toEqual({ kind: 'mirror-clipped-ink', lostPx: 11 });
+    });
+
+    it('surfaces the per-page policy-overflow count and resets it when the doc changes', async () => {
+        const renderPage = makeRender(fakePage(undefined, 3));
+        const otherDoc = createLabelDoc({ backingW: 1000, backingH: 2000, dpi: 300 });
+        const { result, rerender } = renderHook(
+            ({ current }: { current: typeof doc }) =>
+                usePrintThumbnails({ doc: current, csv: null, renderPage }),
+            { initialProps: { current: doc } },
+        );
+
+        act(() => {
+            result.current.urlFor(0);
+        });
+        await waitFor(() => expect(result.current.policyOverflowCount).toBe(3));
+
+        // A new doc rebuilds the cache and clears the stale verdict.
+        rerender({ current: otherDoc });
+        expect(result.current.policyOverflowCount).toBe(0);
+        act(() => {
+            result.current.urlFor(0);
+        });
+        await waitFor(() => expect(result.current.policyOverflowCount).toBe(3));
+    });
+
+    it('resets the policy-overflow count when disabled', async () => {
+        const renderPage = makeRender(fakePage(undefined, 3));
+        const { result, rerender } = renderHook(
+            ({ enabled }: { enabled: boolean }) =>
+                usePrintThumbnails({ doc, csv: null, renderPage, enabled }),
+            { initialProps: { enabled: true } },
+        );
+
+        act(() => {
+            result.current.urlFor(0);
+        });
+        await waitFor(() => expect(result.current.policyOverflowCount).toBe(3));
+
+        rerender({ enabled: false });
+        expect(result.current.policyOverflowCount).toBe(0);
     });
 
     it('stays inert while disabled (no cache, no render, no prefetch)', () => {

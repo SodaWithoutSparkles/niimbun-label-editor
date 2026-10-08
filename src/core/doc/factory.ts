@@ -90,13 +90,15 @@ export const roundNode = (node: Node): Node => {
                 : {}),
         };
     }
+    // Drop a params object that rounded down to nothing (e.g. `{}` or all-invalid)
+    // **before** the per-type early returns, so a text node cannot keep the key.
+    if (node.quantizerParams && Object.keys(base.quantizerParams ?? {}).length === 0) {
+        delete base.quantizerParams;
+    }
     if (node.type === 'text') {
         const rounded = base as typeof node;
         if (node.fontSize !== undefined) rounded.fontSize = Math.max(1, safeRoundHm(node.fontSize));
         return rounded;
-    }
-    if (node.quantizerParams && Object.keys(base.quantizerParams ?? {}).length === 0) {
-        delete base.quantizerParams;
     }
     if (node.type === 'shape') {
         const rounded = base as typeof node;

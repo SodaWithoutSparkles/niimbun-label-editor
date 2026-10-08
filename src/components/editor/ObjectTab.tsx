@@ -5,7 +5,7 @@ import { useStore } from '../../store/useStore';
 import { PopoverSlider } from '../common/PopoverSlider';
 import { ColorPicker } from '../common/ColorPicker';
 import { Input, Select, SettingRow, Toggle } from '../common/forms';
-import { bulkFieldModel, type FieldDescriptor, type FieldReason } from '../../editor/inspectorModel';
+import { bulkFieldModel, quantizerParamsApply, type FieldDescriptor, type FieldReason } from '../../editor/inspectorModel';
 import { roundHm, type hm } from '../../core/hm';
 import { nodeSize, pointsExtent } from '../../core/doc/geometry';
 import { effectiveTransform, nodeLookup, IDENTITY_MAT2D, type Mat2D } from '../../core/doc/derive';
@@ -602,6 +602,15 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
         }
         switch (field.kind) {
             case 'number':
+                // Per-node quantizer params are inert unless the node resolves a
+                // quantizer (no hint + no per-type default, e.g. a shape). Hide
+                // the two fields rather than offer a silent no-op (fix #3).
+                if (
+                    (field.key === 'quantizerThreshold' || field.key === 'quantizerStrength') &&
+                    !quantizerParamsApply(first)
+                ) {
+                    return null;
+                }
                 return (
                     <SettingRow
                         key={field.key}

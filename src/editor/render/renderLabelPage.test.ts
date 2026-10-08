@@ -205,18 +205,87 @@ describe('renderLabelPage — shared preview/print path', () => {
         expect(page.policyOverflowCount).toBe(1);
     });
 
-    it('uses the global quantizer for a policy equal to the global id', async () => {
-        const textWithParams: Node = {
-            id: 't', parentId: null, type: 'text', visible: true, locked: false,
-            transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
-            text: { kind: 'static', value: 'X' }, size: { w: 500, h: 500 }, fontSize: 400,
-            quantizerParams: { threshold: 220 },
-        };
-        const doc = smallDoc(fullRegions, [textWithParams]);
-        const page = await renderLabelPage(doc, {}, { quantizer: 'threshold' });
-        const built = await buildPolicyMask(resolve(doc), nodeLookup(doc.nodes), { widthPx: 100, heightPx: 80 }, doc.label.dpi);
+    it('caps the palette at 8 policies and degrades the excess node to the global key', async () => {
+        // Nine rectangles, each with its own threshold → nine distinct policies.
+        const nodes: Node[] = Array.from({ length: 9 }, (_, index) =>
+            node({
+                id: `r${index}`,
+                parentId: null,
+                type: 'shape',
+                shape: 'rectangle',
+                visible: true,
+                locked: false,
+                transform: { x: index * 300, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                size: { w: 200, h: 200 },
+                fill: '#000000',
+                quantizerHint: 'threshold',
+                quantizerParams: { threshold: 10 * (index + 1) },
+            }),
+        );
+        const doc = imageDoc(nodes); // 4000×2000 @254 dpi → 0.1 hm→px
+        const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+        const built = await buildPolicyMask(resolve(doc), nodeLookup(doc.nodes), dims, doc.label.dpi);
         expect(built).toBeDefined();
-        expect(page.policyOverflowCount).toBeUndefined();
+        if (!built) return;
+        expect(built.overflowCount).toBe(1);
+        expect(built.policies.size).toBe(8);
+        const width = dims.widthPx;
+        // Rect i is 200×200 hm at x = i*300 hm → 20×20 px at x = i*30; sample its centre.
+        for (let index = 0; index < 8; index++) {
+            expect(
+                built.mask.data[10 * width + index * 30 + 10],
+                `node ${index} keeps its own policy index ${index + 1}`,
+            ).toBe(index + 1);
+        }
+        expect(
+            built.mask.data[10 * width + 8 * 30 + 10],
+            'the ninth node fell back to the global key (0)',
+        ).toBe(0);
+    });
+
+    it('routes node quantizerParams into the policy options (node → key → policies)', async () => {
+        const doc = smallDoc(fullRegions, [
+            node({
+                id: 't', parentId: null, type: 'text', visible: true, locked: false,
+                transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                text: { kind: 'static', value: 'X' }, size: { w: 500, h: 500 }, fontSize: 400,
+                quantizerParams: { threshold: 200, strength: 2 },
+            }),
+        ]);
+        const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+        const built = await buildPolicyMask(resolve(doc), nodeLookup(doc.nodes), dims, doc.label.dpi);
+        expect(built).toBeDefined();
+        if (!built) return;
+        const entry = built.policies.get(1);
+        expect(entry).toBeDefined();
+        if (!entry || typeof entry === 'function') return;
+        expect(entry.options).toEqual({ threshold: 200, strength: 2 });
+    });
+
+    it('collapses absent, empty, and explicit-default params into one shared policy', async () => {
+        const mk = (id: string, x: number, params?: Record<string, number>): Node =>
+            node({
+                id, parentId: null, type: 'text', visible: true, locked: false,
+                transform: { x, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                text: { kind: 'static', value: 'X' }, size: { w: 500, h: 500 }, fontSize: 400,
+                ...(params ? { quantizerParams: params } : {}),
+            });
+        const doc = smallDoc(fullRegions, [
+            mk('a', 0),
+            mk('b', 600, {}),
+            mk('c', 1200, { threshold: 128, strength: 1 }),
+            mk('d', 1800, { threshold: 128, strength: 1 }),
+        ]);
+        const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+        const built = await buildPolicyMask(resolve(doc), nodeLookup(doc.nodes), dims, doc.label.dpi);
+        expect(built).toBeDefined();
+        if (!built) return;
+        // Absent, empty, explicit-default, and the resolved default all dedupe to
+        // one policy; the two identical-param nodes share its index.
+        expect(built.policies.size).toBe(1);
+        expect(built.overflowCount).toBe(0);
+        expect(built.mask.data.some((value) => value === 1)).toBe(true);
+        expect(built.mask.data.every((value) => value <= 1)).toBe(true);
     });
 
     it('renders ink inside the union and blanks everything outside it', async () => {
@@ -261,6 +330,9 @@ describe('renderLabelPage — shared preview/print path', () => {
         });
         const a = await renderLabelPage(doc);
         const b = await renderLabelPage(doc);
+        // Two distinct policies are within the 8-policy cap, so the page reports
+        // no overflow: `policyOverflowCount` is absent.
+        expect(a.policyOverflowCount, 'distinct policies ≤ 8 ⇒ no overflow').toBeUndefined();
         expect(a.rgba.data).toEqual(b.rgba.data);
     });
 

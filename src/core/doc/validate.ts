@@ -357,18 +357,26 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
             const raw = value.quantizerParams;
             const params: { threshold?: number; strength?: number } = {};
             if (raw.threshold !== undefined) {
-                if (isFiniteNumber(raw.threshold)) params.threshold = Math.max(0, Math.min(255, Math.round(raw.threshold)));
-                else repairs?.push('node.quantizerParams.threshold: invalid value dropped');
-                if (isFiniteNumber(raw.threshold) && params.threshold !== raw.threshold) {
-                    repairs?.push('node.quantizerParams.threshold: clamped to 0–255');
-                }
+                if (isFiniteNumber(raw.threshold)) {
+                    // Compare against the pre-clamp rounded value so a pure round
+                    // (`128.5 → 129`) is not reported as a false clamp repair.
+                    const rounded = Math.round(raw.threshold);
+                    params.threshold = Math.max(0, Math.min(255, rounded));
+                    if (params.threshold !== rounded) {
+                        repairs?.push('node.quantizerParams.threshold: clamped to 0–255');
+                    }
+                } else repairs?.push('node.quantizerParams.threshold: invalid value dropped');
             }
             if (raw.strength !== undefined) {
-                if (isFiniteNumber(raw.strength)) params.strength = Math.max(0, Math.min(4, raw.strength));
-                else repairs?.push('node.quantizerParams.strength: invalid value dropped');
-                if (isFiniteNumber(raw.strength) && params.strength !== raw.strength) {
-                    repairs?.push('node.quantizerParams.strength: clamped to 0–4');
-                }
+                if (isFiniteNumber(raw.strength)) {
+                    // Round to 2 dp (matching `factory.roundNode`) so a JSON import
+                    // and an `updateNode` edit converge on the same serialized value.
+                    const rounded = Math.round(raw.strength * 100) / 100;
+                    params.strength = Math.max(0, Math.min(4, rounded));
+                    if (params.strength !== rounded) {
+                        repairs?.push('node.quantizerParams.strength: clamped to 0–4');
+                    }
+                } else repairs?.push('node.quantizerParams.strength: invalid value dropped');
             }
             if (Object.keys(params).length) base.quantizerParams = params;
         } else repairs?.push('node.quantizerParams: invalid value dropped');
