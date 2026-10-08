@@ -340,4 +340,96 @@ describe('PreviewStage resize commit resets the Konva node scale (Bug 1)', () =>
         expect(node.size).toEqual({ w: 1000, h: 800 });
         expect(state.docPast).toHaveLength(0);
     });
+
+    it('restores the committed scale when the window loses focus mid-transform (OS mouse steal)', () => {
+        const stage = mountSelectedRect();
+        const transformer = stage.findOne('Transformer') as Konva.Transformer;
+        const rect = transformer.nodes()[0] as Konva.Rect;
+
+        act(() => {
+            // Mimic a live gesture: Konva leaves its scale on the node.
+            rect.scaleX(1.5);
+            rect.scaleY(1.5);
+            transformer.fire('transformstart', {});
+        });
+        expect(rect.scaleX()).toBe(1.5);
+
+        act(() => {
+            // Win+Shift+S (and friends) steals the mouse: no `mouseup` and no
+            // `pointercancel` arrives, so the window `blur` must abort the live
+            // transform and revert to the committed doc — no commit.
+            window.dispatchEvent(new Event('blur'));
+        });
+
+        expect(rect.scaleX()).toBe(1);
+        expect(rect.scaleY()).toBe(1);
+
+        const state = useStore.getState();
+        const node = state.currentDoc!.nodes.find((entry) => entry.id === 'r')!;
+        expect(node.size).toEqual({ w: 1000, h: 800 });
+        expect(state.docPast).toHaveLength(0);
+    });
+
+    it('reverts through the real stopTransform → transformend route on blur', () => {
+        const stage = mountSelectedRect();
+        const transformer = stage.findOne('Transformer') as Konva.Transformer;
+        const rect = transformer.nodes()[0] as Konva.Rect;
+
+        act(() => {
+            // Mimic a live gesture and force Konva's internal flag so
+            // `stopTransform()` really fires `transformend` synchronously. This
+            // exercises the `abortingRef` branch of `handleTransformEnd`; the
+            // manual `transformstart` above leaves `_transforming` false, so
+            // that path is otherwise never reached (the fallback revert runs).
+            rect.scaleX(1.5);
+            rect.scaleY(1.5);
+            transformer.fire('transformstart', {});
+            (transformer as unknown as { _transforming: boolean })._transforming = true;
+        });
+        expect(rect.scaleX()).toBe(1.5);
+
+        act(() => {
+            window.dispatchEvent(new Event('blur'));
+        });
+
+        // The abort branch reverted to the committed doc and never committed the
+        // abandoned live scale.
+        expect(rect.scaleX()).toBe(1);
+        expect(rect.scaleY()).toBe(1);
+
+        const state = useStore.getState();
+        const node = state.currentDoc!.nodes.find((entry) => entry.id === 'r')!;
+        expect(node.size).toEqual({ w: 1000, h: 800 });
+        expect(state.docPast).toHaveLength(0);
+    });
+
+    it('reverts through the real stopTransform → transformend route when the tab is hidden', () => {
+        const stage = mountSelectedRect();
+        const transformer = stage.findOne('Transformer') as Konva.Transformer;
+        const rect = transformer.nodes()[0] as Konva.Rect;
+
+        act(() => {
+            rect.scaleX(1.5);
+            rect.scaleY(1.5);
+            transformer.fire('transformstart', {});
+            (transformer as unknown as { _transforming: boolean })._transforming = true;
+        });
+
+        try {
+            act(() => {
+                Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+                document.dispatchEvent(new Event('visibilitychange'));
+            });
+
+            expect(rect.scaleX()).toBe(1);
+            expect(rect.scaleY()).toBe(1);
+
+            const state = useStore.getState();
+            const node = state.currentDoc!.nodes.find((entry) => entry.id === 'r')!;
+            expect(node.size).toEqual({ w: 1000, h: 800 });
+            expect(state.docPast).toHaveLength(0);
+        } finally {
+            Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+        }
+    });
 });

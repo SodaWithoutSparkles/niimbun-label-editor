@@ -37,6 +37,14 @@ interface ResolvedShapeProps {
     warnings?: ReadonlyMap<string, AssetWarning>;
     /** Human label for a placeholder box (asset name, or the node id). */
     assetLabels?: ReadonlyMap<string, string>;
+    /**
+     * Screen px per hm — the viewport zoom (default 1). Shape strokes are drawn
+     * with `strokeScaleEnabled={false}` so a live Transformer handle changes
+     * geometry, not ink width. That flag also cancels the viewport-zoom Layer
+     * scale, so the resolved hm width is multiplied by this to keep the on-screen
+     * stroke identical to print (which scales hm by `dpi` instead).
+     */
+    strokeScale?: number;
 }
 
 const flatten = (points: readonly [number, number][]): number[] => {
@@ -51,7 +59,12 @@ const strokeOf = (selected: boolean, warn: boolean): string | undefined => {
     return undefined;
 };
 
-/** Placeholder dash pattern, in hm — scaled with the box so it stays visible. */
+/**
+ * Placeholder dash pattern, in hm. The caller multiplies it by the same
+ * `strokeScale * |attrs.scaleX|` factor as a shape stroke: the placeholder's
+ * `strokeScaleEnabled={false}` makes Konva interpret the dash in device px, so
+ * the raw hm values must be pre-multiplied to stay proportional to the box.
+ */
 const dashFor = (w: number): [number, number] => {
     const unit = Math.max(1, w);
     return [Math.max(60, Math.round(unit * 0.04)), Math.max(40, Math.round(unit * 0.03))];
@@ -72,6 +85,7 @@ export const ResolvedShape = React.memo(function ResolvedShape({
     assets,
     warnings,
     assetLabels,
+    strokeScale = 1,
 }: ResolvedShapeProps) {
     const ref = (instance: Konva.Node | null) => registerRef?.(node.id, instance);
 
@@ -89,6 +103,7 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                         assets={assets}
                         warnings={warnings}
                         assetLabels={assetLabels}
+                        strokeScale={strokeScale}
                     />
                 ))}
             </KonvaGroup>
@@ -97,6 +112,23 @@ export const ResolvedShape = React.memo(function ResolvedShape({
 
     const attrs = matrixToKonvaAttrs(node.localTransform);
     const stroke = strokeOf(selected, warn);
+
+    // Preview ink ignores the node's own scale during a gesture: a Transformer
+    // handle changes the shape's *geometry*, not its line width, so the outline
+    // must not thicken while a handle is dragged (it would snap back on commit).
+    // `strokeScaleEnabled=false` is the mechanism; because it also cancels the
+    // viewport-zoom Layer scale, shape strokes are pre-multiplied by
+    // `strokeScale` (the zoom). The print path still scales the resolved hm
+    // width by `dpi` *and* by the node's own committed `transform.scaleX`, so
+    // the preview must pre-multiply that factor too for parity when
+    // `|transform.scale| != 1` (reachable from the inspector scale sliders).
+    // During a live drag `attrs` is decomposed from the doc transform, so
+    // `attrs.scaleX` stays constant and the outline does not thicken mid-gesture.
+    // A non-uniform node scale is approximated by the X factor; print renders an
+    // elliptical stroke there (the preview's `strokeScaleEnabled=false` cannot).
+    // Parity is also only approximate for a node nested under a scaled ancestor
+    // group: the preview cancels that group scale while print composes it.
+    const inkWidth = (hmWidth: number): number => hmWidth * strokeScale * Math.abs(attrs.scaleX);
 
     switch (node.type) {
         case 'text':
@@ -116,6 +148,8 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                     fill={node.placeholder ? '#9ca3af' : '#111827'}
                     stroke={stroke}
                     strokeWidth={selected ? 1 : 0}
+                    // Selection outline only: constant screen width.
+                    strokeScaleEnabled={false}
                 />
             );
         case 'rectangle': {
@@ -135,7 +169,8 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                     // Editor affordance only: a selected/warn node overrides the
                     // visible stroke. The print factory never sees this highlight.
                     stroke={stroke ?? node.stroke}
-                    strokeWidth={selected ? Math.max(node.strokeWidth, 2) : node.strokeWidth}
+                    strokeWidth={selected ? Math.max(inkWidth(node.strokeWidth), 2) : inkWidth(node.strokeWidth)}
+                    strokeScaleEnabled={false}
                 />
             );
         }
@@ -150,7 +185,8 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                     listening={false}
                     fill={fill}
                     stroke={stroke ?? node.stroke}
-                    strokeWidth={selected ? Math.max(node.strokeWidth, 2) : node.strokeWidth}
+                    strokeWidth={selected ? Math.max(inkWidth(node.strokeWidth), 2) : inkWidth(node.strokeWidth)}
+                    strokeScaleEnabled={false}
                 />
             );
         }
@@ -166,7 +202,8 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                     listening={false}
                     fill={fill}
                     stroke={stroke ?? node.stroke}
-                    strokeWidth={selected ? Math.max(node.strokeWidth, 2) : node.strokeWidth}
+                    strokeWidth={selected ? Math.max(inkWidth(node.strokeWidth), 2) : inkWidth(node.strokeWidth)}
+                    strokeScaleEnabled={false}
                 />
             );
         }
@@ -207,7 +244,13 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                         height={node.h}
                         stroke={stroke ?? '#9ca3af'}
                         strokeWidth={selected ? 2 : 1}
-                        dash={dashFor(node.w)}
+                        // The dash is in hm but, with `strokeScaleEnabled={false}`,
+                        // Konva interprets it in device px — pre-multiply it by the
+                        // same zoom × node-scale factor as a shape stroke so the
+                        // pattern stays proportional to the box.
+                        dash={dashFor(node.w).map((value) => value * strokeScale * Math.abs(attrs.scaleX)) as [number, number]}
+                        // Placeholder affordance: constant screen width.
+                        strokeScaleEnabled={false}
                     />
                     <Text
                         text={`${assetWarning ? '⚠ ' : ''}${label}`}

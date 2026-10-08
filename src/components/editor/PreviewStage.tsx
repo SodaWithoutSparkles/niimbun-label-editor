@@ -181,6 +181,11 @@ export const PreviewStage: React.FC = () => {
     /** A Transformer gesture is live (armed at transformstart, cleared at end). */
     const transformingRef = useRef(false);
     /**
+     * Set while `abortTransform` unwinds a gesture: `handleTransformEnd` must
+     * revert to the committed doc instead of committing the abandoned live scale.
+     */
+    const abortingRef = useRef(false);
+    /**
      * The anchor the live Transformer gesture started on. Konva tears its own
      * active anchor (`_movingAnchorName`) down while ending the gesture, so
      * capture it at `transformstart` rather than rely on that teardown ordering
@@ -693,46 +698,100 @@ export const PreviewStage: React.FC = () => {
         commitDoc();
     }, [commitDoc]);
 
-    // `pointercancel` (e.g. a touch scroll taking over) abandons the whole
-    // gesture: finalize it like a release, then drop any half-drawn polygon
-    // draft. `finalizeGesture` alone must not do this — it also runs on every
-    // `pointerup`, and the multi-click polygon gesture legitimately spans
-    // releases. Konva's Stage never fires a `pointercancel` event, so this
-    // window listener is the only cancel path.
-    const handlePointerCancel = useCallback(() => {
-        // Konva's Transformer only listens for mousemove/touchmove/mouseup/
-        // touchend, so a `pointercancel` never fires `transformend`: the live
-        // scale `k` would stay on the node (and `commitDoc` is a no-op for a
-        // transform). Capture the flag before `finalizeGesture` clears it, then
-        // re-apply each selected node's committed (pre-gesture) transform.
-        const wasTransforming = transformingRef.current;
-        finalizeGesture();
-        if (wasTransforming && doc) {
-            for (const id of selectedNodeIds) {
-                const konvaNode = nodeRefs.current.get(id);
-                const source = doc.nodes.find((entry) => entry.id === id);
-                if (!konvaNode || !source || source.type === 'group') continue;
-                konvaNode.position({ x: source.transform.x, y: source.transform.y });
-                konvaNode.rotation(source.transform.rotDeg);
-                konvaNode.scale({ x: source.transform.scaleX, y: source.transform.scaleY });
-            }
-            transformerRef.current?.forceUpdate();
-            layerRef.current?.batchDraw();
+    /**
+     * Re-apply each selected non-group node's committed transform from `doc`.
+     * Konva's Transformer mutates the node in place and leaves the live scale
+     * behind; this is the one place that restores the document's authority.
+     * Groups are skipped (never attached to the Transformer — D-10).
+     */
+    const revertSelectedNodesFromDoc = useCallback(() => {
+        if (!doc) return;
+        for (const id of selectedNodeIds) {
+            const konvaNode = nodeRefs.current.get(id);
+            const source = doc.nodes.find((entry) => entry.id === id);
+            if (!konvaNode || !source || source.type === 'group') continue;
+            konvaNode.position({ x: source.transform.x, y: source.transform.y });
+            konvaNode.rotation(source.transform.rotDeg);
+            konvaNode.scale({ x: source.transform.scaleX, y: source.transform.scaleY });
         }
+        transformerRef.current?.forceUpdate();
+        layerRef.current?.batchDraw();
+    }, [doc, selectedNodeIds]);
+
+    /**
+     * Abandon a live Transformer gesture without committing it. Konva's
+     * Transformer ends a gesture only on `mouseup`/`touchend` (it binds those on
+     * `window`, Transformer.js), so if the OS steals the mouse — e.g. Win+Shift+S
+     * — no `mouseup` arrives: `transformend` never fires, the live scale stays on
+     * the node, the doc is unchanged, and Konva's stale window listeners keep the
+     * transform alive on later moves. `pointercancel` is not fired in that case
+     * either.
+     *
+     * `stopTransform()` synchronously fires `transformend` and removes those
+     * stale window listeners; `abortingRef` routes that `transformend` to the
+     * revert instead of a commit. When Konva was not actually transforming (no
+     * anchor mousedown, e.g. a synthetic test), `stopTransform()` fires nothing,
+     * so the fallback reverts directly.
+     */
+    const abortTransform = useCallback(() => {
+        if (!transformingRef.current) return;
+        abortingRef.current = true;
+        try {
+            transformerRef.current?.stopTransform();
+        } finally {
+            abortingRef.current = false;
+            // The fallback must live inside `finally`: `stopTransform()` runs
+            // user `transformend` handlers synchronously, so a throw from one
+            // would otherwise skip this reset and leave the node stuck at its
+            // live scale. When `stopTransform()` did fire `transformend`, the
+            // abort branch of `handleTransformEnd` has already cleared the flag
+            // and reverted, so this is skipped.
+            if (transformingRef.current) {
+                transformingRef.current = false;
+                revertSelectedNodesFromDoc();
+            }
+        }
+    }, [revertSelectedNodesFromDoc]);
+
+    // Abandon the whole active pointer gesture, then drop any half-drawn
+    // polygon draft. `abortTransform` must run **before** `finalizeGesture`: the
+    // latter clears `transformingRef`, which would make `abortTransform`
+    // early-return and skip the revert. `finalizeGesture` then closes any
+    // move/pan gesture (its transient baseline would otherwise stay open — no
+    // `pointerup` follows a cancel). Shared by `pointercancel` (e.g. a touch
+    // scroll taking over; Konva's Stage never fires it, so the window listener
+    // is the only path) and by the OS focus-steal paths below: `blur` and a
+    // hidden tab both take the mouse away with no `mouseup` and no
+    // `pointercancel`, so a move-drag or pan must be finalized here too — not
+    // just a transform — or `dragRef`/`panRef` stay armed and the next
+    // `pointermove` teleports the node.
+    const cancelActiveGesture = useCallback(() => {
+        abortTransform();
+        finalizeGesture();
         resetPolygonDraft();
-    }, [doc, selectedNodeIds, finalizeGesture, resetPolygonDraft]);
+    }, [abortTransform, finalizeGesture, resetPolygonDraft]);
 
     // Window-level finalizer so a pointer released outside the stage content
-    // (over the MFP/rail) still ends the gesture. Matched add/remove keeps
-    // StrictMode's double-invoke from double-registering.
+    // (over the MFP/rail) still ends the gesture. An OS focus steal (window
+    // `blur`) or a hidden tab (`visibilitychange`) takes the mouse away with no
+    // `mouseup`, so it cancels the whole active gesture the same way
+    // `pointercancel` does. Matched add/remove keeps StrictMode's double-invoke
+    // from double-registering.
     useEffect(() => {
+        const onVisibilityChange = () => {
+            if (document.hidden) cancelActiveGesture();
+        };
         window.addEventListener('pointerup', finalizeGesture);
-        window.addEventListener('pointercancel', handlePointerCancel);
+        window.addEventListener('pointercancel', cancelActiveGesture);
+        window.addEventListener('blur', cancelActiveGesture);
+        document.addEventListener('visibilitychange', onVisibilityChange);
         return () => {
             window.removeEventListener('pointerup', finalizeGesture);
-            window.removeEventListener('pointercancel', handlePointerCancel);
+            window.removeEventListener('pointercancel', cancelActiveGesture);
+            window.removeEventListener('blur', cancelActiveGesture);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
         };
-    }, [finalizeGesture, handlePointerCancel]);
+    }, [finalizeGesture, cancelActiveGesture]);
 
     const handlePointerUp = useCallback(() => {
         if (marquee) {
@@ -817,6 +876,12 @@ export const PreviewStage: React.FC = () => {
         () => {
             transformingRef.current = false;
             if (!doc) return;
+            if (abortingRef.current) {
+                // An aborted gesture (pointercancel / OS focus steal) must revert
+                // to the committed doc, never commit the abandoned live scale.
+                revertSelectedNodesFromDoc();
+                return;
+            }
             // `transformend` carries no reliable modifier state, so the last
             // shift/alt press is tracked on a ref (see the key effect below).
             const inverted = modifierRef.current;
@@ -900,7 +965,7 @@ export const PreviewStage: React.FC = () => {
             // the node's `*Change` events, so force it here.
             transformerRef.current?.forceUpdate();
         },
-        [doc, selectedNodeIds, selectedNodesPreserveAspect, updateNodeTransient, commitDoc],
+        [doc, selectedNodeIds, selectedNodesPreserveAspect, updateNodeTransient, commitDoc, revertSelectedNodesFromDoc],
     );
 
     // A page reload/close inside the autosave debounce would otherwise drop the
@@ -1020,6 +1085,7 @@ export const PreviewStage: React.FC = () => {
                             assets={assets}
                             warnings={warnings}
                             assetLabels={assetLabels}
+                            strokeScale={viewport.zoom}
                         />
                     ))}
                     <Transformer

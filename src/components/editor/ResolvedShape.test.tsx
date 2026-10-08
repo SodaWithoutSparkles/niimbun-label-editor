@@ -42,7 +42,7 @@ const shapeDoc = (over: Record<string, unknown>) =>
         ],
     });
 
-const renderPreview = (over: Record<string, unknown>, selected = false) => {
+const renderPreview = (over: Record<string, unknown>, selected = false, strokeScale?: number) => {
     const resolved = resolve(shapeDoc(over))[0]!;
     let stage: Konva.Stage | null = null;
     render(
@@ -54,7 +54,7 @@ const renderPreview = (over: Record<string, unknown>, selected = false) => {
             height={200}
         >
             <Layer>
-                <ResolvedShape node={resolved} selected={selected} />
+                <ResolvedShape node={resolved} selected={selected} strokeScale={strokeScale} />
             </Layer>
         </Stage>,
     );
@@ -70,6 +70,9 @@ describe('ResolvedShape — preview style (#8)', () => {
         expect(rect.stroke()).toBe('#374151');
         expect(rect.strokeWidth()).toBe(50);
         expect(rect.cornerRadius()).toBe(0);
+        // Bug A: the preview node must ignore its own scale so a live
+        // Transformer handle cannot thicken the outline.
+        expect(rect.strokeScaleEnabled()).toBe(false);
         // The preview and the print factory read the same resolved values.
         expect(shapeStyleAttrs(resolved as ResolvedShapeNode)).toStrictEqual({
             fill: 'transparent',
@@ -85,6 +88,22 @@ describe('ResolvedShape — preview style (#8)', () => {
         expect(line.fill()).toBe('transparent');
         expect(line.stroke()).toBe('#374151');
         expect(line.strokeWidth()).toBe(50);
+        // Bug A: point shapes ignore the node scale for ink width too.
+        expect(line.strokeScaleEnabled()).toBe(false);
+    });
+
+    it('scales the preview stroke width by the viewport zoom (Bug A: zoom still scales)', () => {
+        // `strokeScaleEnabled=false` also cancels the viewport-zoom Layer scale,
+        // so the resolved hm width is pre-multiplied by the zoom to keep the
+        // on-screen ink equal to the print path's hm × dpi.
+        const { stage } = renderPreview(
+            { shape: 'rectangle', size: { w: 1000, h: 800 } },
+            false,
+            0.5,
+        );
+        const rect = stage.findOne('Rect') as Konva.Rect;
+        expect(rect.strokeWidth()).toBe(25);
+        expect(rect.strokeScaleEnabled()).toBe(false);
     });
 
     it('honours explicit style and cornerRadius', () => {
@@ -116,6 +135,11 @@ describe('ResolvedShape — preview style (#8)', () => {
         const printed = createKonvaNode(resolved) as Konva.Rect;
         expect(printed.stroke()).toBe('#374151');
         expect(printed.strokeWidth()).toBe(50);
+        // Pin the print invariant: the print factory must keep Konva's default
+        // `strokeScaleEnabled` so the raster stage's `hm → px` scale (and the
+        // node's own scale) thicken the stroke. A future edit to
+        // `shapeStyleAttrs` adding `strokeScaleEnabled: false` fails loudly here.
+        expect(printed.strokeScaleEnabled()).toBe(true);
     });
 
     it('selected thickens a thin explicit stroke to a visible floor', () => {
@@ -125,5 +149,29 @@ describe('ResolvedShape — preview style (#8)', () => {
         );
         const rect = stage.findOne('Rect') as Konva.Rect;
         expect(rect.strokeWidth()).toBe(2);
+    });
+
+    it('pre-multiplies the preview stroke by |scaleX| so it matches print (round 2)', () => {
+        // Default resolved hm stroke width is 50; the preview ink is
+        // `hm * strokeScale * |scaleX|`. Pin the |scaleX| factor so a future edit
+        // cannot silently drop it.
+        const base = { shape: 'rectangle', size: { w: 1000, h: 800 } };
+        const unscaled = renderPreview(
+            { ...base, transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 } },
+            false,
+            0.5,
+        );
+        const rectUnscaled = unscaled.stage.findOne('Rect') as Konva.Rect;
+        expect(rectUnscaled.strokeWidth()).toBe(25); // 50 * 0.5 * 1
+        expect(rectUnscaled.strokeScaleEnabled()).toBe(false);
+
+        const scaled = renderPreview(
+            { ...base, transform: { x: 0, y: 0, rotDeg: 0, scaleX: 2, scaleY: 1 } },
+            false,
+            0.5,
+        );
+        const rectScaled = scaled.stage.findOne('Rect') as Konva.Rect;
+        expect(rectScaled.strokeWidth()).toBe(50); // 50 * 0.5 * 2
+        expect(rectScaled.strokeScaleEnabled()).toBe(false);
     });
 });

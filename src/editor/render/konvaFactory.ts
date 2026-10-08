@@ -74,6 +74,20 @@ export interface ShapeStyleAttrs {
  * by construction. The preview then overrides `stroke`/`strokeWidth` **only** for
  * the editor's selection/warn highlight, never for print. No Konva default or
  * local constant is consulted here; `resolve` already applied the defaults.
+ *
+ * `strokeWidth` is in `hm` and is invariant under a node's own scale: a resize
+ * changes geometry, not ink width. The print factory keeps Konva's default
+ * `strokeScaleEnabled` so the raster stage's `hm → px` scale thickens the stroke
+ * to `dpi`, and the node's own committed `transform.scale` scales it further; the
+ * preview disables stroke scaling on its nodes and pre-multiplies the width by
+ * the viewport zoom and `|transform.scaleX|` instead. Both paths therefore render
+ * the same on-screen line width when `|transform.scale| == 1` (and approximately
+ * so otherwise: for a non-uniform node scale print renders an elliptical stroke,
+ * which the preview's `strokeScaleEnabled: false` cannot reproduce; parity is
+ * also only approximate for a node nested under a scaled ancestor group, where
+ * the preview cancels the group scale but print composes it). This mapping
+ * must NOT carry `strokeScaleEnabled: false` — that would cancel the print stage's
+ * scale and render the stroke at device px.
  */
 export const shapeStyleAttrs = (node: ResolvedShapeNode): ShapeStyleAttrs => ({
     fill: node.fill,
