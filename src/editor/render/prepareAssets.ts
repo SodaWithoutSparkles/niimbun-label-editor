@@ -219,7 +219,10 @@ export const prepareResolvedAssets = async (
             case 'qr': {
                 if (node.placeholder) return;
                 const { w, h } = requiredPx(node.w, node.h, imageScale);
-                const generated = renderQr(node.text, node.errorCorrection, w, h, minModulePx);
+                const generated = renderQr(node.text, node.errorCorrection, w, h, minModulePx, {
+                    quietModules: node.quietModules,
+                    fill: node.fill,
+                });
                 if (!generated) {
                     warnings.set(node.id, 'invalid');
                     return;
@@ -235,7 +238,10 @@ export const prepareResolvedAssets = async (
             case 'barcode': {
                 if (node.placeholder) return;
                 const { w, h } = requiredPx(node.w, node.h, imageScale);
-                const generated = renderBarcode(node.text, node.symbology, w, h, minModulePx);
+                const generated = renderBarcode(node.text, node.symbology, w, h, minModulePx, {
+                    quietModules: node.quietModules,
+                    fill: node.fill,
+                });
                 if (!generated) {
                     warnings.set(node.id, 'invalid');
                     return;

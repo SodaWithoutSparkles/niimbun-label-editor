@@ -467,6 +467,132 @@ describe('isNode — P5 object options', () => {
     });
 });
 
+describe('isNode — symbol fill & quietZone (P2)', () => {
+    it('round-trips fill and quietZone for qr and barcode', () => {
+        const qr = isNode(
+            baseNode({
+                id: 'q',
+                type: 'qr',
+                shape: undefined,
+                data: 'https://example.com',
+                fill: '#123456',
+                quietZone: 6,
+            }),
+        );
+        expect(qr?.type === 'qr' && qr.fill).toBe('#123456');
+        expect(qr?.type === 'qr' && qr.quietZone).toBe(6);
+
+        const barcode = isNode(
+            baseNode({
+                id: 'b',
+                type: 'barcode',
+                shape: undefined,
+                data: '123456789012',
+                fill: '#123456',
+                quietZone: 6,
+            }),
+        );
+        expect(barcode?.type === 'barcode' && barcode.fill).toBe('#123456');
+        expect(barcode?.type === 'barcode' && barcode.quietZone).toBe(6);
+    });
+
+    it('clamps quietZone to [0,64], rounds finite values, and drops invalid ones with a repair', () => {
+        const quietZoneOf = (
+            value: unknown,
+        ): { qz: number | undefined; repairs: string[] } => {
+            const repairs: string[] = [];
+            const node = isNode(
+                baseNode({ type: 'qr', shape: undefined, data: 'x', quietZone: value }),
+                repairs,
+            );
+            return { qz: node?.type === 'qr' ? node.quietZone : undefined, repairs };
+        };
+
+        // Negative clamps to 0 with a visible repair.
+        const negative = quietZoneOf(-3);
+        expect(negative.qz).toBe(0);
+        expect(negative.repairs.join(' ')).toContain('node.quietZone: clamped to 0–64');
+
+        // Above the cap clamps to 64.
+        const high = quietZoneOf(999);
+        expect(high.qz).toBe(64);
+        expect(high.repairs.join(' ')).toContain('node.quietZone: clamped to 0–64');
+
+        // A finite float rounds with no repair.
+        const rounded = quietZoneOf(6.4);
+        expect(rounded.qz).toBe(6);
+        expect(rounded.repairs).toEqual([]);
+
+        // A non-number / NaN is dropped (absent ⇒ symbology default) with a repair.
+        for (const bad of ['x', Number.NaN, null, {}]) {
+            const dropped = quietZoneOf(bad);
+            expect(dropped.qz, String(bad)).toBeUndefined();
+            expect(dropped.repairs.join(' ')).toContain('node.quietZone: invalid value dropped');
+        }
+
+        // Absent stays absent, silently.
+        const absent = quietZoneOf(undefined);
+        expect(absent.qz).toBeUndefined();
+        expect(absent.repairs).toEqual([]);
+    });
+
+    it('drops an invalid fill with a repair', () => {
+        const repairs: string[] = [];
+        const qr = isNode(
+            baseNode({ type: 'qr', shape: undefined, data: 'x', fill: 'red' }),
+            repairs,
+        );
+        expect(qr?.type === 'qr' && qr.fill).toBeUndefined();
+        expect(repairs.join(' ')).toContain('node.fill: invalid colour dropped');
+
+        const barcodeRepairs: string[] = [];
+        const barcode = isNode(
+            baseNode({ type: 'barcode', shape: undefined, data: 'x', fill: 7 }),
+            barcodeRepairs,
+        );
+        expect(barcode?.type === 'barcode' && barcode.fill).toBeUndefined();
+        expect(barcodeRepairs.join(' ')).toContain('node.fill: invalid colour dropped');
+    });
+
+    it('round-trips fill and quietZone through isLabelDoc (serialize → parse → serialize)', () => {
+        const raw = validRaw({
+            nodes: [
+                baseNode({
+                    id: 'q',
+                    type: 'qr',
+                    shape: undefined,
+                    data: 'https://example.com',
+                    fill: '#123456',
+                    quietZone: 6,
+                }),
+                baseNode({
+                    id: 'b',
+                    type: 'barcode',
+                    shape: undefined,
+                    data: '123456789012',
+                    fill: '#123456',
+                    quietZone: 6,
+                }),
+            ],
+        });
+        const first = isLabelDoc(raw);
+        expect(first.ok).toBe(true);
+        if (!first.ok) return;
+        const firstQr = first.doc.nodes[0];
+        const firstBarcode = first.doc.nodes[1];
+        expect(firstQr?.type === 'qr' && firstQr.fill).toBe('#123456');
+        expect(firstQr?.type === 'qr' && firstQr.quietZone).toBe(6);
+        expect(firstBarcode?.type === 'barcode' && firstBarcode.fill).toBe('#123456');
+        expect(firstBarcode?.type === 'barcode' && firstBarcode.quietZone).toBe(6);
+
+        // Re-parsing the serialized doc is stable and byte-identical.
+        const second = isLabelDoc(JSON.parse(JSON.stringify(first.doc)));
+        expect(second.ok).toBe(true);
+        if (!second.ok) return;
+        expect(JSON.stringify(second.doc)).toBe(JSON.stringify(first.doc));
+    });
+});
+
 describe('isNode', () => {
     it('accepts every node kind', () => {
         expect(isNode(baseNode())?.type).toBe('shape');

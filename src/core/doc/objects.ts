@@ -47,6 +47,54 @@ export const IMAGE_FITS = ['contain', 'cover', 'stretch'] as const;
 export type ImageFit = (typeof IMAGE_FITS)[number];
 export const DEFAULT_IMAGE_FIT: ImageFit = 'contain';
 
+/**
+ * Symbol background + quiet-zone defaults (P2). `fill` mirrors the shape no-fill
+ * value: `'transparent'` (default) means light modules **and** the quiet zone see
+ * through to whatever is behind; a colour paints the background (and quiet zone)
+ * in that colour, alpha composited. The mask stencil treats any visible
+ * (non-zero-alpha) ink as claimed, so a low-alpha fill still owns the pixels it
+ * tints.
+ */
+export const DEFAULT_SYMBOL_FILL = 'transparent';
+
+/**
+ * Quiet-zone width per side, in modules. QR needs ≥ 4 (ISO/IEC 18004); 1D
+ * symbologies express their requirement in X-modules. `quietZone` is an explicit
+ * per-node override; absent ⇒ the derived per-symbology default here.
+ */
+export const DEFAULT_QR_QUIET_MODULES = 4;
+const DEFAULT_BARCODE_QUIET_MODULES = 10;
+
+/** Max quiet-zone width per side (in modules), shared by validation and the UI. */
+export const MAX_QUIET_ZONE = 64;
+
+/**
+ * Per-symbology 1D quiet-zone requirement, as the **symmetric (larger of
+ * left/right) ISO/IEC X-module** figure — this field is one value per side, so
+ * the stricter side of an asymmetric standard is used. ISO/IEC 15420 / GS1
+ * (verified against bwip-js/BWIPP): EAN-13 11X (left) / 7X (right) → 11, EAN-8
+ * 7X, UPC-A 9X, UPC-E 9X/7X → 9, EAN-5 12X/5X → 12, EAN-2 12X/5X → 12, ITF-14
+ * 10X. The `pharmacode` entries have no published numeric margin and are an
+ * **unverified safe linear default** of 10X.
+ * Code128/Code39/Code93/Codabar/ITF fall through to the 10X fallback in
+ * `barcodeQuietModules`.
+ */
+const BARCODE_QUIET_MODULES: Readonly<Partial<Record<BarcodeSymbology, number>>> = {
+    ean13: 11,
+    ean8: 7,
+    upca: 9,
+    upce: 9,
+    itf14: 10,
+    ean5: 12,
+    ean2: 12,
+    pharmacode: 10,
+    pharmacode2: 10,
+};
+
+/** Quiet-zone width (modules/side) for a 1D symbology; fallback 10X. */
+export const barcodeQuietModules = (symbology: BarcodeSymbology): number =>
+    BARCODE_QUIET_MODULES[symbology] ?? DEFAULT_BARCODE_QUIET_MODULES;
+
 export const QR_ERROR_CORRECTIONS = ['L', 'M', 'Q', 'H'] as const;
 export type QrErrorCorrection = (typeof QR_ERROR_CORRECTIONS)[number];
 export const DEFAULT_QR_ERROR_CORRECTION: QrErrorCorrection = 'M';

@@ -12,9 +12,10 @@ import { renderLabelPage } from './renderLabelPage';
  * artifact, so `PreviewStage` is not the right seam).
  *
  * `dpi 254` → `imageScale = 0.1` → `minModulePxFor(0.1) = ceil(0.25 * 0.1 * 100)
- * = 3`. The scale-1 `https://example.com` (EC M) symbol is 25 modules, so:
- *   - a 1000 hm box → 100 px → 4 px/module ≥ 3 → **no** too-small warning;
- *   - a 740 hm box → 74 px → 2.96 px/module < 3 → **too-small**.
+ * = 3`. The scale-1 `https://example.com` (EC M) symbol is 25 modules, and with
+ * the default 4-module quiet zone that is a 33-module budget, so:
+ *   - a 1000 hm box → 100 px → 100/33 ≈ 3.03 px/module ≥ 3 → **no** too-small warning;
+ *   - a 740 hm box → 74 px → 74/33 ≈ 2.24 px/module < 3 → **too-small**.
  * Under the old `scale < minModulePx` verdict both were flagged (bug #12).
  */
 

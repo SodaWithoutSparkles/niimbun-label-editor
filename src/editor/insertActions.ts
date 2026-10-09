@@ -4,6 +4,7 @@ import {
     DEFAULT_SHAPE_FILL,
     DEFAULT_SHAPE_STROKE,
     DEFAULT_SHAPE_STROKE_WIDTH,
+    DEFAULT_SYMBOL_FILL,
 } from '../core/doc/objects';
 import type { ImageRef, Node, ShapeKind } from '../core/doc/types';
 
@@ -108,6 +109,9 @@ export const createNodeForInsert = (action: InsertAction, x: hm, y: hm): Node | 
                 type: 'qr',
                 data: { kind: 'static', value: DEFAULT_QR_PAYLOAD },
                 errorCorrection: 'M',
+                // `quietZone` is deliberately NOT seeded: absent ⇒ the derived
+                // per-type default (QR = 4 modules).
+                fill: DEFAULT_SYMBOL_FILL,
                 size: { ...DEFAULT_QR_BOX },
             };
         case 'barcode':
@@ -116,6 +120,8 @@ export const createNodeForInsert = (action: InsertAction, x: hm, y: hm): Node | 
                 type: 'barcode',
                 data: { kind: 'static', value: DEFAULT_BARCODE_PAYLOAD },
                 symbology: 'code128',
+                // `quietZone` absent ⇒ derived from the symbology.
+                fill: DEFAULT_SYMBOL_FILL,
                 size: { ...DEFAULT_BARCODE_BOX },
             };
         case 'shape:line':

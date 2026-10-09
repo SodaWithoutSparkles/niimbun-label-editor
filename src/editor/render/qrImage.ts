@@ -1,6 +1,7 @@
 import { toCanvas } from 'bwip-js/browser';
+import { DEFAULT_QR_QUIET_MODULES, DEFAULT_SYMBOL_FILL, hasFill } from '../../core/doc/objects';
 import type { QrErrorCorrection } from '../../core/doc/objects';
-import type { GeneratedSymbol } from './assets';
+import { quietModulesOf, type GeneratedSymbol, type SymbolRenderOptions } from './assets';
 
 /**
  * QR engine (P5 W2) — bwip-js `bcid:'qrcode'`.
@@ -12,6 +13,14 @@ import type { GeneratedSymbol } from './assets';
  * When even scale 1 exceeds the target the scale-1 symbol is returned anyway
  * (`belowMinModule` reports the shortfall) and the node's fit helper places it —
  * the generator never returns `null` for an oversized box.
+ *
+ * A **quiet zone** (default 4 modules/side, P2) is composited around the symbol
+ * ourselves — never via bwip's scale-unit `paddingwidth`. The padded canvas is
+ * what gets fitted into the node box, so the effective module pitch is
+ * `box / (moduleCount + 2·quietModules)`; the verdict is measured on that pitch.
+ * `fill` (default `'transparent'`) is the quiet-zone/background colour: any real
+ * colour paints an opaque background, `'transparent'` leaves the zone (and light
+ * modules) see-through.
  *
  * Any failure — empty payload, oversized data, a drawing error — returns `null`
  * and the caller renders nothing rather than crashing the pipeline.
@@ -26,8 +35,8 @@ const integerPx = (value: number): number =>
  * Render `text` as a QR at the given target pixel box.
  *
  * @param minModulePx device px the module must reach to stay scannable.
- * @returns the integer-scaled symbol plus its module verdict, or `null` when the
- * payload cannot be rendered.
+ * @returns the integer-scaled, quiet-zone-padded symbol plus its module verdict,
+ * or `null` when the payload cannot be rendered.
  */
 export const renderQr = (
     text: string,
@@ -35,11 +44,14 @@ export const renderQr = (
     targetWpx: number,
     targetHpx: number,
     minModulePx = 1,
+    options: SymbolRenderOptions = {},
 ): GeneratedSymbol | null => {
     if (!text) return null;
     if (typeof document === 'undefined') return null;
     const targetW = integerPx(targetWpx);
     const targetH = integerPx(targetHpx);
+    const quietModules = quietModulesOf(options.quietModules, DEFAULT_QR_QUIET_MODULES);
+    const fill = options.fill ?? DEFAULT_SYMBOL_FILL;
     try {
         // A fresh options object per render: `toCanvas` mutates its options
         // (adding resolved scaleX/scaleY), so reusing one object would pin later
@@ -53,28 +65,46 @@ export const renderQr = (
             paddingheight: 0,
         });
         // Measure the symbol at scale 1 to derive a largest integer scale that
-        // fits. One scale for both axes keeps the module grid square.
+        // fits the **padded** canvas. One scale for both axes keeps the module
+        // grid square.
         const measure = document.createElement('canvas');
         toCanvas(measure, makeOpts(1));
         const baseW = measure.width;
         const baseH = measure.height;
         if (!baseW || !baseH) return null;
 
-        const scale = Math.max(1, Math.floor(Math.min(targetW / baseW, targetH / baseH)));
+        // bwip's `qrcode` lays down 2 device px per module at scale 1.
+        const moduleCount = Math.max(1, baseW / 2);
+        const totalModules = moduleCount + 2 * quietModules;
+        const paddedBaseW = totalModules * 2;
+        const scale = Math.max(1, Math.floor(Math.min(targetW / paddedBaseW, targetH / paddedBaseW)));
+
+        const symbolCanvas = document.createElement('canvas');
+        toCanvas(symbolCanvas, makeOpts(scale));
+        if (!symbolCanvas.width || !symbolCanvas.height) return null;
+
+        const modulePx = symbolCanvas.width / moduleCount; // = 2 * scale
+        const quietPx = Math.round(quietModules * modulePx);
+
         const canvas = document.createElement('canvas');
-        toCanvas(canvas, makeOpts(scale));
-        if (!canvas.width || !canvas.height) return null;
+        canvas.width = symbolCanvas.width + 2 * quietPx;
+        canvas.height = symbolCanvas.height + 2 * quietPx;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        if (hasFill(fill)) {
+            ctx.fillStyle = fill;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        // Never resample the module matrix: integer-scaled symbol, drawn 1:1.
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(symbolCanvas, quietPx, quietPx);
 
         // The verdict is on the **printed module**, not the integer raster scale.
-        // bwip's `qrcode` lays down 2 device px per module at scale 1, so the
-        // scale-1 `baseW` encodes `baseW / 2` modules. The symbol fills the
-        // authored box (owner decision D), so the limiting box side divided by the
-        // module count is the printed module pitch. `scale` is a unitless integer
-        // and was wrongly compared to `minModulePx` (a 2× unit error). Other
-        // bcids must be measured the same way before reusing this formula (P11).
-        const moduleCount = Math.max(1, baseW / 2);
+        // The padded symbol fills the authored box (owner decision D), so the
+        // limiting box side over the total module count (symbol + quiet zone) is
+        // the printed module pitch.
         const limitingPx = Math.min(targetW, targetH);
-        return { canvas, belowMinModule: limitingPx / moduleCount < minModulePx };
+        return { canvas, belowMinModule: limitingPx / totalModules < minModulePx };
     } catch {
         return null;
     }

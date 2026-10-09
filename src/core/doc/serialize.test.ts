@@ -75,6 +75,29 @@ describe('serializeDoc / parseDoc', () => {
                 transform: { x: 1, y: 2, rotDeg: 0, scaleX: 1, scaleY: 1 },
                 text: { kind: 'static', value: 'hi' },
             },
+            {
+                id: 'n2',
+                parentId: null,
+                type: 'qr',
+                visible: true,
+                locked: false,
+                transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                data: { kind: 'static', value: 'https://example.com' },
+                // P2 symbol options must survive the gzip round-trip.
+                fill: '#123456',
+                quietZone: 6,
+            },
+            {
+                id: 'n3',
+                parentId: null,
+                type: 'barcode',
+                visible: true,
+                locked: false,
+                transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                data: { kind: 'static', value: '123456789012' },
+                fill: '#123456',
+                quietZone: 6,
+            },
         ];
         doc.resources.images = [
             {

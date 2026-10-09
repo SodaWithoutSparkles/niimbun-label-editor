@@ -32,6 +32,22 @@ export interface GeneratedSymbol {
  */
 export type AssetWarning = 'missing' | 'invalid' | 'too-small';
 
+/**
+ * Per-symbol render knobs shared by the QR and barcode engines (P2).
+ * Both optional; absent ⇒ the documented defaults (symbology quiet zone,
+ * transparent fill).
+ */
+export interface SymbolRenderOptions {
+    /** Quiet-zone width per side, in modules. */
+    quietModules?: number;
+    /** Background/quiet-zone colour; `'transparent'` (default) sees through. */
+    fill?: string;
+}
+
+/** Non-negative integer module count; a non-finite value falls back. */
+export const quietModulesOf = (value: number | undefined, fallback: number): number =>
+    value === undefined || !Number.isFinite(value) ? fallback : Math.max(0, Math.round(value));
+
 /** Supplies the raw bytes of a locally-stored resource (IDB `resources`). */
 export interface BytesProvider {
     getBytes(resourceId: string): Promise<Uint8Array | null>;

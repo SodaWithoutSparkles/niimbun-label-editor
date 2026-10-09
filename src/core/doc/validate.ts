@@ -3,6 +3,7 @@ import { QUANTIZERS, type QuantizerId } from '../render/quantize';
 import {
     BARCODE_SYMBOLOGIES,
     IMAGE_FITS,
+    MAX_QUIET_ZONE,
     QR_ERROR_CORRECTIONS,
 } from './objects';
 import type {
@@ -280,6 +281,22 @@ const toFontSize = (value: unknown): hm | undefined => {
 };
 
 /**
+ * Optional `quietZone`: a non-negative integer count of modules/side, clamped to
+ * `[0, MAX_QUIET_ZONE]`. A bad value is dropped (absent ⇒ the symbology default).
+ */
+const toQuietZone = (value: unknown, repairs?: string[]): number | undefined => {
+    if (value === undefined) return undefined;
+    if (!isFiniteNumber(value)) {
+        repairs?.push('node.quietZone: invalid value dropped');
+        return undefined;
+    }
+    const rounded = Math.round(value);
+    const clamped = Math.max(0, Math.min(MAX_QUIET_ZONE, rounded));
+    if (clamped !== rounded) repairs?.push('node.quietZone: clamped to 0–64');
+    return clamped;
+};
+
+/**
  * Optional `quantizerHint` enum. An unknown/invalid value is dropped (absent)
  * rather than failing the document — an absent hint means "type default", which
  * is always a safe fallback.
@@ -502,6 +519,10 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
                 'node.qr.errorCorrection: unknown level dropped',
             );
             if (errorCorrection !== undefined) node.errorCorrection = errorCorrection;
+            const fill = toOptionalColor(value.fill, repairs, 'node.fill: invalid colour dropped');
+            if (fill !== undefined) node.fill = fill;
+            const quietZone = toQuietZone(value.quietZone, repairs);
+            if (quietZone !== undefined) node.quietZone = quietZone;
             return node;
         }
         case 'barcode': {
@@ -517,6 +538,10 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
                 'node.barcode.symbology: unknown symbology dropped',
             );
             if (symbology !== undefined) node.symbology = symbology;
+            const fill = toOptionalColor(value.fill, repairs, 'node.fill: invalid colour dropped');
+            if (fill !== undefined) node.fill = fill;
+            const quietZone = toQuietZone(value.quietZone, repairs);
+            if (quietZone !== undefined) node.quietZone = quietZone;
             return node;
         }
     }

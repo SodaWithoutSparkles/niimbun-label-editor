@@ -152,11 +152,20 @@ describe('inspectorModel — field descriptors', () => {
         expect(qr.data?.wired).toBe(true);
         expect(qr.data?.kind).toBe('dataContent');
         expect(qr.errorCorrection?.options).toEqual(QR_ERROR_CORRECTIONS);
+        // Symbol background + quiet zone (P2) are wired.
+        expect(qr.fill?.wired).toBe(true);
+        expect(qr.fill?.kind).toBe('color');
+        expect(qr.quietZone?.wired).toBe(true);
+        expect(qr.quietZone?.kind).toBe('number');
         expect(qr.size?.wired).toBe(false);
 
         const barcode = Object.fromEntries(BARCODE_FIELDS.map((f) => [f.key, f]));
         expect(barcode.data?.wired).toBe(true);
         expect(barcode.symbology?.options).toEqual(BARCODE_SYMBOLOGIES);
+        expect(barcode.fill?.wired).toBe(true);
+        expect(barcode.fill?.kind).toBe('color');
+        expect(barcode.quietZone?.wired).toBe(true);
+        expect(barcode.quietZone?.kind).toBe('number');
         expect(barcode.size?.wired).toBe(false);
     });
 

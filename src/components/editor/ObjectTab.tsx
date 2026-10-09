@@ -14,9 +14,12 @@ import {
     DEFAULT_BARCODE_SYMBOLOGY,
     DEFAULT_IMAGE_FIT,
     DEFAULT_QR_ERROR_CORRECTION,
+    DEFAULT_QR_QUIET_MODULES,
     DEFAULT_SHAPE_FILL,
     DEFAULT_SHAPE_STROKE,
     DEFAULT_SHAPE_STROKE_WIDTH,
+    MAX_QUIET_ZONE,
+    barcodeQuietModules,
 } from '../../core/doc/objects';
 import { fontBadges, type FontBadge } from '../../editor/render/fontAssets';
 import { importFontFile } from '../../editor/assetImport';
@@ -86,6 +89,7 @@ const FIELD_LABEL_KEYS = {
     data: 'editor.mfp.field.data',
     errorCorrection: 'editor.mfp.field.errorCorrection',
     symbology: 'editor.mfp.field.symbology',
+    quietZone: 'editor.mfp.field.quietZone',
     contentSource: 'editor.mfp.field.contentSource',
     quantizerHint: 'editor.mfp.field.quantizerHint',
     quantizerThreshold: 'editor.mfp.field.quantizerThreshold',
@@ -162,6 +166,12 @@ const numberValue = (node: Node, key: string): number => {
     if (key === 'strokeWidth') return node.strokeWidth ?? DEFAULT_SHAPE_STROKE_WIDTH;
     if (key === 'quantizerThreshold') return node.quantizerParams?.threshold ?? 128;
     if (key === 'quantizerStrength') return node.quantizerParams?.strength ?? 1;
+    // An absent `quietZone` means "derived default", not 0, so show the
+    // effective value the render path resolves (mirrors `strokeWidth`).
+    if (key === 'quietZone') {
+        if (node.type === 'qr') return node.quietZone ?? DEFAULT_QR_QUIET_MODULES;
+        if (node.type === 'barcode') return node.quietZone ?? barcodeQuietModules(node.symbology ?? DEFAULT_BARCODE_SYMBOLOGY);
+    }
     const value = (node as unknown as Record<string, unknown>)[key];
     return typeof value === 'number' ? value : 0;
 };
@@ -621,7 +631,7 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                             value={numberValue(first, field.key)}
                             onChange={(value) => setNumber(field.key, value)}
                             min={field.key === 'fontSize' ? 1 : field.key === 'x' || field.key === 'y' ? -10000 : 0}
-                            max={field.key === 'fontSize' ? 2000 : field.key === 'quantizerThreshold' ? 255 : field.key === 'quantizerStrength' ? 4 : 100000}
+                            max={field.key === 'fontSize' ? 2000 : field.key === 'quantizerThreshold' ? 255 : field.key === 'quantizerStrength' ? 4 : field.key === 'quietZone' ? MAX_QUIET_ZONE : 100000}
                             step={field.key === 'quantizerStrength' ? 0.1 : 1}
                             label={label}
                         />

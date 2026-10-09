@@ -173,6 +173,9 @@ export const IMAGE_FIELDS: readonly FieldDescriptor[] = [
 export const QR_FIELDS: readonly FieldDescriptor[] = [
     { key: 'data', scope: 'qr', kind: 'dataContent', wired: true },
     { key: 'errorCorrection', scope: 'qr', kind: 'select', wired: true, options: QR_ERROR_CORRECTIONS },
+    // Symbol background + quiet zone (P2): resolved by the render path, so wired.
+    { key: 'fill', scope: 'qr', kind: 'color', wired: true },
+    { key: 'quietZone', scope: 'qr', kind: 'number', wired: true },
     { key: 'size', scope: 'qr', kind: 'stub', wired: false, reason: 'size' },
 ];
 
@@ -180,6 +183,9 @@ export const QR_FIELDS: readonly FieldDescriptor[] = [
 export const BARCODE_FIELDS: readonly FieldDescriptor[] = [
     { key: 'data', scope: 'barcode', kind: 'dataContent', wired: true },
     { key: 'symbology', scope: 'barcode', kind: 'select', wired: true, options: BARCODE_SYMBOLOGIES },
+    // Symbol background + quiet zone (P2): resolved by the render path, so wired.
+    { key: 'fill', scope: 'barcode', kind: 'color', wired: true },
+    { key: 'quietZone', scope: 'barcode', kind: 'number', wired: true },
     { key: 'size', scope: 'barcode', kind: 'stub', wired: false, reason: 'size' },
 ];
 

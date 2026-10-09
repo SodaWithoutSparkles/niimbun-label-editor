@@ -533,6 +533,7 @@
         "data": "Data",
         "errorCorrection": "Error correction",
         "symbology": "Symbology",
+        "quietZone": "Quiet zone",
         "contentSource": "Content source",
         "quantizerHint": "Quantizer",
         "quantizerThreshold": "Threshold",

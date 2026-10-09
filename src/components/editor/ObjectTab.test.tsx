@@ -7,6 +7,7 @@ import { createLabelDoc } from '../../core/doc/factory';
 import { createMemoryAdapter } from '../../data/db';
 import { createResourceRepo } from '../../data/resourceRepo';
 import { importImageFile } from '../../editor/assetImport';
+import { DEFAULT_QR_QUIET_MODULES, barcodeQuietModules } from '../../core/doc/objects';
 import { bytesProviderFor, createResourceAssetDeps } from './usePreparedAssets';
 import type { FontRef, ImageRef, Node } from '../../core/doc/types';
 import { SampleRowContext } from './sampleRowContext';
@@ -506,6 +507,25 @@ describe('ObjectTab — qr / barcode payload + options (P5)', () => {
         };
         expect(persisted.data.value).toBe('987');
         expect(persisted.symbology).toBe('ean13');
+    });
+
+    it('shows the wired fill + derived quiet-zone default for qr / barcode (P2)', () => {
+        // An absent `quietZone` means "derived default", so the slider must show
+        // the effective value, never 0.
+        const qr = qrNode();
+        useStore.setState({ currentDoc: doc([qr]), selectedNodeIds: ['q'] });
+        const view = render(<ObjectTab selected={[qr]} />);
+        expect(screen.getByText('Fill')).toBeTruthy();
+        expect(screen.getByText('Quiet zone')).toBeTruthy();
+        expect(screen.getByText(String(DEFAULT_QR_QUIET_MODULES))).toBeTruthy();
+        view.unmount();
+
+        const barcode = barcodeNode({ symbology: 'code128' });
+        useStore.setState({ currentDoc: doc([barcode]), selectedNodeIds: ['b'] });
+        render(<ObjectTab selected={[barcode]} />);
+        expect(screen.getByText('Fill')).toBeTruthy();
+        expect(screen.getByText('Quiet zone')).toBeTruthy();
+        expect(screen.getByText(String(barcodeQuietModules('code128')))).toBeTruthy();
     });
 });
 

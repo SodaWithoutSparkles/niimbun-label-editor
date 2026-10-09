@@ -583,10 +583,11 @@ describe('renderLabelPage — shared preview/print path', () => {
             ],
         });
         const dims = rasterDimensions(4000, 2000, 254);
-        // A square asset in a 2:1 box forces a `contain` letterbox.
-        const assets = new Map<string, PreparedAsset>([
-            ['img', { image: {} as CanvasImageSource, widthPx: 100, heightPx: 100 }],
-        ]);
+        // A square **opaque** asset in a 2:1 box forces a `contain` letterbox.
+        // The mask is built from the asset's visible ink (fix A), so the stub
+        // must be a real drawable that fills the drawn rect — a bare
+        // `{ image: {} }` is no longer acceptable.
+        const assets = new Map<string, PreparedAsset>([['img', await solidAsset(100, 100)]]);
         const built = await buildPolicyMask(resolve(doc), nodeLookup(doc.nodes), dims, 254, assets);
         expect(built).toBeDefined();
         if (!built) return;

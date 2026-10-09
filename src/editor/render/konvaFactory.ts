@@ -225,6 +225,86 @@ export const symbolSceneFunc = (context: Konva.Context, shape: Konva.Shape): voi
 };
 
 /**
+ * Custom `sceneFunc` for the **policy mask** stencil (P2 fix A). Draws a
+ * prepared asset's **visible ink** tinted to the policy key colour: the asset is
+ * rendered into a scratch canvas, tinted with `source-in`, then blitted into the
+ * current (transformed) mask space. Transparent pixels draw nothing, so the leaf
+ * below keeps its policy — the coverage approximation that caused the stacking
+ * bug is gone. `fill`-opaque symbols are fully opaque and claim their whole rect.
+ *
+ * The scratch canvas is drawn 1:1 (never resampled) so the tint boundary matches
+ * the raster's module edges; for a `cover` fit the source crop is honoured.
+ *
+ * Coverage is snapped to **binary** before the blit: any visible ink (non-zero
+ * alpha) claims its policy, transparent claims nothing. The tint colour is
+ * therefore always full-strength at the nearest-key reader, so no key-colour
+ * blending can occur — a semi-transparent `fill` (`#rrggbbaa`) or a
+ * partially-opaque PNG claims exactly the pixels where the raster deposits ink.
+ */
+export interface MaskAssetAttrs {
+    asset: PreparedAsset;
+    boxW: number;
+    boxH: number;
+    fit: ImageFit;
+    /** Key colour for this leaf's policy (`rgb(...)`). */
+    color: string;
+    /** qr/barcode (nearest-neighbour, option D). Photos are not symbols: smoothing stays on (only the tinted edge matters). */
+    symbol: boolean;
+}
+
+export const maskAssetSceneFunc = (context: Konva.Context, shape: Konva.Shape): void => {
+    const attrs = shape.attrs.mask as MaskAssetAttrs | undefined;
+    if (!attrs) return;
+    const { asset, boxW, boxH, fit, color, symbol } = attrs;
+    const srcW = Math.max(1, Math.round(asset.widthPx));
+    const srcH = Math.max(1, Math.round(asset.heightPx));
+    const scratch = document.createElement('canvas');
+    scratch.width = srcW;
+    scratch.height = srcH;
+    const scratchCtx = scratch.getContext('2d');
+    if (!scratchCtx) return;
+    scratchCtx.drawImage(asset.image, 0, 0, srcW, srcH);
+    scratchCtx.globalCompositeOperation = 'source-in';
+    scratchCtx.fillStyle = color;
+    scratchCtx.fillRect(0, 0, srcW, srcH);
+
+    // Snap coverage to binary: any non-zero alpha claims its policy, zero claims
+    // nothing. Without this a semi-transparent `fill` (`#rrggbbaa`) or a
+    // partially-opaque PNG keeps a partial alpha that the mask reader's
+    // `alpha < 128` test drops — ink in the raster that claims no policy.
+    const img = scratchCtx.getImageData(0, 0, srcW, srcH);
+    const data = img.data;
+    for (let i = 3; i < data.length; i += 4) if (data[i]! > 0) data[i] = 255;
+    scratchCtx.putImageData(img, 0, 0);
+
+    const { crop, ...rect } = fitImageAttrs(boxW, boxH, asset.widthPx, asset.heightPx, fit);
+    const raw = context._context;
+    const previousSmoothing = raw.imageSmoothingEnabled;
+    // Symbol masks are thresholded on hard module edges; a photo's coverage is
+    // its drawn rect either way, so smoothing only matters for the tinted edge.
+    raw.imageSmoothingEnabled = symbol ? false : true;
+    try {
+        if (crop) {
+            context.drawImage(
+                scratch,
+                crop.x,
+                crop.y,
+                crop.width,
+                crop.height,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+            );
+        } else {
+            context.drawImage(scratch, rect.x, rect.y, rect.width, rect.height);
+        }
+    } finally {
+        raw.imageSmoothingEnabled = previousSmoothing;
+    }
+};
+
+/**
  * Build a `Konva.Image` for a prepared asset from {@link fitImageAttrs}.
  *
  * `symbol` selects nearest-neighbour drawing for a qr/barcode raster (option D);

@@ -13,9 +13,12 @@ import {
     DEFAULT_BARCODE_SYMBOLOGY,
     DEFAULT_IMAGE_FIT,
     DEFAULT_QR_ERROR_CORRECTION,
+    DEFAULT_QR_QUIET_MODULES,
     DEFAULT_SHAPE_FILL,
     DEFAULT_SHAPE_STROKE,
     DEFAULT_SHAPE_STROKE_WIDTH,
+    DEFAULT_SYMBOL_FILL,
+    barcodeQuietModules,
     isClosedShape,
     type BarcodeSymbology,
     type ImageFit,
@@ -178,6 +181,10 @@ export interface ResolvedQr extends ResolvedBase {
     w: hm;
     h: hm;
     errorCorrection: QrErrorCorrection;
+    /** Symbol background colour; `'transparent'` means light modules see through. */
+    fill: string;
+    /** Quiet-zone width per side, in modules (already defaulted). */
+    quietModules: number;
 }
 
 /** Barcode leaf. `symbology` defaults to `DEFAULT_BARCODE_SYMBOLOGY`. */
@@ -188,6 +195,10 @@ export interface ResolvedBarcode extends ResolvedBase {
     w: hm;
     h: hm;
     symbology: BarcodeSymbology;
+    /** Symbol background colour; see {@link ResolvedQr.fill}. */
+    fill: string;
+    /** Quiet-zone width per side, in modules (already defaulted). */
+    quietModules: number;
 }
 
 export type ResolvedNode =
@@ -433,12 +444,15 @@ export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[]
                     w,
                     h,
                     errorCorrection: node.errorCorrection ?? DEFAULT_QR_ERROR_CORRECTION,
+                    fill: node.fill ?? DEFAULT_SYMBOL_FILL,
+                    quietModules: node.quietZone ?? DEFAULT_QR_QUIET_MODULES,
                     bounds: transformedBounds(rectCorners(0, 0, w, h), base.transform),
                 };
             }
             case 'barcode': {
                 const { w, h } = nodeSize(node);
                 const content = resolveContent(node.data, emptyText, overrides?.get(node.id));
+                const symbology = node.symbology ?? DEFAULT_BARCODE_SYMBOLOGY;
                 return {
                     ...base,
                     type: 'barcode',
@@ -446,7 +460,9 @@ export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[]
                     placeholder: content.placeholder,
                     w,
                     h,
-                    symbology: node.symbology ?? DEFAULT_BARCODE_SYMBOLOGY,
+                    symbology,
+                    fill: node.fill ?? DEFAULT_SYMBOL_FILL,
+                    quietModules: node.quietZone ?? barcodeQuietModules(symbology),
                     bounds: transformedBounds(rectCorners(0, 0, w, h), base.transform),
                 };
             }

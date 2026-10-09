@@ -113,11 +113,23 @@ export interface QrNode extends BaseNode {
     type: 'qr';
     data: ContentSource;
     errorCorrection?: QrErrorCorrection;
+    /**
+     * Symbol background colour (`#rrggbb`/`#rrggbbaa`/hex or `'transparent'`).
+     * Absent ⇒ `DEFAULT_SYMBOL_FILL` (`'transparent'`, light modules + quiet zone
+     * see through). A real colour paints an opaque symbol background (WYSIWYG).
+     */
+    fill?: string;
+    /** Quiet-zone width per side in modules. Absent ⇒ the symbology default (4). */
+    quietZone?: number;
 }
 export interface BarcodeNode extends BaseNode {
     type: 'barcode';
     data: ContentSource;
     symbology?: BarcodeSymbology;
+    /** Symbol background colour; see {@link QrNode.fill}. */
+    fill?: string;
+    /** Quiet-zone width per side in modules. Absent ⇒ the symbology default. */
+    quietZone?: number;
 }
 
 export type Node = GroupNode | TextNode | ImageNode | ShapeNode | QrNode | BarcodeNode;

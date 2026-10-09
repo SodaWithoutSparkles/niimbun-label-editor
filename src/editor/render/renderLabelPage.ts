@@ -18,7 +18,7 @@ import {
 } from '../../core/render';
 import type { AssetDeps, AssetWarning, PreparedAsset } from './assets';
 import { applyRegionClip } from './clip';
-import { createKonvaNode, fitImageAttrs, matrixToKonvaAttrs } from './konvaFactory';
+import { createKonvaNode, maskAssetSceneFunc, matrixToKonvaAttrs } from './konvaFactory';
 import { prepareResolvedAssets } from './prepareAssets';
 import {
     prepareTextFonts,
@@ -310,24 +310,33 @@ export const buildPolicyMask = async (
             const attrs = matrixToKonvaAttrs(carrier.node.transform);
             const leaf = carrier.node;
             if (leaf.type === 'image' || leaf.type === 'qr' || leaf.type === 'barcode') {
-                // Paint only the **drawn** rect: for `contain` the letterbox is
-                // transparent in the raster, so it must not claim coverage.
+                // Fix A (P2): claim only the asset's **visible ink**, not its whole
+                // drawn rect. Transparent pixels (a `fill: 'transparent'` symbol's
+                // light modules + quiet zone, or a transparent-PNG photo) draw
+                // nothing here, so the leaf below keeps its policy — the same
+                // coverage the raster produces. An opaque `fill` makes the whole
+                // rect opaque and it legitimately claims all of it.
                 const asset = assets?.get(leaf.id);
                 if (!asset) continue;
                 const fit = leaf.type === 'image' ? leaf.fit : 'contain';
-                const rect = fitImageAttrs(leaf.w, leaf.h, asset.widthPx, asset.heightPx, fit);
-                // Group carries the absolute transform; the rect keeps the local
-                // drawn-rect offset as a child so the two compose (setting both on
-                // one node would let the transform's x/y overwrite the offset).
+                // Group carries the absolute transform; the stencil keeps the
+                // local drawn-rect offset as a child so the two compose (setting
+                // both on one node would let the transform's x/y overwrite the
+                // offset).
                 const box = new Konva.Group();
                 box.setAttrs(attrs);
                 box.add(
-                    new Konva.Rect({
-                        x: rect.x,
-                        y: rect.y,
-                        width: rect.width,
-                        height: rect.height,
-                        fill: rgb(keyColors[carrier.value]!),
+                    new Konva.Shape({
+                        listening: false,
+                        sceneFunc: maskAssetSceneFunc,
+                        mask: {
+                            asset,
+                            boxW: leaf.w,
+                            boxH: leaf.h,
+                            fit,
+                            color: rgb(keyColors[carrier.value]!),
+                            symbol: leaf.type !== 'image',
+                        },
                     }),
                 );
                 layer.add(box);
