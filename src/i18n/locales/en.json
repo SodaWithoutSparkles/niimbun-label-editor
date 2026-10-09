@@ -122,7 +122,7 @@
       "gridSpacingDescription": "Snap-to-grid step in millimetres. Default 5 mm.",
       "calibrate": "Calibrate",
       "calibrationTitle": "Screen DPI calibration",
-      "calibrationDescription": "Lay a real ruler on the screen, then drag the slider until the bar below is exactly as long as the ruler.",
+      "calibrationDescription": "Lay a real ruler on the screen, then drag the slider until the bar below is exactly as long as the ruler. Effective only for this monitor, resolution, system zoom levels, and various other factors. Default 96 DPI.",
       "calibrationReference": "{{mm}} mm reference",
       "calibrationRulerAria": "Calibration ruler, {{mm}} mm",
       "calibrationCurrent": "Current DPI: {{dpi}}",
