@@ -6,7 +6,7 @@ One zustand `persist` store. Implementation: `src/store/useStore.ts`, `legacySto
 
 `persist(..., { name: 'ui_settings', version: 1, storage: createJSONStorage(...), partialize, migrate, merge })`.
 
-- **`partialize` is mandatory.** The root store holds canvas `objects`, undo `past`/`future` history, `fileHandle`, notifications, etc. Without `partialize`, zustand writes the *entire flattened state* to localStorage. Only `autoSave`, `keyboardShortcuts`, `toolSettings`, `colors`, `language` may persist. `PersistedSettings` in `preferenceValidation.ts` is the canonical pick.
+- **`partialize` is mandatory.** The root store holds canvas `objects`, undo `past`/`future` history, `fileHandle`, notifications, etc. Without `partialize`, zustand writes the *entire flattened state* to localStorage. Only `autoSave`, `keyboardShortcuts`, `toolSettings`, `colors`, `language`, `screenDpi`, `gridSpacingHm` may persist. `PersistedSettings` in `preferenceValidation.ts` is the canonical pick (a new preference must be added to `partialize`, `persistedDefaults`, `PersistedSettings`, `normalize*`, `validatePersistedSettings`, `pickPersistedKeys`, and `resetSettings`).
 - `version` + `migrate` exist as a seam; today `migrate` returns the blob unchanged.
 
 ## Why `colors` is persisted here but owned by `colorsSlice`
