@@ -53,7 +53,13 @@ export const EditorKeyboardShortcuts = () => {
             }
             if (mod && key === 'd') {
                 event.preventDefault();
-                for (const id of state.selectedNodeIds) state.cloneNode(id);
+                // Duplicate the selection and select the clones (H2).
+                const clonedIds: string[] = [];
+                for (const id of state.selectedNodeIds) {
+                    const cloneId = state.cloneNode(id);
+                    if (cloneId !== null) clonedIds.push(cloneId);
+                }
+                if (clonedIds.length > 0) state.selectNodes(clonedIds);
                 return;
             }
             if (mod && key === 'g') {

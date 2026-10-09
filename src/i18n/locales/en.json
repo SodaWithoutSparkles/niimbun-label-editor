@@ -431,6 +431,8 @@
       "alignTop": "Align top",
       "alignMiddle": "Align middle vertically",
       "alignBottom": "Align bottom",
+      "tileVertical": "Tile vertical",
+      "tileHorizontal": "Tile horizontal",
       "contentSource": "Content",
       "contentStatic": "Static",
       "contentCsv": "CSV column",

@@ -74,6 +74,45 @@ describe('EditorKeyboardShortcuts', () => {
     });
 });
 
+describe('EditorKeyboardShortcuts — duplicate selects the clones (H2)', () => {
+    it('Ctrl+D clones the selection, selects the clones and deselects the sources', () => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({ id: 'doc-1', now: 1, nodes: [node('a'), node('b')] }),
+            selectedNodeIds: ['a', 'b'],
+        });
+        render(<EditorKeyboardShortcuts />);
+
+        press('d', { ctrlKey: true });
+
+        const state = useStore.getState();
+        const selected = state.selectedNodeIds;
+        const docIds = state.currentDoc!.nodes.map((n) => n.id);
+        // Two clones keyed by fresh ids; the sources are deselected.
+        expect(selected).toHaveLength(2);
+        expect(selected).not.toContain('a');
+        expect(selected).not.toContain('b');
+        for (const id of selected) expect(docIds).toContain(id);
+        // The clone commits landed (the doc gained exactly the two clones).
+        expect(state.currentDoc!.nodes).toHaveLength(4);
+    });
+
+    it('Cmd+D (metaKey) selects the clones too', () => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({ id: 'doc-1', now: 1, nodes: [node('a')] }),
+            selectedNodeIds: ['a'],
+        });
+        render(<EditorKeyboardShortcuts />);
+
+        press('d', { metaKey: true });
+
+        const state = useStore.getState();
+        expect(state.selectedNodeIds).toHaveLength(1);
+        expect(state.selectedNodeIds).not.toContain('a');
+    });
+});
+
 describe('EditorKeyboardShortcuts — print (Ctrl/Cmd+P)', () => {
     const withDoc = () =>
         useStore.setState({

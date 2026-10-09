@@ -291,6 +291,75 @@ export const nodeLocalPoints = (node: Node): [number, number][] => {
     return rectCorners(0, 0, w, h);
 };
 
+/**
+ * Local outline of what a node **actually draws**, in the node's local space.
+ *
+ * `image`/`qr`/`barcode` are painted through `fitImageAttrs`. A `contain` fit
+ * places the raster in a centred sub-rect of the node's `(0,0,w,h)` box whenever
+ * the content aspect differs from the box aspect, so this helper returns that
+ * drawn rect — not the raw box — and a keep-out predicate cannot falsely flag a
+ * letterboxed symbol/image whose *box* pokes outside the printable area while
+ * its *content* stays well inside.
+ *
+ * - `group`/`shape`/`text` (and anything else) → {@link nodeLocalPoints} unchanged;
+ * - `image` with `fit: 'stretch'` or `'cover'` → the raster fills the whole box
+ *   (`fitImageAttrs`), so the raw box is returned (no letterbox to allow for);
+ * - `image` with `fit: 'contain'` (or absent = default) / `barcode` → when
+ *   `assetSize` is present with positive dimensions, contain-fit using the aspect
+ *   `widthPx/heightPx`; otherwise fall back to the raw box;
+ * - `qr` → the symbol canvas is always square, so it contain-fits a square into
+ *   the box (`side = min(w,h)`, centred). A missing **or non-positive**
+ *   `assetSize` is treated as a `1×1` natural size, which yields the same square;
+ *   a supplied positive size is honoured.
+ *
+ * The four rect corners are returned in the node's local space. Pure and
+ * side-effect free; `nodeLocalPoints` itself is deliberately left untouched
+ * because it feeds resolve bounds used by hit-test/marquee/align.
+ */
+export const nodeDrawnLocalPoints = (
+    node: Node,
+    assetSize?: { widthPx: number; heightPx: number },
+): [number, number][] => {
+    if (node.type !== 'image' && node.type !== 'qr' && node.type !== 'barcode') {
+        return nodeLocalPoints(node);
+    }
+
+    // Only `contain` letterboxes inside the box; `stretch`/`cover` both draw the
+    // full box (see `fitImageAttrs`), so a `stretch`/`cover` image that genuinely
+    // pokes outside must be sampled by its raw box.
+    if (node.type === 'image' && node.fit !== undefined && node.fit !== 'contain') {
+        return nodeLocalPoints(node);
+    }
+
+    const { w, h } = nodeSize(node);
+
+    let srcW: number;
+    let srcH: number;
+    if (node.type === 'qr') {
+        // The QR raster is always square; a 1×1 natural size reproduces the
+        // `side = min(w,h)` square fit when the size is absent. A non-positive
+        // size is also treated as absent — otherwise `scale` would be Infinity
+        // and the bounds NaN, re-introducing the keep-out false positive.
+        const hasSize = assetSize !== undefined && assetSize.widthPx > 0 && assetSize.heightPx > 0;
+        srcW = hasSize ? assetSize.widthPx : 1;
+        srcH = hasSize ? assetSize.heightPx : 1;
+    } else {
+        // image/barcode without a known aspect cannot be letterboxed here; keep
+        // the legacy raw-box behaviour.
+        if (!assetSize || assetSize.widthPx <= 0 || assetSize.heightPx <= 0) {
+            return nodeLocalPoints(node);
+        }
+        srcW = assetSize.widthPx;
+        srcH = assetSize.heightPx;
+    }
+
+    // `contain` fit (mirrors `fitImageAttrs`): preserve aspect, centre in the box.
+    const scale = Math.min(w / srcW, h / srcH);
+    const drawW = srcW * scale;
+    const drawH = srcH * scale;
+    return rectCorners((w - drawW) / 2, (h - drawH) / 2, drawW, drawH);
+};
+
 /** Union of AABBs; empty input yields a degenerate box at the origin. */
 const unionBounds = (boxes: readonly Bounds[]): Bounds => {
     if (boxes.length === 0) return { x: 0, y: 0, w: 0, h: 0 };

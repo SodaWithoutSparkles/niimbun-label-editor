@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { LabelDoc, Node, Region } from '../../core/doc/types';
+import type { ImageRef, LabelDoc, Node, Region } from '../../core/doc/types';
 import { createFtagSpareDoc, createLabelDoc } from '../../core/doc/factory';
 import { regionUnionBounds } from '../../core/doc/derive';
 import {
@@ -16,9 +16,39 @@ const node = (value: Record<string, unknown>): Node => value as unknown as Node;
 const docWith = (regions: Region[], nodes: Node[]): LabelDoc =>
     createLabelDoc({ backingW: 4000, backingH: 4000, regions, nodes });
 
+/** `docWith` plus recorded image refs (the keep-out reads their pixel size). */
+const docWithImages = (regions: Region[], nodes: Node[], images: ImageRef[]): LabelDoc => {
+    const doc = docWith(regions, nodes);
+    doc.resources.images.push(...images);
+    return doc;
+};
+
+const imageRef = (imageId: string, widthPx: number, heightPx: number): ImageRef => ({
+    imageId,
+    name: `${imageId}.png`,
+    source: { kind: 'inline', mediaType: 'image/png', dataUrl: 'data:image/png;base64,AAAA' },
+    widthPx,
+    heightPx,
+});
+
 const rect = (x: number, y: number, w: number, h: number): Record<string, unknown> => ({
     type: 'shape',
     shape: 'rectangle',
+    visible: true,
+    locked: false,
+    transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
+    size: { w, h },
+});
+
+/** A sizeable image/qr/barcode leaf; keep-out only reads its box, not its payload. */
+const symbol = (
+    type: 'image' | 'qr' | 'barcode',
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+): Record<string, unknown> => ({
+    type,
     visible: true,
     locked: false,
     transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
@@ -271,5 +301,93 @@ describe('nodesIntersectNonPrintable — truth table', () => {
         ];
         const doc = docWith(regions, [node({ id: 'span', parentId: null, ...rect(400, 400, 700, 200) })]);
         expect(nodesIntersectNonPrintable(doc)).toEqual([]);
+    });
+});
+
+describe('nodesIntersectNonPrintable — contain-fit (keep-out false positive)', () => {
+    it('does not flag a letterboxed qr whose square content is inside the region', () => {
+        // 1000 wide × 4000 tall box at y=-1500: the raw box spans y −1500..2500
+        // (outside), but the square content (side = min(1000,4000)) is centred at
+        // local y 1500..2500 → world y 0..1000, exactly filling the region.
+        const doc = docWith(square, [node({ id: 'qr', parentId: null, ...symbol('qr', 0, -1500, 1000, 4000) })]);
+        // A qr defaults to a square even with no asset size…
+        expect(nodesIntersectNonPrintable(doc)).toEqual([]);
+        // …and honours a supplied square size.
+        expect(nodesIntersectNonPrintable(doc, new Map([['qr', { widthPx: 128, heightPx: 128 }]]))).toEqual([]);
+    });
+
+    it('still flags a letterboxed qr whose square content pokes outside the region', () => {
+        // Same 1000×4000 box, shifted so the centred square (local y 1500..2500)
+        // lands at world y 500..1500 — half of it outside the 0..1000 region.
+        const doc = docWith(square, [
+            node({ id: 'qr-straddle', parentId: null, ...symbol('qr', 0, -1000, 1000, 4000) }),
+        ]);
+        expect(nodesIntersectNonPrintable(doc)).toEqual(['qr-straddle']);
+        expect(
+            nodesIntersectNonPrintable(doc, new Map([['qr-straddle', { widthPx: 128, heightPx: 128 }]])),
+        ).toEqual(['qr-straddle']);
+    });
+
+    it('still flags a square qr that genuinely pokes outside the region', () => {
+        // The drawn square equals the box here, so the raw and fitted bounds agree.
+        const doc = docWith(square, [node({ id: 'qr-out', parentId: null, ...symbol('qr', 0, -500, 1000, 1000) })]);
+        expect(nodesIntersectNonPrintable(doc)).toEqual(['qr-out']);
+        expect(nodesIntersectNonPrintable(doc, new Map([['qr-out', { widthPx: 64, heightPx: 64 }]]))).toEqual([
+            'qr-out',
+        ]);
+    });
+
+    it('resolves an image fit from doc.resources.images even with no assetSizes', () => {
+        // Box 1000×4000, source 400×100 (4:1): contain scale = 2.5, so the drawn
+        // rect is 1000×250 centred at local y 1875..2125 → world y 0..250 with
+        // `y=-1875`. The raw box (world y −1875..2125) would be flagged.
+        const doc = docWithImages(
+            square,
+            [node({ id: 'img', parentId: null, imageId: 'img-1', ...symbol('image', 0, -1875, 1000, 4000) })],
+            [imageRef('img-1', 400, 100)],
+        );
+        // Resolved synchronously from the recorded ref — NO `assetSizes` entry.
+        expect(nodesIntersectNonPrintable(doc)).toEqual([]);
+        // A stray `assetSizes` entry is ignored for images (qr/barcode use it).
+        expect(nodesIntersectNonPrintable(doc, new Map([['img', { widthPx: 1, heightPx: 1 }]]))).toEqual([]);
+    });
+
+    it('falls back to the raw box for an image with no recorded ref', () => {
+        const doc = docWith(square, [
+            node({ id: 'img', parentId: null, imageId: 'missing', ...symbol('image', 0, -1875, 1000, 4000) }),
+        ]);
+        expect(nodesIntersectNonPrintable(doc)).toEqual(['img']);
+    });
+
+    it('samples the raw box for a stretch/cover image (both draw the full box)', () => {
+        // Box 1000×4000 at y=-1500, source 400×100. A `contain` fit would sit
+        // inside (world y 375..625), but `stretch`/`cover` fill the whole box and
+        // genuinely poke outside the 0..1000 region, so they must be flagged.
+        const makeDoc = (fit: 'stretch' | 'cover'): LabelDoc =>
+            docWithImages(
+                square,
+                [node({ id: 'img', parentId: null, imageId: 'img-1', fit, ...symbol('image', 0, -1500, 1000, 4000) })],
+                [imageRef('img-1', 400, 100)],
+            );
+        expect(nodesIntersectNonPrintable(makeDoc('stretch'))).toEqual(['img']);
+        expect(nodesIntersectNonPrintable(makeDoc('cover'))).toEqual(['img']);
+    });
+
+    it('treats a non-positive qr size as absent (square content, no NaN bounds)', () => {
+        // The square content fits the region, but a `{0,0}` size used to yield
+        // `scale = Infinity` and NaN bounds, which falsely flagged the node.
+        const doc = docWith(square, [node({ id: 'qr', parentId: null, ...symbol('qr', 0, -1500, 1000, 4000) })]);
+        expect(nodesIntersectNonPrintable(doc, new Map([['qr', { widthPx: 0, heightPx: 0 }]]))).toEqual([]);
+        // A partially non-positive size is treated as absent too.
+        expect(nodesIntersectNonPrintable(doc, new Map([['qr', { widthPx: 128, heightPx: 0 }]]))).toEqual([]);
+    });
+
+    it('barcode without a known size keeps the raw-box behaviour', () => {
+        // 1000×4000 box at y=-1500: a square fit would sit at world y 0..1000
+        // (inside), but without an asset size the raw box is used and pokes out.
+        const doc = docWith(square, [node({ id: 'bc', parentId: null, ...symbol('barcode', 0, -1500, 1000, 4000) })]);
+        expect(nodesIntersectNonPrintable(doc)).toEqual(['bc']);
+        // Supplying the size proves it was the fallback, not the geometry, that flagged it.
+        expect(nodesIntersectNonPrintable(doc, new Map([['bc', { widthPx: 100, heightPx: 100 }]]))).toEqual([]);
     });
 });

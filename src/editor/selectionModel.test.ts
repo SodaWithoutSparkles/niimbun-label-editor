@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createLabelDoc } from '../core/doc/factory';
 import type { LabelDoc, Node } from '../core/doc/types';
-import { nodesInMarquee, rectsIntersect, selectionAfterClick } from './selectionModel';
+import { nodesInMarquee, pointerDownSelection, rectsIntersect, selectionAfterClick } from './selectionModel';
 
 const node = (value: Record<string, unknown>): Node => value as unknown as Node;
 
@@ -24,6 +24,45 @@ describe('selectionAfterClick', () => {
     it('toggles on an additive click', () => {
         expect(selectionAfterClick(['a'], 'b', true)).toEqual(['a', 'b']);
         expect(selectionAfterClick(['a', 'b'], 'a', true)).toEqual(['b']);
+    });
+});
+
+describe('pointerDownSelection', () => {
+    it('clears on an empty-canvas click and keeps on an additive empty click', () => {
+        expect(pointerDownSelection(['a'], null, false)).toEqual({ selection: [], collapseTo: null });
+        expect(pointerDownSelection(['a'], null, true)).toEqual({ selection: ['a'], collapseTo: null });
+    });
+
+    it('keeps the whole selection and defers a collapse on a plain already-selected click', () => {
+        expect(pointerDownSelection(['a', 'b'], 'a', false)).toEqual({
+            selection: ['a', 'b'],
+            collapseTo: 'a',
+        });
+    });
+
+    it('replaces with the single id on a plain unselected click (no collapse)', () => {
+        expect(pointerDownSelection(['a', 'b'], 'c', false)).toEqual({
+            selection: ['c'],
+            collapseTo: null,
+        });
+    });
+
+    it('toggles membership on an additive click (no collapse)', () => {
+        expect(pointerDownSelection(['a'], 'b', true)).toEqual({
+            selection: ['a', 'b'],
+            collapseTo: null,
+        });
+        expect(pointerDownSelection(['a', 'b'], 'a', true)).toEqual({
+            selection: ['b'],
+            collapseTo: null,
+        });
+    });
+
+    it('does not mutate the input selection', () => {
+        const current = ['a', 'b'];
+        pointerDownSelection(current, 'a', false);
+        pointerDownSelection(current, 'a', true);
+        expect(current).toEqual(['a', 'b']);
     });
 });
 

@@ -2,7 +2,7 @@ import type { Bounds } from '../../core/doc/derive';
 import { effectiveTransform, nodeLookup, regionUnionBounds } from '../../core/doc/derive';
 import type { hm } from '../../core/hm';
 import type { LabelDoc, Region } from '../../core/doc/types';
-import { nodeLocalPoints, transformedBounds } from './resolve';
+import { nodeDrawnLocalPoints, transformedBounds } from './resolve';
 
 /**
  * Region overlay + keep-out data for the editor view.
@@ -231,23 +231,42 @@ const samplePoints = (b: Bounds): [number, number][] => {
 };
 
 /**
- * Ids of content nodes whose transformed bounds are not fully inside the region
- * union. Groups are skipped — their children are tested individually and already
- * carry the parent transform. Returns ids in document order. Pure and testable.
+ * Ids of content nodes whose **drawn** transformed bounds are not fully inside
+ * the region union. Groups are skipped — their children are tested individually
+ * and already carry the parent transform. Returns ids in document order. Pure
+ * and testable.
+ *
+ * `image` natural sizes are read **synchronously** from `doc.resources.images`
+ * (matching `node.imageId` → `ImageRef.widthPx/heightPx`), so a keep-out stays
+ * stable while the async prepared-asset map is momentarily empty (e.g. during a
+ * `updateNodeTransient` frame) — no letterbox flicker. `assetSizes` (keyed by
+ * node id) supplies the natural pixel size only for `qr`/`barcode`: a `qr` fits
+ * a square regardless (a `1×1` default), while a `barcode` without a supplied
+ * size falls back to its raw box. A `stretch`/`cover` image draws the full box,
+ * so its raw box is sampled either way (see `nodeDrawnLocalPoints`).
  *
  * A document whose regions yield no **drawable** union declares no printable
  * area; the predicate is then silent (`[]`) rather than flagging every object.
  * Keyed on `regionUnionPath` so it matches `applyRegionClip` exactly (a doc of
  * only open/degenerate contours is a clip no-op, hence a keep-out no-op).
  */
-export const nodesIntersectNonPrintable = (doc: LabelDoc): string[] => {
+export const nodesIntersectNonPrintable = (
+    doc: LabelDoc,
+    assetSizes?: ReadonlyMap<string, { widthPx: number; heightPx: number }>,
+): string[] => {
     const regions = doc.label.regions;
     if (regionUnionPath(regions).length === 0) return [];
     const byId = nodeLookup(doc.nodes);
+    const imageSizeById = new Map(doc.resources.images.map((ref) => [ref.imageId, ref]));
     const offenders: string[] = [];
     for (const node of doc.nodes) {
         if (node.type === 'group') continue;
-        const bounds = transformedBounds(nodeLocalPoints(node), effectiveTransform(node, byId));
+        // Images resolve their fit synchronously from the recorded ref (stable
+        // across transient frames); qr/barcode still use the prepared-asset map.
+        const assetSize =
+            node.type === 'image' ? imageSizeById.get(node.imageId) : assetSizes?.get(node.id);
+        const points = nodeDrawnLocalPoints(node, assetSize);
+        const bounds = transformedBounds(points, effectiveTransform(node, byId));
         const inside = samplePoints(bounds).every(([x, y]) => pointInUnion(x, y, regions));
         if (!inside) offenders.push(node.id);
     }

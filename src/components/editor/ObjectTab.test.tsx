@@ -14,6 +14,7 @@ import { SampleRowContext } from './sampleRowContext';
 import type { SampleRowState } from './useSampleRow';
 import {
     ObjectTab,
+    TILE_GAP_HM,
     alignTransformPatch,
     clampSizeHm,
     colorDefault,
@@ -24,6 +25,8 @@ import {
     sizePatch,
     textContentPatch,
     textContentValue,
+    tileLayout,
+    tileTransformPatch,
 } from './ObjectTab';
 
 vi.mock('../../editor/assetImport', () => ({
@@ -404,6 +407,22 @@ describe('align uses resolved world bounds (must-fix #10)', () => {
         // World right edge for a 400-wide box under +1000 parent is 3000-1400=1600 world.
         // Local delta = world delta (translation only) => local x = 1600.
         expect(patch?.transform?.x).toBe(1600);
+    });
+
+    it('returns null for a geometry-less group (align skips it)', () => {
+        const group = node({
+            id: 'g',
+            parentId: null,
+            type: 'group',
+            visible: true,
+            locked: false,
+            transform: { x: 500, y: 500, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        });
+        const byId = new Map([[group.id, group]]);
+        // Every edge reads world bounds; a group has none, so nothing is patched.
+        for (const edge of ['left', 'center', 'right', 'top', 'middle', 'bottom'] as const) {
+            expect(alignTransformPatch(group, byId, 3000, 2000, edge)).toBeNull();
+        }
     });
 });
 
@@ -829,5 +848,181 @@ describe('ObjectTab — content source switcher + trust (P6)', () => {
         cleanup();
         renderWithTrust(textNode(), 'ask');
         expect(Array.from(selectWithOption('csv').options).map((option) => option.value)).toContain('template');
+    });
+});
+
+describe('tile vertical / horizontal (H2 mixed-selection alignment)', () => {
+    const rect = (id: string, x: number, y: number, w: number, h: number): Node =>
+        shapeNode({ id, transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 }, size: { w, h } });
+
+    /** Apply a tile run to a node list, returning the translated nodes. */
+    const applyTile = (nodes: Node[], axis: 'vertical' | 'horizontal'): Node[] => {
+        const byId = new Map(nodes.map((n) => [n.id, n]));
+        const targets = tileLayout(nodes, byId, axis, TILE_GAP_HM);
+        return nodes.map((n) => {
+            const target = targets.get(n.id)!;
+            const patch = tileTransformPatch(n, byId, target.x, target.y)!;
+            return { ...n, transform: patch.transform } as Node;
+        });
+    };
+
+    it('stacks vertically by center: anchor fixed, fixed gap, left edges aligned', () => {
+        const a = rect('a', 0, 0, 400, 300);
+        const b = rect('b', 100, 1000, 200, 500);
+        const c = rect('c', 50, 2000, 300, 300);
+        // Deliberately unordered input: ordering is by world center.
+        const byId = new Map([c, a, b].map((n) => [n.id, n]));
+
+        const targets = tileLayout([c, a, b], byId, 'vertical', TILE_GAP_HM);
+
+        // Anchor (smallest cy) keeps its own top-left; the rest stack under it.
+        expect(targets.get('a')).toEqual({ x: 0, y: 0 });
+        expect(targets.get('b')).toEqual({ x: 0, y: 400 });
+        expect(targets.get('c')).toEqual({ x: 0, y: 1000 });
+    });
+
+    it('tiles horizontally by center with a fixed gap and a shared top edge', () => {
+        const a = rect('a', 0, 0, 400, 300);
+        const b = rect('b', 1000, 50, 200, 500);
+        const c = rect('c', 2000, 200, 300, 300);
+        const byId = new Map([a, b, c].map((n) => [n.id, n]));
+
+        const targets = tileLayout([c, b, a], byId, 'horizontal', TILE_GAP_HM);
+
+        expect(targets.get('a')).toEqual({ x: 0, y: 0 });
+        expect(targets.get('b')).toEqual({ x: 500, y: 0 });
+        expect(targets.get('c')).toEqual({ x: 800, y: 0 });
+    });
+
+    it('gaps neighbours by exactly TILE_GAP_HM and preserves each node size', () => {
+        const a = rect('a', 0, 0, 400, 300);
+        const b = rect('b', 100, 1000, 200, 500);
+        const byId = new Map([a, b].map((n) => [n.id, n]));
+
+        const targets = tileLayout([a, b], byId, 'vertical', TILE_GAP_HM);
+        const gap = targets.get('b')!.y - (targets.get('a')!.y + a.size!.h);
+        expect(gap).toBe(TILE_GAP_HM);
+
+        // Tiling only translates: no size field is touched.
+        const patch = tileTransformPatch(b, byId, targets.get('b')!.x, targets.get('b')!.y)!;
+        expect(patch).not.toHaveProperty('size');
+    });
+
+    it('is idempotent: a second vertical run produces no translation', () => {
+        const first = applyTile([rect('a', 0, 0, 400, 300), rect('b', 100, 1000, 200, 500)], 'vertical');
+        const second = applyTile(first, 'vertical');
+        expect(second.map((n) => n.transform)).toEqual(first.map((n) => n.transform));
+    });
+
+    it('is idempotent: a second horizontal run produces no translation', () => {
+        const first = applyTile([rect('a', 0, 0, 400, 300), rect('b', 1000, 50, 200, 500)], 'horizontal');
+        const second = applyTile(first, 'horizontal');
+        expect(second.map((n) => n.transform)).toEqual(first.map((n) => n.transform));
+    });
+
+    it('tiles the selection through the Tile vertical button', () => {
+        const a = rect('a', 0, 0, 400, 300);
+        const b = rect('b', 100, 1000, 200, 500);
+        useStore.setState({ currentDoc: doc([a, b]), selectedNodeIds: ['a', 'b'], docPast: [] });
+        render(<ObjectTab selected={[a, b]} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Tile vertical' }));
+
+        const persisted = useStore.getState().currentDoc!.nodes;
+        // The anchor keeps its position, the next node sits directly below it.
+        expect(persisted.find((n) => n.id === 'a')!.transform).toEqual({
+            x: 0,
+            y: 0,
+            rotDeg: 0,
+            scaleX: 1,
+            scaleY: 1,
+        });
+        expect(persisted.find((n) => n.id === 'b')!.transform).toEqual({
+            x: 0,
+            y: 400,
+            rotDeg: 0,
+            scaleX: 1,
+            scaleY: 1,
+        });
+    });
+
+    it('renders a Tile horizontal button that tiles left-to-right', () => {
+        const a = rect('a', 0, 0, 400, 300);
+        const b = rect('b', 1000, 50, 200, 500);
+        useStore.setState({ currentDoc: doc([a, b]), selectedNodeIds: ['a', 'b'], docPast: [] });
+        render(<ObjectTab selected={[a, b]} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Tile horizontal' }));
+
+        const persisted = useStore.getState().currentDoc!.nodes;
+        expect(persisted.find((n) => n.id === 'a')!.transform.x).toBe(0);
+        expect(persisted.find((n) => n.id === 'b')!.transform.x).toBe(500);
+        expect(persisted.find((n) => n.id === 'b')!.transform.y).toBe(0);
+    });
+
+    it('drops a geometry-less group instead of anchoring on its fake origin', () => {
+        // A group resolves `[]` local points → degenerate world bounds at 0,0.
+        // Left unfiltered, its centre 0 wins the sort, becomes the anchor, and
+        // tiles the whole selection into the world origin (the P3 blocker).
+        const group = node({
+            id: 'g',
+            parentId: null,
+            type: 'group',
+            visible: true,
+            locked: false,
+            transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        });
+        const a = rect('a', 500, 500, 400, 300);
+        const b = rect('b', 100, 1000, 200, 500);
+        const byId = new Map([group, a, b].map((n) => [n.id, n]));
+
+        const targets = tileLayout([group, a, b], byId, 'vertical', TILE_GAP_HM);
+        // The group is neither a target nor the anchor.
+        expect(targets.has('g')).toBe(false);
+        // The real anchor keeps its own position; the rest stack below it.
+        expect(targets.get('a')).toEqual({ x: 500, y: 500 });
+        expect(targets.get('b')).toEqual({ x: 500, y: 900 });
+    });
+
+    it('leaves a selected group untouched when tiling a mixed selection', () => {
+        const group = node({
+            id: 'g',
+            parentId: null,
+            type: 'group',
+            visible: true,
+            locked: false,
+            transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        });
+        const a = rect('a', 500, 500, 400, 300);
+        const b = rect('b', 100, 1000, 200, 500);
+        useStore.setState({ currentDoc: doc([group, a, b]), selectedNodeIds: ['g', 'a', 'b'], docPast: [] });
+        render(<ObjectTab selected={[group, a, b]} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Tile vertical' }));
+
+        const persisted = useStore.getState().currentDoc!.nodes;
+        // The group is untouched — never teleported to the world origin.
+        expect(persisted.find((n) => n.id === 'g')!.transform).toEqual({
+            x: 0,
+            y: 0,
+            rotDeg: 0,
+            scaleX: 1,
+            scaleY: 1,
+        });
+        // Real nodes tile relative to their own anchor, not the origin.
+        expect(persisted.find((n) => n.id === 'a')!.transform).toEqual({
+            x: 500,
+            y: 500,
+            rotDeg: 0,
+            scaleX: 1,
+            scaleY: 1,
+        });
+        expect(persisted.find((n) => n.id === 'b')!.transform).toEqual({
+            x: 500,
+            y: 900,
+            rotDeg: 0,
+            scaleX: 1,
+            scaleY: 1,
+        });
     });
 });

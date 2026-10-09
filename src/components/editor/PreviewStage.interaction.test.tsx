@@ -6,7 +6,7 @@ import '../../i18n';
 import { installCanvasShim } from '../../test/canvasHarness';
 import { useStore } from '../../store/useStore';
 import { createLabelDoc } from '../../core/doc/factory';
-import type { Node } from '../../core/doc/types';
+import type { Node, TextNode } from '../../core/doc/types';
 import { PreviewStage } from './PreviewStage';
 
 /**
@@ -47,6 +47,9 @@ const mount = () => {
 interface FireOptions {
     detail?: number;
     button?: number;
+    shiftKey?: boolean;
+    ctrlKey?: boolean;
+    metaKey?: boolean;
 }
 
 /** Fire one pointer event at pane position (x, y) on the mounted stage. */
@@ -56,9 +59,9 @@ const firePointer = (stage: Konva.Stage, type: string, x: number, y: number, opt
         clientY: y,
         button: opts.button ?? 0,
         detail: opts.detail ?? 1,
-        shiftKey: false,
-        ctrlKey: false,
-        metaKey: false,
+        shiftKey: opts.shiftKey ?? false,
+        ctrlKey: opts.ctrlKey ?? false,
+        metaKey: opts.metaKey ?? false,
         preventDefault: () => undefined,
         stopPropagation: () => undefined,
     };
@@ -66,6 +69,12 @@ const firePointer = (stage: Konva.Stage, type: string, x: number, y: number, opt
     act(() => {
         stage.fire(type, { evt: evt as unknown as PointerEvent, target: stage });
     });
+};
+
+/** World (hm) → pane screen coordinates, via the mounted content layer. */
+const toScreen = (stage: Konva.Stage, x: number, y: number): { x: number; y: number } => {
+    const layer = stage.getLayers().at(-1)!;
+    return layer.getAbsoluteTransform().point({ x, y });
 };
 
 beforeEach(() => {
@@ -431,5 +440,273 @@ describe('PreviewStage resize commit resets the Konva node scale (Bug 1)', () =>
         } finally {
             Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
         }
+    });
+});
+
+/**
+ * Phase 3 selection & resize semantics:
+ * - item 1: corners-only anchors for a single aspect-default node.
+ * - item 4: multi-selection drag preserves the selection; a no-move click collapses.
+ * - item 6: text live-resize is box-only (glyphs constant, live == commit).
+ */
+describe('PreviewStage P3 selection & resize semantics', () => {
+    const rectNode = (id: string, x: number, y: number): Node => ({
+        id,
+        parentId: null,
+        type: 'shape',
+        shape: 'rectangle',
+        visible: true,
+        locked: false,
+        transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        size: { w: 1000, h: 1000 },
+    });
+
+    const qrNode = (id: string): Node => ({
+        id,
+        parentId: null,
+        type: 'qr',
+        visible: true,
+        locked: false,
+        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        size: { w: 1000, h: 1000 },
+        data: { kind: 'static', value: 'payload' },
+    });
+
+    const textNode = (id: string): Node => ({
+        id,
+        parentId: null,
+        type: 'text',
+        visible: true,
+        locked: false,
+        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        size: { w: 1000, h: 500 },
+        text: { kind: 'static', value: 'hello world' },
+        fontSize: 300,
+    });
+
+    const mountSelection = (nodes: Node[], selected: string[]) => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({ id: 'doc-1', now: 1_700_000_000, backingW: 4000, backingH: 3000, nodes }),
+            selectedNodeIds: selected,
+            activeTool: 'select',
+            snapEnabled: false,
+        });
+        render(<PreviewStage />);
+        const stage = Konva.stages[Konva.stages.length - 1] as Konva.Stage;
+        if (!stage) throw new Error('PreviewStage did not mount a Konva stage');
+        return stage;
+    };
+
+    describe('item 1 — corners-only anchors for aspect-default nodes', () => {
+        it('shows only the four corners for a single QR selection', () => {
+            const stage = mountSelection([qrNode('q')], ['q']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            expect(transformer.enabledAnchors()).toEqual([
+                'top-left',
+                'top-right',
+                'bottom-left',
+                'bottom-right',
+            ]);
+        });
+
+        it('keeps all eight anchors for a single text selection (free resize)', () => {
+            const stage = mountSelection([textNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            expect(transformer.enabledAnchors()).toHaveLength(8);
+            expect(transformer.enabledAnchors()).toContain('middle-left');
+        });
+
+        it('switches the anchor set when the selection changes qr → text in one mounted component', () => {
+            const stage = mountSelection([qrNode('q'), textNode('t')], ['q']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            // A single qr is aspect-default: corners only.
+            expect(transformer.enabledAnchors()).toHaveLength(4);
+
+            act(() => {
+                useStore.setState({ selectedNodeIds: ['t'] });
+            });
+
+            // Text is free: all eight anchors. The `undefined` prop must reset
+            // Konva's default rather than stick at the previous four.
+            expect(transformer.enabledAnchors()).toHaveLength(8);
+            expect(transformer.enabledAnchors()).toContain('middle-left');
+        });
+
+        it('keeps free resize (eight anchors, no ratio lock) for a mixed selection', () => {
+            const stage = mountSelection([qrNode('q'), rectNode('r', 3000, 0)], ['q', 'r']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            expect(transformer.enabledAnchors()).toHaveLength(8);
+            expect(transformer.keepRatio()).toBe(false);
+        });
+    });
+
+    describe('item 4 — preserve multi-selection on drag', () => {
+        it('moves the whole selection when dragging an already-selected node', () => {
+            const stage = mountSelection([rectNode('a', 0, 0), rectNode('b', 2000, 0)], ['a', 'b']);
+            const from = toScreen(stage, 500, 500); // inside node a
+
+            firePointer(stage, 'pointerdown', from.x, from.y);
+            firePointer(stage, 'pointermove', from.x + 30, from.y + 20);
+            firePointer(stage, 'pointerup', from.x + 30, from.y + 20);
+
+            const doc = useStore.getState().currentDoc!;
+            const a = doc.nodes.find((entry) => entry.id === 'a')!;
+            const b = doc.nodes.find((entry) => entry.id === 'b')!;
+            // Both moved by the same delta (10 px → the selection did not collapse).
+            expect(a.transform.x).toBeGreaterThan(0);
+            expect(b.transform.x).toBeGreaterThan(2000);
+            expect(b.transform.x - 2000).toBe(a.transform.x);
+        });
+
+        it('collapses to the hit node on a plain click without movement', () => {
+            const stage = mountSelection([rectNode('a', 0, 0), rectNode('b', 2000, 0)], ['a', 'b']);
+            const from = toScreen(stage, 500, 500); // inside node a
+
+            firePointer(stage, 'pointerdown', from.x, from.y);
+            firePointer(stage, 'pointerup', from.x, from.y);
+
+            expect(useStore.getState().selectedNodeIds).toEqual(['a']);
+            const doc = useStore.getState().currentDoc!;
+            const a = doc.nodes.find((entry) => entry.id === 'a')!;
+            expect(a.transform.x).toBe(0);
+        });
+
+        it('does not move anything on sub-threshold jitter, and still collapses on release', () => {
+            const stage = mountSelection([rectNode('a', 0, 0), rectNode('b', 2000, 0)], ['a', 'b']);
+            const from = toScreen(stage, 500, 500); // inside node a
+
+            firePointer(stage, 'pointerdown', from.x, from.y);
+            // ~2.2 screen px of OS jitter: below the 3 px collapse threshold.
+            firePointer(stage, 'pointermove', from.x + 2, from.y + 1);
+            firePointer(stage, 'pointerup', from.x + 2, from.y + 1);
+
+            // It was a click, so the selection collapses to the hit node ...
+            expect(useStore.getState().selectedNodeIds).toEqual(['a']);
+            // ... but no node moved and no undo entry was minted.
+            const state = useStore.getState();
+            const a = state.currentDoc!.nodes.find((entry) => entry.id === 'a')!;
+            const b = state.currentDoc!.nodes.find((entry) => entry.id === 'b')!;
+            expect(a.transform.x).toBe(0);
+            expect(b.transform.x).toBe(2000);
+            expect(state.docPast).toHaveLength(0);
+        });
+
+        it('keeps the selection when the drag is released over the MFP/rail (must-fix #5)', () => {
+            const stage = mountSelection([rectNode('a', 0, 0), rectNode('b', 2000, 0)], ['a', 'b']);
+            const from = toScreen(stage, 500, 500); // inside node a
+
+            firePointer(stage, 'pointerdown', from.x, from.y);
+            firePointer(stage, 'pointermove', from.x + 30, from.y + 20);
+            // Released outside the stage: only the window finalizer sees it.
+            act(() => {
+                window.dispatchEvent(new Event('pointerup'));
+            });
+
+            expect(useStore.getState().selectedNodeIds).toEqual(['a', 'b']);
+            const doc = useStore.getState().currentDoc!;
+            const a = doc.nodes.find((entry) => entry.id === 'a')!;
+            const b = doc.nodes.find((entry) => entry.id === 'b')!;
+            expect(a.transform.x).toBeGreaterThan(0);
+            expect(b.transform.x).toBeGreaterThan(2000);
+            expect(b.transform.x - 2000).toBe(a.transform.x);
+            expect(useStore.getState().docPast).toHaveLength(1);
+        });
+
+        it('toggles membership on a shift-click without collapsing', () => {
+            const stage = mountSelection([rectNode('a', 0, 0), rectNode('b', 2000, 0)], ['a']);
+
+            const pb = toScreen(stage, 2500, 500); // inside node b
+            firePointer(stage, 'pointerdown', pb.x, pb.y, { shiftKey: true });
+            expect(useStore.getState().selectedNodeIds).toEqual(['a', 'b']);
+
+            const pa = toScreen(stage, 500, 500); // inside node a, already selected
+            firePointer(stage, 'pointerdown', pa.x, pa.y, { shiftKey: true });
+            expect(useStore.getState().selectedNodeIds).toEqual(['b']);
+        });
+    });
+
+    describe('item 6 — text box-only live resize', () => {
+        it('keeps the glyph scale at ±1 while resizing the box, and commits that box', () => {
+            const stage = mountSelection([textNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            expect(text, 'the Transformer must attach to the selected text node').toBeTruthy();
+            const baseW = text.width();
+            const baseH = text.height();
+
+            act(() => {
+                // Mimic the first live `transform`: Konva's scale is the gesture
+                // factor so far. The recipe bakes it into the box and resets scale.
+                text.scaleX(1.5);
+                text.scaleY(1.2);
+                transformer.fire('transformstart', {});
+                transformer.fire('transform', {});
+            });
+
+            expect(text.scaleX()).toBe(1);
+            expect(text.scaleY()).toBe(1);
+            expect(text.width()).toBeCloseTo(baseW * 1.5, 5);
+            expect(text.height()).toBeCloseTo(baseH * 1.2, 5);
+
+            act(() => {
+                // A second live event: the recipe reset the scale to ±1 above, so
+                // `width()` is the Transformer's current box. Konva's
+                // `_fitNodesInto` delta (`newTr · oldTr⁻¹`) is relative to that
+                // box, so multiplying the *current* width — not the gesture base
+                // — is what tracks the pointer.
+                text.scaleX(2);
+                text.scaleY(1.5);
+                transformer.fire('transform', {});
+            });
+
+            expect(text.scaleX()).toBe(1);
+            expect(text.width()).toBeCloseTo(baseW * 3, 5);
+            expect(text.height()).toBeCloseTo(baseH * 1.8, 5);
+
+            act(() => {
+                transformer.fire('transformend', {});
+            });
+
+            const state = useStore.getState();
+            const node = state.currentDoc!.nodes.find((entry) => entry.id === 't') as TextNode;
+            // The committed box equals the live box; glyphs never scaled.
+            expect(node.size).toEqual({ w: Math.round(baseW * 3), h: Math.round(baseH * 1.8) });
+            expect(node.fontSize).toBe(300);
+            expect(node.transform.scaleX).toBe(1);
+            expect(node.transform.scaleY).toBe(1);
+            expect(state.docPast).toHaveLength(1);
+        });
+
+        it('restores the committed text box when a box-only resize is cancelled', () => {
+            const stage = mountSelection([textNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            const baseW = text.width();
+            const baseH = text.height();
+
+            act(() => {
+                transformer.fire('transformstart', {});
+                // Box-only live resize: the box grows and the scale resets to ±1.
+                text.scaleX(1.5);
+                text.scaleY(1.5);
+                transformer.fire('transform', {});
+            });
+            expect(text.width()).toBeCloseTo(baseW * 1.5, 5);
+
+            act(() => {
+                // No `mouseup`/`transformend`: the cancel path must revert the
+                // imperatively-grown box to the committed size.
+                window.dispatchEvent(new Event('pointercancel'));
+            });
+
+            expect(text.width()).toBeCloseTo(baseW, 5);
+            expect(text.height()).toBeCloseTo(baseH, 5);
+
+            const state = useStore.getState();
+            expect(state.docPast).toHaveLength(0);
+            const node = state.currentDoc!.nodes.find((entry) => entry.id === 't')!;
+            expect(node.size).toEqual({ w: 1000, h: 500 });
+        });
     });
 });

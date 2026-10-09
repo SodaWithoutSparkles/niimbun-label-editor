@@ -29,7 +29,7 @@ import {
 import { resolveZoom, centeredViewport, zoomAt } from '../../editor/viewportController';
 import { createNodeForInsert, createPolygonNode } from '../../editor/insertActions';
 import { finishPolygonPoints, snapPolygonPointIfEnabled, type PolygonPoint } from '../../editor/polygonDrawing';
-import { selectionAfterClick, nodesInMarquee } from '../../editor/selectionModel';
+import { pointerDownSelection, nodesInMarquee } from '../../editor/selectionModel';
 import { DEFAULT_SHAPE_STROKE, DEFAULT_SHAPE_STROKE_WIDTH } from '../../core/doc/objects';
 import { isTypingTarget } from '../../utils/keyboardTarget';
 import { GRID_STEP_HM } from './gridConstants';
@@ -57,6 +57,16 @@ const SNAP_THRESHOLD_PX = 6;
 const RULER_GUTTER = 24;
 const ZOOM_MIN = 0.005;
 const ZOOM_MAX = 4;
+/**
+ * Movement (in screen px) a pointer must travel before a pointer-down on an
+ * already-selected node counts as a drag rather than a click. Below it the
+ * gesture collapses the selection to the hit node on release; OS/touch jitter
+ * routinely moves a click a pixel or two, so this must be non-zero.
+ */
+const COLLAPSE_DRAG_THRESHOLD_PX = 3;
+
+/** The four diagonal Transformer anchors (Konva's default is all eight). */
+const CORNER_ANCHORS: string[] = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
 
 /** Stable identities for an isolated mount with no sample-row provider. */
 const EMPTY_RESOLVED: ResolvedNode[] = [];
@@ -86,6 +96,14 @@ interface DragState {
     origins: Map<string, DragOrigin>;
     /** World bounds per dragged node captured at drag start, for snapping. */
     bounds: Map<string, ViewRect>;
+    /**
+     * A plain pointer-down on an already-selected node keeps the whole selection
+     * so the drag moves all of it; this id is where the selection collapses if
+     * the gesture turns out to be a click (no movement). `null` otherwise.
+     */
+    collapseTo: string | null;
+    /** Set once the pointer has travelled past the click/drag threshold. */
+    moved: boolean;
 }
 
 const matrixForViewport = (viewport: Viewport): Mat2D => {
@@ -192,6 +210,14 @@ export const PreviewStage: React.FC = () => {
      * — the commit needs it to know corner (aspect) vs side (free-stretch) (#13).
      */
     const activeAnchorRef = useRef<string | null>(null);
+    /**
+     * Set by the Transformer `onTransform` handler for a single-text selection,
+     * where the live gesture is implemented as the Konva "resize without
+     * scaling" recipe: the box is scaled imperatively and the node scale is
+     * reset. `handleTransformEnd` reads the live `width()/height()` (not
+     * `base × scale`) when this is set. Cleared at gesture start and end.
+     */
+    const boxOnlyTextRef = useRef(false);
 
     const backing = useMemo(
         () => (doc ? { backingW: doc.label.backingW, backingH: doc.label.backingH } : null),
@@ -270,7 +296,17 @@ export const PreviewStage: React.FC = () => {
         [flatResolved],
     );
     const guides = useMemo(() => (doc ? resolveGuides(doc) : []), [doc]);
-    const keepOutIds = useMemo(() => (doc ? nodesIntersectNonPrintable(doc) : []), [doc]);
+    const keepOutIds = useMemo(() => {
+        if (!doc) return [];
+        // Symbols/images are drawn `contain`, so sample the fitted drawn rect
+        // (from the prepared asset sizes) rather than the raw box; a letterboxed
+        // symbol whose box exceeds its content must not falsely warn.
+        const assetSizes = new Map<string, { widthPx: number; heightPx: number }>();
+        for (const [id, asset] of assets) {
+            assetSizes.set(id, { widthPx: asset.widthPx, heightPx: asset.heightPx });
+        }
+        return nodesIntersectNonPrintable(doc, assetSizes.size > 0 ? assetSizes : undefined);
+    }, [doc, assets]);
     // Preview warnings are aggregated by the pure `buildPreviewWarnings` and
     // published under `preview`, scoped to the document id. The effect owns the
     // cleanup: on doc change/unmount it drops only the group it published, so a
@@ -388,6 +424,15 @@ export const PreviewStage: React.FC = () => {
         return node ? preservesAspectByDefault(node) : false;
     }, [selectedNodeIds, doc]);
 
+    // A single selected text node drives the box-only live-resize recipe (item 6):
+    // glyphs keep their size, only the box reflows. Read from the committed doc,
+    // which stays at the pre-gesture baseline throughout the transform.
+    const boxOnlyTextSource = useMemo<TextNode | null>(() => {
+        if (selectedNodeIds.length !== 1 || !doc) return null;
+        const node = doc.nodes.find((n) => n.id === selectedNodeIds[0]);
+        return node && node.type === 'text' ? node : null;
+    }, [selectedNodeIds, doc]);
+
     const registerRef = useCallback((id: string, node: Konva.Node | null) => {
         if (node) nodeRefs.current.set(id, node);
         else nodeRefs.current.delete(id);
@@ -440,7 +485,7 @@ export const PreviewStage: React.FC = () => {
     }, [doc?.meta.id, resetPolygonDraft]);
 
     const beginDrag = useCallback(
-        (world: Point, ids: readonly string[]) => {
+        (world: Point, ids: readonly string[], collapseTo: string | null = null) => {
             const origins = new Map<string, DragOrigin>();
             const bounds = new Map<string, ViewRect>();
             if (!doc) return;
@@ -450,7 +495,7 @@ export const PreviewStage: React.FC = () => {
                 const box = nodeBoundsRef.current.get(id);
                 if (box) bounds.set(id, box);
             }
-            dragRef.current = { startWorld: world, origins, bounds };
+            dragRef.current = { startWorld: world, origins, bounds, collapseTo, moved: false };
         },
         [doc],
     );
@@ -523,15 +568,21 @@ export const PreviewStage: React.FC = () => {
 
             const additive = event.evt.shiftKey || event.evt.ctrlKey || event.evt.metaKey;
             const hitId = hitTestWorld(world, targets);
-            const nextSelection = selectionAfterClick(selectedNodeIds, hitId, additive);
+            const { selection, collapseTo } = pointerDownSelection(selectedNodeIds, hitId, additive);
 
             if (hitId !== null) {
-                if (!additive && !selectedNodeIds.includes(hitId)) selectNode(hitId);
-                else selectNodes(nextSelection);
+                // Only rewrite the selection when it actually changed: a plain
+                // pointer-down on an already-selected node must keep the whole
+                // selection (so the drag moves all of it) and defer the
+                // click-to-focus collapse to `finalizeGesture`.
+                const changed =
+                    selection.length !== selectedNodeIds.length ||
+                    selection.some((id, index) => id !== selectedNodeIds[index]);
+                if (changed) selectNodes(selection);
                 // A plain click begins a move of exactly the selection the user
-                // now sees (must-fix #11); using the pre-click list moved nodes
-                // that a collapsing click had just deselected.
-                if (!additive) beginDrag(world, nextSelection);
+                // now sees (must-fix #11); the deferred collapse is carried into
+                // the drag state so a no-move release can apply it.
+                if (!additive) beginDrag(world, selection, collapseTo);
                 return;
             }
 
@@ -598,6 +649,19 @@ export const PreviewStage: React.FC = () => {
             const world = screenToWorld(pointer, viewport);
             let dx = world.x - drag.startWorld.x;
             let dy = world.y - drag.startWorld.y;
+
+            // Distinguish a click from a drag: OS/touch jitter moves the pointer
+            // a pixel or two, so require a small screen-space threshold before
+            // the gesture counts as a real move. Below it a plain pointer-down on
+            // a selected node collapses to that node on release (finalizeGesture).
+            if (!drag.moved && Math.hypot(dx, dy) > COLLAPSE_DRAG_THRESHOLD_PX / viewport.zoom) {
+                drag.moved = true;
+            }
+            // Below the threshold this is still a click candidate: move nothing.
+            // Running the snap search / `updateNodeTransient` here would shift the
+            // node by the jitter and (via `commitDoc` on release) mint an undo
+            // entry for a plain click. `finalizeGesture` collapses the selection.
+            if (!drag.moved) return;
 
             if (snapEnabled) {
                 const movingIds = new Set(drag.origins.keys());
@@ -670,7 +734,8 @@ export const PreviewStage: React.FC = () => {
      * read it — the transform no-op (must-fix #1).
      */
     const finalizeGesture = useCallback(() => {
-        const hadGesture = panRef.current !== null || dragRef.current !== null || transformingRef.current;
+        const drag = dragRef.current;
+        const hadGesture = panRef.current !== null || drag !== null || transformingRef.current;
         const wasTransforming = transformingRef.current;
         panRef.current = null;
         dragRef.current = null;
@@ -696,7 +761,22 @@ export const PreviewStage: React.FC = () => {
         // A live transform has no transient baseline yet (the patch is applied
         // in `handleTransformEnd`), so this is a no-op for it.
         commitDoc();
-    }, [commitDoc]);
+        // A plain pointer-down on an already-selected node started a
+        // whole-selection move. If the pointer never moved, it was a click, so
+        // collapse to the hit node now — the one sanctioned selection change
+        // here (must-fix #5 only forbids clearing a fresh selection on release
+        // over the MFP/rail; a real drag leaves `collapseTo` unmoved and the
+        // selection untouched).
+        if (drag && drag.collapseTo && !drag.moved) {
+            // Skip the no-op collapse: this runs on every click of an
+            // already-selected node, and `selectNodes` mints a fresh array even
+            // when the selection is unchanged, forcing a full re-render.
+            const live = useStore.getState().selectedNodeIds;
+            if (!(live.length === 1 && live[0] === drag.collapseTo)) {
+                selectNodes([drag.collapseTo]);
+            }
+        }
+    }, [commitDoc, selectNodes]);
 
     /**
      * Re-apply each selected non-group node's committed transform from `doc`.
@@ -713,6 +793,13 @@ export const PreviewStage: React.FC = () => {
             konvaNode.position({ x: source.transform.x, y: source.transform.y });
             konvaNode.rotation(source.transform.rotDeg);
             konvaNode.scale({ x: source.transform.scaleX, y: source.transform.scaleY });
+            // The box-only text recipe (item 6) writes the box imperatively; a
+            // cancel must restore it, or the abandoned live size would linger
+            // until the next unrelated re-render.
+            if (source.type === 'text') {
+                const box = nodeSize(source);
+                konvaNode.setAttrs({ width: box.w, height: box.h });
+            }
         }
         transformerRef.current?.forceUpdate();
         layerRef.current?.batchDraw();
@@ -748,6 +835,10 @@ export const PreviewStage: React.FC = () => {
             // and reverted, so this is skipped.
             if (transformingRef.current) {
                 transformingRef.current = false;
+                // This fallback bypasses `handleTransformEnd`, so clear the
+                // box-only flag here too — otherwise a later non-text gesture
+                // would inherit it and commit against `node.width()`.
+                boxOnlyTextRef.current = false;
                 revertSelectedNodesFromDoc();
             }
         }
@@ -853,6 +944,41 @@ export const PreviewStage: React.FC = () => {
     }, [clearActiveTool, clearNodeSelection, activeTool, finishPolygon]);
 
     /**
+     * Live box-only text resize (item 6): the Konva "resize without scaling"
+     * recipe. The Transformer mutates the node's scale in place; while the
+     * selection is a single text node we bake the live scale into the box
+     * (`width`/`height`) and reset the node scale to its sign, so the glyphs
+     * keep their size and only the box reflows.
+     *
+     * The multiply-by-current-box is correct because this recipe resets the node
+     * scale to its sign (±1) on every event, so `node.width()` always equals the
+     * Transformer's current box. Konva's `_fitNodesInto` computes the live scale
+     * as `delta = newTr · oldTr⁻¹` from the node's *current* transform, i.e. a
+     * delta relative to that box — reading the gesture-start base would compound
+     * it. The resolved doc is not re-rendered mid-gesture, so these imperative
+     * attrs persist until `handleTransformEnd` commits and react-konva
+     * re-applies `width`/`height` from the new box.
+     */
+    const handleTransform = useCallback(() => {
+        if (!boxOnlyTextSource) return;
+        // A rotation-only gesture has no resize to bake; leave the box/scale
+        // alone and let `handleTransformEnd` commit the rotation normally.
+        if (activeAnchorRef.current === 'rotater') return;
+        const konvaNode = nodeRefs.current.get(boxOnlyTextSource.id);
+        if (!konvaNode) return;
+        const scaleX = konvaNode.scaleX();
+        const scaleY = konvaNode.scaleY();
+        konvaNode.setAttrs({
+            width: konvaNode.width() * Math.abs(scaleX),
+            height: konvaNode.height() * Math.abs(scaleY),
+            // Preserve the flip sign, matching the commit's scale collapse.
+            scaleX: Math.sign(scaleX) || 1,
+            scaleY: Math.sign(scaleY) || 1,
+        });
+        boxOnlyTextRef.current = true;
+    }, [boxOnlyTextSource]);
+
+    /**
      * Batch a Transformer gesture into **one** undo entry (must-fix #3): apply
      * every selected node's resize + rotation transiently, then a single
      * `commitDoc`. The patch is derived from the **live Konva node** geometry —
@@ -875,6 +1001,10 @@ export const PreviewStage: React.FC = () => {
     const handleTransformEnd = useCallback(
         () => {
             transformingRef.current = false;
+            // Read once and clear: a stale flag must never leak into the next
+            // (non-text) gesture.
+            const boxOnly = boxOnlyTextRef.current;
+            boxOnlyTextRef.current = false;
             if (!doc) return;
             if (abortingRef.current) {
                 // An aborted gesture (pointercancel / OS focus steal) must revert
@@ -898,7 +1028,14 @@ export const PreviewStage: React.FC = () => {
                 // Konva node's scale/rotation in place during a gesture, while
                 // the document stays at the pre-gesture baseline.
                 const base = nodeBaseExtent(source);
-                const target = transformerTargetSize(base, konvaNode.scaleX(), konvaNode.scaleY());
+                // Box-only text (item 6): the live recipe already baked the
+                // gesture scale into the node's width/height and reset the scale
+                // to its sign, so the box — not `base × scale` — is the commit
+                // target. Live equals commit because the same box is what the
+                // user saw reflow.
+                const target = boxOnly
+                    ? { w: konvaNode.width(), h: konvaNode.height() }
+                    : transformerTargetSize(base, konvaNode.scaleX(), konvaNode.scaleY());
                 // The live gesture's actual uniform/free choice, read straight
                 // off the scales: `|scaleX| == |scaleY|` exactly when Konva held
                 // the ratio (a corner with `keepRatio` on or Shift). This is what
@@ -931,13 +1068,19 @@ export const PreviewStage: React.FC = () => {
                 // ran uniform (`keepRatio` on), so `liveUniform` is authoritative
                 // there; a non-aspect corner locked only when a modifier forced
                 // it, guarded by `liveUniform` to separate Shift from Alt.
-                const preserveAspect = commitPreservesAspect(
-                    source,
-                    anchor,
-                    inverted,
-                    selectedNodesPreserveAspect,
-                    liveUniform,
-                );
+                //
+                // Box-only text is always free: the live glyph size is constant
+                // (the recipe resets the scale), so holding the ratio at commit
+                // would scale `fontSize` and diverge from what was shown live.
+                const preserveAspect = boxOnly
+                    ? false
+                    : commitPreservesAspect(
+                          source,
+                          anchor,
+                          inverted,
+                          selectedNodesPreserveAspect,
+                          liveUniform,
+                      );
                 updateNodeTransient(
                     id,
                     transformEndPatch(
@@ -1092,13 +1235,22 @@ export const PreviewStage: React.FC = () => {
                         ref={transformerRef}
                         rotateEnabled
                         keepRatio={selectedNodesPreserveAspect}
+                        // A single aspect-default node (qr/image/ellipse) may only
+                        // resize from the four corners, so a side handle can never
+                        // commit a non-uniform box. Everything else (text, mixed
+                        // selections) keeps Konva's default all-eight free resize.
+                        enabledAnchors={selectedNodesPreserveAspect ? CORNER_ANCHORS : undefined}
                         onTransformStart={() => {
                             transformingRef.current = true;
+                            // A fresh gesture never inherits the previous text
+                            // box-only flag.
+                            boxOnlyTextRef.current = false;
                             // Capture the anchor now: Konva tears its active
                             // anchor down while ending the gesture.
                             const transformer = transformerRef.current;
                             activeAnchorRef.current = transformer ? transformer.getActiveAnchor() : null;
                         }}
+                        onTransform={handleTransform}
                         onTransformEnd={handleTransformEnd}
                         borderStroke="#3b82f6"
                         anchorStroke="#3b82f6"

@@ -343,6 +343,14 @@ export const shapeKindPatch = (node: ShapeNode, next: ShapeKind): NodePatch => {
 export const nodeWorldBounds = (node: Node, byId: ReadonlyMap<string, Node>) =>
     transformedBounds(nodeLocalPoints(node), effectiveTransform(node, byId));
 
+/**
+ * True when a node carries real local geometry. A `group` (and a point-shape
+ * with no points) has none: `nodeLocalPoints` returns `[]`, so `nodeWorldBounds`
+ * is the degenerate `{0,0,0,0}` box at the world origin. Such a fake origin must
+ * never win a tiling sort or be aligned, so tile/align skip these nodes.
+ */
+export const hasLocalGeometry = (node: Node): boolean => nodeLocalPoints(node).length > 0;
+
 /** Invert only the linear (a,b,c,d) part of a matrix; `null` when singular. */
 const invertLinear = (m: Mat2D): Mat2D | null => {
     const det = m.a * m.d - m.b * m.c;
@@ -363,6 +371,10 @@ const parentMatrix = (node: Node, byId: ReadonlyMap<string, Node>): Mat2D => {
  * (`nodeLocalPoints`, so line/polygon work too). The resulting world delta is
  * converted into the parent-local space before it is folded into `transform.x/y`,
  * so aligning under a translated/rotated parent does not jump.
+ *
+ * A geometry-less node (a group, or a point-shape with no points) has no bounds
+ * to align — its degenerate world box sits at the origin — so this returns
+ * `null` and the caller leaves it untouched.
  */
 export const alignTransformPatch = (
     node: Node,
@@ -371,6 +383,7 @@ export const alignTransformPatch = (
     backingH: number,
     edge: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom',
 ): NodePatch | null => {
+    if (!hasLocalGeometry(node)) return null;
     const bounds = nodeWorldBounds(node, byId);
     let worldDx = 0;
     let worldDy = 0;
@@ -381,6 +394,21 @@ export const alignTransformPatch = (
     else if (edge === 'middle') worldDy = Math.round(backingH / 2 - (bounds.y + bounds.h / 2));
     else worldDy = Math.round(backingH - (bounds.y + bounds.h));
 
+    return translateWorldPatch(node, byId, worldDx, worldDy);
+};
+
+/**
+ * Convert a world-space translation into the node's parent-local space and fold
+ * it into `transform.x/y`. Used by both align and tile; the returned patch keeps
+ * the node's size/rotation intact (translation only). `null` on a singular
+ * parent chain (unmappable delta).
+ */
+export const translateWorldPatch = (
+    node: Node,
+    byId: ReadonlyMap<string, Node>,
+    worldDx: number,
+    worldDy: number,
+): NodePatch | null => {
     const inverse = invertLinear(parentMatrix(node, byId));
     if (!inverse) return null;
     const localDx = inverse.a * worldDx + inverse.c * worldDy;
@@ -392,6 +420,62 @@ export const alignTransformPatch = (
             y: roundHm(node.transform.y + localDy),
         },
     };
+};
+
+/** Gap between tiled neighbours in hm (1/100 mm): 100 hm = 1 mm. */
+export const TILE_GAP_HM = 100;
+
+/** World-space center along the tiling axis (`vertical` stacks by cy). */
+const centerAlong = (node: Node, byId: ReadonlyMap<string, Node>, axis: 'vertical' | 'horizontal'): number => {
+    const bounds = nodeWorldBounds(node, byId);
+    return axis === 'vertical' ? bounds.y + bounds.h / 2 : bounds.x + bounds.w / 2;
+};
+
+/**
+ * Target world top-left for every node in a vertical/horizontal tile. The
+ * anchor is the first node ordered by world center along the axis (smallest `cy`
+ * for vertical, smallest `cx` for horizontal) and keeps its position. Each
+ * following node is placed adjacent to the previous one with a fixed `gapHm`,
+ * cross-axis-aligned to the anchor's bounds edge. Tiling only translates, so
+ * each node keeps its own size.
+ *
+ * Geometry-less nodes (groups, empty point-shapes) are dropped entirely: their
+ * degenerate `{0,0,0,0}` world bounds would otherwise sort to the fake origin,
+ * become the anchor, and tile the whole selection into the world origin. They
+ * are neither in the returned map nor eligible as the anchor.
+ */
+export const tileLayout = (
+    nodes: readonly Node[],
+    byId: ReadonlyMap<string, Node>,
+    axis: 'vertical' | 'horizontal',
+    gapHm: number,
+): Map<string, { x: number; y: number }> => {
+    const targets = new Map<string, { x: number; y: number }>();
+    const ordered = nodes
+        .filter(hasLocalGeometry)
+        .sort((a, b) => centerAlong(a, byId, axis) - centerAlong(b, byId, axis));
+    const anchor = ordered[0];
+    if (!anchor) return targets;
+    const anchorBounds = nodeWorldBounds(anchor, byId);
+    const cross = axis === 'vertical' ? anchorBounds.x : anchorBounds.y;
+    let cursor = axis === 'vertical' ? anchorBounds.y : anchorBounds.x;
+    for (const node of ordered) {
+        targets.set(node.id, axis === 'vertical' ? { x: cross, y: cursor } : { x: cursor, y: cross });
+        const bounds = nodeWorldBounds(node, byId);
+        cursor += (axis === 'vertical' ? bounds.h : bounds.w) + gapHm;
+    }
+    return targets;
+};
+
+/** Patch that translates a node so its world top-left lands on the target. */
+export const tileTransformPatch = (
+    node: Node,
+    byId: ReadonlyMap<string, Node>,
+    targetWorldX: number,
+    targetWorldY: number,
+): NodePatch | null => {
+    const bounds = nodeWorldBounds(node, byId);
+    return translateWorldPatch(node, byId, targetWorldX - bounds.x, targetWorldY - bounds.y);
 };
 
 export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
@@ -840,6 +924,28 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
         }
     };
 
+    /**
+     * Tile the selection along one axis (H2 / mixed-selection alignment). The
+     * nodes are ordered by world center; the anchor (first) keeps its position
+     * and every following node is placed adjacent with `TILE_GAP_HM`, aligned to
+     * the anchor's bounds edge. Tiling only translates, so sizes are preserved.
+     * Geometry-less nodes (groups, empty point-shapes) are skipped entirely —
+     * `tileLayout` already omits them, and this guard keeps the commit honest.
+     */
+    const tile = (axis: 'vertical' | 'horizontal') => {
+        const doc = useStore.getState().currentDoc;
+        if (!doc) return;
+        const byId = nodeLookup(doc.nodes);
+        const targets = tileLayout(selected, byId, axis, TILE_GAP_HM);
+        for (const node of selected) {
+            if (!hasLocalGeometry(node)) continue;
+            const target = targets.get(node.id);
+            if (!target) continue;
+            const patch = tileTransformPatch(node, byId, target.x, target.y);
+            if (patch) updateNode(node.id, patch);
+        }
+    };
+
     const hasTransform = model.fields.some((field) => field.scope === 'transform');
 
     // The selected node's referenced asset, if any, for the name/alt rename UI.
@@ -890,6 +996,17 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                             className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-300 hover:bg-gray-700"
                         >
                             {t(ALIGN_LABEL_KEYS[edge])}
+                        </button>
+                    ))}
+                    {(['vertical', 'horizontal'] as const).map((axis) => (
+                        <button
+                            key={axis}
+                            type="button"
+                            onClick={() => tile(axis)}
+                            title={t(TILE_LABEL_KEYS[axis])}
+                            className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-300 hover:bg-gray-700"
+                        >
+                            {t(TILE_LABEL_KEYS[axis])}
                         </button>
                     ))}
                 </div>
@@ -1014,4 +1131,9 @@ const ALIGN_LABEL_KEYS = {
     top: 'editor.mfp.alignTop',
     middle: 'editor.mfp.alignMiddle',
     bottom: 'editor.mfp.alignBottom',
+} as const;
+
+const TILE_LABEL_KEYS = {
+    vertical: 'editor.mfp.tileVertical',
+    horizontal: 'editor.mfp.tileHorizontal',
 } as const;

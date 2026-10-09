@@ -38,6 +38,7 @@ export const Header: React.FC = () => {
     const undoDoc = useStore(state => state.undoDoc);
     const redoDoc = useStore(state => state.redoDoc);
     const cloneNode = useStore(state => state.cloneNode);
+    const selectNodes = useStore(state => state.selectNodes);
     const removeNode = useStore(state => state.removeNode);
     const moveNodeZ = useStore(state => state.moveNodeZ);
     const groupNodes = useStore(state => state.groupNodes);
@@ -55,7 +56,14 @@ export const Header: React.FC = () => {
     const viewRotation = useStore(state => state.viewRotation);
     const toggleViewRotation = useStore(state => state.toggleViewRotation);
 
-    const editClone = () => selectedNodeIds.forEach((id) => cloneNode(id));
+    // Duplicate every selected root, then select the clones (H2): selecting
+    // replaces the selection, so the sources are deselected automatically.
+    const editClone = () => {
+        const clonedIds = selectedNodeIds
+            .map((id) => cloneNode(id))
+            .filter((id): id is string => id !== null);
+        if (clonedIds.length > 0) selectNodes(clonedIds);
+    };
     const editDelete = () => selectedNodeIds.forEach((id) => removeNode(id));
     const editMoveLayer = (direction: 'up' | 'down') =>
         selectedNodeIds.forEach((id) => moveNodeZ(id, direction));
