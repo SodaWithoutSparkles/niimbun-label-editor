@@ -37,9 +37,13 @@ identity fit into the shared render pipeline. Read before touching
 - `qrImage.ts` / `barcodeImage.ts` — **bwip-js** (see below).
 - `konvaFactory.createKonvaNode(node, assets?)` + shared `fitImageAttrs`; a fitted
   image is wrapped in a **transform group** so the fit offset and the node
-  transform compose. The policy mask (`buildPolicyMask`) paints the **drawn
-  rect** for these leaves (letterbox uncovered) and **only when an asset exists**
-  — so mask-topmost == raster-topmost. `applyInkDefaults` skips `Konva.Image`.
+  transform compose. The policy mask (`buildPolicyMask`, `maskAssetSceneFunc`)
+  paints an **ink stencil**, not the drawn rect: the prepared asset is tinted to
+  the policy key and only its **opaque pixels** claim the leaf's policy; opaque
+  `fill` claims the whole rect. Transparent pixels (a photo's clear area, a
+  `fill:'transparent'` symbol's light modules + quiet zone) leave whatever policy
+  is on the leaf below, so mask-topmost == raster-topmost. `applyInkDefaults`
+  skips `Konva.Image`.
 - `rasterizeResolved`/`renderLabelPage` take `assets?: AssetDeps`;
   `renderLabelPage` calls `fonts.ensureFonts(doc)` first (a rejection degrades to
   fallback fonts). `RenderedLabelPage.warnings?` carries the warning map.

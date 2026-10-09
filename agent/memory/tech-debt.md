@@ -40,7 +40,7 @@ chore = do opportunistically, not phase-blocking.
 
 | D-32 | editor | polygon draw finishes on raw `event.evt.detail < 2`, which also drops a deliberate fast corner click (<500 ms, few px) and can commit a shape with a missing vertex | rare lost vertex on quick sharp corners | post-v1 (time+distance gate) |
 | D-33 | editor | `Modal` captures the opener in a passive effect, so a nested dialog can't use `autoFocus` without breaking focus restore; the P7 `CalibrationDialog` leaves its slider un-autofocused | keyboard users must Tab to the slider | chore (rework Modal focus capture) |
-| D-34 | render/test | P3 policy coverage-mask tests assert colour presence, not the resulting threshold ink for light/low-alpha fills | weaker print-parity regression guard | chore |
+| D-34 | render/test | P3 coverage-mask tests asserted colour presence, not threshold ink for light/low-alpha fills; P2 superseded the coverage mask with the **ink stencil** (`maskAssetSceneFunc`) and R8 added ink-aware coverage tests (`renderLabelPage.mask.test.ts`) asserting transparent pixels inherit the under-leaf policy (error-diffusion across policy boundaries stays D-05) | — | **CLOSED** (P2 ink mask + R8 tests) |
 | D-35 | editor | warning center: the CSV inline amber list is component state (lost on tab switch) while the store group persists; print warnings clear when the print dialog closes | two views can briefly disagree | chore (source the inline list from the store group) |
 
 **Owner UI-test round (2026-10-06):** `agent/known-issues/2026-10-06_round-1.md` (14 items) was
