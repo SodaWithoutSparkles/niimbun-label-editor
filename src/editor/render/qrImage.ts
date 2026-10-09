@@ -65,7 +65,16 @@ export const renderQr = (
         toCanvas(canvas, makeOpts(scale));
         if (!canvas.width || !canvas.height) return null;
 
-        return { canvas, belowMinModule: scale < minModulePx };
+        // The verdict is on the **printed module**, not the integer raster scale.
+        // bwip's `qrcode` lays down 2 device px per module at scale 1, so the
+        // scale-1 `baseW` encodes `baseW / 2` modules. The symbol fills the
+        // authored box (owner decision D), so the limiting box side divided by the
+        // module count is the printed module pitch. `scale` is a unitless integer
+        // and was wrongly compared to `minModulePx` (a 2× unit error). Other
+        // bcids must be measured the same way before reusing this formula (P11).
+        const moduleCount = Math.max(1, baseW / 2);
+        const limitingPx = Math.min(targetW, targetH);
+        return { canvas, belowMinModule: limitingPx / moduleCount < minModulePx };
     } catch {
         return null;
     }

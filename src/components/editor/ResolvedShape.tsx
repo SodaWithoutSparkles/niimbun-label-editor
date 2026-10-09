@@ -5,6 +5,7 @@ import {
     fitImageAttrs,
     matrixToKonvaAttrs,
     shapeStyleAttrs,
+    symbolSceneFunc,
 } from '../../editor/render/konvaFactory';
 import type { AssetWarning, PreparedAsset } from '../../editor/render/assets';
 import type { ResolvedNode } from '../../editor/render/resolve';
@@ -223,7 +224,14 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                 );
                 return (
                     <KonvaGroup ref={ref} {...attrs} listening={false}>
-                        <KonvaImage image={asset.image} {...rect} {...(crop ? { crop } : {})} />
+                        {/* qr/barcode draw nearest-neighbour (option D) so upscaled
+                            module edges stay hard; photos keep default smoothing. */}
+                        <KonvaImage
+                            image={asset.image}
+                            {...rect}
+                            {...(crop ? { crop } : {})}
+                            {...(node.type !== 'image' ? { sceneFunc: symbolSceneFunc } : {})}
+                        />
                         {assetWarning && (
                             <Text
                                 text="⚠"

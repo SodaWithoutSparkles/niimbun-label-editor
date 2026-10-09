@@ -51,6 +51,17 @@ export function installCanvasShim(): void {
         return canvas.getContext('2d') as unknown as CanvasRenderingContext2D;
     } as typeof HTMLCanvasElement.prototype.getContext;
 
+    // `@napi-rs/canvas` unwraps a canvas-like `drawImage` source via
+    // `image._canvas`. Expose each element's napi backing surface so drawing a
+    // prepared `HTMLCanvasElement` (e.g. a bwip qr/barcode raster) into another
+    // shimmed canvas works instead of throwing on an unrecognised source.
+    Object.defineProperty(proto, '_canvas', {
+        configurable: true,
+        get(this: HTMLCanvasElement): unknown {
+            return backingFor(this);
+        },
+    });
+
     proto.toDataURL = function toDataURL(
         this: HTMLCanvasElement,
         type?: string,

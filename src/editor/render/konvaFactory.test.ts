@@ -6,7 +6,13 @@ import { createLabelDoc } from '../../core/doc/factory';
 import type { Mat2D } from '../../core/doc/derive';
 import { resolve } from './resolve';
 import type { PreparedAsset } from './assets';
-import { createKonvaNode, matrixToKonvaAttrs, shapeStyleAttrs, type ResolvedShapeNode } from './konvaFactory';
+import {
+    createKonvaNode,
+    matrixToKonvaAttrs,
+    shapeStyleAttrs,
+    symbolSceneFunc,
+    type ResolvedShapeNode,
+} from './konvaFactory';
 
 const node = (value: Record<string, unknown>): Node => value as unknown as Node;
 
@@ -181,6 +187,129 @@ describe('createKonvaNode — plain Konva, no react-konva', () => {
         expect(img.y()).toBe(0);
         expect(img.width()).toBe(1000);
         expect(img.height()).toBe(1000);
+    });
+});
+
+describe('symbol draw — nearest-neighbour sceneFunc (option D)', () => {
+    it('attaches the symbol sceneFunc to qr/barcode images but not photos', () => {
+        const localDoc = createLabelDoc({
+            backingW: 3000,
+            backingH: 2000,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 3000, h: 2000 }],
+            nodes: [
+                node({
+                    id: 'img',
+                    parentId: null,
+                    type: 'image',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    imageId: 'i1',
+                    size: { w: 100, h: 100 },
+                }),
+                node({
+                    id: 'q',
+                    parentId: null,
+                    type: 'qr',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    data: { kind: 'static', value: 'hello' },
+                    size: { w: 100, h: 100 },
+                }),
+                node({
+                    id: 'bc',
+                    parentId: null,
+                    type: 'barcode',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    data: { kind: 'static', value: '123456789012' },
+                    size: { w: 100, h: 100 },
+                }),
+            ],
+        });
+        const nodes = resolve(localDoc);
+        const assets = new Map<string, PreparedAsset>([
+            ['img', { image: {} as CanvasImageSource, widthPx: 100, heightPx: 100 }],
+            ['q', { image: {} as CanvasImageSource, widthPx: 100, heightPx: 100 }],
+            ['bc', { image: {} as CanvasImageSource, widthPx: 100, heightPx: 100 }],
+        ]);
+        const imageOf = (id: string): Konva.Image => {
+            const found = nodes.find((n) => n.id === id);
+            if (!found) throw new Error(`missing node ${id}`);
+            const group = createKonvaNode(found, assets) as Konva.Group;
+            return group.getChildren()[0] as Konva.Image;
+        };
+
+        // Photos keep Konva's default `_sceneFunc` (smoothing on).
+        expect(imageOf('img').getSceneFunc()).not.toBe(symbolSceneFunc);
+        expect(imageOf('q').getSceneFunc()).toBe(symbolSceneFunc);
+        expect(imageOf('bc').getSceneFunc()).toBe(symbolSceneFunc);
+    });
+
+    const fakeShape = (attrs: Record<string, unknown>, size: { w: number; h: number }) =>
+        ({
+            attrs,
+            width: () => size.w,
+            height: () => size.h,
+            hasFill: () => false,
+            hasStroke: () => false,
+            cornerRadius: () => 0,
+            cropX: () => 0,
+            cropY: () => 0,
+        }) as unknown as Konva.Shape;
+
+    const fakeContext = (raw: { imageSmoothingEnabled: boolean; drawImage: () => void }) =>
+        ({
+            _context: raw,
+            drawImage: () => raw.drawImage(),
+            beginPath: () => undefined,
+            rect: () => undefined,
+            closePath: () => undefined,
+            fillStrokeShape: () => undefined,
+        }) as unknown as Konva.Context;
+
+    it('disables smoothing during the draw and restores it in finally', () => {
+        let duringDraw: boolean | undefined;
+        const raw = {
+            imageSmoothingEnabled: true,
+            drawImage: () => {
+                duringDraw = raw.imageSmoothingEnabled;
+            },
+        };
+        symbolSceneFunc(fakeContext(raw), fakeShape({ image: {} }, { w: 20, h: 10 }));
+
+        expect(duringDraw, 'smoothing off for the symbol draw').toBe(false);
+        expect(raw.imageSmoothingEnabled, 'context state restored').toBe(true);
+    });
+
+    it('restores smoothing even when the draw throws', () => {
+        const raw = {
+            imageSmoothingEnabled: true,
+            drawImage: () => {
+                throw new Error('boom');
+            },
+        };
+        expect(() =>
+            symbolSceneFunc(fakeContext(raw), fakeShape({ image: {} }, { w: 20, h: 10 })),
+        ).toThrow('boom');
+        expect(raw.imageSmoothingEnabled).toBe(true);
+    });
+
+    it('draws a cropped (cover) asset through the source-rect path', () => {
+        let drawCalls = 0;
+        const raw = {
+            imageSmoothingEnabled: true,
+            drawImage: () => {
+                drawCalls++;
+            },
+        };
+        const shape = fakeShape({ image: {}, cropWidth: 5, cropHeight: 5 }, { w: 40, h: 20 });
+        symbolSceneFunc(fakeContext(raw), shape);
+
+        expect(drawCalls).toBe(1);
+        expect(raw.imageSmoothingEnabled).toBe(true);
     });
 });
 

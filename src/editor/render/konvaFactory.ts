@@ -168,11 +168,76 @@ export const fitImageAttrs = (
 };
 
 /**
- * Build a `Konva.Image` for a prepared asset from {@link fitImageAttrs}.
+ * Custom `sceneFunc` for a prepared **symbol** (qr/barcode) `Konva.Image`: draw
+ * the raster with `imageSmoothingEnabled = false` so a fractional fit pitch
+ * produces hard module edges instead of antialiased greys straddling the
+ * quantizer threshold (owner decision D, P1 #13).
+ *
+ * A per-node `imageSmoothingEnabled` config is **not** honoured on the normal
+ * scene draw: `Konva.Image._useBufferCanvas()` is `false` for our images (no
+ * fill + stroke + non-1 opacity), and only that buffer path reads the attr — so
+ * the toggle must wrap the actual draw. This mirrors
+ * `Konva.Image._sceneFunc` (`konva/lib/shapes/Image.js`): crop-vs-plain
+ * `drawImage` plus the fill/stroke/corner-radius branch, and always restores the
+ * raw context state in a `finally`. Photos never use this function and keep the
+ * default smoothing.
  */
-const createFittedImage = (box: FitBox, asset: PreparedAsset): Konva.Image => {
+export const symbolSceneFunc = (context: Konva.Context, shape: Konva.Shape): void => {
+    const image = shape.attrs.image as CanvasImageSource | undefined;
+    const raw = context._context;
+    const previousSmoothing = raw.imageSmoothingEnabled;
+    raw.imageSmoothingEnabled = false;
+    try {
+        const width = shape.width();
+        const height = shape.height();
+        const cornerRadius = (shape as Konva.Image).cornerRadius();
+        if (shape.hasFill() || shape.hasStroke() || cornerRadius) {
+            context.beginPath();
+            if (cornerRadius) Konva.Util.drawRoundedRectPath(context, width, height, cornerRadius);
+            else context.rect(0, 0, width, height);
+            context.closePath();
+            context.fillStrokeShape(shape);
+        }
+        if (image) {
+            if (cornerRadius) context.clip();
+            const cropWidth = shape.attrs.cropWidth as number | undefined;
+            const cropHeight = shape.attrs.cropHeight as number | undefined;
+            if (cropWidth && cropHeight) {
+                const img = shape as Konva.Image;
+                context.drawImage(
+                    image,
+                    img.cropX(),
+                    img.cropY(),
+                    cropWidth,
+                    cropHeight,
+                    0,
+                    0,
+                    width,
+                    height,
+                );
+            } else {
+                context.drawImage(image, 0, 0, width, height);
+            }
+        }
+    } finally {
+        raw.imageSmoothingEnabled = previousSmoothing;
+    }
+};
+
+/**
+ * Build a `Konva.Image` for a prepared asset from {@link fitImageAttrs}.
+ *
+ * `symbol` selects nearest-neighbour drawing for a qr/barcode raster (option D);
+ * photos keep the default smoothing (their module grid is not a hard edge).
+ */
+const createFittedImage = (box: FitBox, asset: PreparedAsset, symbol: boolean): Konva.Image => {
     const { crop, ...rect } = fitImageAttrs(box.w, box.h, asset.widthPx, asset.heightPx, box.fit);
-    return new Konva.Image({ image: asset.image, ...rect, ...(crop ? { crop } : {}) });
+    return new Konva.Image({
+        image: asset.image,
+        ...rect,
+        ...(crop ? { crop } : {}),
+        ...(symbol ? { sceneFunc: symbolSceneFunc } : {}),
+    });
 };
 
 /** Build an offscreen plain-Konva node for a resolved node (recurses for groups). */
@@ -201,7 +266,9 @@ export const createKonvaNode = (
             // the transform on the image itself would overwrite that x/y with the
             // node's translation (contain images rendered top-left anchored).
             const imageGroup = new Konva.Group();
-            imageGroup.add(createFittedImage({ w: node.w, h: node.h, fit }, asset));
+            imageGroup.add(
+                createFittedImage({ w: node.w, h: node.h, fit }, asset, node.type !== 'image'),
+            );
             return withTransform(imageGroup, node.localTransform);
         }
         case 'text':

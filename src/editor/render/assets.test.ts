@@ -290,6 +290,37 @@ describe('qr / barcode engines', () => {
         expect(darkBBox(generated.canvas)).toEqual(darkBBox(ref));
     });
 
+    it('measures the target module pitch, not the integer raster scale (#12)', () => {
+        const text = 'https://example.com';
+        const base = baseSymbol({
+            bcid: 'qrcode',
+            text,
+            eclevel: 'M',
+            scale: 1,
+            paddingwidth: 0,
+            paddingheight: 0,
+        });
+        // bwip's qrcode draws 2 device px / module at scale 1; this payload is 25
+        // modules (version 2-M).
+        expect(base.w / 2).toBe(25);
+        const minModulePx = 3;
+
+        // 100 px / 25 modules = 4 px/module ≥ 3 → scannable. The old
+        // `scale < minModulePx` (2 < 3) wrongly flagged it.
+        const ok = renderQr(text, 'M', 100, 100, minModulePx);
+        expect(ok).not.toBeNull();
+        expect(ok?.belowMinModule).toBe(false);
+        // The raster selection is unchanged: the integer scale still fits the box.
+        expect(ok?.canvas.width).toBe(100);
+
+        // 74 px / 25 = 2.96 px/module < 3 → too small.
+        const small = renderQr(text, 'M', 74, 74, minModulePx);
+        expect(small).not.toBeNull();
+        expect(small?.belowMinModule).toBe(true);
+        // Oversized scale-1 symbol returned un-resampled (still the integer path).
+        expect(small?.canvas.width).toBe(base.w);
+    });
+
     it('renders a crisp integer-scaled barcode for a comfortably large target', () => {
         const text = '123456789012';
         const base = baseSymbol({
@@ -346,6 +377,29 @@ describe('qr / barcode engines', () => {
         expect(generated.canvas.width).toBe(base.w);
         expect(generated.canvas.height).toBe(base.h);
         expect(countDark(generated.canvas)).toBeGreaterThan(0);
+    });
+
+    it('keeps the barcode verdict as scaleX < minModulePx — parity (no change)', () => {
+        const text = '123456789012';
+        const base = baseSymbol({
+            bcid: 'code128',
+            text,
+            includetext: false,
+            paddingwidth: 0,
+            scaleX: 1,
+            scaleY: 1,
+        });
+        // A 1D narrow module IS a device-px scaleX, so the verdict stays a direct
+        // comparison (unlike QR's 2 px/module raster).
+        const large = renderBarcode(text, 'code128', 1500, 500, 3);
+        const scaleX = Math.max(1, Math.floor(1500 / base.w));
+        expect(large?.belowMinModule).toBe(scaleX < 3);
+        // A tiny target forces scaleX 1 → below the minimum.
+        const tinyTarget = Math.max(8, base.w - 1);
+        const tiny = renderBarcode(text, 'code128', tinyTarget, 20, 3);
+        const tinyScaleX = Math.max(1, Math.floor(tinyTarget / base.w));
+        expect(tiny?.belowMinModule).toBe(tinyScaleX < 3);
+        expect(tiny?.belowMinModule).toBe(true);
     });
 
     it('returns a scale-1 barcode with belowMinModule when the target is too small', () => {
