@@ -84,7 +84,7 @@ describe('createNodeForInsert', () => {
         const qr = createNodeForInsert('qr', 0, 0);
         expect(qr?.type === 'qr' && qr.data).toEqual({ kind: 'static', value: DEFAULT_QR_PAYLOAD });
         expect(qr?.type === 'qr' && qr.errorCorrection).toBe('M');
-        expect(qr?.type === 'qr' && qr.fill).toBe('transparent');
+        expect(qr?.type === 'qr' && qr.fill).toBe('#ffffff');
         // `quietZone` is deliberately absent (⇒ derived default), not seeded.
         expect(qr?.type === 'qr' && qr.quietZone).toBeUndefined();
         expect(qr?.type === 'qr' && qr.size).toEqual({ w: 1500, h: 1500 });
@@ -95,7 +95,7 @@ describe('createNodeForInsert', () => {
             value: DEFAULT_BARCODE_PAYLOAD,
         });
         expect(barcode?.type === 'barcode' && barcode.symbology).toBe('code128');
-        expect(barcode?.type === 'barcode' && barcode.fill).toBe('transparent');
+        expect(barcode?.type === 'barcode' && barcode.fill).toBe('#ffffff');
         expect(barcode?.type === 'barcode' && barcode.quietZone).toBeUndefined();
         expect(barcode?.type === 'barcode' && barcode.size).toEqual({ w: 2000, h: 800 });
     });

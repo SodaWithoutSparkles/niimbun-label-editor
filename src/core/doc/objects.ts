@@ -48,14 +48,15 @@ export type ImageFit = (typeof IMAGE_FITS)[number];
 export const DEFAULT_IMAGE_FIT: ImageFit = 'contain';
 
 /**
- * Symbol background + quiet-zone defaults (P2). `fill` mirrors the shape no-fill
- * value: `'transparent'` (default) means light modules **and** the quiet zone see
- * through to whatever is behind; a colour paints the background (and quiet zone)
- * in that colour, alpha composited. The mask stencil treats any visible
- * (non-zero-alpha) ink as claimed, so a low-alpha fill still owns the pixels it
- * tints.
+ * Symbol background + quiet-zone defaults (P2). `fill` defaults to opaque white:
+ * the symbol background (light modules **and** the quiet zone) is painted solid
+ * white. An explicit `'transparent'` opts the light modules and quiet zone to see
+ * through to whatever is behind; any other colour paints the background (and
+ * quiet zone) in that colour, alpha composited. The mask stencil treats any
+ * visible (non-zero-alpha) ink as claimed, so the opaque default owns its whole
+ * rect and even a low-alpha fill still owns the pixels it tints.
  */
-export const DEFAULT_SYMBOL_FILL = 'transparent';
+export const DEFAULT_SYMBOL_FILL = '#ffffff';
 
 /**
  * Quiet-zone width per side, in modules. QR needs ≥ 4 (ISO/IEC 18004); 1D

@@ -217,6 +217,9 @@ describe('shape style defaults shown by the inspector (#8)', () => {
             colorDefault(shapeNode({ shape: 'line', points: [[0, 0], [100, 0]], closed: false }), 'fill'),
         ).toBe('transparent');
         expect(colorDefault(shapeNode({ shape: 'polygon', closed: true }), 'fill')).toBe('transparent');
+        // A qr/barcode symbol defaults to opaque white, unlike a shape's no-fill.
+        expect(colorDefault(qrNode(), 'fill')).toBe('#ffffff');
+        expect(colorDefault(barcodeNode(), 'fill')).toBe('#ffffff');
         // An unknown colour field has no default and must not silently show black.
         expect(() => colorDefault(shapeNode(), 'notAColour')).toThrow();
     });

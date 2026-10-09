@@ -20,7 +20,7 @@ import { quietModulesOf, type GeneratedSymbol, type SymbolRenderOptions } from '
  * A **horizontal quiet zone** (default per symbology, P2) is composited around
  * the bars ourselves. `scaleX` is chosen against the **padded** width and stays
  * the integer narrow-module scale of the generated raster; `fill` (default
- * `'transparent'`) is the background/quiet-zone colour.
+ * `DEFAULT_SYMBOL_FILL`, opaque white) is the background/quiet-zone colour.
  *
  * An invalid payload for a strict format (bad EAN/UPC length, CODE39 charset…)
  * throws inside bwip-js, so everything is caught: the caller gets `null` and

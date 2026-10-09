@@ -139,7 +139,7 @@ const grayAsset = (): PreparedAsset =>
         }),
     );
 
-/** A real QR raster generated with the given `fill` (default: transparent). */
+/** A real QR raster generated with the given `fill` (absent: engine default, opaque white). */
 const renderSymbol = (fill?: string) => {
     const generated = renderQr(QR_PAYLOAD, 'M', 130, 130, 1, fill ? { fill } : {});
     if (!generated) throw new Error('renderQr returned null');
@@ -213,7 +213,7 @@ const buildMask = async (doc: LabelDoc, assets: ReadonlyMap<string, PreparedAsse
 
 describe('renderLabelPage — R8 stacking / ink-aware policy mask', () => {
     it('transparent-fill symbol over a dithered image: quiet zone keeps the image policy, dark modules threshold', async () => {
-        const sym = renderSymbol(); // default fill 'transparent'
+        const sym = renderSymbol('transparent'); // node below uses an explicit transparent fill
         const size = sym.canvas.width;
         const nodeHm = size * 10; // box px == asset px → 1:1 mapping
         const doc = imageDoc([
@@ -301,7 +301,7 @@ describe('renderLabelPage — R8 stacking / ink-aware policy mask', () => {
     });
 
     it('opaque-fill symbol over a dithered image: the whole drawn rect is governed by the symbol policy', async () => {
-        const transparent = renderSymbol(); // geometry twin
+        const transparent = renderSymbol('transparent'); // geometry twin
         const opaque = renderSymbol('#ffffff');
         const size = opaque.canvas.width;
         const nodeHm = size * 10;

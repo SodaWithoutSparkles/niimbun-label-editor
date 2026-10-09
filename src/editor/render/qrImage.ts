@@ -18,9 +18,9 @@ import { quietModulesOf, type GeneratedSymbol, type SymbolRenderOptions } from '
  * ourselves — never via bwip's scale-unit `paddingwidth`. The padded canvas is
  * what gets fitted into the node box, so the effective module pitch is
  * `box / (moduleCount + 2·quietModules)`; the verdict is measured on that pitch.
- * `fill` (default `'transparent'`) is the quiet-zone/background colour: any real
- * colour paints an opaque background, `'transparent'` leaves the zone (and light
- * modules) see-through.
+ * `fill` (default `DEFAULT_SYMBOL_FILL`, opaque white) is the quiet-zone/background
+ * colour: it paints an opaque background, `'transparent'` leaves the zone (and
+ * light modules) see-through.
  *
  * Any failure — empty payload, oversized data, a drawing error — returns `null`
  * and the caller renders nothing rather than crashing the pipeline.

@@ -115,8 +115,10 @@ export interface QrNode extends BaseNode {
     errorCorrection?: QrErrorCorrection;
     /**
      * Symbol background colour (`#rrggbb`/`#rrggbbaa`/hex or `'transparent'`).
-     * Absent ⇒ `DEFAULT_SYMBOL_FILL` (`'transparent'`, light modules + quiet zone
-     * see through). A real colour paints an opaque symbol background (WYSIWYG).
+     * Absent ⇒ `DEFAULT_SYMBOL_FILL` (opaque white, the symbol background — light
+     * modules + quiet zone — is painted solid white). An explicit `'transparent'`
+     * opts the light modules + quiet zone to see through; any other colour paints
+     * an opaque symbol background (WYSIWYG).
      */
     fill?: string;
     /** Quiet-zone width per side in modules. Absent ⇒ the symbology default (4). */

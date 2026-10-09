@@ -346,7 +346,9 @@ describe('qr / barcode engines', () => {
             paddingheight: 0,
         });
         const target = 400;
-        const generated = renderQr(text, 'M', target, target);
+        // Explicit transparent fill so the composite matches the bare `toCanvas`
+        // reference byte-for-byte below.
+        const generated = renderQr(text, 'M', target, target, 1, { fill: 'transparent' });
         expect(generated).not.toBeNull();
         if (!generated) return;
         // P2: the integer scale is chosen against the quiet-zone-padded budget.
@@ -438,7 +440,9 @@ describe('qr / barcode engines', () => {
         });
         const targetW = 1500;
         const targetH = 500;
-        const generated = renderBarcode(text, 'code128', targetW, targetH);
+        // Explicit transparent fill so the composite matches the bare `toCanvas`
+        // reference byte-for-byte below.
+        const generated = renderBarcode(text, 'code128', targetW, targetH, 1, { fill: 'transparent' });
         expect(generated).not.toBeNull();
         if (!generated) return;
         const quiet = barcodeQuietModules('code128');
@@ -621,18 +625,21 @@ describe('qr / barcode engines', () => {
         expect(bare.canvas.height).toBe(base.h * bareLayout.scale);
     });
 
-    it('fill paints the padded QR background; the default transparent leaves it clear', () => {
+    it('the default fill paints the padded QR background opaque white; explicit transparent leaves it clear', () => {
         const text = 'https://example.com';
         const target = 400;
 
-        const filled = renderQr(text, 'M', target, target, 1, { fill: '#ffffff' });
-        expect(filled).not.toBeNull();
-        if (!filled) return;
+        // No options: the default symbol fill is opaque white.
+        const defaultFill = renderQr(text, 'M', target, target);
+        expect(defaultFill).not.toBeNull();
+        if (!defaultFill) return;
         // (0,0) lies inside the quiet zone: opaque white proves the background
         // (quiet zone included) was painted.
-        expect(pixelAt(filled.canvas, 0, 0)).toEqual([255, 255, 255, 255]);
+        expect(pixelAt(defaultFill.canvas, 0, 0)).toEqual([255, 255, 255, 255]);
 
-        const clear = renderQr(text, 'M', target, target);
+        // An explicit `'transparent'` opts the quiet zone/light modules to see
+        // through.
+        const clear = renderQr(text, 'M', target, target, 1, { fill: 'transparent' });
         expect(clear).not.toBeNull();
         if (!clear) return;
         expect(pixelAt(clear.canvas, 0, 0)).toEqual([0, 0, 0, 0]);
@@ -687,15 +694,17 @@ describe('qr / barcode engines', () => {
         }
     });
 
-    it('fill paints the padded barcode background', () => {
-        const filled = renderBarcode('123456789012', 'code128', 1500, 500, 1, {
-            fill: '#ffffff',
-        });
+    it('the default fill paints the padded barcode background opaque white', () => {
+        // No options: the default symbol fill is opaque white.
+        const filled = renderBarcode('123456789012', 'code128', 1500, 500);
         expect(filled).not.toBeNull();
         if (!filled) return;
         expect(pixelAt(filled.canvas, 0, 0)).toEqual([255, 255, 255, 255]);
 
-        const clear = renderBarcode('123456789012', 'code128', 1500, 500);
+        // An explicit `'transparent'` leaves the quiet zone see-through.
+        const clear = renderBarcode('123456789012', 'code128', 1500, 500, 1, {
+            fill: 'transparent',
+        });
         expect(clear).not.toBeNull();
         if (!clear) return;
         // (0,0) sits in the left quiet zone: no ink, so see-through.

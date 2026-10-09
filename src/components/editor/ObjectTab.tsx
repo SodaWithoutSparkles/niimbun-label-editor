@@ -18,6 +18,7 @@ import {
     DEFAULT_SHAPE_FILL,
     DEFAULT_SHAPE_STROKE,
     DEFAULT_SHAPE_STROKE_WIDTH,
+    DEFAULT_SYMBOL_FILL,
     MAX_QUIET_ZONE,
     barcodeQuietModules,
 } from '../../core/doc/objects';
@@ -184,13 +185,16 @@ const stringValue = (node: Node, key: string): string => {
 /**
  * Effective colour shown by a `kind:'color'` field when the node omits it. The
  * render path applies these defaults, so the swatch mirrors them instead of
- * falling back to black. A shape's no-fill value is the explicit
+ * falling back to black. A qr/barcode symbol's default fill is the opaque
+ * `DEFAULT_SYMBOL_FILL`; a shape's no-fill value is the explicit
  * `DEFAULT_SHAPE_FILL` (`'transparent'`) — for every shape, closed or open. Any
  * other colour field has no default and is a programming error, so it throws
  * rather than showing black.
  */
 export const colorDefault = (node: Node, key: string): string => {
-    if (key === 'fill') return DEFAULT_SHAPE_FILL;
+    if (key === 'fill') {
+        return node.type === 'qr' || node.type === 'barcode' ? DEFAULT_SYMBOL_FILL : DEFAULT_SHAPE_FILL;
+    }
     if (key === 'stroke') return DEFAULT_SHAPE_STROKE;
     throw new Error(`colorDefault: no default colour for field "${key}" on ${node.type}`);
 };

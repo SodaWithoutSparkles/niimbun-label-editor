@@ -35,12 +35,15 @@ export type AssetWarning = 'missing' | 'invalid' | 'too-small';
 /**
  * Per-symbol render knobs shared by the QR and barcode engines (P2).
  * Both optional; absent ⇒ the documented defaults (symbology quiet zone,
- * transparent fill).
+ * opaque white fill).
  */
 export interface SymbolRenderOptions {
     /** Quiet-zone width per side, in modules. */
     quietModules?: number;
-    /** Background/quiet-zone colour; `'transparent'` (default) sees through. */
+    /**
+     * Background/quiet-zone colour; absent ⇒ opaque white
+     * (`DEFAULT_SYMBOL_FILL`). An explicit `'transparent'` sees through.
+     */
     fill?: string;
 }
 

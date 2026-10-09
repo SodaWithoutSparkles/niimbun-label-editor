@@ -40,7 +40,9 @@ identity fit into the shared render pipeline. Read before touching
   transform compose. The policy mask (`buildPolicyMask`, `maskAssetSceneFunc`)
   paints an **ink stencil**, not the drawn rect: the prepared asset is tinted to
   the policy key and only its **opaque pixels** claim the leaf's policy; opaque
-  `fill` claims the whole rect. Transparent pixels (a photo's clear area, a
+  `fill` claims the whole rect (a qr/barcode symbol's default `fill` is now
+  opaque white, so it claims its whole rect unless explicitly `'transparent'`).
+  Transparent pixels (a photo's clear area, a
   `fill:'transparent'` symbol's light modules + quiet zone) leave whatever policy
   is on the leaf below, so mask-topmost == raster-topmost. `applyInkDefaults`
   skips `Konva.Image`.
