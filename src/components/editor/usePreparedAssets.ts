@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../../store/useStore';
 import type { LabelDoc } from '../../core/doc/types';
+import { HM_PER_INCH } from '../../core/render';
 import type { AssetDeps, AssetWarning, BytesProvider, PreparedAsset } from '../../editor/render/assets';
 import { createFontProvider } from '../../editor/render/fontAssets';
 import { prepareResolvedAssets } from '../../editor/render/prepareAssets';
@@ -116,8 +117,14 @@ export const usePreparedAssets = (
     const providers = useMemo(() => createResourceAssetProviders(resourceRepo), [resourceRepo]);
     const deps = useMemo(() => {
         const scale = forwardableImageScale(effectiveZoom * devicePixelRatioOf());
-        return scale === undefined ? providers : { ...providers, imageScale: scale };
-    }, [providers, effectiveZoom]);
+        return scale === undefined
+            ? providers
+            : {
+                  ...providers,
+                  imageScale: scale,
+                  symbolScale: doc?.label.dpi ? doc.label.dpi / HM_PER_INCH : undefined,
+              };
+    }, [providers, effectiveZoom, doc?.label.dpi]);
 
     // The prepared result is only valid for the inputs it was built from. Keying
     // it to the exact `nodes`/`doc` identity means a changed document reports

@@ -195,7 +195,11 @@ export const prepareResolvedAssets = async (
         deps.imageScale !== undefined && Number.isFinite(deps.imageScale)
             ? deps.imageScale
             : effectiveDpi / HM_PER_INCH;
-    const minModulePx = minModulePxFor(imageScale);
+    const symbolScale =
+        deps.symbolScale !== undefined && Number.isFinite(deps.symbolScale) && deps.symbolScale > 0
+            ? deps.symbolScale
+            : imageScale;
+    const minModulePx = minModulePxFor(symbolScale);
 
     const imageRefs = new Map((doc.resources.images ?? []).map((ref) => [ref.imageId, ref] as const));
 
@@ -218,7 +222,7 @@ export const prepareResolvedAssets = async (
             }
             case 'qr': {
                 if (node.placeholder) return;
-                const { w, h } = requiredPx(node.w, node.h, imageScale);
+                const { w, h } = requiredPx(node.w, node.h, symbolScale);
                 const generated = renderQr(node.text, node.errorCorrection, w, h, minModulePx, {
                     quietModules: node.quietModules,
                     fill: node.fill,
@@ -237,7 +241,7 @@ export const prepareResolvedAssets = async (
             }
             case 'barcode': {
                 if (node.placeholder) return;
-                const { w, h } = requiredPx(node.w, node.h, imageScale);
+                const { w, h } = requiredPx(node.w, node.h, symbolScale);
                 const generated = renderBarcode(node.text, node.symbology, w, h, minModulePx, {
                     quietModules: node.quietModules,
                     fill: node.fill,

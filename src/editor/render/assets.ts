@@ -73,6 +73,8 @@ export interface AssetDeps {
      * Defaults to the document dpi (the print requirement).
      */
     imageScale?: number;
+    /** Stable symbol raster scale; defaults to `imageScale` when absent. */
+    symbolScale?: number;
     /**
      * Effective render dpi. When set (and no explicit `imageScale`), it overrides
      * `doc.label.dpi` for the default device-px-per-hm scale, so a thumbnail

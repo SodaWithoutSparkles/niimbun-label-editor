@@ -138,6 +138,7 @@ This section contains debts/issues that are discovered during the fixes.
 - **D-36**: Touchpad panning is locked to cardinal if the initial movement is cardinal, even if the user changes direction. 
 - **D-37**: Polygon draw preview is rendered at the lowest layer, it should've been rendered at the top layer.
 - Incorrect select logic for overlapping objects. Click on layer list = selected = priority to be dragged. If the user clicks inside the control box of the selected object, it should take priority over whatever is stacking above it. If user clicks outside the control box of the selected object, it should select the topmost object at that point. 
+- Fix navigation. Maybe use paths `/editor` for the editor. Use `?tag=...` for the document tag. `#settings` or `#gallery` for the view, etc.
 
 ## Risks & checkpoints
 
