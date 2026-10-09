@@ -42,6 +42,8 @@ chore = do opportunistically, not phase-blocking.
 | D-33 | editor | `Modal` captures the opener in a passive effect, so a nested dialog can't use `autoFocus` without breaking focus restore; the P7 `CalibrationDialog` leaves its slider un-autofocused | keyboard users must Tab to the slider | chore (rework Modal focus capture) |
 | D-34 | render/test | P3 coverage-mask tests asserted colour presence, not threshold ink for light/low-alpha fills; P2 superseded the coverage mask with the **ink stencil** (`maskAssetSceneFunc`) and R8 added ink-aware coverage tests (`renderLabelPage.mask.test.ts`) asserting transparent pixels inherit the under-leaf policy (error-diffusion across policy boundaries stays D-05) | — | **CLOSED** (P2 ink mask + R8 tests) |
 | D-35 | editor | warning center: the CSV inline amber list is component state (lost on tab switch) while the store group persists; print warnings clear when the print dialog closes | two views can briefly disagree | chore (source the inline list from the store group) |
+| D-36 | editor | Current impl of panning with touchpad forces cardinal directions (x or y). But if the initial movement is small enough, arbitrary direction is allowed??? | UX: touchpad panning is not smooth | post-v1 (revisit UX) |
+| D-37 | editor | Polygon tool preview is defaulted to the bottom layer. User cannot see what they are drawing. | UX: Polygon tool preview is not visible | post-v1 (revisit UX) |
 
 **Owner UI-test round (2026-10-06):** `agent/known-issues/2026-10-06_round-1.md` (14 items) was
 **fully addressed by the ui-sweep P1–P7** (2026-10-08): #1/#9/#10/#12/#14 (P1), #2/#13 (P2),

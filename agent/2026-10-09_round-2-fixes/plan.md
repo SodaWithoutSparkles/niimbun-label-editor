@@ -133,6 +133,12 @@ Item: "Additional feature request: Grid duplication".
 - Dialog: rows × columns × spacing, duplicated from the original selection in a grid pattern. New items are **derived/linked**: they follow edits, move, and delete together. **Unlink** per item or all — unlinked items become independent.
 - Cross-cutting model work (provenance/link metadata on nodes + propagation in slice reducers). Action plan must contain a short model design (link group, propagation rules, unlink semantics) before code. Keep last so it cannot destabilize the earlier phases.
 
+### P13 — Miscellaneous
+This section contains debts/issues that are discovered during the fixes.
+- **D-36**: Touchpad panning is locked to cardinal if the initial movement is cardinal, even if the user changes direction. 
+- **D-37**: Polygon draw preview is rendered at the lowest layer, it should've been rendered at the top layer.
+- Incorrect select logic for overlapping objects. Click on layer list = selected = priority to be dragged. If the user clicks inside the control box of the selected object, it should take priority over whatever is stacking above it. If user clicks outside the control box of the selected object, it should select the topmost object at that point. 
+
 ## Risks & checkpoints
 
 - **R1 — resolved by the D decision (2026-10-09).** D keeps the symbol filling the authored box, so the owner-decided target-based verdict formula is correct verbatim: no drawn/target divergence, no 6–8.4 mm shrinkage band, no checkpoint table needed. Residual, owner-accepted: N/N+1 device-px module pitch where the factor is fractional (≤ 1 px at 203 dpi = 0.125 mm, within scanner noise).
