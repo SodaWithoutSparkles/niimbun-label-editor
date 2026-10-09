@@ -16,6 +16,14 @@ import type { ZoomMode } from '../store/slices/viewSlice';
  * behavior is unit-testable without a canvas.
  */
 
+/**
+ * Zoom bounds (CSS px per `hm`) shared by every zoom entry point: the wheel
+ * handler and the toolbar step must clamp to the same range, or the toolbar can
+ * push past the wheel's ceiling (or below its floor).
+ */
+export const ZOOM_MIN = 0.005;
+export const ZOOM_MAX = 4;
+
 /** Resolve the CSS px-per-`hm` zoom for the current mode. */
 export const resolveZoom = (
     mode: ZoomMode,

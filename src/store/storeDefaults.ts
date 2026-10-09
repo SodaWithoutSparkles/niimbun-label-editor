@@ -15,6 +15,15 @@ export const DEFAULT_SCREEN_DPI = 96;
 export const SCREEN_DPI_MIN = 24;
 export const SCREEN_DPI_MAX = 400;
 
+/**
+ * Preview grid spacing (ui-spec.md §6/§11) in hm (1/100 mm). 500 hm = 5 mm is a
+ * comfortable drafting grid at label scale; purely a view aid, never document
+ * data. Clamped to a sane 1–50 mm range so a corrupt blob cannot erase the grid.
+ */
+export const DEFAULT_GRID_SPACING_HM = 500;
+export const GRID_SPACING_MIN_HM = 100;
+export const GRID_SPACING_MAX_HM = 5000;
+
 export const defaultKeyboardShortcuts: KeyboardShortcutConfig = {
     modifyKey: 'ctrl',
     cancelKey: 'Escape',

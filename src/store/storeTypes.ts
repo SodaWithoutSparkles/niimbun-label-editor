@@ -119,6 +119,9 @@ export interface AppState {
     /** Screen-density calibration (CSS px per inch) for `real` zoom. */
     screenDpi: number;
     setScreenDpi: (dpi: number) => void;
+    /** Preview grid spacing in hm (1/100 mm); drives the overlay and snap step. */
+    gridSpacingHm: number;
+    setGridSpacingHm: (hm: number) => void;
     resetSettings: () => void;
 
     // Settings window (shared so the global Ctrl/Cmd+, binding can open it)
@@ -202,6 +205,20 @@ export interface AppState {
     /** Adds a node with a fresh id; returns the new id, or null with no doc. */
     addNode: (node: Node) => string | null;
     updateNode: (id: string, patch: NodePatch) => void;
+    /**
+     * Translate the current selection by a **world-space** hm delta as one undo
+     * entry. Only the top level of the selection moves (a selected node whose
+     * ancestor is also selected is carried by that ancestor, so it is not moved
+     * twice). A locked node is skipped. No-op with no selection, a zero/rounding-
+     * away delta, or a singular parent chain.
+     *
+     * `coalesce` is for OS key auto-repeat: the first press of a hold
+     * (`coalesce === false`) pushes the undo baseline, and each subsequent
+     * repeat (`coalesce === true`) mutates the working doc without pushing, so
+     * one key-hold is exactly one undo entry. A later fresh press pushes a new
+     * entry.
+     */
+    nudgeNodes: (dx: number, dy: number, coalesce?: boolean) => void;
     /**
      * Register an image resource (one undo entry). Returns `false` (no-op) when
      * there is no open doc or an `imageId` collision.
@@ -308,6 +325,12 @@ export interface AppState {
     manualZoom: number;
     setZoomMode: (mode: ZoomMode) => void;
     setManualZoom: (zoom: number) => void;
+    /**
+     * Bumped by `setZoomMode` only (never by `setManualZoom`), so the Preview can
+     * force a re-derive/recenter on an explicit Fit/Real pick even when the mode
+     * is already active.
+     */
+    recenterToken: number;
     /** Resolved CSS px per hm, kept in sync by the Preview. */
     effectiveZoom: number;
     setEffectiveZoom: (zoom: number) => void;

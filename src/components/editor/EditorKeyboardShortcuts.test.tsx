@@ -26,8 +26,20 @@ const press = (key: string, init: KeyboardEventInit = {}) => {
     return event;
 };
 
+const release = (key: string, init: KeyboardEventInit = {}) => {
+    const event = new KeyboardEvent('keyup', { key, bubbles: true, cancelable: true, ...init });
+    window.dispatchEvent(event);
+    return event;
+};
+
 beforeEach(() => {
-    useStore.setState({ view: 'editor', isSettingsOpen: false, isPrintOpen: false, selectedNodeIds: [] });
+    useStore.setState({
+        view: 'editor',
+        isSettingsOpen: false,
+        isPrintOpen: false,
+        selectedNodeIds: [],
+        activeTool: 'select',
+    });
 });
 
 afterEach(() => {
@@ -163,5 +175,169 @@ describe('EditorKeyboardShortcuts — print (Ctrl/Cmd+P)', () => {
         press('p', { ctrlKey: true });
 
         expect(useStore.getState().isPrintOpen).toBe(false);
+    });
+});
+
+describe('EditorKeyboardShortcuts — arrow nudge (P4 W4)', () => {
+    const withSelectedNode = () =>
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({ id: 'doc-1', now: 1, nodes: [node('a')] }),
+            selectedNodeIds: ['a'],
+        });
+
+    const x = () => useStore.getState().currentDoc!.nodes[0]!.transform.x;
+    const y = () => useStore.getState().currentDoc!.nodes[0]!.transform.y;
+
+    it('nudges 0.1 mm, escalates to 1 mm then 2 mm on repeats, and resets on keyup', () => {
+        withSelectedNode();
+        render(<EditorKeyboardShortcuts />);
+
+        press('ArrowRight');
+        expect(x()).toBe(10);
+        press('ArrowRight');
+        expect(x()).toBe(110);
+        press('ArrowRight');
+        expect(x()).toBe(310);
+
+        release('ArrowRight');
+        press('ArrowRight');
+        expect(x()).toBe(320);
+    });
+
+    it('nudges in the direction of each arrow', () => {
+        withSelectedNode();
+        render(<EditorKeyboardShortcuts />);
+
+        press('ArrowUp');
+        expect(y()).toBe(-10);
+        press('ArrowDown');
+        expect(y()).toBe(0);
+        press('ArrowLeft');
+        expect(x()).toBe(-10);
+        press('ArrowRight');
+        expect(x()).toBe(0);
+    });
+
+    it('does not nudge while a modal dialog is open', () => {
+        const dialog = document.createElement('dialog');
+        dialog.setAttribute('open', '');
+        document.body.appendChild(dialog);
+        withSelectedNode();
+        render(<EditorKeyboardShortcuts />);
+
+        press('ArrowRight');
+
+        expect(x()).toBe(0);
+        dialog.remove();
+    });
+
+    it('is a no-op with an empty selection', () => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({ id: 'doc-1', now: 1, nodes: [node('a')] }),
+            selectedNodeIds: [],
+        });
+        render(<EditorKeyboardShortcuts />);
+        const before = useStore.getState().docPast.length;
+
+        press('ArrowRight');
+
+        expect(x()).toBe(0);
+        expect(useStore.getState().docPast).toHaveLength(before);
+    });
+
+    it('ignores arrows combined with a modifier', () => {
+        withSelectedNode();
+        render(<EditorKeyboardShortcuts />);
+
+        press('ArrowRight', { shiftKey: true });
+        press('ArrowRight', { altKey: true });
+        press('ArrowRight', { ctrlKey: true });
+
+        expect(x()).toBe(0);
+    });
+
+    it('records exactly one undo entry per press', () => {
+        withSelectedNode();
+        render(<EditorKeyboardShortcuts />);
+        const before = useStore.getState().docPast.length;
+
+        press('ArrowRight');
+        expect(useStore.getState().docPast).toHaveLength(before + 1);
+        // A discrete press releases the key between presses; two keydowns with
+        // no keyup are a single hold and now coalesce (see the coalesce test).
+        release('ArrowRight');
+        press('ArrowRight');
+        expect(useStore.getState().docPast).toHaveLength(before + 2);
+    });
+
+    it('coalesces a held key (OS auto-repeat) into a single undo entry', () => {
+        withSelectedNode();
+        render(<EditorKeyboardShortcuts />);
+        const before = useStore.getState().docPast.length;
+
+        press('ArrowRight'); // 0.1 mm — opens the undo entry
+        press('ArrowRight', { repeat: true }); // 1 mm
+        press('ArrowRight', { repeat: true }); // 2 mm
+        press('ArrowRight', { repeat: true }); // 2 mm
+
+        expect(x()).toBe(10 + 100 + 200 + 200);
+        expect(useStore.getState().docPast).toHaveLength(before + 1);
+    });
+
+    it('pushes a baseline for a repeat that lands after a mid-hold selection (regression)', () => {
+        // Regression: `event.repeat` is not proof a baseline was pushed. A
+        // keydown can bail (empty selection / armed tool) before the escalation
+        // ref advances; a repeat arriving after a selection appears mid-hold must
+        // still push a baseline or the whole hold is unrecoverable by undo.
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({ id: 'doc-1', now: 1, nodes: [node('a')] }),
+            selectedNodeIds: [],
+        });
+        render(<EditorKeyboardShortcuts />);
+        const before = useStore.getState().docPast.length;
+
+        // Held with nothing selected: the ref never advances, so no baseline exists.
+        press('ArrowRight');
+        press('ArrowRight', { repeat: true });
+
+        // The selection appears mid-hold while the key is still down.
+        useStore.setState({ selectedNodeIds: ['a'] });
+        press('ArrowRight', { repeat: true }); // first effective nudge — pushes a baseline
+        press('ArrowRight', { repeat: true }); // later repeat — coalesces into it
+        release('ArrowRight');
+
+        expect(x()).toBe(10 + 100);
+        expect(useStore.getState().docPast).toHaveLength(before + 1);
+    });
+
+    it('resets the escalation when the window loses focus', () => {
+        withSelectedNode();
+        render(<EditorKeyboardShortcuts />);
+
+        press('ArrowRight');
+        expect(x()).toBe(10);
+        press('ArrowRight', { repeat: true });
+        expect(x()).toBe(110);
+
+        // A missed keyup (alt-tab / devtools) is recovered by the blur reset.
+        window.dispatchEvent(new Event('blur'));
+
+        press('ArrowRight');
+        expect(x()).toBe(120);
+    });
+
+    it('does not nudge the selection while an insert tool is armed', () => {
+        withSelectedNode();
+        useStore.setState({ activeTool: 'text' });
+        render(<EditorKeyboardShortcuts />);
+        const before = useStore.getState().docPast.length;
+
+        press('ArrowRight');
+
+        expect(x()).toBe(0);
+        expect(useStore.getState().docPast).toHaveLength(before);
     });
 });

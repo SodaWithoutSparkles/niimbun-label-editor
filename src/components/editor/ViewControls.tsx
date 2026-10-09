@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Grid3x3, Magnet, ZoomIn, ZoomOut, Maximize, Ruler as RulerIcon, RotateCw, Scan } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { cn } from '../../utils/cn';
+import { ZOOM_MIN, ZOOM_MAX } from '../../editor/viewportController';
 
 /**
  * View controls (ui-spec.md §6) — right column, row A. Grid, snap, zoom
@@ -49,7 +50,8 @@ export const ViewControls: React.FC = () => {
     const setZoomMode = useStore((state) => state.setZoomMode);
     const setManualZoom = useStore((state) => state.setManualZoom);
 
-    const step = (factor: number) => setManualZoom(Math.max(0.005, effectiveZoom * factor));
+    const step = (factor: number) =>
+        setManualZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, effectiveZoom * factor)));
 
     return (
         <div className="flex flex-col gap-2 border-b border-gray-700 bg-gray-800 p-2">

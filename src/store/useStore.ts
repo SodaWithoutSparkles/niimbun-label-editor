@@ -11,6 +11,7 @@ import { createSelectionSlice } from './slices/selectionSlice';
 import { createWarningsSlice } from './slices/warningsSlice';
 import { createViewSlice } from './slices/viewSlice';
 import {
+    DEFAULT_GRID_SPACING_HM,
     DEFAULT_SCREEN_DPI,
     defaultAutoSave,
     defaultKeyboardShortcuts,
@@ -30,6 +31,7 @@ const persistedDefaults: PersistedSettings = {
     toolSettings: defaultToolSettings,
     language: defaultLanguage,
     screenDpi: DEFAULT_SCREEN_DPI,
+    gridSpacingHm: DEFAULT_GRID_SPACING_HM,
 };
 
 /**
@@ -143,6 +145,7 @@ export const createAppStore = (storage?: Storage) => {
                     toolSettings: s.toolSettings,
                     language: s.language,
                     screenDpi: s.screenDpi,
+                    gridSpacingHm: s.gridSpacingHm,
                 }),
                 migrate: (persisted) => persisted as PersistedSettings,
                 // `persist`'s default merge is a *shallow* spread over the seed,

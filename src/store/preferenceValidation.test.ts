@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     normalizeBoolean,
+    normalizeGridSpacingHm,
     normalizeKeyboardShortcuts,
     normalizeLanguage,
     normalizeToolSettings,
@@ -9,7 +10,10 @@ import {
     type PersistedSettings,
 } from './preferenceValidation';
 import {
+    DEFAULT_GRID_SPACING_HM,
     DEFAULT_SCREEN_DPI,
+    GRID_SPACING_MAX_HM,
+    GRID_SPACING_MIN_HM,
     defaultAutoSave,
     defaultKeyboardShortcuts,
     defaultLanguage,
@@ -90,12 +94,30 @@ describe('normalizeToolSettings', () => {
     });
 });
 
+describe('normalizeGridSpacingHm', () => {
+    it('rounds and clamps to the range', () => {
+        expect(normalizeGridSpacingHm(500, GRID_SPACING_MIN_HM, GRID_SPACING_MAX_HM)).toBe(500);
+        expect(normalizeGridSpacingHm(250.6, GRID_SPACING_MIN_HM, GRID_SPACING_MAX_HM)).toBe(251);
+        // Below the minimum / above the maximum clamp instead of rejecting.
+        expect(normalizeGridSpacingHm(1, GRID_SPACING_MIN_HM, GRID_SPACING_MAX_HM)).toBe(GRID_SPACING_MIN_HM);
+        expect(normalizeGridSpacingHm(1e9, GRID_SPACING_MIN_HM, GRID_SPACING_MAX_HM)).toBe(GRID_SPACING_MAX_HM);
+    });
+
+    it('returns undefined for non-finite / non-numeric values', () => {
+        expect(normalizeGridSpacingHm(NaN, GRID_SPACING_MIN_HM, GRID_SPACING_MAX_HM)).toBeUndefined();
+        expect(normalizeGridSpacingHm(Infinity, GRID_SPACING_MIN_HM, GRID_SPACING_MAX_HM)).toBeUndefined();
+        expect(normalizeGridSpacingHm('500', GRID_SPACING_MIN_HM, GRID_SPACING_MAX_HM)).toBeUndefined();
+        expect(normalizeGridSpacingHm(null, GRID_SPACING_MIN_HM, GRID_SPACING_MAX_HM)).toBeUndefined();
+    });
+});
+
 const defaults: PersistedSettings = {
     autoSave: defaultAutoSave,
     keyboardShortcuts: defaultKeyboardShortcuts,
     toolSettings: defaultToolSettings,
     language: defaultLanguage,
     screenDpi: DEFAULT_SCREEN_DPI,
+    gridSpacingHm: DEFAULT_GRID_SPACING_HM,
 };
 
 describe('validatePersistedSettings', () => {
@@ -120,6 +142,14 @@ describe('validatePersistedSettings', () => {
         expect(result.autoSave).toBe(false);
         expect(result.language).toBe('en');
     });
+
+    it('normalizes/clamps gridSpacingHm and falls back when unusable', () => {
+        expect(validatePersistedSettings({ gridSpacingHm: 250.6 }, defaults).gridSpacingHm).toBe(251);
+        expect(validatePersistedSettings({ gridSpacingHm: 1 }, defaults).gridSpacingHm).toBe(GRID_SPACING_MIN_HM);
+        expect(validatePersistedSettings({ gridSpacingHm: 'x' }, defaults).gridSpacingHm).toBe(DEFAULT_GRID_SPACING_HM);
+        // Absent => the default.
+        expect(validatePersistedSettings({}, defaults).gridSpacingHm).toBe(DEFAULT_GRID_SPACING_HM);
+    });
 });
 
 describe('pickPersistedKeys', () => {
@@ -136,5 +166,10 @@ describe('pickPersistedKeys', () => {
         const picked = pickPersistedKeys({ language: 'en' }, defaults);
         expect(picked).toEqual({ language: 'en' });
         expect('autoSave' in picked).toBe(false);
+    });
+
+    it('picks a normalized gridSpacingHm only when present', () => {
+        expect(pickPersistedKeys({ gridSpacingHm: 1234.7 }, defaults)).toEqual({ gridSpacingHm: 1235 });
+        expect('gridSpacingHm' in pickPersistedKeys({}, defaults)).toBe(false);
     });
 });

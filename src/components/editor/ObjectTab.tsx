@@ -8,7 +8,7 @@ import { Input, Select, SettingRow, Toggle } from '../common/forms';
 import { bulkFieldModel, quantizerParamsApply, type FieldDescriptor, type FieldReason } from '../../editor/inspectorModel';
 import { roundHm, type hm } from '../../core/hm';
 import { nodeSize, pointsExtent } from '../../core/doc/geometry';
-import { effectiveTransform, nodeLookup, IDENTITY_MAT2D, type Mat2D } from '../../core/doc/derive';
+import { effectiveTransform, nodeLookup } from '../../core/doc/derive';
 import { nodeLocalPoints, transformedBounds } from '../../editor/render/resolve';
 import {
     DEFAULT_BARCODE_SYMBOLOGY,
@@ -31,6 +31,7 @@ import { bytesProviderFor } from './usePreparedAssets';
 import { useSampleRowState } from './sampleRowContext';
 import { contentSourceOf } from '../../editor/contentSource';
 import { ImageImportDialog } from './ImageImportDialog';
+import { translateWorldPatch } from '../../editor/transformPatch';
 
 /**
  * MFP → Object tab (ui-spec.md §8/§10). Renders the field model from
@@ -351,20 +352,6 @@ export const nodeWorldBounds = (node: Node, byId: ReadonlyMap<string, Node>) =>
  */
 export const hasLocalGeometry = (node: Node): boolean => nodeLocalPoints(node).length > 0;
 
-/** Invert only the linear (a,b,c,d) part of a matrix; `null` when singular. */
-const invertLinear = (m: Mat2D): Mat2D | null => {
-    const det = m.a * m.d - m.b * m.c;
-    if (det === 0) return null;
-    return { a: m.d / det, b: -m.b / det, c: -m.c / det, d: m.a / det, e: 0, f: 0 };
-};
-
-/** The effective parent matrix (identity at the root). */
-const parentMatrix = (node: Node, byId: ReadonlyMap<string, Node>): Mat2D => {
-    if (node.parentId === null) return IDENTITY_MAT2D;
-    const parent = byId.get(node.parentId);
-    return parent ? effectiveTransform(parent, byId) : IDENTITY_MAT2D;
-};
-
 /**
  * Patch that aligns a node to a backing edge (must-fix #10). The target is
  * computed from the node's resolved **world** bounds and its real geometry
@@ -398,29 +385,10 @@ export const alignTransformPatch = (
 };
 
 /**
- * Convert a world-space translation into the node's parent-local space and fold
- * it into `transform.x/y`. Used by both align and tile; the returned patch keeps
- * the node's size/rotation intact (translation only). `null` on a singular
- * parent chain (unmappable delta).
+ * Re-exported from its canonical home `editor/transformPatch` (a pure module),
+ * so existing importers (align/tile, and tests) keep resolving it from here.
  */
-export const translateWorldPatch = (
-    node: Node,
-    byId: ReadonlyMap<string, Node>,
-    worldDx: number,
-    worldDy: number,
-): NodePatch | null => {
-    const inverse = invertLinear(parentMatrix(node, byId));
-    if (!inverse) return null;
-    const localDx = inverse.a * worldDx + inverse.c * worldDy;
-    const localDy = inverse.b * worldDx + inverse.d * worldDy;
-    return {
-        transform: {
-            ...node.transform,
-            x: roundHm(node.transform.x + localDx),
-            y: roundHm(node.transform.y + localDy),
-        },
-    };
-};
+export { translateWorldPatch };
 
 /** Gap between tiled neighbours in hm (1/100 mm): 100 hm = 1 mm. */
 export const TILE_GAP_HM = 100;

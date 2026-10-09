@@ -8,6 +8,7 @@ import { useStore } from '../../store/useStore';
 import { createLabelDoc } from '../../core/doc/factory';
 import type { Node, TextNode } from '../../core/doc/types';
 import { PreviewStage } from './PreviewStage';
+import { centeredViewport, ZOOM_MAX } from '../../editor/viewportController';
 
 /**
  * Interaction coverage for the polygon draw mode (#7). The stage is mounted for
@@ -708,5 +709,238 @@ describe('PreviewStage P3 selection & resize semantics', () => {
             const node = state.currentDoc!.nodes.find((entry) => entry.id === 't')!;
             expect(node.size).toEqual({ w: 1000, h: 500 });
         });
+    });
+});
+
+/**
+ * F1 regression (P4): the recenter effect must skip **only** the wheel's own
+ * run. An earlier fix compared the live viewport zoom against the derived zoom,
+ * which swamped every non-zoom change after a wheel zoom (rotation, backing,
+ * pane resize) — the Rotate button and portrait auto-orientation stopped
+ * working. The fix uses a one-shot provenance token (`wheelZoomRef`), consumed
+ * by the effect on read.
+ */
+describe('PreviewStage P4 viewport recenter (one-shot wheel token)', () => {
+    const PANE = { w: 600, h: 400 };
+    const RULER_GUTTER = 24;
+    // The stage measures `container.clientWidth/Height` (fixed in `beforeAll`)
+    // minus the ruler gutter, which is visible by default.
+    const INNER = { w: PANE.w - RULER_GUTTER, h: PANE.h - RULER_GUTTER };
+
+    const mountDoc = (labelDoc: ReturnType<typeof createLabelDoc>) => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: labelDoc,
+            selectedNodeIds: [],
+            activeTool: 'select',
+            snapEnabled: false,
+            rulersVisible: true,
+            viewRotation: 0,
+            viewRotationUserSet: false,
+            zoomMode: 'fit',
+            recenterToken: 0,
+        });
+        render(<PreviewStage />);
+        const stage = Konva.stages[Konva.stages.length - 1] as Konva.Stage;
+        if (!stage) throw new Error('PreviewStage did not mount a Konva stage');
+        return stage;
+    };
+
+    const contentLayer = (stage: Konva.Stage): Konva.Layer => {
+        const layer = stage.getLayers().at(-1);
+        if (!layer) throw new Error('PreviewStage has no content layer');
+        return layer;
+    };
+
+    /**
+     * Fire a wheel notch (deltaMode 0). The classifier is modifier-driven, so
+     * the default is ctrl+wheel — the mouse-wheel zoom (or touchpad pinch) the
+     * recenter tests below exercise.
+     */
+    const fireWheel = (stage: Konva.Stage, x: number, y: number, deltaY: number) => {
+        const evt = {
+            clientX: x,
+            clientY: y,
+            deltaX: 0,
+            deltaY,
+            deltaMode: 0,
+            ctrlKey: true,
+            shiftKey: false,
+            preventDefault: () => undefined,
+            stopPropagation: () => undefined,
+        };
+        stage.setPointersPositions(evt as unknown as WheelEvent);
+        act(() => {
+            stage.fire('wheel', { evt: evt as unknown as WheelEvent, target: stage });
+        });
+    };
+
+    const doc = (id: string, backingW: number, backingH: number) =>
+        createLabelDoc({ id, now: 1_700_000_000, backingW, backingH });
+
+    it('recentres on a view-rotation change after a wheel zoom', () => {
+        const stage = mountDoc(doc('doc-1', 4000, 3000));
+        expect(contentLayer(stage).rotation()).toBeCloseTo(0, 6);
+
+        // A wheel zoom writes a pointer-anchored viewport and consumes the token.
+        fireWheel(stage, 560, 360, -120);
+        expect(useStore.getState().zoomMode).toBe('manual');
+
+        act(() => {
+            useStore.getState().toggleViewRotation();
+        });
+
+        // The token was one-shot, so the rotation change recentres: the derived
+        // viewport (and therefore the layer matrix) now carries rotation 90.
+        // Without the fix the zoom-equality skip swamped this change and the
+        // layer stayed at rotation 0.
+        expect(useStore.getState().viewRotation).toBe(90);
+        expect(contentLayer(stage).rotation()).toBeCloseTo(90, 6);
+    });
+
+    it('recentres on rotation even after a wheel notch pinned at the zoom ceiling', () => {
+        const stage = mountDoc(doc('doc-1', 4000, 3000));
+
+        // Pinned at the manual ceiling: the next wheel notch computes
+        // `next === ZOOM_MAX === zoom`, so the derived zoom does not change and
+        // the recenter effect never runs. It must not leave a stale token that
+        // swallows the following rotation (the class of bug F1a fixes).
+        act(() => {
+            useStore.setState({ zoomMode: 'manual', manualZoom: ZOOM_MAX });
+        });
+        fireWheel(stage, 300, 200, -120);
+        expect(useStore.getState().manualZoom).toBe(ZOOM_MAX);
+
+        act(() => {
+            useStore.getState().toggleViewRotation();
+        });
+
+        expect(useStore.getState().viewRotation).toBe(90);
+        expect(contentLayer(stage).rotation()).toBeCloseTo(90, 6);
+    });
+
+    it('recentres a second document after a wheel zoom (no off-pane pan)', () => {
+        const stage = mountDoc(doc('doc-1', 4000, 3000));
+
+        // Zoom in with the pointer off-centre so the anchored viewport is panned
+        // away from the centred position it started at.
+        fireWheel(stage, 560, 360, -120);
+        const zoom = useStore.getState().manualZoom;
+        expect(zoom).toBeGreaterThan(0);
+        const wheeledX = contentLayer(stage).x();
+
+        // Opening a second document changes the backing → the recenter effect
+        // must run (the token is spent) and centre the new label.
+        const next = doc('doc-2', 2000, 6000);
+        act(() => {
+            useStore.setState({ currentDoc: next });
+        });
+
+        const expected = centeredViewport(zoom, { backingW: next.label.backingW, backingH: next.label.backingH }, INNER, 0);
+        const layer = contentLayer(stage);
+        // The layer now sits at the centred position for doc-2, not the
+        // wheel-anchored pan for doc-1.
+        expect(layer.x()).toBeCloseTo(expected.x, 4);
+        expect(layer.y()).toBeCloseTo(expected.y, 4);
+        expect(layer.x()).not.toBeCloseTo(wheeledX, 1);
+    });
+});
+
+/**
+ * P4 wheel gestures, explicit mapping: ctrl+wheel (and a touchpad pinch, which
+ * the browser reports as `ctrlKey`) zooms, shift+wheel pans horizontally, a
+ * plain wheel pans vertically. The old delta-based mouse/touchpad heuristic is
+ * gone, so a pan must never touch the zoom.
+ *
+ * The backings are deliberately wide/tall: at fit zoom the label fills the pane
+ * on one axis exactly, so `clampPan` pins that axis and only the other axis can
+ * move. A wide backing leaves vertical slack, a tall one horizontal slack.
+ */
+describe('PreviewStage P4 wheel pan gestures', () => {
+    const PANE = { w: 600, h: 400 };
+
+    const mountWheelStage = (backingW: number, backingH: number) => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({ id: 'doc-wheel', now: 1_700_000_000, backingW, backingH }),
+            selectedNodeIds: [],
+            activeTool: 'select',
+            snapEnabled: false,
+            rulersVisible: true,
+            viewRotation: 0,
+            viewRotationUserSet: false,
+            zoomMode: 'fit',
+            recenterToken: 0,
+        });
+        render(<PreviewStage />);
+        const stage = Konva.stages[Konva.stages.length - 1] as Konva.Stage;
+        if (!stage) throw new Error('PreviewStage did not mount a Konva stage');
+        return stage;
+    };
+
+    const contentLayer = (stage: Konva.Stage): Konva.Layer => {
+        const layer = stage.getLayers().at(-1);
+        if (!layer) throw new Error('PreviewStage has no content layer');
+        return layer;
+    };
+
+    const fireWheel = (stage: Konva.Stage, delta: { x?: number; y?: number; shiftKey?: boolean }) => {
+        const evt = {
+            clientX: PANE.w / 2,
+            clientY: PANE.h / 2,
+            deltaX: delta.x ?? 0,
+            deltaY: delta.y ?? 0,
+            deltaMode: 0,
+            ctrlKey: false,
+            shiftKey: delta.shiftKey ?? false,
+            preventDefault: () => undefined,
+            stopPropagation: () => undefined,
+        };
+        stage.setPointersPositions(evt as unknown as WheelEvent);
+        act(() => {
+            stage.fire('wheel', { evt: evt as unknown as WheelEvent, target: stage });
+        });
+    };
+
+    it('pans vertically on a plain wheel without changing the zoom', () => {
+        // Wide backing: fit fills the width, so only y has slack to pan into.
+        const stage = mountWheelStage(4000, 1000);
+        const layer = contentLayer(stage);
+        const yBefore = layer.y();
+        const zoomBefore = layer.scaleX();
+
+        fireWheel(stage, { y: 60 });
+
+        // The content follows the gesture (scroll down → the label moves up) ...
+        expect(layer.y()).toBeCloseTo(yBefore - 60, 4);
+        // ... and the fit zoom is untouched: no manual zoom was claimed.
+        expect(layer.scaleX()).toBeCloseTo(zoomBefore, 6);
+        expect(useStore.getState().zoomMode).toBe('fit');
+    });
+
+    it('pans horizontally on shift+wheel without changing the zoom', () => {
+        // Tall backing: fit fills the height, so only x has slack to pan into.
+        const stage = mountWheelStage(1000, 4000);
+        const layer = contentLayer(stage);
+        const xBefore = layer.x();
+        const zoomBefore = layer.scaleX();
+
+        // A mouse reports shift+wheel on deltaY, so the handler must read it there.
+        fireWheel(stage, { y: 60, shiftKey: true });
+
+        expect(layer.x()).toBeCloseTo(xBefore - 60, 4);
+        expect(layer.scaleX()).toBeCloseTo(zoomBefore, 6);
+        expect(useStore.getState().zoomMode).toBe('fit');
+    });
+
+    it('prefers deltaX on shift+wheel when the device already swapped the axes', () => {
+        const stage = mountWheelStage(1000, 4000);
+        const layer = contentLayer(stage);
+        const xBefore = layer.x();
+
+        fireWheel(stage, { x: 40, y: 90, shiftKey: true });
+
+        // deltaX wins over the (mouse-style) deltaY of 90.
+        expect(layer.x()).toBeCloseTo(xBefore - 40, 4);
     });
 });

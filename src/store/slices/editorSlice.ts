@@ -2,6 +2,8 @@ import { newLabelId, roundNode } from '../../core/doc/factory';
 import { resizeNodeGeometry } from '../../core/doc/geometry';
 import { effectiveTransform, IDENTITY_MAT2D, nodeLookup, worldPreservingTransform, type Mat2D } from '../../core/doc/derive';
 import { roundHm } from '../../core/hm';
+import { translateWorldPatch } from '../../editor/transformPatch';
+import { effectiveLockedMap } from '../../editor/selectors';
 import type { CsvRef, FontRef, GlobalSpec, GroupNode, ImageRef, LabelDoc, Node } from '../../core/doc/types';
 import type { NodePatch, StoreSlice } from '../storeTypes';
 
@@ -311,15 +313,23 @@ export const createEditorSlice: StoreSlice = (set, get) => {
         set({ docPast: [], docFuture: [] });
     };
 
-    /** Replace the doc, push the previous snapshot, clear redo, autosave. */
-    const commit = (next: LabelDoc, previous: LabelDoc): void => {
+    /**
+     * Replace the doc, push the previous snapshot, clear redo, autosave.
+     *
+     * `coalesce` folds an auto-repeat into the gesture already on the undo
+     * stack: the first press of a hold pushes the pre-move doc as the baseline,
+     * each subsequent repeat mutates the working doc **without** pushing, so one
+     * key-hold is exactly one `docPast` entry. Everything else (current doc,
+     * `updatedAt`, redo clear, autosave) is identical.
+     */
+    const commit = (next: LabelDoc, previous: LabelDoc, coalesce = false): void => {
         // A committed op ends any transient gesture; its baseline must not leak
         // into a later `commitDoc`.
         transientBase = null;
         next.meta.updatedAt = nowSeconds();
         set((state) => ({
             currentDoc: next,
-            docPast: [...state.docPast, previous].slice(-DOC_HISTORY_CAP),
+            docPast: coalesce ? state.docPast : [...state.docPast, previous].slice(-DOC_HISTORY_CAP),
             docFuture: [],
         }));
         scheduleAutosave(next);
@@ -356,6 +366,54 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             const node = next.nodes.find((entry) => entry.id === id)!;
             applyNodePatch(node, patch);
             commit(next, doc);
+        },
+
+        nudgeNodes: (dx, dy, coalesce = false) => {
+            const state = get();
+            const doc = state.currentDoc;
+            if (!doc || state.selectedNodeIds.length === 0) return;
+            const selected = new Set(state.selectedNodeIds);
+            const byId = nodeLookup(doc.nodes);
+            // A node selected before it was locked must not move; drag/hit-test
+            // skip locked nodes too.
+            const locked = effectiveLockedMap(doc);
+            // Move only the top level of the selection: a selected node whose
+            // ancestor is also selected is carried by that ancestor, so patching
+            // it too would apply the delta twice.
+            const movable = doc.nodes.filter((node) => {
+                if (!selected.has(node.id)) return false;
+                if (locked.get(node.id)) return false;
+                for (
+                    let parentId = node.parentId;
+                    parentId !== null;
+                    parentId = byId.get(parentId)?.parentId ?? null
+                ) {
+                    if (selected.has(parentId)) return false;
+                }
+                return true;
+            });
+            if (movable.length === 0) return;
+            // One working clone, one `commit`: the whole nudge is a single undo
+            // entry regardless of how many nodes are selected. `coalesce` lets a
+            // key-hold's auto-repeats share the first press's undo entry.
+            const next = cloneDoc(doc);
+            let changed = false;
+            for (const node of movable) {
+                const patch = translateWorldPatch(node, byId, dx, dy);
+                const target = patch?.transform;
+                if (!patch || !target) continue;
+                // The patch carries already-rounded hm, so a zero or sub-hm
+                // delta that rounds away leaves x/y equal. Comparing before
+                // applying keeps the hot auto-repeat path off a whole-doc
+                // `docsEqual`.
+                if (target.x === node.transform.x && target.y === node.transform.y) continue;
+                applyNodePatch(next.nodes.find((entry) => entry.id === node.id)!, patch);
+                changed = true;
+            }
+            // A singular chain or a delta that rounds away must not create a dead
+            // undo entry.
+            if (!changed) return;
+            commit(next, doc, coalesce);
         },
 
         addImageRef: (ref) => {

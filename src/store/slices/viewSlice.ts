@@ -56,7 +56,15 @@ export const createViewSlice: StoreSlice = (set) => ({
     zoomMode: 'fit',
     /** Zoom used when `zoomMode === 'manual'` (CSS px per `hm`). */
     manualZoom: 0.05,
-    setZoomMode: (zoomMode) => set({ zoomMode }),
+    /** See the `recenterToken` contract on `AppState`. */
+    recenterToken: 0,
+    /**
+     * An explicit Fit/Real pick bumps `recenterToken` so the Preview re-derives
+     * even when the mode is already active. `setManualZoom` (wheel/toolbar)
+     * deliberately does NOT bump it: those steps must not force a recenter.
+     */
+    setZoomMode: (zoomMode) =>
+        set((state) => ({ zoomMode, recenterToken: state.recenterToken + 1 })),
     setManualZoom: (manualZoom) => set({ manualZoom, zoomMode: 'manual' }),
 
     /** Resolved zoom, kept in sync by the Preview. */

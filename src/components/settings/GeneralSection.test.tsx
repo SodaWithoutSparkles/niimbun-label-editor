@@ -9,14 +9,21 @@ import { SettingsModal } from './SettingsModal';
 afterEach(() => {
     cleanup();
     // Reset for the next test; every test that assumes 96 seeds it explicitly.
-    useStore.setState({ screenDpi: 96 });
+    useStore.setState({ screenDpi: 96, gridSpacingHm: 500 });
 });
+
+// The section now has two numeric inputs (plus the dialog's DPI slider, whose
+// aria-label is also "Screen DPI"), so query by role + accessible name.
+const screenDpiInput = () =>
+    screen.getByRole('spinbutton', { name: /screen dpi/i }) as HTMLInputElement;
+const gridSpacingInput = () =>
+    screen.getByRole('spinbutton', { name: /grid spacing/i }) as HTMLInputElement;
 
 describe('GeneralSection screen DPI', () => {
     it('does not clamp while typing; blur commits the clamped value once', () => {
         useStore.setState({ screenDpi: 96 });
         render(<GeneralSection />);
-        const input = screen.getByRole('spinbutton') as HTMLInputElement;
+        const input = screenDpiInput();
 
         // Clearing the field leaves the committed value untouched.
         fireEvent.change(input, { target: { value: '' } });
@@ -36,12 +43,51 @@ describe('GeneralSection screen DPI', () => {
     it('commits on Enter', () => {
         useStore.setState({ screenDpi: 96 });
         render(<GeneralSection />);
-        const input = screen.getByRole('spinbutton') as HTMLInputElement;
+        const input = screenDpiInput();
 
         fireEvent.change(input, { target: { value: '150' } });
         fireEvent.keyDown(input, { key: 'Enter' });
 
         expect(useStore.getState().screenDpi).toBe(150);
+    });
+});
+
+describe('GeneralSection grid spacing', () => {
+    it('shows the store value in mm and commits the typed value on blur', () => {
+        useStore.setState({ gridSpacingHm: 500 });
+        render(<GeneralSection />);
+        const input = gridSpacingInput();
+
+        expect(input.value).toBe('5');
+
+        fireEvent.change(input, { target: { value: '12' } });
+        expect(useStore.getState().gridSpacingHm).toBe(500);
+
+        fireEvent.blur(input);
+        expect(useStore.getState().gridSpacingHm).toBe(1200);
+    });
+
+    it('reverts a bad value on blur', () => {
+        useStore.setState({ gridSpacingHm: 500 });
+        render(<GeneralSection />);
+        const input = gridSpacingInput();
+
+        fireEvent.change(input, { target: { value: 'abc' } });
+        fireEvent.blur(input);
+
+        expect(useStore.getState().gridSpacingHm).toBe(500);
+        expect(input.value).toBe('5');
+    });
+
+    it('commits on Enter', () => {
+        useStore.setState({ gridSpacingHm: 500 });
+        render(<GeneralSection />);
+        const input = gridSpacingInput();
+
+        fireEvent.change(input, { target: { value: '20' } });
+        fireEvent.keyDown(input, { key: 'Enter' });
+
+        expect(useStore.getState().gridSpacingHm).toBe(2000);
     });
 });
 
@@ -79,7 +125,7 @@ describe('GeneralSection calibration dialog (P7 #11)', () => {
 
         expect(useStore.getState().screenDpi).toBe(120);
         // The raw field re-renders from the store, so the two never disagree.
-        expect((screen.getByRole('spinbutton') as HTMLInputElement).value).toBe('120');
+        expect(screenDpiInput().value).toBe('120');
     });
 
     it('opens stacked on the Settings modal', () => {

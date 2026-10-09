@@ -5,7 +5,15 @@ import { SUPPORTED_LANGUAGES } from '../../i18n/languages';
 import { normalizeLanguage } from '../../store/preferenceValidation';
 import { Input, Select, SettingRow, Toggle } from '../common/forms';
 import { CalibrationDialog } from './CalibrationDialog';
-import { SCREEN_DPI_MAX, SCREEN_DPI_MIN } from '../../store/storeDefaults';
+import {
+    GRID_SPACING_MAX_HM,
+    GRID_SPACING_MIN_HM,
+    SCREEN_DPI_MAX,
+    SCREEN_DPI_MIN,
+} from '../../store/storeDefaults';
+
+/** hm are hundredths of a millimetre; the grid control speaks mm. */
+const HM_PER_MM = 100;
 
 /**
  * Literal map so dynamic locale values keep i18next's typed-key union intact
@@ -25,21 +33,29 @@ export const GeneralSection: React.FC = () => {
     const languageId = useId();
     const autoSaveId = useId();
     const screenDpiId = useId();
+    const gridSpacingId = useId();
     const language = useStore((state) => state.language);
     const setLanguage = useStore((state) => state.setLanguage);
     const autoSave = useStore((state) => state.autoSave);
     const toggleAutoSave = useStore((state) => state.toggleAutoSave);
     const screenDpi = useStore((state) => state.screenDpi);
     const setScreenDpi = useStore((state) => state.setScreenDpi);
+    const gridSpacingHm = useStore((state) => state.gridSpacingHm);
+    const setGridSpacingHm = useStore((state) => state.setGridSpacingHm);
     // Local draft so typing (including clearing the field) never hits the store;
     // the store clamps/rounds once, on blur or Enter (EditorStatusBar pattern).
     const [screenDpiDraft, setScreenDpiDraft] = useState(String(screenDpi));
+    const [gridSpacingDraft, setGridSpacingDraft] = useState(String(gridSpacingHm / HM_PER_MM));
     const [calibrationOpen, setCalibrationOpen] = useState(false);
 
     // Keep the draft in step with the committed value (external change / reset).
     useEffect(() => {
         setScreenDpiDraft(String(screenDpi));
     }, [screenDpi]);
+
+    useEffect(() => {
+        setGridSpacingDraft(String(gridSpacingHm / HM_PER_MM));
+    }, [gridSpacingHm]);
 
     /** Commit the typed DPI; an unparseable value reverts to the committed one. */
     const commitScreenDpi = () => {
@@ -49,6 +65,16 @@ export const GeneralSection: React.FC = () => {
             return;
         }
         setScreenDpi(parsed);
+    };
+
+    /** Commit the typed mm; an unparseable value reverts to the committed one. */
+    const commitGridSpacing = () => {
+        const parsed = Number.parseFloat(gridSpacingDraft);
+        if (!Number.isFinite(parsed)) {
+            setGridSpacingDraft(String(gridSpacingHm / HM_PER_MM));
+            return;
+        }
+        setGridSpacingHm(Math.round(parsed * HM_PER_MM));
     };
 
     // Data-driven off the runtime allow-list so it cannot drift from validation.
@@ -105,6 +131,29 @@ export const GeneralSection: React.FC = () => {
                         {t('settings.general.calibrate')}
                     </button>
                 </div>
+            </SettingRow>
+            <SettingRow
+                label={t('settings.general.gridSpacing')}
+                description={t('settings.general.gridSpacingDescription')}
+                htmlFor={gridSpacingId}
+            >
+                <Input
+                    id={gridSpacingId}
+                    type="number"
+                    min={GRID_SPACING_MIN_HM / HM_PER_MM}
+                    max={GRID_SPACING_MAX_HM / HM_PER_MM}
+                    step={1}
+                    value={gridSpacingDraft}
+                    onChange={setGridSpacingDraft}
+                    onBlur={commitGridSpacing}
+                    onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                            event.preventDefault();
+                            commitGridSpacing();
+                        }
+                    }}
+                    className="w-24"
+                />
             </SettingRow>
 
             {/* Mounted only while open: a closed dialog's hooks still run. */}

@@ -1,5 +1,5 @@
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n/languages';
-import { SCREEN_DPI_MAX, SCREEN_DPI_MIN } from './storeDefaults';
+import { GRID_SPACING_MAX_HM, GRID_SPACING_MIN_HM, SCREEN_DPI_MAX, SCREEN_DPI_MIN } from './storeDefaults';
 import type {
     AppState,
     KeyboardShortcutConfig,
@@ -10,7 +10,7 @@ import type {
 /** The only state that belongs in localStorage. Everything else is runtime. */
 export type PersistedSettings = Pick<
     AppState,
-    'autoSave' | 'keyboardShortcuts' | 'toolSettings' | 'language' | 'screenDpi'
+    'autoSave' | 'keyboardShortcuts' | 'toolSettings' | 'language' | 'screenDpi' | 'gridSpacingHm'
 >;
 
 /**
@@ -131,6 +131,20 @@ export const normalizeScreenDpi = (
 };
 
 /**
+ * Returns a finite grid-spacing (hm) clamped to a sane range, or `undefined`
+ * when the persisted value is unusable. Keeps a corrupt blob from reaching the
+ * preview as `0`/`NaN` (a collapsing grid or infinite snap candidates).
+ */
+export const normalizeGridSpacingHm = (
+    value: unknown,
+    min: number,
+    max: number,
+): number | undefined => {
+    if (!isFiniteNumber(value)) return undefined;
+    return Math.min(max, Math.max(min, Math.round(value)));
+};
+
+/**
  * Validates the `ui_settings` payload and returns a complete
  * `PersistedSettings`, filling anything absent or malformed from `defaults`.
  */
@@ -152,6 +166,9 @@ export const validatePersistedSettings = (
         screenDpi:
             normalizeScreenDpi(persisted.screenDpi, SCREEN_DPI_MIN, SCREEN_DPI_MAX) ??
             defaults.screenDpi,
+        gridSpacingHm:
+            normalizeGridSpacingHm(persisted.gridSpacingHm, GRID_SPACING_MIN_HM, GRID_SPACING_MAX_HM) ??
+            defaults.gridSpacingHm,
     };
 };
 
@@ -174,5 +191,6 @@ export const pickPersistedKeys = (
     if ('toolSettings' in persisted) picked.toolSettings = repaired.toolSettings;
     if ('language' in persisted) picked.language = repaired.language;
     if ('screenDpi' in persisted) picked.screenDpi = repaired.screenDpi;
+    if ('gridSpacingHm' in persisted) picked.gridSpacingHm = repaired.gridSpacingHm;
     return picked;
 };

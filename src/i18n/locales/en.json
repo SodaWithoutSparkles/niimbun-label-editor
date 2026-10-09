@@ -118,6 +118,8 @@
       "autoSave": "Auto-save",
       "screenDpi": "Screen DPI",
       "screenDpiDescription": "Screen density used for real-size zoom. Default 96.",
+      "gridSpacing": "Grid spacing",
+      "gridSpacingDescription": "Snap-to-grid step in millimetres. Default 5 mm.",
       "calibrate": "Calibrate",
       "calibrationTitle": "Screen DPI calibration",
       "calibrationDescription": "Lay a real ruler on the screen, then drag the slider until the bar below is exactly as long as the ruler.",

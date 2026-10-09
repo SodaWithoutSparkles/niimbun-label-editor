@@ -1,6 +1,9 @@
 import type { StoreSlice } from '../storeTypes';
 import {
+    DEFAULT_GRID_SPACING_HM,
     DEFAULT_SCREEN_DPI,
+    GRID_SPACING_MAX_HM,
+    GRID_SPACING_MIN_HM,
     SCREEN_DPI_MAX,
     SCREEN_DPI_MIN,
     defaultAutoSave,
@@ -65,6 +68,13 @@ export const createSettingsSlice: StoreSlice = (set) => ({
         screenDpi: Math.min(SCREEN_DPI_MAX, Math.max(SCREEN_DPI_MIN, Math.round(screenDpi))),
     }),
 
+    // Preview grid spacing (§6, §11). Persisted with the other global settings;
+    // rounded to whole hm and clamped so the grid can never collapse or vanish.
+    gridSpacingHm: DEFAULT_GRID_SPACING_HM,
+    setGridSpacingHm: (hm) => set({
+        gridSpacingHm: Math.min(GRID_SPACING_MAX_HM, Math.max(GRID_SPACING_MIN_HM, Math.round(hm))),
+    }),
+
     // Settings-window open state lives in the store (not `Header` local state)
     // so the global Ctrl/Cmd+, handler can open it without prop-drilling.
     isSettingsOpen: false,
@@ -77,5 +87,6 @@ export const createSettingsSlice: StoreSlice = (set) => ({
         toolSettings: defaultToolSettings,
         language: defaultLanguage,
         screenDpi: DEFAULT_SCREEN_DPI,
+        gridSpacingHm: DEFAULT_GRID_SPACING_HM,
     }),
 });

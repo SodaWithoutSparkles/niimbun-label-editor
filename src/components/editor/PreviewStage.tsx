@@ -26,13 +26,13 @@ import {
     type Rect as ViewRect,
     type Viewport,
 } from '../../core/viewport';
-import { resolveZoom, centeredViewport, zoomAt } from '../../editor/viewportController';
+import { resolveZoom, centeredViewport, zoomAt, ZOOM_MIN, ZOOM_MAX } from '../../editor/viewportController';
+import { classifyWheel } from '../../editor/wheelIntent';
 import { createNodeForInsert, createPolygonNode } from '../../editor/insertActions';
 import { finishPolygonPoints, snapPolygonPointIfEnabled, type PolygonPoint } from '../../editor/polygonDrawing';
 import { pointerDownSelection, nodesInMarquee } from '../../editor/selectionModel';
 import { DEFAULT_SHAPE_STROKE, DEFAULT_SHAPE_STROKE_WIDTH } from '../../core/doc/objects';
 import { isTypingTarget } from '../../utils/keyboardTarget';
-import { GRID_STEP_HM } from './gridConstants';
 import { ResolvedShape } from './ResolvedShape';
 import { bytesProviderFor, usePreparedAssets } from './usePreparedAssets';
 import { fontBadges } from '../../editor/render/fontAssets';
@@ -55,8 +55,6 @@ import { Rulers } from './Rulers';
 
 const SNAP_THRESHOLD_PX = 6;
 const RULER_GUTTER = 24;
-const ZOOM_MIN = 0.005;
-const ZOOM_MAX = 4;
 /**
  * Movement (in screen px) a pointer must travel before a pointer-down on an
  * already-selected node counts as a drag rather than a click. Below it the
@@ -175,8 +173,11 @@ export const PreviewStage: React.FC = () => {
     const viewRotation = useStore((state) => state.viewRotation);
     const zoomMode = useStore((state) => state.zoomMode);
     const manualZoom = useStore((state) => state.manualZoom);
+    const setManualZoom = useStore((state) => state.setManualZoom);
+    const recenterToken = useStore((state) => state.recenterToken);
     const setEffectiveZoom = useStore((state) => state.setEffectiveZoom);
     const screenDpi = useStore((state) => state.screenDpi);
+    const gridSpacingHm = useStore((state) => state.gridSpacingHm);
     const resourceRepo = useStore((state) => state.resourceRepo);
 
     const containerRef = useRef<HTMLDivElement>(null);
@@ -188,6 +189,18 @@ export const PreviewStage: React.FC = () => {
     const nodeBoundsRef = useRef<Map<string, ViewRect>>(new Map());
     const [size, setSize] = useState({ w: 0, h: 0 });
     const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1, rotation: 0 });
+    /**
+     * The zoom a wheel gesture just wrote, set by `handleWheel` and consumed by
+     * the recenter effect. The wheel writes a pointer-anchored viewport and the
+     * store's `setManualZoom` flips the derived `zoom` to the same value; that
+     * one effect run must survive, while every other change to `zoom` (toolbar
+     * step, Fit/Real, rotation, backing or pane resize) must recentre. The token
+     * is one-shot: the effect clears it on read, so a later rotation or resize
+     * can never be mistaken for the wheel's own run.
+     */
+    const wheelZoomRef = useRef<number | null>(null);
+    /** Token value the recenter effect last observed (forces a re-derive on bump). */
+    const lastRecenterTokenRef = useRef(recenterToken);
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
     const [snapLines, setSnapLines] = useState<SnapGuideLine[]>([]);
     const [polygonPoints, setPolygonPoints] = useState<PolygonPoint[]>([]);
@@ -249,10 +262,22 @@ export const PreviewStage: React.FC = () => {
     }, [backing, innerSize, zoomMode, manualZoom, viewRotation, screenDpi]);
 
     // Recenter whenever the derived zoom, rotation, backing or area changes.
+    // A wheel zoom writes a pointer-anchored viewport and flips the store to
+    // `manual` at the same zoom, so the derived `zoom` matches the live zoom.
+    // `wheelZoomRef` records that exact zoom for exactly one effect run: the
+    // skip below consumes it, so the anchored viewport survives the wheel while
+    // every other `zoom` change (toolbar step, rotation, backing/resize)
+    // recentres normally. An explicit Fit/Real pick bumps `recenterToken` so it
+    // always re-derives/recenters, even when the mode was already active.
     useEffect(() => {
         if (!backing || innerSize.w <= 1) return;
+        const forced = recenterToken !== lastRecenterTokenRef.current;
+        lastRecenterTokenRef.current = recenterToken;
+        const anchored = wheelZoomRef.current;
+        wheelZoomRef.current = null; // consumed: only the wheel's own run may skip
+        if (!forced && anchored !== null && Math.abs(anchored - zoom) < 1e-6) return;
         setViewport(centeredViewport(zoom, backing, innerSize, viewRotation));
-    }, [zoom, viewRotation, backing, innerSize]);
+    }, [zoom, recenterToken, viewRotation, backing, innerSize]);
 
     useEffect(() => {
         if (viewport.zoom > 0) setEffectiveZoom(viewport.zoom);
@@ -391,10 +416,10 @@ export const PreviewStage: React.FC = () => {
             doc,
             [...nodeBoundsById.values()],
             SNAP_THRESHOLD_PX / viewport.zoom,
-            GRID_STEP_HM,
+            gridSpacingHm,
             snapEnabled,
         );
-    }, [polygonCursor, snapEnabled, doc, nodeBoundsById, viewport.zoom]);
+    }, [polygonCursor, snapEnabled, doc, nodeBoundsById, viewport.zoom, gridSpacingHm]);
     // Keep the latest bounds reachable from `beginDrag` without a stale closure.
     nodeBoundsRef.current = nodeBoundsById;
 
@@ -539,7 +564,7 @@ export const PreviewStage: React.FC = () => {
                     doc,
                     [...nodeBoundsById.values()],
                     SNAP_THRESHOLD_PX / viewport.zoom,
-                    GRID_STEP_HM,
+                    gridSpacingHm,
                     snapEnabled,
                 );
                 if (polygonPoints.length >= 3 && Math.hypot(snapped[0] - polygonPoints[0][0], snapped[1] - polygonPoints[0][1]) <= SNAP_THRESHOLD_PX / viewport.zoom) {
@@ -591,7 +616,7 @@ export const PreviewStage: React.FC = () => {
             const pointer = stage.getPointerPosition();
             if (pointer) setMarquee({ start: pointer, current: pointer });
         },
-        [doc, pointerWorld, viewport, activeTool, addNode, selectNode, clearActiveTool, selectedNodeIds, selectNodes, clearNodeSelection, beginDrag, targets, snapEnabled, nodeBoundsById, polygonPoints, finishPolygon],
+        [doc, pointerWorld, viewport, activeTool, addNode, selectNode, clearActiveTool, selectedNodeIds, selectNodes, clearNodeSelection, beginDrag, targets, snapEnabled, nodeBoundsById, polygonPoints, finishPolygon, gridSpacingHm],
     );
 
     const handlePointerMove = useCallback(() => {
@@ -632,7 +657,7 @@ export const PreviewStage: React.FC = () => {
                     doc,
                     [...nodeBoundsById.values()],
                     SNAP_THRESHOLD_PX / viewport.zoom,
-                    GRID_STEP_HM,
+                    gridSpacingHm,
                     snapEnabled,
                 ),
             );
@@ -692,7 +717,7 @@ export const PreviewStage: React.FC = () => {
                     backing: backing!,
                     regions: doc.label.regions,
                     siblings,
-                    grid: GRID_STEP_HM,
+                    grid: gridSpacingHm,
                 });
                 const thresholdHm = SNAP_THRESHOLD_PX / viewport.zoom;
                 let bestX: (typeof candidates)[number] | null = null;
@@ -718,7 +743,7 @@ export const PreviewStage: React.FC = () => {
                 updateNodeTransient(id, movePatch(origin, dx, dy));
             }
         }
-    }, [doc, marquee, viewport, snapEnabled, selectedNodeIds, backing, innerSize, nodeBoundsById, updateNodeTransient, activeTool, polygonPoints]);
+    }, [doc, marquee, viewport, snapEnabled, selectedNodeIds, backing, innerSize, nodeBoundsById, updateNodeTransient, activeTool, polygonPoints, gridSpacingHm]);
 
     /**
      * Finalize any armed pointer gesture: release pan, drop snap guides and
@@ -912,12 +937,47 @@ export const PreviewStage: React.FC = () => {
             event.evt.preventDefault();
             const stage = stageRef.current;
             if (!stage) return;
+            const e = event.evt;
+            const intent = classifyWheel(e);
+
+            if (intent !== 'zoom') {
+                // Normalise to screen px: pixel deltas 1:1, a line ~16 px, a page spans the pane.
+                const pxPerLine = 16;
+                const sx = e.deltaMode === 1 ? pxPerLine : e.deltaMode === 2 ? innerSize.w : 1;
+                const sy = e.deltaMode === 1 ? pxPerLine : e.deltaMode === 2 ? innerSize.h : 1;
+                const dx = e.deltaX * sx;
+                const dy = e.deltaY * sy;
+                // Some trackpads emit a zero-delta wheel on tap; skip it or
+                // `clampPan` allocates a fresh viewport object for nothing.
+                if (dx === 0 && dy === 0) return;
+                if (intent === 'pan-horizontal') {
+                    // Shift+wheel pan horizontally. A mouse reports the gesture on deltaY;
+                    // a trackpad that already swapped axes reports it on deltaX — prefer deltaX.
+                    const horizontal = e.deltaX !== 0 ? dx : dy;
+                    setViewport((v) => clampPan({ ...v, x: v.x - horizontal }, backing, innerSize));
+                } else {
+                    setViewport((v) => clampPan({ ...v, x: v.x - dx, y: v.y - dy }, backing, innerSize));
+                }
+                return;
+            }
+
             const pointer = stage.getPointerPosition() ?? { x: innerSize.w / 2, y: innerSize.h / 2 };
-            const factor = event.evt.deltaY < 0 ? 1.1 : 1 / 1.1;
+            const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
             const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, viewport.zoom * factor));
             setViewport(zoomAt(viewport, pointer, next, backing, innerSize));
+            // Mirror the live zoom into the store so `zoomMode` flips to
+            // `manual` and the Real/Fit indicators deselect (the reported bug).
+            // No `recenterToken` bump — the pointer anchor must survive — so the
+            // one-shot token tells the recenter effect to skip exactly this run.
+            //
+            // Only claim the skip when this notch actually changes the derived
+            // zoom: a notch already pinned at a bound (`next === zoom`) leaves the
+            // effect deps untouched, so it never runs to consume the token — a
+            // stale token would then swallow a later rotation/resize.
+            if (next !== zoom) wheelZoomRef.current = next;
+            setManualZoom(next);
         },
-        [backing, innerSize, viewport],
+        [backing, innerSize, viewport, zoom, setManualZoom],
     );
 
     // Enter finishes a half-drawn polygon; Esc cancels the draft and clears the
@@ -1188,7 +1248,7 @@ export const PreviewStage: React.FC = () => {
                     doc={doc}
                     guides={guides}
                     showGrid={gridVisible}
-                    gridStepHm={GRID_STEP_HM}
+                    gridStepHm={gridSpacingHm}
                     snapLines={snapLines}
                     keepOutIds={keepOutIds}
                     keepOutBounds={keepOutBounds}

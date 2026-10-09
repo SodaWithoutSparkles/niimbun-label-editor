@@ -1128,6 +1128,137 @@ describe('editorSlice — setDocGlobals (P6 W6)', () => {
     });
 });
 
+describe('editorSlice — nudgeNodes (P4 W1)', () => {
+    it('translates a single selected node by the world hm delta (one undo entry)', () => {
+        const doc = makeDoc([textNode('a')]);
+        const store = setupStore(doc);
+        store.getState().selectNodes(['a']);
+
+        store.getState().nudgeNodes(100, -50);
+
+        const node = store.getState().currentDoc!.nodes[0]!;
+        expect(node.transform.x).toBe(100);
+        expect(node.transform.y).toBe(-50);
+        // Source doc untouched; exactly one undo entry, no redo branch.
+        expect(doc.nodes[0]!.transform.x).toBe(0);
+        expect(store.getState().docPast).toHaveLength(1);
+        expect(store.getState().docFuture).toHaveLength(0);
+
+        store.getState().undoDoc();
+        expect(store.getState().currentDoc!.nodes[0]!.transform.x).toBe(0);
+    });
+
+    it('moves every top-level node in a multi-selection as one undo entry', () => {
+        const store = setupStore(makeDoc([textNode('a'), textNode('b')]));
+        store.getState().selectNodes(['a', 'b']);
+
+        store.getState().nudgeNodes(200, 0);
+
+        const nodes = store.getState().currentDoc!.nodes;
+        expect(nodes.find((n) => n.id === 'a')!.transform.x).toBe(200);
+        expect(nodes.find((n) => n.id === 'b')!.transform.x).toBe(200);
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('moves a nested child under a selected group exactly once', () => {
+        const group = groupNode('g');
+        group.transform = { x: 1000, y: 200, rotDeg: 0, scaleX: 1, scaleY: 1 };
+        const child = textNode('a', 'g');
+        child.transform = { x: 100, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 };
+        const store = setupStore(makeDoc([group, child]));
+        store.getState().selectNodes(['g', 'a']);
+
+        const before = worldOf(store.getState().currentDoc!.nodes, 'a');
+        store.getState().nudgeNodes(300, 0);
+
+        const nodes = store.getState().currentDoc!.nodes;
+        const groupAfter = nodes.find((n) => n.id === 'g')!;
+        const childAfter = nodes.find((n) => n.id === 'a')!;
+        // The group carries the delta; the child's local transform is untouched.
+        expect(groupAfter.transform.x).toBe(1300);
+        expect(childAfter.transform.x).toBe(100);
+        // World position moved by exactly the delta (not doubled).
+        const after = worldOf(nodes, 'a');
+        expect(after.e - before.e).toBe(300);
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('is a no-op with an empty selection or a zero delta', () => {
+        const store = setupStore(makeDoc([textNode('a')]));
+
+        store.getState().nudgeNodes(100, 100);
+        expect(store.getState().docPast).toHaveLength(0);
+
+        store.getState().selectNodes(['a']);
+        store.getState().nudgeNodes(0, 0);
+        expect(store.getState().currentDoc!.nodes[0]!.transform.x).toBe(0);
+        expect(store.getState().docPast).toHaveLength(0);
+    });
+
+    it('skips a selected id that is no longer in the document', () => {
+        const store = setupStore(makeDoc([textNode('a')]));
+        store.setState({ selectedNodeIds: ['missing'] });
+        store.getState().nudgeNodes(100, 0);
+        expect(store.getState().docPast).toHaveLength(0);
+    });
+
+    it('coalesces auto-repeat repeats into a single undo entry', () => {
+        const store = setupStore(makeDoc([textNode('a')]));
+        store.getState().selectNodes(['a']);
+
+        // The first press pushes the baseline; each repeat mutates in place.
+        store.getState().nudgeNodes(100, 0, false);
+        store.getState().nudgeNodes(100, 0, true);
+        store.getState().nudgeNodes(100, 0, true);
+
+        expect(store.getState().currentDoc!.nodes[0]!.transform.x).toBe(300);
+        // One hold = one undo entry.
+        expect(store.getState().docPast).toHaveLength(1);
+
+        // Undo restores the position before the whole hold.
+        store.getState().undoDoc();
+        expect(store.getState().currentDoc!.nodes[0]!.transform.x).toBe(0);
+    });
+
+    it('pushes a new undo entry for a subsequent non-coalesced nudge', () => {
+        const store = setupStore(makeDoc([textNode('a')]));
+        store.getState().selectNodes(['a']);
+
+        store.getState().nudgeNodes(100, 0, false);
+        store.getState().nudgeNodes(100, 0, true);
+        store.getState().nudgeNodes(100, 0, false);
+
+        expect(store.getState().currentDoc!.nodes[0]!.transform.x).toBe(300);
+        expect(store.getState().docPast).toHaveLength(2);
+
+        store.getState().undoDoc();
+        expect(store.getState().currentDoc!.nodes[0]!.transform.x).toBe(200);
+    });
+
+    it('does not move a locked node and adds no undo entry', () => {
+        const locked = textNode('a');
+        locked.locked = true;
+        const store = setupStore(makeDoc([locked]));
+        store.getState().selectNodes(['a']);
+
+        store.getState().nudgeNodes(100, 0);
+
+        expect(store.getState().currentDoc!.nodes[0]!.transform.x).toBe(0);
+        expect(store.getState().docPast).toHaveLength(0);
+    });
+
+    it('adds no entry for a delta that rounds away', () => {
+        const store = setupStore(makeDoc([textNode('a')]));
+        store.getState().selectNodes(['a']);
+
+        // Sub-hm on both axes rounds to the current 0 → no change, no entry.
+        store.getState().nudgeNodes(0.4, 0.4);
+
+        expect(store.getState().currentDoc!.nodes[0]!.transform.x).toBe(0);
+        expect(store.getState().docPast).toHaveLength(0);
+    });
+});
+
 describe('editorSlice — attachCsv (P6 W6)', () => {
     it('attaches the CSV and resets the sample row in a single undo entry', () => {
         const store = setupStore();
