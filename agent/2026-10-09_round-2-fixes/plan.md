@@ -16,6 +16,7 @@
 5. **Commits:** semantic git commit **per phase**, after its review pass.
 6. **2D code formats (new issue):** **new "2D code" object** — a separate palette category from QR (QR stays untouched, backward compatible by construction), with a format picker (datamatrix, aztec, pdf417, …) over one shared bwip-driven symbol engine (fill, quiet zones, module-size verdict all shared).
 7. **Quiet zones for qr/barcode:** **in scope, default ON.** Project is v0 alpha — breaking changes allowed. Existing docs' symbols shrink to make room for the zone and some will newly trip the too-small warning; that is intended and accepted. Explicit/derived quiet-zone option per symbology with a sensible default (QR ≥ 4 modules/side), NOT via bwip's `paddingwidth` (scale-unit based, currently zeroed).
+8. User: i18n `en.json` can be handled later after round finished. Workflow: dispatch parallel first (without edits to en.json), just let agents report missing keys and then do a single pass to add them all at once (no per-phase edits to en.json). Speeds up the round and avoids merge conflicts.
 
 ## Scope
 

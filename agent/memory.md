@@ -35,3 +35,4 @@ Label editor for NIIMBOT thermal printers (React 19, TypeScript, Tailwind v4, zu
 - `<React.StrictMode>` is active — lifecycle effects fire twice; dialog/portal code must be idempotent.
 - `cn()` (`src/utils/cn.ts`) = `twMerge(clsx(...))`; use it rather than string-concatenating class names.
 - Settings window opens via OptionsMenu or `Ctrl/Cmd+,`; language lives in the settings store and drives `i18n.changeLanguage`.
+- User: i18n `en.json` can be handled later after round finished. Workflow: dispatch parallel first (without edits to en.json), just let agents report missing keys and then do a single pass to add them all at once (no per-phase edits to en.json). Speeds up the round and avoids merge conflicts.
