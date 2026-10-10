@@ -34,7 +34,7 @@ import { pointerDownSelection, nodesInMarquee } from '../../editor/selectionMode
 import { DEFAULT_SHAPE_STROKE, DEFAULT_SHAPE_STROKE_WIDTH } from '../../core/doc/objects';
 import { isTypingTarget } from '../../utils/keyboardTarget';
 import { ResolvedShape } from './ResolvedShape';
-import { TextEditorOverlay, useTextEditor, computeScreenPlacement } from './TextEditorOverlay';
+import { TextEditorOverlay, useTextEditor, computeScreenPlacement, localPointOf } from './TextEditorOverlay';
 import { bytesProviderFor, usePreparedAssets } from './usePreparedAssets';
 import { fontBadges } from '../../editor/render/fontAssets';
 import { useSampleRowState } from './sampleRowContext';
@@ -673,6 +673,10 @@ export const PreviewStage: React.FC = () => {
         const { screenX, screenY, rotation } = computeScreenPlacement(nodeM, gutter, gutter);
         const scaleX = Math.hypot(nodeM[0], nodeM[1]) || 1;
         const scaleY = Math.hypot(nodeM[2], nodeM[3]) || 1;
+        // The double-click point, mapped into the node's own (unscaled) space so
+        // the caret lands under the pointer even when the node is rotated/scaled.
+        const pointer = stage.getPointerPosition() ?? { x: screenX, y: screenY };
+        const clickLocal = localPointOf(nodeM, pointer.x, pointer.y, gutter, gutter);
         beginTextEdit({
             id: node.id,
             screenX,
@@ -682,6 +686,8 @@ export const PreviewStage: React.FC = () => {
             rotation,
             scaleX,
             scaleY,
+            clickLocalX: clickLocal.x,
+            clickLocalY: clickLocal.y,
             fontSize: node.fontSize ?? DEFAULT_FONT_SIZE,
             fontFamily: node.fontFamily ?? DEFAULT_FONT_FAMILY,
             fontStyle: node.fontStyle ?? 'normal',

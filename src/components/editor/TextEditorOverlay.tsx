@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TextWrap } from '../../core/doc/objects';
 import type { LabelDoc, TextAlign } from '../../core/doc/types';
 import { useStore } from '../../store/useStore';
@@ -9,9 +9,15 @@ import { useStore } from '../../store/useStore';
  * Ported from the template-webui reference (`TextEditorOverlay.tsx` +
  * `hooks/useTextEditor.ts`), adapted to this repo's `LabelDoc` model and its
  * transient-gesture undo seam: `useTextEditor` owns the session and all store
- * wiring, while `TextEditorOverlay` is a purely presentational `<textarea>` a
- * parent mounts inside the stage container. The parent (PreviewStage) hides the
- * node being edited; this file never touches shared rendering code.
+ * wiring, while `TextEditorOverlay` is a presentational `<textarea>` a parent
+ * mounts inside the stage container. The parent (PreviewStage) hides the node
+ * being edited; this file never touches shared rendering code.
+ *
+ * A `<textarea>`'s native caret is ~1 px and cannot be thickened, so we render a
+ * synthetic caret. The textarea and the caret live in one **wrapper** that
+ * carries the node transform (rotate+scale), so both are placed in *unscaled
+ * layout px* and the wrapper transform scales/rotates them together. Opening the
+ * editor seeds the caret from the double-click point.
  */
 
 /** One live editing session, positioned in container-relative screen px. */
@@ -33,6 +39,13 @@ export interface TextEditorSession {
     lineHeight: number;
     align: TextAlign;
     text: string;
+    /**
+     * Double-click point in **node-local hm**: `localPointOf(pointer, nodeMatrix)`
+     * from the parent, so the seed lands under the pointer even when the node is
+     * rotated/scaled.
+     */
+    clickLocalX: number;
+    clickLocalY: number;
 }
 
 export interface TextEditorOverlayProps {
@@ -57,7 +70,7 @@ export interface TextEditorOverlayProps {
  *
  * Returns the node origin in screen px plus its rotation in degrees; the overlay
  * re-applies the rotation and per-axis scale via CSS, so its layout box stays
- * the node's *unscaled* hm extent (the caller passes `size.w`/`size.h`).
+ * the node's *unscaled* hm extent.
  */
 export const computeScreenPlacement = (
     nodeAbsoluteMatrix: readonly number[],
@@ -69,9 +82,181 @@ export const computeScreenPlacement = (
     return { screenX: e + offsetX, screenY: f + offsetY, rotation };
 };
 
+/**
+ * Map a stage-local screen point into the node's local hm space by inverting the
+ * node's absolute matrix. Used to seed the caret under the double-click.
+ */
+export const localPointOf = (
+    nodeAbsoluteMatrix: readonly number[],
+    x: number,
+    y: number,
+    offsetX = 0,
+    offsetY = 0,
+): { x: number; y: number } => {
+    const [a, b, c, d, e, f] = nodeAbsoluteMatrix;
+    const px = x - offsetX - e;
+    const py = y - offsetY - f;
+    const det = a * d - b * c;
+    if (det === 0) return { x: 0, y: 0 };
+    return { x: (d * px - c * py) / det, y: (-b * px + a * py) / det };
+};
+
 /** Textarea wrapping CSS that mirrors the Konva `wrap` modes that affect flow. */
 const wrapStyle = (wrap: TextWrap): React.CSSProperties =>
     wrap === 'char' ? { wordBreak: 'break-all' } : { overflowWrap: 'break-word' };
+
+/** Reused canvas 2D context for text measurement (created lazily, never drawn). */
+let measureCtx: CanvasRenderingContext2D | null = null;
+const measurementContext = (): CanvasRenderingContext2D | null => {
+    if (measureCtx) return measureCtx;
+    if (typeof document === 'undefined') return null;
+    measureCtx = document.createElement('canvas').getContext('2d');
+    return measureCtx;
+};
+
+export interface CaretFont {
+    fontSize: number;
+    fontFamily: string;
+    fontStyle: string;
+    lineHeight: number;
+}
+
+const lineHeightPxOf = (font: CaretFont): number => font.fontSize * font.lineHeight;
+
+/**
+ * Split a wrapped textarea's text into **visual** lines (hard `\n` plus soft
+ * wraps at `contentWidth`), returning each line's start offset. Mirrors the
+ * textarea/Konva word/char break roughly (a word longer than the line is broken
+ * at the overflow point in both modes).
+ */
+export const wrappedLineStarts = (
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    contentWidth: number,
+    font: CaretFont,
+    wrap: TextWrap,
+): number[] => {
+    const fontSpec = `${font.fontStyle} ${font.fontSize}px ${font.fontFamily}`;
+    const width = (s: string): number => {
+        ctx.font = fontSpec;
+        return ctx.measureText(s).width;
+    };
+    const limit = contentWidth > 0 ? contentWidth : Number.POSITIVE_INFINITY;
+    const starts = [0];
+    let i = 0;
+    while (i < text.length) {
+        const ch = text[i]!;
+        if (ch === '\n') {
+            i += 1;
+            starts.push(i);
+            continue;
+        }
+        let j = i;
+        let lastSpace = -1;
+        while (j < text.length && text[j] !== '\n' && width(text.slice(i, j + 1)) <= limit) {
+            if (text[j] === ' ') lastSpace = j;
+            j += 1;
+        }
+        if (j >= text.length || text[j] === '\n') {
+            // Consumed to the end of the paragraph.
+            i = j;
+            continue;
+        }
+        if (j === i) {
+            // A single char wider than the line: advance one char (no wrap point
+            // exists) so the loop always makes progress.
+            starts.push(i + 1);
+            i += 1;
+            continue;
+        }
+        // Overflow: break at the last space (word) or exactly here (char / long word).
+        const breakAt = wrap === 'word' && lastSpace > i ? lastSpace + 1 : j;
+        i = breakAt;
+        starts.push(i);
+    }
+    return starts;
+};
+
+/** Line index + column for a text offset (clamped). */
+const lineColOf = (starts: readonly number[], text: string, offset: number): { line: number; col: number } => {
+    const clamped = Math.max(0, Math.min(offset, text.length));
+    let line = 0;
+    for (let li = 0; li < starts.length; li += 1) {
+        if (starts[li]! <= clamped) line = li;
+        else break;
+    }
+    return { line, col: clamped - starts[line]! };
+};
+
+/**
+ * Offset into `text` for a click at `(x, y)` in the textarea's **layout px**
+ * space (`x` from the content edge, `y` from the content top).
+ */
+export const caretFromPoint = (
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    x: number,
+    y: number,
+    contentWidth: number,
+    font: CaretFont,
+    wrap: TextWrap,
+    align: TextAlign,
+): number => {
+    const fontSpec = `${font.fontStyle} ${font.fontSize}px ${font.fontFamily}`;
+    const width = (s: string): number => {
+        ctx.font = fontSpec;
+        return ctx.measureText(s).width;
+    };
+    const starts = wrappedLineStarts(ctx, text, contentWidth, font, wrap);
+    const lineHeightPx = lineHeightPxOf(font);
+    const line = Math.max(0, Math.min(Math.floor(y / lineHeightPx), starts.length - 1));
+    const start = starts[line]!;
+    const end = line + 1 < starts.length ? starts[line + 1]! : text.length;
+    const lineText = text.slice(start, end);
+
+    const lineWidth = lineText.length > 0 ? width(lineText || ' ') : 0;
+    const originX = align === 'center' ? (contentWidth - lineWidth) / 2 : align === 'right' ? contentWidth - lineWidth : 0;
+    const localX = x - originX;
+
+    let col = 0;
+    let best = Math.abs(localX);
+    for (let k = 1; k <= lineText.length; k += 1) {
+        const w = width(lineText.slice(0, k) || ' ');
+        const d = Math.abs(localX - w);
+        if (d < best) {
+            best = d;
+            col = k;
+        }
+    }
+    return start + col;
+};
+
+/** Caret rectangle (layout px) for `offset`, plus the line's left edge. */
+export const caretRectForOffset = (
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    offset: number,
+    contentWidth: number,
+    font: CaretFont,
+    wrap: TextWrap,
+    align: TextAlign,
+): { left: number; top: number; height: number } => {
+    const fontSpec = `${font.fontStyle} ${font.fontSize}px ${font.fontFamily}`;
+    const width = (s: string): number => {
+        ctx.font = fontSpec;
+        return ctx.measureText(s).width;
+    };
+    const starts = wrappedLineStarts(ctx, text, contentWidth, font, wrap);
+    const lineHeightPx = lineHeightPxOf(font);
+    const { line, col } = lineColOf(starts, text, offset);
+    const start = starts[line]!;
+    const end = line + 1 < starts.length ? starts[line + 1]! : text.length;
+    const lineText = text.slice(start, end);
+    const lineWidth = lineText.length > 0 ? width(lineText || ' ') : 0;
+    const originX = align === 'center' ? (contentWidth - lineWidth) / 2 : align === 'right' ? contentWidth - lineWidth : 0;
+    const caretX = originX + width(lineText.slice(0, col));
+    return { left: caretX, top: line * lineHeightPx, height: lineHeightPx };
+};
 
 export const TextEditorOverlay: React.FC<TextEditorOverlayProps> = ({
     session,
@@ -80,6 +265,85 @@ export const TextEditorOverlay: React.FC<TextEditorOverlayProps> = ({
     onCommit,
     onCancel,
 }) => {
+    const taRef = useRef<HTMLTextAreaElement | null>(null);
+    // Caret in the textarea's **layout px** (the wrapper transform scales it).
+    const [caret, setCaret] = useState<{ left: number; top: number; height: number } | null>(null);
+
+    const font = useMemo<CaretFont>(
+        () => ({
+            fontSize: session.fontSize,
+            fontFamily: session.fontFamily,
+            fontStyle: session.fontStyle,
+            lineHeight: session.lineHeight,
+        }),
+        [session.fontSize, session.fontFamily, session.fontStyle, session.lineHeight],
+    );
+
+    // Layout px per CSS px: the wrapper transform scales, but the textarea's
+    // `clientWidth` is in CSS px (transform does not change CSS pixel sizes), so
+    // the layout width equals `clientWidth` — no scale division needed here.
+    const contentWidth = useCallback((): number => taRef.current?.clientWidth || session.unscaledWidth, [session.unscaledWidth]);
+
+    // Caret thickness, in **layout px**. The bar is ~3% of the font (so it reads
+    // as a ~1px caret at working zoom) but the wrapper transform then multiplies
+    // it by `scaleX`, which drops it sub-pixel when zoomed out (a faint smeared
+    // line) and lets it drift off whole pixels when zoomed in. Round in device
+    // space, then convert back, so the painted bar is always whole pixels wide
+    // and never thinner than one.
+    const deviceScale = session.scaleX * (typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1);
+    const caretWidth = Math.max(1, Math.round(session.fontSize * 0.05 * deviceScale)) / deviceScale;
+
+    const measure = useCallback(
+        (offset: number) => {
+            const ta = taRef.current;
+            const ctx = measurementContext();
+            if (!ta || !ctx) return;
+            const rect = caretRectForOffset(ctx, ta.value, offset, contentWidth(), font, wrap, session.align);
+            setCaret({ ...rect, top: rect.top - ta.scrollTop });
+        },
+        [font, wrap, session.align, contentWidth],
+    );
+
+    const focusEndpoint = useCallback((ta: HTMLTextAreaElement): number => {
+        // A forward selection's active end is `selectionEnd`; a collapsed caret is
+        // the same value. Keep the caret on the focus endpoint.
+        if (typeof ta.selectionDirection === 'string' && ta.selectionDirection === 'backward') {
+            return ta.selectionStart ?? 0;
+        }
+        return ta.selectionEnd ?? ta.selectionStart ?? 0;
+    }, []);
+
+    const syncCaret = useCallback(() => {
+        const ta = taRef.current;
+        if (ta) measure(focusEndpoint(ta));
+    }, [measure, focusEndpoint]);
+
+    // Seed the caret under the double-click point, once, on open. `clickLocalX/Y`
+    // are node-local hm (the parent inverted the node matrix), so this is correct
+    // for a rotated/scaled node; layout px = local hm × the node's screen scale.
+    const seedRef = useRef(false);
+    useEffect(() => {
+        const ta = taRef.current;
+        const ctx = measurementContext();
+        if (!ta || !ctx || seedRef.current) return;
+        seedRef.current = true;
+        const scale = session.scaleX || 1;
+        const x = session.clickLocalX * scale;
+        const y = session.clickLocalY * scale;
+        const offset = caretFromPoint(ctx, ta.value, x, y, contentWidth(), font, wrap, session.align);
+        ta.focus();
+        ta.setSelectionRange(offset, offset);
+        measure(offset);
+        // Seed only on the initial mount of a session; edits re-measure below.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Re-measure when the text changes (caret sits after the inserted char).
+    useEffect(() => {
+        const ta = taRef.current;
+        if (ta) measure(focusEndpoint(ta));
+    }, [session.text, measure, focusEndpoint]);
+
     const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
         // Belt-and-braces: the global shortcut listener already bails on a
         // textarea target, but a tool keybind must never see an in-editor key.
@@ -98,41 +362,78 @@ export const TextEditorOverlay: React.FC<TextEditorOverlayProps> = ({
     };
 
     return (
-        <textarea
-            value={session.text}
-            onChange={(event) => onChange(event.target.value)}
-            onBlur={onCommit}
-            onKeyDown={handleKeyDown}
-            autoFocus
+        <div
+            data-testid="text-editor-wrapper"
             style={{
                 position: 'absolute',
                 left: `${session.screenX}px`,
                 top: `${session.screenY}px`,
-                width: `${session.unscaledWidth}px`,
-                height: `${session.unscaledHeight}px`,
-                // `border-box` so width/height are the node box extent, with the
-                // padding inset (matching Konva's Text, which draws inside them).
-                boxSizing: 'border-box',
-                fontSize: `${session.fontSize}px`,
-                fontFamily: session.fontFamily,
-                fontStyle: session.fontStyle,
-                lineHeight: session.lineHeight,
-                textAlign: session.align,
-                padding: 0,
-                border: 'none',
-                outline: '2px solid #3b82f6',
-                resize: 'none',
-                overflow: 'hidden',
+                // The wrapper carries the node transform, so the textarea and the
+                // synthetic caret both lay out in unscaled px and transform once.
                 transform: `rotate(${session.rotation}deg) scale(${session.scaleX}, ${session.scaleY})`,
                 transformOrigin: 'top left',
-                background: 'transparent',
-                color: '#111827',
-                whiteSpace: 'pre-wrap',
-                // Above the canvas layer, below app chrome/popovers.
+                width: `${session.unscaledWidth}px`,
+                height: `${session.unscaledHeight}px`,
                 zIndex: 20,
-                ...wrapStyle(wrap),
             }}
-        />
+        >
+            <textarea
+                ref={taRef}
+                value={session.text}
+                onChange={(event) => onChange(event.target.value)}
+                onBlur={onCommit}
+                onKeyDown={handleKeyDown}
+                onKeyUp={syncCaret}
+                onClick={syncCaret}
+                onSelect={syncCaret}
+                onFocus={syncCaret}
+                autoFocus
+                style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: '100%',
+                    height: '100%',
+                    boxSizing: 'border-box',
+                    fontSize: `${session.fontSize}px`,
+                    fontFamily: session.fontFamily,
+                    fontStyle: session.fontStyle,
+                    lineHeight: session.lineHeight,
+                    textAlign: session.align,
+                    padding: 0,
+                    border: 'none',
+                    outline: '2px solid #3b82f6',
+                    resize: 'none',
+                    overflow: 'hidden',
+                    background: 'transparent',
+                    // Hide the ~1px native caret; the synthetic one is the cursor
+                    // (`caret-color` has no width, so it can't be thickened).
+                    caretColor: 'transparent',
+                    color: '#111827',
+                    whiteSpace: 'pre-wrap',
+                    ...wrapStyle(wrap),
+                }}
+            />
+            {caret && (
+                <div
+                    aria-hidden
+                    data-testid="text-editor-caret"
+                    key={`${caret.left}-${caret.top}`} // Forces animation restart at 0% on move
+                    style={{
+                        position: 'absolute',
+                        left: `${caret.left}px`,
+                        top: `${caret.top}px`,
+                        width: `${caretWidth}px`,
+                        height: `${caret.height}px`,
+                        background: '#0ea5e9',
+                        // The wrapper's transform scales this bar too, so its
+                        // width follows the text at every zoom level.
+                        pointerEvents: 'none',
+                        transition: 'left 80ms cubic-bezier(0.2, 0, 0, 1), top 80ms ease-out',
+                        animation: 'text-editor-caret-blink 1s steps(1, end) infinite',
+                    }}
+                />
+            )}
+        </div>
     );
 };
 

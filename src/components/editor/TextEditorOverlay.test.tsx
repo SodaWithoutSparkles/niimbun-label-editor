@@ -1,14 +1,20 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { useStore } from '../../store/useStore';
 import { createLabelDoc } from '../../core/doc/factory';
+import { installCanvasShim } from '../../test/canvasHarness';
 import type { LabelDoc, Node } from '../../core/doc/types';
 import {
     TextEditorOverlay,
+    caretFromPoint,
+    caretRectForOffset,
     computeScreenPlacement,
+    localPointOf,
+    wrappedLineStarts,
     useTextEditor,
+    type CaretFont,
     type TextEditorSession,
 } from './TextEditorOverlay';
 
@@ -33,7 +39,9 @@ const textNode = (over: Record<string, unknown> = {}): Node =>
 const makeDoc = (nodes: Node[]): LabelDoc =>
     createLabelDoc({ id: 'doc-1', now: 1_700_000_000, backingW: 3000, backingH: 2000, nodes });
 
-/** The hook takes no geometry argument; nothing to stub. */
+beforeEach(() => {
+    installCanvasShim();
+});
 
 afterEach(() => {
     cleanup();
@@ -49,8 +57,6 @@ afterEach(() => {
 
 describe('computeScreenPlacement', () => {
     it('reads an identity matrix as no rotation and the raw screen origin', () => {
-        // Konva absolute matrix [a,b,c,d,e,f]; here e/f are the screen origin.
-        // The box is rendered by CSS scale, so placement returns only origin+rotation.
         expect(computeScreenPlacement([1, 0, 0, 1, 30, 40])).toEqual({
             screenX: 30,
             screenY: 40,
@@ -59,7 +65,6 @@ describe('computeScreenPlacement', () => {
     });
 
     it('reads a rotate-90 matrix as 90°', () => {
-        // 90° rotation with uniform scale z=2: [a,b,c,d,e,f] = [0,z,-z,0,e,f].
         const z = 2;
         const placement = computeScreenPlacement([0, z, -z, 0, 100, 200]);
         expect(placement.screenX).toBeCloseTo(100, 6);
@@ -71,6 +76,114 @@ describe('computeScreenPlacement', () => {
         const placement = computeScreenPlacement([1, 0, 0, 1, 5, 7], 24, 24);
         expect(placement.screenX).toBeCloseTo(29, 6);
         expect(placement.screenY).toBeCloseTo(31, 6);
+    });
+});
+
+describe('localPointOf', () => {
+    it('inverts translation', () => {
+        expect(localPointOf([1, 0, 0, 1, 100, 200], 130, 240)).toEqual({ x: 30, y: 40 });
+    });
+
+    it('inverts scale', () => {
+        expect(localPointOf([2, 0, 0, 2, 0, 0], 40, 100)).toEqual({ x: 20, y: 50 });
+    });
+
+    it('round-trips a rotated+scaled+translated matrix (inverse of the forward map)', () => {
+        // Forward: p' = M·p. For any p, localPointOf(M, forward(p)) === p.
+        const m = [2 * Math.cos(0.5), 2 * Math.sin(0.5), -2 * Math.sin(0.5), 2 * Math.cos(0.5), 100, 200] as const;
+        const forward = (x: number, y: number) => ({
+            x: m[0] * x + m[2] * y + m[4],
+            y: m[1] * x + m[3] * y + m[5],
+        });
+        for (const [x, y] of [
+            [0, 0],
+            [50, 20],
+            [-13, 7],
+        ] as const) {
+            const screen = forward(x, y);
+            const back = localPointOf(m, screen.x, screen.y);
+            expect(back.x).toBeCloseTo(x, 6);
+            expect(back.y).toBeCloseTo(y, 6);
+        }
+    });
+
+    it('is degenerate-safe for a singular matrix', () => {
+        expect(localPointOf([0, 0, 0, 0, 0, 0], 5, 5)).toEqual({ x: 0, y: 0 });
+    });
+});
+
+// 10 px per char so the caret math is exact and readable.
+const ctx = { measureText: (t: string) => ({ width: t.length * 10 }), font: '' } as unknown as CanvasRenderingContext2D;
+const font: CaretFont = { fontSize: 10, fontFamily: 'sans-serif', fontStyle: 'normal', lineHeight: 1 };
+
+describe('wrappedLineStarts', () => {
+    it('splits on hard newlines', () => {
+        expect(wrappedLineStarts(ctx, 'ab\ncde', 500, font, 'word')).toEqual([0, 3]);
+    });
+
+    it('soft-wraps at a space (word mode)', () => {
+        // "hello world" at contentWidth 70: "hello " fits (60), "world" wraps → [0,6].
+        expect(wrappedLineStarts(ctx, 'hello world', 70, font, 'word')).toEqual([0, 6]);
+    });
+
+    it('soft-wraps per character when no space exists', () => {
+        expect(wrappedLineStarts(ctx, 'abcdef', 25, font, 'word')).toEqual([0, 2, 4]);
+    });
+
+    it('makes progress for a single char wider than the line', () => {
+        expect(wrappedLineStarts(ctx, 'ab', 5, font, 'char')).toEqual([0, 1, 2]);
+    });
+});
+
+describe('caretFromPoint', () => {
+    it('maps a click inside a line to the nearest character boundary', () => {
+        expect(caretFromPoint(ctx, 'hello', 34, 5, 500, font, 'word', 'left')).toBe(3);
+        expect(caretFromPoint(ctx, 'hello', 41, 5, 500, font, 'word', 'left')).toBe(4);
+    });
+
+    it('clamps to the line bounds', () => {
+        expect(caretFromPoint(ctx, 'hello', -50, 5, 500, font, 'word', 'left')).toBe(0);
+        expect(caretFromPoint(ctx, 'hello', 9999, 5, 500, font, 'word', 'left')).toBe(5);
+    });
+
+    it('maps a click on a later hard line to the right offset', () => {
+        expect(caretFromPoint(ctx, 'ab\ncde', 20, 15, 500, font, 'word', 'left')).toBe(5);
+    });
+
+    it('accounts for center alignment', () => {
+        // "hello" width 50 in a 500 box → origin 225.
+        expect(caretFromPoint(ctx, 'hello', 225, 5, 500, font, 'word', 'center')).toBe(0);
+        expect(caretFromPoint(ctx, 'hello', 249, 5, 500, font, 'word', 'center')).toBe(2);
+    });
+
+    it('maps a click on a soft-wrapped line', () => {
+        // "hello world" wraps after "hello " (70) → line 1 starts at 6 ("world").
+        // Click x=20 on line 1 → col 2 → offset 8.
+        expect(caretFromPoint(ctx, 'hello world', 20, 15, 70, font, 'word', 'left')).toBe(8);
+    });
+});
+
+describe('caretRectForOffset', () => {
+    it('places the caret after the prefix on the clicked line', () => {
+        expect(caretRectForOffset(ctx, 'hello', 3, 500, font, 'word', 'left')).toEqual({ left: 30, top: 0, height: 10 });
+        expect(caretRectForOffset(ctx, 'ab\ncde', 5, 500, font, 'word', 'left')).toEqual({ left: 20, top: 10, height: 10 });
+    });
+
+    it('places the caret at the line end', () => {
+        expect(caretRectForOffset(ctx, 'hello', 5, 500, font, 'word', 'left')).toEqual({ left: 50, top: 0, height: 10 });
+    });
+
+    it('offsets the caret for right alignment', () => {
+        expect(caretRectForOffset(ctx, 'hello', 0, 500, font, 'word', 'right').left).toBe(450);
+    });
+
+    it('places the caret on a soft-wrapped line', () => {
+        // "hello world" wraps at 70 → line 1 (offset 6) top = 10, "world" starts at x 0.
+        expect(caretRectForOffset(ctx, 'hello world', 6, 70, font, 'word', 'left')).toEqual({
+            left: 0,
+            top: 10,
+            height: 10,
+        });
     });
 });
 
@@ -89,6 +202,8 @@ const sessionArgs: Omit<TextEditorSession, 'text'> = {
     fontStyle: 'normal',
     lineHeight: 1,
     align: 'left',
+    clickLocalX: 12,
+    clickLocalY: 22,
 };
 
 describe('useTextEditor', () => {
@@ -168,6 +283,8 @@ const session: TextEditorSession = {
     lineHeight: 1,
     align: 'left',
     text: 'hello',
+    clickLocalX: 0,
+    clickLocalY: 0,
 };
 
 const overlay = (props: Partial<ComponentProps<typeof TextEditorOverlay>> = {}) => (
@@ -211,26 +328,72 @@ describe('TextEditorOverlay', () => {
         expect(onCommit).toHaveBeenCalledTimes(1);
     });
 
-    it('applies the session box, unscaled font and per-axis scale without re-scaling', () => {
-        render(overlay({ wrap: 'clip' }));
+    it('places the transform on the wrapper and lays the box out unscaled', () => {
+        render(overlay());
+        const wrapper = screen.getByTestId('text-editor-wrapper') as HTMLElement;
         const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
 
-        // fontSize is the node's value in px, never multiplied by scale; the
-        // CSS transform carries the per-axis scale exactly like Konva.
+        expect(wrapper.style.transform).toBe('rotate(0deg) scale(2, 3)');
+        expect(wrapper.style.left).toBe('10px');
+        expect(wrapper.style.top).toBe('20px');
+        expect(wrapper.style.width).toBe('200px');
+        expect(wrapper.style.height).toBe('100px');
+        // The textarea fills the wrapper and carries no transform of its own.
+        expect(textarea.style.transform).toBe('');
+        expect(textarea.style.caretColor).toBe('transparent');
         expect(textarea.style.fontSize).toBe('300px');
-        expect(textarea.style.padding).toBe('0px');
-        expect(textarea.style.left).toBe('10px');
-        expect(textarea.style.top).toBe('20px');
-        expect(textarea.style.width).toBe('200px');
-        expect(textarea.style.height).toBe('100px');
-        // The box stays the *unscaled* hm extent; CSS `scale` renders the screen
-        // size once (never twice).
-        expect(textarea.style.transform).toBe('rotate(0deg) scale(2, 3)');
     });
 
-    it('rotates the overlay by the session rotation, keeping the scale', () => {
+    it('rotates the wrapper by the session rotation', () => {
         render(overlay({ session: { ...session, rotation: 90 } }));
-        const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-        expect(textarea.style.transform).toBe('rotate(90deg) scale(2, 3)');
+        const wrapper = screen.getByTestId('text-editor-wrapper') as HTMLElement;
+        expect(wrapper.style.transform).toBe('rotate(90deg) scale(2, 3)');
+    });
+
+    it('renders the synthetic caret inside the wrapper (layout px)', () => {
+        render(overlay());
+        const caret = screen.getByTestId('text-editor-caret') as HTMLElement;
+        expect(caret.style.width).toBe('9px');
+        expect(caret.style.animation).toContain('text-editor-caret-blink');
+        // Position is layout px inside the transformed wrapper (never pre-scaled).
+        const left = parseFloat(caret.style.left);
+        expect(left).toBeGreaterThanOrEqual(0);
+        expect(left).toBeLessThanOrEqual(session.unscaledWidth);
+    });
+
+    it('keeps a caret for an empty box', () => {
+        render(overlay({ session: { ...session, text: '' } }));
+        expect(screen.getByTestId('text-editor-caret')).toBeTruthy();
+    });
+
+    // The caret is sized in layout px but the wrapper transform scales it, so the
+    // bar must be rounded in *device* space to stay whole pixels at any zoom.
+    const caretWidthAt = (scaleX: number): number => {
+        render(overlay({ session: { ...session, scaleX } }));
+        return parseFloat((screen.getByTestId('text-editor-caret') as HTMLElement).style.width);
+    };
+
+    it('rounds the caret to whole device pixels', () => {
+        // 300px font x 3% x 1.3 scale = 11.7 device px -> 12
+        const width = caretWidthAt(1.3);
+        expect(width * 1.3).toBeCloseTo(12);
+    });
+
+    it('never thins the caret below one device pixel when zoomed out', () => {
+        // 300px font x 3% x 0.05 scale = 0.45 device px -> clamped to 1
+        expect(caretWidthAt(0.05) * 0.05).toBeCloseTo(1);
+    });
+
+    it('scales the caret rounding with devicePixelRatio', () => {
+        // happy-dom exposes devicePixelRatio as a settable accessor.
+        const original = window.devicePixelRatio;
+        window.devicePixelRatio = 2;
+        try {
+            // deviceScale 0.05 x 2 = 0.1: 0.9 device px -> 1 device px, reached
+            // at half the layout width the dpr=1 case needs.
+            expect(caretWidthAt(0.05)).toBeCloseTo(10);
+        } finally {
+            window.devicePixelRatio = original;
+        }
     });
 });

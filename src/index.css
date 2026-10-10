@@ -5,3 +5,16 @@
         @apply antialiased text-gray-900;
     }
 }
+
+/* Synthetic text-editor caret (P5 follow-up): a `<textarea>`'s native caret is
+   ~1px and can't be thickened, so the inline editor draws its own. */
+@keyframes text-editor-caret-blink {
+    0%,
+    50% {
+        opacity: 1;
+    }
+    50.01%,
+    100% {
+        opacity: 0;
+    }
+}
