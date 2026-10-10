@@ -277,6 +277,13 @@ export interface AppState {
     /** Abandons any in-progress transient gesture without touching history. */
     resetTransient: () => void;
     /**
+     * Replaces the current doc with `previous` (one undo entry): pushes the
+     * current doc to `docPast`, clears `docFuture`/transient, stamps `updatedAt`.
+     * No-op with no open doc. Used by the inline text editor's Escape to undo a
+     * live edit session.
+     */
+    restoreDoc: (previous: LabelDoc) => void;
+    /**
      * Clears `docPast`/`docFuture` and the transient baseline. Called at the
      * doc-switch boundary so history from one document can never be applied to
      * another.

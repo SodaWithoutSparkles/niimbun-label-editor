@@ -1,7 +1,8 @@
 import Konva from 'konva';
 import type { Mat2D } from '../../core/doc/derive';
-import type { ImageFit } from '../../core/doc/objects';
+import type { ImageFit, TextWrap } from '../../core/doc/objects';
 import type { PreparedAsset } from './assets';
+import { measureKonvaText } from './textMetrics';
 import type {
     ResolvedEllipse,
     ResolvedLine,
@@ -101,6 +102,16 @@ const flattenPoints = (points: readonly [number, number][]): number[] => {
     for (const [x, y] of points) out.push(x, y);
     return out;
 };
+
+/**
+ * The **one** mapping from a text node's `wrap` mode to Konva's `wrap` prop
+ * (P5). `word` wraps at words; `char` wraps per character; `clip` and `shrink`
+ * both wrap at words (`clip` then relies on Konva hiding lines past the box
+ * height; `shrink` is downscaled by `measureKonvaText`). Shared by both
+ * renderers so preview ≡ print.
+ */
+export const konvaTextWrap = (wrap: TextWrap): 'word' | 'char' =>
+    wrap === 'char' ? 'char' : 'word';
 
 /** The box + fit an image leaf uses; barcodes cover to prioritize full width. */
 interface FitBox {
@@ -351,20 +362,39 @@ export const createKonvaNode = (
             );
             return withTransform(imageGroup, node.localTransform);
         }
-        case 'text':
-            return withTransform(
-                new Konva.Text({
+        case 'text': {
+            const attrs = matrixToKonvaAttrs(node.localTransform);
+            const text = new Konva.Text({
+                text: node.text,
+                width: node.w,
+                height: node.h,
+                fontSize: node.fontSize,
+                fontFamily: node.fontFamily,
+                fontStyle: node.fontStyle,
+                align: node.align,
+                padding: node.paddingHm,
+                wrap: konvaTextWrap(node.wrap),
+                lineHeight: node.lineHeight,
+            });
+            if (node.wrap === 'shrink') {
+                const metrics = measureKonvaText({
                     text: node.text,
                     width: node.w,
                     height: node.h,
                     fontSize: node.fontSize,
                     fontFamily: node.fontFamily,
                     fontStyle: node.fontStyle,
-                    align: node.align,
-                    padding: node.paddingHm,
-                }),
-                node.localTransform,
-            );
+                    wrap: 'word',
+                    lineHeight: node.lineHeight,
+                });
+                // Shrink scale composes with the node's own transform scale
+                // (Konva scales a text from its top-left origin, offset 0).
+                attrs.scaleX *= metrics.scale;
+                attrs.scaleY *= metrics.scale;
+            }
+            text.setAttrs(attrs);
+            return text;
+        }
         case 'line':
         case 'polygon':
             return withTransform(

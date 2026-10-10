@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { act, cleanup, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import Konva from 'konva';
 import '../../i18n';
 import { installCanvasShim } from '../../test/canvasHarness';
@@ -942,5 +942,149 @@ describe('PreviewStage P4 wheel pan gestures', () => {
 
         // deltaX wins over the (mouse-style) deltaY of 90.
         expect(layer.x()).toBeCloseTo(xBefore - 40, 4);
+    });
+});
+
+/**
+ * P5 inline text editing: a double-click on a **static** text node in the
+ * select tool mounts the positioned `<textarea>` overlay (from `useTextEditor`)
+ * and hides that node's Konva `Text`; Esc cancels (restoring the pre-edit doc)
+ * and Ctrl+Enter commits exactly one undo entry. The polygon double-click
+ * finish is covered above and must be unaffected.
+ */
+describe('PreviewStage inline text editing (P5)', () => {
+    const textNode = (id: string): TextNode => ({
+        id,
+        parentId: null,
+        type: 'text',
+        visible: true,
+        locked: false,
+        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        size: { w: 1000, h: 500 },
+        text: { kind: 'static', value: 'hello world' },
+        fontSize: 300,
+    });
+
+    const rectNode = (id: string): Node => ({
+        id,
+        parentId: null,
+        type: 'shape',
+        shape: 'rectangle',
+        visible: true,
+        locked: false,
+        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        size: { w: 1000, h: 800 },
+    });
+
+    const mountSelect = (nodes: Node[]) => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({ id: 'doc-1', now: 1_700_000_000, backingW: 4000, backingH: 3000, nodes }),
+            selectedNodeIds: [],
+            activeTool: 'select',
+            snapEnabled: false,
+        });
+        render(<PreviewStage />);
+        const stage = Konva.stages[Konva.stages.length - 1] as Konva.Stage;
+        if (!stage) throw new Error('PreviewStage did not mount a Konva stage');
+        return stage;
+    };
+
+    /** Text values of the Konva `Text` nodes currently on the content layer. */
+    const renderedTextValues = (stage: Konva.Stage): string[] =>
+        (stage.getLayers().at(-1)!.find('Text') as Konva.Text[]).map((node) => node.text());
+
+    const docText = (id: string): string => {
+        const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === id);
+        return node?.type === 'text' && node.text.kind === 'static' ? node.text.value : '';
+    };
+
+    /** Fire a `dblclick` at a world (hm) point, mapped to the node's screen box. */
+    const dblClick = (stage: Konva.Stage, worldX: number, worldY: number) => {
+        const at = toScreen(stage, worldX, worldY);
+        firePointer(stage, 'dblclick', at.x, at.y, { detail: 2 });
+    };
+
+    it('mounts the overlay and hides the Konva Text on a double-click on a text node', () => {
+        const stage = mountSelect([textNode('t')]);
+        expect(renderedTextValues(stage)).toContain('hello world');
+
+        dblClick(stage, 500, 250);
+
+        const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+        expect(textarea.value).toBe('hello world');
+        // While editing, the node's Konva Text must not paint under the overlay.
+        expect(renderedTextValues(stage)).not.toContain('hello world');
+    });
+
+    it('does not mount the overlay on a double-click on a non-text node', () => {
+        const stage = mountSelect([rectNode('r')]);
+        dblClick(stage, 500, 400);
+        expect(screen.queryByRole('textbox')).toBeNull();
+    });
+
+    it('does not open the editor while a modal dialog is open', () => {
+        const stage = mountSelect([textNode('t')]);
+        const dialog = document.createElement('dialog');
+        dialog.setAttribute('open', '');
+        document.body.appendChild(dialog);
+        try {
+            dblClick(stage, 500, 250);
+            expect(screen.queryByRole('textbox')).toBeNull();
+        } finally {
+            dialog.remove();
+        }
+    });
+
+    it('cancels the session on Escape (overlay unmounts, doc text restored)', () => {
+        const stage = mountSelect([textNode('t')]);
+        dblClick(stage, 500, 250);
+        const textarea = screen.getByRole('textbox');
+        fireEvent.change(textarea, { target: { value: 'changed' } });
+        expect(docText('t')).toBe('changed');
+
+        fireEvent.keyDown(textarea, { key: 'Escape' });
+
+        expect(screen.queryByRole('textbox')).toBeNull();
+        // Esc restores the pre-edit snapshot as one undo entry.
+        expect(docText('t')).toBe('hello world');
+        expect(useStore.getState().docPast).toHaveLength(1);
+    });
+
+    it('commits on Ctrl+Enter with one undo entry', () => {
+        const stage = mountSelect([textNode('t')]);
+        dblClick(stage, 500, 250);
+        const textarea = screen.getByRole('textbox');
+        fireEvent.change(textarea, { target: { value: 'committed' } });
+
+        fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true });
+
+        expect(screen.queryByRole('textbox')).toBeNull();
+        expect(docText('t')).toBe('committed');
+        expect(useStore.getState().docPast).toHaveLength(1);
+    });
+
+    it('detaches the Transformer from the edited node and reattaches it on Escape', () => {
+        const stage = mountSelect([textNode('t')]);
+        // Select the text node so the Transformer attaches to it.
+        act(() => {
+            useStore.getState().selectNode('t');
+        });
+        const transformer = stage.findOne('Transformer') as Konva.Transformer;
+        const contentLayer = stage.getLayers().at(-1)!;
+        expect(transformer.nodes()).toContain(contentLayer.find('Text')[0]);
+
+        dblClick(stage, 500, 250);
+        expect(screen.getByRole('textbox')).toBeTruthy();
+        // The edited node is hidden and the attach effect re-runs off the editing
+        // id, so the Transformer must let go of the (now unmounted) node.
+        expect(transformer.nodes()).toHaveLength(0);
+
+        fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' });
+
+        expect(screen.queryByRole('textbox')).toBeNull();
+        // Closing reattaches to the re-mounted text node.
+        expect(transformer.nodes()).toHaveLength(1);
+        expect(transformer.nodes()[0]).toBe(contentLayer.find('Text')[0]);
     });
 });

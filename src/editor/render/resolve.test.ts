@@ -466,3 +466,43 @@ describe('resolve — content overrides (P6 W2)', () => {
         expect(resolve(smallDoc(), { overrides })).toEqual(resolve(smallDoc(), { overrides }));
     });
 });
+
+describe('resolve — text wrap + lineHeight (P5 D2)', () => {
+    const textDoc = (over: Record<string, unknown>) =>
+        createLabelDoc({
+            id: 'doc-wrap',
+            now: 1_700_000_000,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 1000, h: 1000 }],
+            nodes: [
+                node({
+                    id: 't1',
+                    parentId: null,
+                    type: 'text',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    text: { kind: 'static', value: 'hello' },
+                    size: { w: 200, h: 100 },
+                    ...over,
+                }),
+            ],
+        });
+
+    it("defaults wrap to 'word' and lineHeight to 1 when absent", () => {
+        expect(resolve(textDoc({}))[0]).toMatchObject({ type: 'text', wrap: 'word', lineHeight: 1 });
+    });
+
+    it('passes an explicit wrap and lineHeight through', () => {
+        expect(resolve(textDoc({ wrap: 'shrink', lineHeight: 1.5 }))[0]).toMatchObject({
+            type: 'text',
+            wrap: 'shrink',
+            lineHeight: 1.5,
+        });
+    });
+
+    it('emits every explicit wrap mode', () => {
+        for (const wrap of ['word', 'char', 'clip', 'shrink'] as const) {
+            expect(resolve(textDoc({ wrap }))[0], wrap).toMatchObject({ wrap });
+        }
+    });
+});

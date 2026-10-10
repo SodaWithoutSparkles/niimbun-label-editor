@@ -179,6 +179,15 @@ describe('inspectorModel — field descriptors', () => {
         expect(family?.options).toContain('sans-serif');
     });
 
+    it('wires text wrap as a select over the four modes (P5)', () => {
+        const field = TEXT_FIELDS.find((f) => f.key === 'wrap');
+        expect(field?.wired).toBe(true);
+        expect(field?.kind).toBe('select');
+        expect(field?.options).toEqual(['word', 'char', 'clip', 'shrink']);
+        // The Object tab resolves its label lazily; a missing key would render raw.
+        expect(keys(typeFields('text'))).toContain('wrap');
+    });
+
     it('wires contentSource and templateTrust (P6)', () => {
         expect(keys(RESERVED_FIELDS)).toEqual(['contentSource', 'quantizerHint', 'quantizerThreshold', 'quantizerStrength', 'templateTrust']);
         const contentSource = RESERVED_FIELDS.find((f) => f.key === 'contentSource');

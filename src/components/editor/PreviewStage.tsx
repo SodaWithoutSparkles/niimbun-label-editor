@@ -4,14 +4,14 @@ import { Layer, Line, Stage, Transformer } from 'react-konva';
 import type Konva from 'konva';
 import { useStore } from '../../store/useStore';
 import { cn } from '../../utils/cn';
-import { flattenResolved, resolve } from '../../editor/render/resolve';
+import { flattenResolved, resolve, DEFAULT_FONT_FAMILY } from '../../editor/render/resolve';
 import type { ResolvedContent, ResolvedNode } from '../../editor/render/resolve';
 import type { GlobalWarning } from '../../templates/globals';
 import { buildFontWarnings, buildPreviewWarnings } from '../../editor/previewWarnings';
 import type { LabelDoc, Node, TextNode } from '../../core/doc/types';
 import { matrixToKonvaAttrs } from '../../editor/render/konvaFactory';
 import { movePatch, transformEndPatch, commitPreservesAspect, transformerTargetSize, dragOriginOf, type DragOrigin } from '../../editor/transformGesture';
-import { nodeSize, pointsExtent, preservesAspectByDefault, DEFAULT_CONTENT_SIZE, type Size } from '../../core/doc/geometry';
+import { nodeSize, pointsExtent, preservesAspectByDefault, DEFAULT_CONTENT_SIZE, DEFAULT_FONT_SIZE, type Size } from '../../core/doc/geometry';
 import { type Mat2D } from '../../core/doc/derive';
 import { resolveGuides } from '../../editor/render/guides';
 import { nodesIntersectNonPrintable } from '../../editor/render/regionOverlay';
@@ -34,6 +34,7 @@ import { pointerDownSelection, nodesInMarquee } from '../../editor/selectionMode
 import { DEFAULT_SHAPE_STROKE, DEFAULT_SHAPE_STROKE_WIDTH } from '../../core/doc/objects';
 import { isTypingTarget } from '../../utils/keyboardTarget';
 import { ResolvedShape } from './ResolvedShape';
+import { TextEditorOverlay, useTextEditor, computeScreenPlacement } from './TextEditorOverlay';
 import { bytesProviderFor, usePreparedAssets } from './usePreparedAssets';
 import { fontBadges } from '../../editor/render/fontAssets';
 import { useSampleRowState } from './sampleRowContext';
@@ -231,6 +232,18 @@ export const PreviewStage: React.FC = () => {
      * `base × scale`) when this is set. Cleared at gesture start and end.
      */
     const boxOnlyTextRef = useRef(false);
+
+    // Inline WYSIWYG text editing (P5). The hook owns the session and all store
+    // wiring (transient typing + single-entry commit/restore); this component
+    // only opens the editor on a double-click, hides the node being edited and
+    // mounts the positioned overlay.
+    const {
+        editing,
+        begin: beginTextEdit,
+        setText: setTextFromHook,
+        commit: commitTextEdit,
+        cancel: cancelTextEdit,
+    } = useTextEditor();
 
     const backing = useMemo(
         () => (doc ? { backingW: doc.label.backingW, backingH: doc.label.backingH } : null),
@@ -438,7 +451,12 @@ export const PreviewStage: React.FC = () => {
             .filter((node): node is Konva.Node => Boolean(node));
         transformer.nodes(nodes);
         transformer.getLayer()?.batchDraw();
-    }, [selectedNodeIds, resolved, doc]);
+        // `editing?.id` is load-bearing: hiding the edited node happens in JSX
+        // (the `resolved` array is referentially unchanged), so without this the
+        // effect would not re-run to detach the Transformer from the now-hidden
+        // node on session open, nor reattach it on close. `refsReady` ignores the
+        // dep; the callback-ref map already handles the mount/unmount.
+    }, [selectedNodeIds, resolved, doc, editing?.id]);
 
     // Live Transformer ratio matches the aspect rule applied at commit (§13):
     // uniform for a single ellipse/image/QR, free otherwise (mixed selections
@@ -618,6 +636,59 @@ export const PreviewStage: React.FC = () => {
         },
         [doc, pointerWorld, viewport, activeTool, addNode, selectNode, clearActiveTool, selectedNodeIds, selectNodes, clearNodeSelection, beginDrag, targets, snapEnabled, nodeBoundsById, polygonPoints, finishPolygon, gridSpacingHm],
     );
+
+    /**
+     * Stage double-click. In the polygon tool it finishes the draft (the
+     * existing behaviour); in the select tool it opens the inline text editor
+     * when the pointer lands on a text node. A modal dialog owns its own
+     * double-clicks, and the hook itself refuses non-static sources and
+     * re-entry, so this only routes the gesture.
+     */
+    const handleDblClick = useCallback(() => {
+        if (document.querySelector('dialog[open]')) return;
+        if (activeTool === 'shape:polygon') {
+            finishPolygon();
+            return;
+        }
+        if (activeTool !== 'select') return;
+        const stage = stageRef.current;
+        if (!stage) return;
+        const world = pointerWorld(stage);
+        if (!world) return;
+        const hitId = hitTestWorld(world, targets);
+        if (!hitId) return;
+        const node = doc?.nodes.find((entry) => entry.id === hitId);
+        if (node?.type !== 'text') return;
+        // Compute the overlay placement from the **live** Konva node: its
+        // absolute matrix already includes ancestor group transforms and the
+        // content layer's viewport pan/zoom (and view rotation), so the overlay
+        // tracks the node under every case. The stage transform does not include
+        // the container's CSS ruler-gutter padding, so add it explicitly (same
+        // as the marquee rect).
+        const konvaNode = nodeRefs.current.get(node.id);
+        if (!konvaNode) return;
+        const nodeM = konvaNode.getAbsoluteTransform().getMatrix();
+        const size = node.size ?? { w: DEFAULT_CONTENT_SIZE, h: DEFAULT_CONTENT_SIZE };
+        const gutter = rulersVisible ? RULER_GUTTER : 0;
+        const { screenX, screenY, rotation } = computeScreenPlacement(nodeM, gutter, gutter);
+        const scaleX = Math.hypot(nodeM[0], nodeM[1]) || 1;
+        const scaleY = Math.hypot(nodeM[2], nodeM[3]) || 1;
+        beginTextEdit({
+            id: node.id,
+            screenX,
+            screenY,
+            unscaledWidth: size.w,
+            unscaledHeight: size.h,
+            rotation,
+            scaleX,
+            scaleY,
+            fontSize: node.fontSize ?? DEFAULT_FONT_SIZE,
+            fontFamily: node.fontFamily ?? DEFAULT_FONT_FAMILY,
+            fontStyle: node.fontStyle ?? 'normal',
+            lineHeight: node.lineHeight ?? 1,
+            align: node.align ?? 'left',
+        });
+    }, [activeTool, finishPolygon, pointerWorld, targets, doc, beginTextEdit, rulersVisible]);
 
     const handlePointerMove = useCallback(() => {
         const stage = stageRef.current;
@@ -1214,6 +1285,10 @@ export const PreviewStage: React.FC = () => {
 
     const viewportMatrix = matrixForViewport(viewport);
     const sceneAttrs = matrixForViewportAttrs(viewportMatrix);
+    // The overlay mirrors the edited node's wrap mode; read it from the live
+    // doc (a non-text session, if any ever reached the overlay, defaults to word).
+    const editingNode = editing ? doc.nodes.find((entry) => entry.id === editing.id) : undefined;
+    const editingWrap = editingNode?.type === 'text' ? editingNode.wrap ?? 'word' : 'word';
     const marqueeRect =
         marquee &&
         ({
@@ -1237,9 +1312,7 @@ export const PreviewStage: React.FC = () => {
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
                 onPointerLeave={resetPolygonDraft}
-                onDblClick={() => {
-                    if (activeTool === 'shape:polygon') finishPolygon();
-                }}
+                onDblClick={handleDblClick}
                 onWheel={handleWheel}
             >
                 {/* Background overlays (silhouette, grid, guides, keep-out) first,
@@ -1278,19 +1351,21 @@ export const PreviewStage: React.FC = () => {
                             listening={false}
                         />
                     )}
-                    {resolved.map((node) => (
-                        <ResolvedShape
-                            key={node.id}
-                            node={node}
-                            registerRef={registerRef}
-                            selected={selectedNodeIds.includes(node.id)}
-                            warn={keepOutIds.includes(node.id)}
-                            assets={assets}
-                            warnings={warnings}
-                            assetLabels={assetLabels}
-                            strokeScale={viewport.zoom}
-                        />
-                    ))}
+                    {resolved.map((node) =>
+                        editing?.id === node.id ? null : (
+                            <ResolvedShape
+                                key={node.id}
+                                node={node}
+                                registerRef={registerRef}
+                                selected={selectedNodeIds.includes(node.id)}
+                                warn={keepOutIds.includes(node.id)}
+                                assets={assets}
+                                warnings={warnings}
+                                assetLabels={assetLabels}
+                                strokeScale={viewport.zoom}
+                            />
+                        ),
+                    )}
                     <Transformer
                         ref={transformerRef}
                         rotateEnabled
@@ -1320,6 +1395,16 @@ export const PreviewStage: React.FC = () => {
             </Stage>
 
             {rulersVisible && <Rulers viewport={viewport} backingW={backing.backingW} backingH={backing.backingH} />}
+
+            {editing && (
+                <TextEditorOverlay
+                    session={editing}
+                    wrap={editingWrap}
+                    onChange={setTextFromHook}
+                    onCommit={commitTextEdit}
+                    onCancel={cancelTextEdit}
+                />
+            )}
 
             {blocked && (
                 <div

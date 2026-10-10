@@ -5,6 +5,7 @@ import {
     IMAGE_FITS,
     MAX_QUIET_ZONE,
     QR_ERROR_CORRECTIONS,
+    TEXT_WRAPS,
 } from './objects';
 import type {
     AssetRef,
@@ -417,6 +418,7 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
             if (isFiniteNumber(value.letterSpacing)) node.letterSpacing = value.letterSpacing;
             if (isFiniteNumber(value.lineHeight)) node.lineHeight = value.lineHeight;
             if (isOneOf(value.direction, TEXT_DIRECTIONS)) node.direction = value.direction;
+            if (isOneOf(value.wrap, TEXT_WRAPS)) node.wrap = value.wrap;
             return node;
         }
         case 'image': {

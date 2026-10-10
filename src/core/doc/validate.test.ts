@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { roundNode } from './factory';
 import type { Node } from './types';
+import { TEXT_WRAPS } from './objects';
 import {
     isAssetRef,
     isColorString,
@@ -464,6 +465,35 @@ describe('isNode — P5 object options', () => {
         expect(result.doc.nodes[1]?.type === 'image' && result.doc.nodes[1].fit).toBe('contain');
         expect(result.doc.nodes[2]?.type === 'qr' && result.doc.nodes[2].errorCorrection).toBe('M');
         expect(result.doc.nodes[3]?.type === 'barcode' && result.doc.nodes[3].symbology).toBe('code128');
+    });
+});
+
+describe('isNode — text wrap (P5)', () => {
+    const wrapOf = (n: ReturnType<typeof isNode>) => (n?.type === 'text' ? n.wrap : undefined);
+    const textNode = (wrap: unknown) =>
+        isNode(baseNode({ id: 'w', type: 'text', shape: undefined, text: 'hi', wrap }));
+
+    it('round-trips every TEXT_WRAPS value', () => {
+        for (const wrap of TEXT_WRAPS) {
+            expect(wrapOf(textNode(wrap)), wrap).toBe(wrap);
+        }
+    });
+
+    it('drops an invalid wrap value (absent), never fails the node', () => {
+        expect(wrapOf(textNode('middle'))).toBeUndefined();
+        expect(wrapOf(textNode(7))).toBeUndefined();
+        expect(wrapOf(textNode(undefined))).toBeUndefined();
+    });
+
+    it('round-trips wrap through isLabelDoc', () => {
+        const result = isLabelDoc(
+            validRaw({
+                nodes: [baseNode({ id: 'w', type: 'text', shape: undefined, text: 'hi', wrap: 'shrink' })],
+            }),
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.nodes[0]?.type === 'text' && result.doc.nodes[0].wrap).toBe('shrink');
     });
 });
 

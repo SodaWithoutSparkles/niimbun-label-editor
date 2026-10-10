@@ -175,3 +175,64 @@ describe('ResolvedShape — preview style (#8)', () => {
         expect(rectScaled.strokeScaleEnabled()).toBe(false);
     });
 });
+
+describe('ResolvedShape — text wrap preview (P5)', () => {
+    const renderText = (over: Record<string, unknown>): Konva.Text => {
+        const resolved = resolve(
+            createLabelDoc({
+                id: 'doc-text',
+                now: 1_700_000_000,
+                backingW: 3000,
+                backingH: 2000,
+                regions: [{ kind: 'rect', x: 0, y: 0, w: 3000, h: 2000 }],
+                nodes: [
+                    node({
+                        id: 't',
+                        parentId: null,
+                        type: 'text',
+                        visible: true,
+                        locked: false,
+                        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                        text: { kind: 'static', value: 'hi' },
+                        size: { w: 100, h: 40 },
+                        ...over,
+                    }),
+                ],
+            }),
+        )[0]!;
+        let stage: Konva.Stage | null = null;
+        render(
+            <Stage
+                ref={(instance) => {
+                    stage = instance;
+                }}
+                width={300}
+                height={200}
+            >
+                <Layer>
+                    <ResolvedShape node={resolved} />
+                </Layer>
+            </Stage>,
+        );
+        return (stage as unknown as Konva.Stage).findOne('Text') as Konva.Text;
+    };
+
+    it('renders wrap + lineHeight on the Konva Text (preview ≡ print)', () => {
+        expect(renderText({}).wrap()).toBe('word');
+        expect(renderText({ wrap: 'char' }).wrap()).toBe('char');
+        expect(renderText({ wrap: 'clip' }).wrap()).toBe('word');
+        expect(renderText({ lineHeight: 1.5 }).lineHeight()).toBe(1.5);
+    });
+
+    it('applies the shrink scale in the preview', () => {
+        const shrink = renderText({
+            text: { kind: 'static', value: 'a'.repeat(26) },
+            size: { w: 100, h: 40 },
+            fontSize: 100,
+            wrap: 'shrink',
+        });
+        expect(shrink.scaleX()).toBe(shrink.scaleY());
+        expect(shrink.scaleX()).toBeGreaterThan(0);
+        expect(shrink.scaleX()).toBeLessThanOrEqual(1);
+    });
+});

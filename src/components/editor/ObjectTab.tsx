@@ -19,8 +19,10 @@ import {
     DEFAULT_SHAPE_STROKE,
     DEFAULT_SHAPE_STROKE_WIDTH,
     DEFAULT_SYMBOL_FILL,
+    DEFAULT_TEXT_WRAP,
     MAX_QUIET_ZONE,
     barcodeQuietModules,
+    type TextWrap,
 } from '../../core/doc/objects';
 import { fontBadges, type FontBadge } from '../../editor/render/fontAssets';
 import { importFontFile } from '../../editor/assetImport';
@@ -72,6 +74,7 @@ const FIELD_LABEL_KEYS = {
     fontWeight: 'editor.mfp.field.fontWeight',
     fontStyle: 'editor.mfp.field.fontStyle',
     align: 'editor.mfp.field.align',
+    wrap: 'editor.mfp.field.wrap',
     letterSpacing: 'editor.mfp.field.letterSpacing',
     direction: 'editor.mfp.field.direction',
     shape: 'editor.mfp.field.shape',
@@ -146,11 +149,22 @@ const TRUST_STATE_LABEL_KEYS = {
     never: 'editor.mfp.trust.never',
 } as const;
 
-/** Human label for one select option. Non-quantizer selects show the raw value. */
-const optionLabel = (fieldKey: string, option: string, t: TFunction): string =>
-    fieldKey === 'quantizerHint' && isQuantizerOption(option)
-        ? t(QUANTIZER_LABEL_KEYS[option])
-        : option;
+/** i18n keys for the `wrap` select options (literal map, typed keys). */
+const WRAP_LABEL_KEYS = {
+    word: 'editor.mfp.wrap.word',
+    char: 'editor.mfp.wrap.char',
+    clip: 'editor.mfp.wrap.clip',
+    shrink: 'editor.mfp.wrap.shrink',
+} as const satisfies Record<TextWrap, string>;
+
+const isWrapOption = (option: string): option is TextWrap => option in WRAP_LABEL_KEYS;
+
+/** Human label for one select option. Non-labeled selects show the raw value. */
+const optionLabel = (fieldKey: string, option: string, t: TFunction): string => {
+    if (fieldKey === 'quantizerHint' && isQuantizerOption(option)) return t(QUANTIZER_LABEL_KEYS[option]);
+    if (fieldKey === 'wrap' && isWrapOption(option)) return t(WRAP_LABEL_KEYS[option]);
+    return option;
+};
 
 /** The transform keys read straight off `node.transform`. */
 const TRANSFORM_KEYS = ['x', 'y', 'rotDeg', 'scaleX', 'scaleY'] as const;
@@ -291,6 +305,7 @@ const FIELD_DEFAULTS: Record<string, string> = {
     errorCorrection: DEFAULT_QR_ERROR_CORRECTION,
     symbology: DEFAULT_BARCODE_SYMBOLOGY,
     fit: DEFAULT_IMAGE_FIT,
+    wrap: DEFAULT_TEXT_WRAP,
     fontFamily: 'sans-serif',
 };
 

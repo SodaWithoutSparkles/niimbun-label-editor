@@ -1,6 +1,6 @@
 import type { hm } from '../hm';
 import type { QuantizerId } from '../render/quantize';
-import type { BarcodeSymbology, ImageFit, QrErrorCorrection } from './objects';
+import type { BarcodeSymbology, ImageFit, QrErrorCorrection, TextWrap } from './objects';
 
 /**
  * LabelDoc v1 — the document contract.
@@ -84,6 +84,12 @@ export interface TextNode extends BaseNode {
     letterSpacing?: number;
     lineHeight?: number;
     direction?: TextDirection;
+    /**
+     * Absent ⇒ {@link DEFAULT_TEXT_WRAP} (`'word'`). `word`=wrap at word,
+     * `char`=wrap per character, `clip`=no wrap cut at the box, `shrink`=uniform
+     * downscale to fit the box.
+     */
+    wrap?: TextWrap;
 }
 export interface ImageNode extends BaseNode {
     type: 'image';

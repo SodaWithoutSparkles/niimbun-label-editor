@@ -3,10 +3,12 @@ import { Ellipse, Group as KonvaGroup, Image as KonvaImage, Line, Rect, Text } f
 import type Konva from 'konva';
 import {
     fitImageAttrs,
+    konvaTextWrap,
     matrixToKonvaAttrs,
     shapeStyleAttrs,
     symbolSceneFunc,
 } from '../../editor/render/konvaFactory';
+import { measureKonvaText } from '../../editor/render/textMetrics';
 import type { AssetWarning, PreparedAsset } from '../../editor/render/assets';
 import type { ResolvedNode } from '../../editor/render/resolve';
 
@@ -90,6 +92,23 @@ export const ResolvedShape = React.memo(function ResolvedShape({
 }: ResolvedShapeProps) {
     const ref = (instance: Konva.Node | null) => registerRef?.(node.id, instance);
 
+    // Shrink-to-fit scale (P5). The hook runs unconditionally; the memo bails
+    // for every node that is not `wrap: 'shrink'`, so a group⇄text switch can
+    // never change the hook order.
+    const shrinkScale = React.useMemo(() => {
+        if (node.type !== 'text' || node.wrap !== 'shrink') return 1;
+        return measureKonvaText({
+            text: node.text,
+            width: node.w,
+            height: node.h,
+            fontSize: node.fontSize,
+            fontFamily: node.fontFamily,
+            fontStyle: node.fontStyle,
+            wrap: 'word',
+            lineHeight: node.lineHeight,
+        }).scale;
+    }, [node]);
+
     if (node.type === 'group') {
         const attrs = matrixToKonvaAttrs(node.localTransform);
         return (
@@ -137,6 +156,13 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                 <Text
                     ref={ref}
                     {...attrs}
+                    // Shrink folds into the node's own transform scale; both
+                    // renderers scale from the top-left origin (offset 0, which
+                    // is Konva's default transform origin).
+                    scaleX={attrs.scaleX * shrinkScale}
+                    scaleY={attrs.scaleY * shrinkScale}
+                    offsetX={0}
+                    offsetY={0}
                     text={node.text}
                     width={node.w}
                     height={node.h}
@@ -145,6 +171,8 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                     fontStyle={node.fontStyle}
                     align={node.align}
                     padding={node.paddingHm}
+                    wrap={konvaTextWrap(node.wrap)}
+                    lineHeight={node.lineHeight}
                     listening={false}
                     fill={node.placeholder ? '#9ca3af' : '#111827'}
                     stroke={stroke}

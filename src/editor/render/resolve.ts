@@ -18,11 +18,13 @@ import {
     DEFAULT_SHAPE_STROKE,
     DEFAULT_SHAPE_STROKE_WIDTH,
     DEFAULT_SYMBOL_FILL,
+    DEFAULT_TEXT_WRAP,
     barcodeQuietModules,
     isClosedShape,
     type BarcodeSymbology,
     type ImageFit,
     type QrErrorCorrection,
+    type TextWrap,
 } from '../../core/doc/objects';
 import { DEFAULT_FONT_SIZE, nodeSize } from '../../core/doc/geometry';
 
@@ -119,6 +121,10 @@ export interface ResolvedText extends ResolvedBase {
     fontStyle: string;
     align: TextAlign;
     paddingHm: hm;
+    /** Wrap mode (already defaulted to `DEFAULT_TEXT_WRAP`). */
+    wrap: TextWrap;
+    /** Line-height multiplier (already defaulted to `1`). */
+    lineHeight: number;
 }
 
 /**
@@ -442,6 +448,8 @@ export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[]
                     fontStyle: node.fontStyle ?? 'normal',
                     align: node.align ?? 'left',
                     paddingHm: 0,
+                    wrap: node.wrap ?? DEFAULT_TEXT_WRAP,
+                    lineHeight: node.lineHeight ?? 1,
                     bounds: transformedBounds(rectCorners(0, 0, w, h), base.transform),
                 };
             }

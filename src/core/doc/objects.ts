@@ -48,6 +48,15 @@ export type ImageFit = (typeof IMAGE_FITS)[number];
 export const DEFAULT_IMAGE_FIT: ImageFit = 'contain';
 
 /**
+ * How a text node's content fills its box. `word`/`char` wrap; `clip` wraps at
+ * words but hides lines past the box height; `shrink` wraps then uniformly
+ * downscales (never up) so the measured text fits the box.
+ */
+export const TEXT_WRAPS = ['word', 'char', 'clip', 'shrink'] as const;
+export type TextWrap = (typeof TEXT_WRAPS)[number];
+export const DEFAULT_TEXT_WRAP: TextWrap = 'word';
+
+/**
  * Symbol background + quiet-zone defaults (P2). `fill` defaults to opaque white:
  * the symbol background (light modules **and** the quiet zone) is painted solid
  * white. An explicit `'transparent'` opts the light modules and quiet zone to see

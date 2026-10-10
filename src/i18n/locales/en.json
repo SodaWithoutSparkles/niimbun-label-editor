@@ -489,6 +489,12 @@
         "stucki": "Stucki",
         "atkinson": "Atkinson"
       },
+      "wrap": {
+        "word": "Wrap at word",
+        "char": "Wrap at character",
+        "clip": "Clip overflow",
+        "shrink": "Shrink to fit"
+      },
       "trustDisabled": "Templates are disabled for this document.",
       "imageDisabled": "Image options arrive with the image engine in a later phase.",
       "qrDisabled": "QR options arrive with the QR engine in a later phase.",
@@ -515,6 +521,7 @@
         "fontWeight": "Weight",
         "fontStyle": "Style",
         "align": "Align",
+        "wrap": "Text wrap",
         "letterSpacing": "Letter spacing",
         "direction": "Direction",
         "shape": "Shape",

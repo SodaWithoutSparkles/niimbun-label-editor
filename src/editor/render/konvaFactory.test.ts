@@ -380,3 +380,79 @@ describe('matrixToKonvaAttrs — exact affine decomposition', () => {
         }
     });
 });
+
+describe('createKonvaNode — text wrap (P5 D1/D2a)', () => {
+    // The fake 2D context in `beforeAll` measures every glyph at 10px, which
+    // makes the shrink math deterministic without a font dependency.
+    const buildText = (over: Record<string, unknown> = {}): Konva.Text => {
+        const doc = createLabelDoc({
+            id: 'doc-wrap',
+            now: 1_700_000_000,
+            backingW: 3000,
+            backingH: 2000,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 3000, h: 2000 }],
+            nodes: [
+                node({
+                    id: 'tw',
+                    parentId: null,
+                    type: 'text',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    text: { kind: 'static', value: 'hi' },
+                    size: { w: 100, h: 40 },
+                    ...over,
+                }),
+            ],
+        });
+        return createKonvaNode(resolve(doc)[0]!) as Konva.Text;
+    };
+
+    it("defaults to Konva's word wrap and lineHeight 1", () => {
+        const text = buildText();
+        expect(text).toBeInstanceOf(Konva.Text);
+        expect(text.wrap()).toBe('word');
+        expect(text.lineHeight()).toBe(1);
+    });
+
+    it('maps each wrap mode to the Konva wrap prop', () => {
+        expect(buildText({ wrap: 'word' }).wrap()).toBe('word');
+        expect(buildText({ wrap: 'char' }).wrap()).toBe('char');
+        // clip wraps at words (Konva then hides lines past the box height).
+        expect(buildText({ wrap: 'clip' }).wrap()).toBe('word');
+        expect(buildText({ wrap: 'shrink' }).wrap()).toBe('word');
+    });
+
+    it('passes an explicit lineHeight through', () => {
+        expect(buildText({ lineHeight: 1.5 }).lineHeight()).toBe(1.5);
+    });
+
+    it('does not upscale a short string in shrink mode', () => {
+        const text = buildText({
+            text: { kind: 'static', value: 'hi' },
+            size: { w: 100, h: 40 },
+            fontSize: 10,
+            lineHeight: 1,
+            wrap: 'shrink',
+        });
+        expect(text.scaleX()).toBe(1);
+        expect(text.scaleY()).toBe(1);
+    });
+
+    it('uniformly downscales an overflowing string in shrink mode to fit the box', () => {
+        const w = 100;
+        const h = 40;
+        const text = buildText({
+            text: { kind: 'static', value: 'a'.repeat(26) },
+            size: { w, h },
+            fontSize: 100,
+            lineHeight: 1,
+            wrap: 'shrink',
+        });
+        expect(text.scaleX()).toBe(text.scaleY());
+        expect(text.scaleX()).toBeGreaterThan(0);
+        expect(text.scaleX()).toBeLessThanOrEqual(1);
+        // The measured wrapped width, scaled, still fits the box.
+        expect(text.getTextWidth() * text.scaleX()).toBeLessThanOrEqual(w + 1);
+    });
+});

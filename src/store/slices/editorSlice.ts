@@ -666,6 +666,28 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             transientBase = null;
         },
 
+        restoreDoc: (previous) => {
+            const current = get().currentDoc;
+            // No open doc (gallery): nothing to restore onto.
+            if (!current) return;
+            // Semantic no-op guard (Esc with no edits): the pre-edit snapshot is
+            // a `structuredClone` of the doc the session started from, so an
+            // unedited session compares equal. Drop the transient baseline and
+            // add no history entry, or undo would look dead.
+            if (docsEqual(current, previous)) {
+                transientBase = null;
+                return;
+            }
+            // Restore the snapshot exactly as a committed op lands: the doc on
+            // screen now (the live edit session's working copy) becomes the one
+            // `docPast` entry, so `undoDoc` brings it back. `commit` clones
+            // nothing, so clone the caller's snapshot first — the stored doc, its
+            // `updatedAt` stamp and the pending autosave must not alias the
+            // snapshot the caller still owns. `commit` also drops the transient
+            // baseline and clears `docFuture`, matching `commitDoc`.
+            commit(cloneDoc(previous), current);
+        },
+
         clearDocHistory: () => {
             clearDocHistory();
         },

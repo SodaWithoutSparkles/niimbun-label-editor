@@ -135,6 +135,8 @@ export const TEXT_FIELDS: readonly FieldDescriptor[] = [
     { key: 'fontWeight', scope: 'text', kind: 'select', wired: false, options: ['normal', 'bold'], reason: 'style' },
     { key: 'fontStyle', scope: 'text', kind: 'select', wired: true, options: ['normal', 'italic'] },
     { key: 'align', scope: 'text', kind: 'select', wired: true, options: ['left', 'center', 'right'] },
+    // How the text fills its box (P5): both renderers read `node.wrap`.
+    { key: 'wrap', scope: 'text', kind: 'select', wired: true, options: ['word', 'char', 'clip', 'shrink'] },
     { key: 'letterSpacing', scope: 'text', kind: 'number', wired: false, reason: 'style' },
     { key: 'direction', scope: 'text', kind: 'select', wired: false, options: ['ltr', 'rtl'], reason: 'style' },
 ];

@@ -437,6 +437,99 @@ describe('editorSlice — document operations', () => {
         expect(store.getState().docFuture).toHaveLength(0);
     });
 
+    it('restoreDoc swaps in a clone of the snapshot and pushes the live doc as one undo entry', () => {
+        const store = setupStore(makeDoc([textNode('a')]));
+        // A live (transient) edit: x moved to 5 without history.
+        store.getState().updateNodeTransient('a', {
+            transform: { x: 5, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        });
+        const live = store.getState().currentDoc!;
+
+        // Snapshot of the pre-edit doc (x === 0), stamped to the frozen clock so
+        // the restore's `updatedAt` re-stamp lands on the same value.
+        const prev = makeDoc([textNode('a')]);
+        prev.meta.updatedAt = Math.floor(Date.now() / 1000);
+
+        store.getState().restoreDoc(prev);
+
+        const restored = store.getState().currentDoc!;
+        expect(restored).toEqual(prev);
+        // A clone, never the caller's object.
+        expect(restored).not.toBe(prev);
+        expect(restored.nodes[0]!.transform.x).toBe(0);
+        // Exactly one new undo entry, holding the live (pre-restore) doc.
+        expect(store.getState().docPast).toHaveLength(1);
+        expect(store.getState().docPast[0]).toEqual(live);
+        expect(store.getState().docFuture).toHaveLength(0);
+    });
+
+    it('undoDoc after restoreDoc returns to the pre-restore doc', () => {
+        const store = setupStore(makeDoc([textNode('a')]));
+        store.getState().updateNodeTransient('a', {
+            transform: { x: 5, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        });
+        const prev = makeDoc([textNode('a')]);
+        prev.meta.updatedAt = Math.floor(Date.now() / 1000);
+
+        store.getState().restoreDoc(prev);
+        expect(store.getState().currentDoc!.nodes[0]!.transform.x).toBe(0);
+
+        store.getState().undoDoc();
+        expect(store.getState().currentDoc!.nodes[0]!.transform.x).toBe(5);
+        expect(store.getState().docPast).toHaveLength(0);
+        expect(store.getState().docFuture).toHaveLength(1);
+    });
+
+    it('restoreDoc is a no-op with no open doc', () => {
+        const store = setupStore(null);
+        expect(() => store.getState().restoreDoc(makeDoc())).not.toThrow();
+        expect(store.getState().currentDoc).toBeNull();
+        expect(store.getState().docPast).toHaveLength(0);
+        expect(store.getState().docFuture).toHaveLength(0);
+    });
+
+    it('restoreDoc clears docFuture (redo becomes unavailable)', () => {
+        const store = setupStore(makeDoc([textNode('a')]));
+        store.getState().updateNodeTransient('a', {
+            transform: { x: 5, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        });
+        store.getState().commitDoc();
+        store.getState().undoDoc();
+        expect(store.getState().docFuture).toHaveLength(1);
+
+        // The snapshot must differ semantically from the doc on screen (x === 0
+        // here vs 0 after the undo), or the no-op guard would swallow it. Move
+        // the node so this exercises the real restore path.
+        const prev = makeDoc([textNode('a')]);
+        prev.nodes[0]!.transform.x = 1;
+        prev.meta.updatedAt = Math.floor(Date.now() / 1000);
+        store.getState().restoreDoc(prev);
+
+        expect(store.getState().docFuture).toHaveLength(0);
+        store.getState().redoDoc();
+        // Redo is a no-op: the restored snapshot is still on screen.
+        expect(store.getState().currentDoc).toEqual(prev);
+    });
+
+    it('restoreDoc of an identical doc is a no-op: no undo entry and the transient baseline is cleared', () => {
+        vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+        const store = setupStore(makeDoc([textNode('a')]));
+        store.getState().updateNodeTransient('a', {
+            transform: { x: 5, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        });
+        // The pre-edit snapshot `useTextEditor.cancel` restores: a clone of the
+        // doc as it stands now (an unedited session), so `docsEqual` holds.
+        const snapshot = structuredClone(store.getState().currentDoc!);
+
+        store.getState().restoreDoc(snapshot);
+
+        expect(store.getState().docPast).toHaveLength(0);
+        // The guard cleared the transient baseline, so a later commit cannot
+        // resurrect a dead undo entry for the no-op restore.
+        store.getState().commitDoc();
+        expect(store.getState().docPast).toHaveLength(0);
+    });
+
     it('undo and redo re-stamp updatedAt (gallery sort key)', () => {
         vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
         const doc = makeDoc([textNode('a')]);
