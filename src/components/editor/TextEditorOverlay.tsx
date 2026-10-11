@@ -105,6 +105,14 @@ export const localPointOf = (
 const wrapStyle = (wrap: TextWrap): React.CSSProperties =>
     wrap === 'char' ? { wordBreak: 'break-all' } : { overflowWrap: 'break-word' };
 
+/**
+ * Caret bar thickness as a fraction of the font size, measured in layout px
+ * before the wrapper transform scales it. 5% — owner-verified visually against
+ * a real browser. Tests derive their expectations from this, so the bar's
+ * weight is stated once.
+ */
+export const CARET_WIDTH_RATIO = 0.05;
+
 /** Reused canvas 2D context for text measurement (created lazily, never drawn). */
 let measureCtx: CanvasRenderingContext2D | null = null;
 const measurementContext = (): CanvasRenderingContext2D | null => {
@@ -284,14 +292,14 @@ export const TextEditorOverlay: React.FC<TextEditorOverlayProps> = ({
     // the layout width equals `clientWidth` — no scale division needed here.
     const contentWidth = useCallback((): number => taRef.current?.clientWidth || session.unscaledWidth, [session.unscaledWidth]);
 
-    // Caret thickness, in **layout px**. The bar is ~3% of the font (so it reads
-    // as a ~1px caret at working zoom) but the wrapper transform then multiplies
-    // it by `scaleX`, which drops it sub-pixel when zoomed out (a faint smeared
-    // line) and lets it drift off whole pixels when zoomed in. Round in device
-    // space, then convert back, so the painted bar is always whole pixels wide
-    // and never thinner than one.
+    // Caret thickness, in **layout px**. The bar is CARET_WIDTH_RATIO (5%) of the
+    // font size — owner-verified as the right visual weight — but the wrapper
+    // transform then multiplies it by `scaleX`, which drops it sub-pixel when
+    // zoomed out (a faint smeared line) and lets it drift off whole pixels when
+    // zoomed in. Round in device space, then convert back, so the painted bar is
+    // always whole device pixels wide and never thinner than one.
     const deviceScale = session.scaleX * (typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1);
-    const caretWidth = Math.max(1, Math.round(session.fontSize * 0.05 * deviceScale)) / deviceScale;
+    const caretWidth = Math.max(1, Math.round(session.fontSize * CARET_WIDTH_RATIO * deviceScale)) / deviceScale;
 
     const measure = useCallback(
         (offset: number) => {

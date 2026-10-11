@@ -3,7 +3,8 @@
 > Coordinator handoff. Read with [`plan.md`](plan.md) §P6, [`state.md`](state.md), and
 > [`memory/csv-templates.md`](../memory/csv-templates.md) (the authoritative "how it works" for
 > `src/templates/*`, the Data/JS/Global tabs, `useSampleRow`, and the trust gate).
-> Status: P5 done (`6ab1525`), P6 not started. Base commit `6dfdf46` + P1–P5 commits.
+> Status: P5 done (`6ab1525` + caret follow-up `4b75184`), P6 not started.
+> HEAD at handoff: `4b75184`. Full suite green: 120 files / 1522 tests, `tsc` clean.
 
 ## Scope (plan.md §P6)
 
@@ -16,10 +17,14 @@ Items: "Globals only allow online"; "Unclear extraction"; "missing API contract"
    reaches `ctx.globals.<name>`.
 2. **Extract normalization** — `createExtract` strips a leading `.` (and accepts a leading `$.`) so
    `.rate` works. Pin the grammar in tests (dotted paths, dot-numeric indices `a.b.0.c`, `|fallback`).
-3. **Contract surface** — user-facing docs of `TemplateContext` (`index`, `total`/`rowCount`, `row`,
-   `now`, `label`, `globals`, `fmt`), the extract grammar, fallback rules, forbidden operations — an
-   i18n help panel reachable from the template-related tabs. Plus **`ctx.seeds.docSeed`** (owner-decided):
-   a stable per-document seed so the same document + data always generates the same label.
+3. **Contract surface — written docs, NOT an in-app panel** (owner, 2026-10-10). Document
+   `TemplateContext` (`index`, `total`/`rowCount`, `row`, `now`, `label`, `globals`, `fmt`), the extract
+   grammar, fallback rules, and forbidden operations as **Markdown files**:
+   - User-facing → `docs/user-guide/*.md` (**new directory**).
+   - Developer-facing → `docs/developer-guide/*.md` (**new directory**).
+   - A docs repo and a docs static site are **out of scope for this round** — write plain `.md` only.
+   Plus **`ctx.seeds.docSeed`** (owner-decided): a stable per-document seed so the same document + data
+   always generates the same label.
 4. **Trust prompt (C1)** — widen to four choices: allow once / always allow / deny once / never allow,
    wiring `gate.always`/`gate.never`. Dismiss = session deny (fail-closed). New `trust.prompt.*` i18n
    keys. Delete the stale `trustPrompt.ts:7-10` comment.
@@ -67,6 +72,9 @@ Items: "Globals only allow online"; "Unclear extraction"; "missing API contract"
 - P4: brush `gridConstants.ts` is deleted; grid step is the persisted `gridSpacingHm`.
 - P5: `TextNode.wrap` + inline editor landed; `restoreDoc(previous)` store action exists (Esc-cancel seam).
   Residual **D-40** (inline overlay shear under a rotated+non-uniform group) is registered, not fixed.
+- P5 caret follow-up: nothing in `src/templates/*` was touched; the only cross-cutting addition is
+  `CARET_WIDTH_RATIO` in `TextEditorOverlay.tsx` and the `text-editor-caret-blink` keyframes in
+  `src/index.css` — no relevance to P6.
 
 ## Action-plan sketch (write `phase6_action-plan.md` before coding)
 
@@ -76,7 +84,19 @@ Likely fan-out (single writer per file per wave):
   (`core/doc/types.ts`, `validate.ts`, `templates/globals.ts`). `general`: extract normalization
   (`templates/globals.ts` `createExtract`) + grammar tests. `general`: trust prompt widen + wire
   `gate.always`/`gate.never` (`trustPrompt.ts`, `TrustSection`, store) + tests.
-- **Wave 2** — `general`: `GlobalDataTab` static variant; contract/help panel (i18n) + `ctx.seeds.docSeed`;
-  refresh tick through the single-flight queue (`useSampleRow.ts`) with fake-timer tests.
+- **Wave 2** — `general`: `GlobalDataTab` static variant; `ctx.seeds.docSeed`; **docs** (new
+  `docs/user-guide/*.md` + `docs/developer-guide/*.md`) + `ctx.seeds.docSeed`; refresh tick through the
+  single-flight queue (`useSampleRow.ts`) with fake-timer tests.
 - Review (`review`) → fix (max 2 rounds) → commit `feat(templates): static globals, extract normalization,
-  contract help, 4-choice trust prompt, refresh tick (#P6)`.
+  contract docs, 4-choice trust prompt, refresh tick (#P6)`.
+
+## Suggested doc split for item 3 (the implementer should confirm)
+
+- `docs/user-guide/` — non-technical template authoring: what a field can bind to, the extract grammar a
+  user types (`a.b.0.c`, `|fallback`), what "forbidden" means in practice, and what happens when a field
+  is missing.
+- `docs/developer-guide/` — the actual contract: `TemplateContext` members, `row`/`globals` shapes,
+  `fmt`, `seeds.docSeed` semantics, and the trust model (when JS runs, fail-closed behaviour).
+
+Keep both lists derived from the real types — the point of the docs is to pin the contract, so a test
+that asserts the documented members exist on `TemplateContext` is worth more than prose.

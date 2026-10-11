@@ -7,6 +7,7 @@ import { createLabelDoc } from '../../core/doc/factory';
 import { installCanvasShim } from '../../test/canvasHarness';
 import type { LabelDoc, Node } from '../../core/doc/types';
 import {
+    CARET_WIDTH_RATIO,
     TextEditorOverlay,
     caretFromPoint,
     caretRectForOffset,
@@ -353,7 +354,8 @@ describe('TextEditorOverlay', () => {
     it('renders the synthetic caret inside the wrapper (layout px)', () => {
         render(overlay());
         const caret = screen.getByTestId('text-editor-caret') as HTMLElement;
-        expect(caret.style.width).toBe('9px');
+        // 300px font x 5% x scaleX 2 = 30 device px -> 15 layout px.
+        expect(caret.style.width).toBe(`${300 * CARET_WIDTH_RATIO}px`);
         expect(caret.style.animation).toContain('text-editor-caret-blink');
         // Position is layout px inside the transformed wrapper (never pre-scaled).
         const left = parseFloat(caret.style.left);
@@ -374,13 +376,12 @@ describe('TextEditorOverlay', () => {
     };
 
     it('rounds the caret to whole device pixels', () => {
-        // 300px font x 3% x 1.3 scale = 11.7 device px -> 12
-        const width = caretWidthAt(1.3);
-        expect(width * 1.3).toBeCloseTo(12);
+        // 300px font x 5% x 1.3 scale = 19.5 device px -> 20.
+        expect(caretWidthAt(1.3) * 1.3).toBeCloseTo(20);
     });
 
     it('never thins the caret below one device pixel when zoomed out', () => {
-        // 300px font x 3% x 0.05 scale = 0.45 device px -> clamped to 1
+        // 300px font x 5% x 0.05 scale = 0.75 device px -> clamped to 1.
         expect(caretWidthAt(0.05) * 0.05).toBeCloseTo(1);
     });
 
@@ -389,9 +390,9 @@ describe('TextEditorOverlay', () => {
         const original = window.devicePixelRatio;
         window.devicePixelRatio = 2;
         try {
-            // deviceScale 0.05 x 2 = 0.1: 0.9 device px -> 1 device px, reached
-            // at half the layout width the dpr=1 case needs.
-            expect(caretWidthAt(0.05)).toBeCloseTo(10);
+            // deviceScale = 0.05 x 2 = 0.1: 300 x 5% x 0.1 = 1.5 device px -> 2,
+            // i.e. 2 / 0.1 = 20 layout px.
+            expect(caretWidthAt(0.05)).toBeCloseTo(20);
         } finally {
             window.devicePixelRatio = original;
         }
