@@ -143,7 +143,7 @@ describe('editorSlice — document operations', () => {
     it('never mutates the stored doc (deep compare, including untouched payload)', () => {
         const doc = makeDoc([textNode('a')]);
         doc.label.regions.push({ kind: 'rect', x: 1, y: 2, w: 3, h: 4 });
-        doc.data.globals.push({ name: 'g', url: 'u', extract: 'e', expiresAt: 5 });
+        doc.data.globals.push({ kind: 'remote', name: 'g', url: 'u', extract: 'e', expiresAt: 5 });
         doc.resources.fonts.push({
             fontId: 'f',
             familyName: 'F',
@@ -1177,10 +1177,10 @@ describe('editorSlice — reparent/ungroup preserve world transform (must-fix #4
 describe('editorSlice — setDocGlobals (P6 W6)', () => {
     it('replaces globals as one undoable change and undo restores them', () => {
         const store = setupStore();
-        store.getState().setDocGlobals([{ name: 'store', url: 'https://example.test/a', extract: 'name', expiresAt: 100 }]);
+        store.getState().setDocGlobals([{ kind: 'remote', name: 'store', url: 'https://example.test/a', extract: 'name', expiresAt: 100 }]);
 
         expect(store.getState().currentDoc?.data.globals).toEqual([
-            { name: 'store', url: 'https://example.test/a', extract: 'name', expiresAt: 100 },
+            { kind: 'remote', name: 'store', url: 'https://example.test/a', extract: 'name', expiresAt: 100 },
         ]);
         expect(store.getState().docPast).toHaveLength(1);
 
@@ -1194,18 +1194,18 @@ describe('editorSlice — setDocGlobals (P6 W6)', () => {
     it('trims names/urls, floors expiresAt, and drops blank-named specs', () => {
         const store = setupStore();
         store.getState().setDocGlobals([
-            { name: '  store  ', url: '  https://x.test  ', extract: 'a.b', expiresAt: 10.9 },
-            { name: '   ', url: 'https://dropped.test', extract: 'x', expiresAt: 5 },
+            { kind: 'remote', name: '  store  ', url: '  https://x.test  ', extract: 'a.b', expiresAt: 10.9 },
+            { kind: 'remote', name: '   ', url: 'https://dropped.test', extract: 'x', expiresAt: 5 },
         ]);
 
         expect(store.getState().currentDoc?.data.globals).toEqual([
-            { name: 'store', url: 'https://x.test', extract: 'a.b', expiresAt: 10 },
+            { kind: 'remote', name: 'store', url: 'https://x.test', extract: 'a.b', expiresAt: 10 },
         ]);
     });
 
     it('does not create a dead undo entry for an identical list', () => {
         const store = setupStore();
-        const spec = { name: 'store', url: 'https://x.test', extract: 'a', expiresAt: 10 };
+        const spec = { kind: 'remote' as const, name: 'store', url: 'https://x.test', extract: 'a', expiresAt: 10 };
         store.getState().setDocGlobals([spec]);
         store.getState().setDocGlobals([spec]);
 
@@ -1214,10 +1214,20 @@ describe('editorSlice — setDocGlobals (P6 W6)', () => {
 
     it('is a no-op with no open document', () => {
         const store = setupStore(null);
-        store.getState().setDocGlobals([{ name: 'store', url: 'u', extract: 'a', expiresAt: 1 }]);
+        store.getState().setDocGlobals([{ kind: 'remote', name: 'store', url: 'u', extract: 'a', expiresAt: 1 }]);
 
         expect(store.getState().currentDoc).toBeNull();
         expect(store.getState().docPast).toHaveLength(0);
+    });
+
+    it('persists a static spec verbatim (value kept, no expiry fields)', () => {
+        const store = setupStore();
+        store.getState().setDocGlobals([{ kind: 'static', name: '  store  ', value: '  Main  ' }]);
+
+        expect(store.getState().currentDoc?.data.globals).toEqual([
+            { kind: 'static', name: 'store', value: '  Main  ' },
+        ]);
+        expect(store.getState().docPast).toHaveLength(1);
     });
 });
 

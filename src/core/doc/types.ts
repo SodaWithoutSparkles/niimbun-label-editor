@@ -159,13 +159,37 @@ export interface FontRef {
         | { kind: 'imported'; asset: AssetRef; fingerprint?: string };
 }
 
-// expiresAt = epoch seconds (UTC); prefetch once per job, deep-clone into template worker
-export interface GlobalSpec {
+/**
+ * A global available to templates as `ctx.globals.<name>`. Discriminated by
+ * `kind`:
+ *
+ *   remote = fetched once per job from `url`; `extract` selects the value;
+ *            `expiresAt` is epoch seconds (UTC) and controls cache reuse.
+ *   static = a literal `value` defined in the document; never fetched, never
+ *            expires (cached as always-valid for the job).
+ *
+ * The persisted/wire form may omit `kind` for legacy remote specs; validation
+ * hydrates the missing discriminator to `'remote'`.
+ */
+export interface GlobalSpecBase {
     name: string;
+}
+
+export interface RemoteGlobalSpec extends GlobalSpecBase {
+    kind: 'remote';
     url: string;
     extract: string;
+    /** Epoch seconds (UTC); prefetch once per job, deep-clone into template worker. */
     expiresAt: number;
 }
+
+export interface StaticGlobalSpec extends GlobalSpecBase {
+    kind: 'static';
+    /** Plain string; never JSON-parsed. */
+    value: string;
+}
+
+export type GlobalSpec = RemoteGlobalSpec | StaticGlobalSpec;
 
 /**
  * Binary-ish assets (fonts, images, SVGs, CSVs) all use one reference shape. Any

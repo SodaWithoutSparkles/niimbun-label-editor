@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { GlobalSpec } from '../core/doc/types';
+import type { RemoteGlobalSpec, StaticGlobalSpec } from '../core/doc/types';
 import {
     createGlobalsCache,
     createExtract,
@@ -7,12 +7,17 @@ import {
     type GlobalsResult,
 } from './globals';
 
-const spec = (overrides: Partial<GlobalSpec> & Pick<GlobalSpec, 'name'>): GlobalSpec => ({
+const spec = (
+    overrides: Partial<Omit<RemoteGlobalSpec, 'kind'>> & Pick<RemoteGlobalSpec, 'name'>,
+): RemoteGlobalSpec => ({
+    kind: 'remote',
     url: `https://example.test/${overrides.name}`,
     extract: 'value',
     expiresAt: 2_000_000_000, // epoch seconds, far in the future for now=0
     ...overrides,
 });
+
+const staticSpec = (name: string, value: string): StaticGlobalSpec => ({ kind: 'static', name, value });
 
 const isStructuredCloneable = (value: unknown): boolean => {
     try {
@@ -64,6 +69,25 @@ describe('createExtract', () => {
         expect(ran).toBe(false);
         expect(createExtract('rate | 0')(body)).toBe(0);
         expect(ran).toBe(false);
+    });
+
+    it('normalizes a leading `$.`, `$`, or single `.` before splitting', () => {
+        const body = { rate: 4.2, a: { b: [{ c: 'deep' }] } };
+        expect(createExtract('.rate')(body)).toBe(4.2);
+        expect(createExtract('$.rate')(body)).toBe(4.2);
+        expect(createExtract('$rate')(body)).toBe(4.2);
+        expect(createExtract('rate')(body)).toBe(4.2);
+        // Dot-numeric array indices keep working, with or without the sugar.
+        expect(createExtract('a.b.0.c')(body)).toBe('deep');
+        expect(createExtract('$.a.b.0.c')(body)).toBe('deep');
+    });
+
+    it('applies the `|` fallback for a missing path, sugar included', () => {
+        expect(createExtract('a.b.0.c|fallback')({})).toBe('fallback');
+        expect(createExtract('$.missing | "n/a"')({})).toBe('n/a');
+        // An empty path (before the pipe) means the whole body, unchanged.
+        expect(createExtract('|fallback')({ x: 1 })).toEqual({ x: 1 });
+        expect(createExtract('$')({ x: 1 })).toEqual({ x: 1 });
     });
 });
 
@@ -406,6 +430,57 @@ describe('createGlobalsCache', () => {
         expect(second.values).toEqual({ x: 'once' });
     });
 
+    it('keys specs whose fields contain the old NUL delimiter unambiguously', async () => {
+        const cache = createGlobalsCache();
+
+        // Two static specs whose `name`/`value` contain `\u0000`. A naive
+        // NUL-joined key lets `name \0 static \0 value` collide across the
+        // field boundary, so one could serve the other's value.
+        const statA = staticSpec('a', '\u0000static\u0000b');
+        const statB = staticSpec('a\u0000static\u0000', 'b');
+        const staticDeps = { now: () => 0, fetchJson: async () => ({}) };
+
+        const statFirst = await cache.prefetch([statA, statB], staticDeps);
+        expect(statFirst.values).toEqual({
+            a: '\u0000static\u0000b',
+            'a\u0000static\u0000': 'b',
+        });
+        const statSecond = await cache.prefetch([statA, statB], staticDeps);
+        expect(statSecond.values).toEqual(statFirst.values);
+
+        // Two remote specs whose `name`/`url` collide under a naive NUL-joined
+        // key: `name \0 url \0 extract \0 expiresAt` is byte-identical for both.
+        // Counting fetches makes the cache reuse observable.
+        let calls = 0;
+        const deps = {
+            now: () => 0,
+            fetchJson: async (url: string) => {
+                calls += 1;
+                return { value: url, other: `other:${url}` };
+            },
+        };
+        const remoteA = spec({ name: 'r', url: 'remote\u0000b', extract: 'value', expiresAt: 2_000_000_000 });
+        const remoteB = spec({ name: 'r\u0000remote', url: 'b', extract: 'value', expiresAt: 2_000_000_000 });
+
+        const remoteFirst = await cache.prefetch([remoteA, remoteB], deps);
+        expect(calls).toBe(2); // distinct entries: each fetched its own value
+        expect(remoteFirst.values).toEqual({
+            r: 'remote\u0000b',
+            'r\u0000remote': 'b',
+        });
+
+        const remoteSecond = await cache.prefetch([remoteA, remoteB], deps);
+        expect(calls).toBe(2); // valid entries reused across prefetches
+        expect(remoteSecond.values).toEqual(remoteFirst.values);
+
+        // A colliding-looking-but-different spec (same name and url, different
+        // extract) is its own identity and must not reuse a cached value.
+        const remoteC = spec({ name: 'r\u0000remote', url: 'b', extract: 'other', expiresAt: 2_000_000_000 });
+        const remoteThird = await cache.prefetch([remoteC], deps);
+        expect(calls).toBe(3);
+        expect(remoteThird.values).toEqual({ 'r\u0000remote': 'other:b' });
+    });
+
     it('an expired entry warns on failure rather than reusing stale data', async () => {
         let nowMs = 1_000_000;
         const cache = createGlobalsCache();
@@ -427,6 +502,94 @@ describe('createGlobalsCache', () => {
         expect(result.warnings).toEqual([
             expect.objectContaining({ kind: 'fetch' }),
         ]);
+    });
+});
+
+describe('prefetchGlobals — static specs', () => {
+    it('resolves a static value with no fetch and no warning', async () => {
+        let calls = 0;
+        const result = await prefetchGlobals(
+            [staticSpec('greeting', 'hello')],
+            {
+                now: () => 0,
+                fetchJson: async () => {
+                    calls += 1;
+                    return {};
+                },
+            },
+        );
+
+        expect(calls).toBe(0); // fetch dep is never called for a static spec
+        expect(result.warnings).toEqual([]);
+        expect(result.values).toEqual({ greeting: 'hello' });
+        expect(isStructuredCloneable(result.values)).toBe(true);
+    });
+
+    it('caches a static entry as always-valid (no expiry, never refetched)', async () => {
+        let nowMs = 0;
+        let calls = 0;
+        const cache = createGlobalsCache();
+        const deps = {
+            now: () => nowMs,
+            fetchJson: async () => {
+                calls += 1;
+                return {};
+            },
+        };
+        const specs = [staticSpec('fixed', 'v')];
+
+        const first = await cache.prefetch(specs, deps);
+        nowMs = 10 ** 15; // far future: any remote entry would be long expired
+        const second = await cache.prefetch(specs, deps);
+
+        expect(calls).toBe(0);
+        expect(first.values).toEqual({ fixed: 'v' });
+        expect(second.values).toEqual({ fixed: 'v' });
+    });
+
+    it('keeps two different static values with the same name as distinct entries', async () => {
+        const cache = createGlobalsCache();
+        const deps = { now: () => 0, fetchJson: async () => ({}) };
+
+        const a = await cache.prefetch([staticSpec('k', 'A')], deps);
+        const b = await cache.prefetch([staticSpec('k', 'B')], deps);
+
+        expect(a.values).toEqual({ k: 'A' });
+        expect(b.values).toEqual({ k: 'B' });
+    });
+
+    it('never lets a static spec and a remote spec of the same name collide', async () => {
+        const cache = createGlobalsCache();
+        let calls = 0;
+        const deps = {
+            now: () => 0,
+            fetchJson: async () => {
+                calls += 1;
+                return { value: 'remote' };
+            },
+        };
+
+        const remote = await cache.prefetch([spec({ name: 'k', extract: 'value' })], deps);
+        const stat = await cache.prefetch([staticSpec('k', 'literal')], deps);
+
+        expect(calls).toBe(1); // the remote spec fetched once
+        expect(remote.values).toEqual({ k: 'remote' });
+        expect(stat.values).toEqual({ k: 'literal' });
+    });
+
+    it('resolves mixed remote and static specs in one prefetch', async () => {
+        const result = await prefetchGlobals(
+            [staticSpec('s', 'lit'), spec({ name: 'r', extract: 'value' })],
+            { now: () => 0, fetchJson: async () => ({ value: 'fetched' }) },
+        );
+
+        expect(result.warnings).toEqual([]);
+        expect(result.values).toEqual({ s: 'lit', r: 'fetched' });
+    });
+
+    it('an empty static value still yields a value (not absent)', async () => {
+        const result = await prefetchGlobals([staticSpec('blank', '')], { now: () => 0 });
+        expect(result.values).toEqual({ blank: '' });
     });
 });
 

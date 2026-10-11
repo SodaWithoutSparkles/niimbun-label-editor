@@ -1,4 +1,4 @@
-import type { TemplateContext, TemplateFormat, TemplateLabel } from '../../templates/engine';
+import type { TemplateContext, TemplateFormat, TemplateLabel, TemplateSeeds } from '../../templates/engine';
 
 /**
  * Row-context builder for the P6 binding/execution pre-pass (W2).
@@ -9,8 +9,9 @@ import type { TemplateContext, TemplateFormat, TemplateLabel } from '../../templ
  * edge. `TemplateEngine` instances are injected by the host.
  *
  * The produced shape is the plan's resolve context
- * `{ index, total, row, rowCount, now, label, globals, fmt }`. It is exactly the
- * {@link TemplateContext} the engine receives, so the two cannot drift.
+ * `{ index, total, row, rowCount, now, label, globals, fmt, seeds }`. It is
+ * exactly the {@link TemplateContext} the engine receives, so the two cannot
+ * drift.
  */
 
 export interface BuildRowContextInput {
@@ -26,6 +27,8 @@ export interface BuildRowContextInput {
     globals?: Record<string, unknown>;
     /** Formatting settings. Omitted from the result when not supplied. */
     fmt?: TemplateFormat;
+    /** Stable per-document seed (`docSeed = doc.meta.id`). Defaults to `{ docSeed: '' }`. */
+    seeds?: TemplateSeeds;
     /** Epoch **milliseconds** at resolve time (decision 24); read by the host. */
     now: number;
 }
@@ -85,6 +88,7 @@ export const buildRowContext = (input: BuildRowContextInput): RowContext => {
         now: input.now,
         label: input.label ?? {},
         globals: input.globals ?? {},
+        seeds: input.seeds ?? { docSeed: '' },
         ...(input.fmt === undefined ? {} : { fmt: input.fmt }),
     };
 };

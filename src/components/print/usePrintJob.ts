@@ -178,8 +178,32 @@ export const usePrintJob = ({ open }: UsePrintJobOptions): PrintJobDeps => {
                         docId: currentDoc.meta.id,
                         docName: currentDoc.meta.name,
                     });
-                    if (choice === 'allow') gate.allowOnce(currentDoc.meta.id);
-                    else if (choice === 'deny') gate.denyOnce(currentDoc.meta.id);
+                    switch (choice) {
+                        case 'allowOnce':
+                            gate.allowOnce(currentDoc.meta.id);
+                            break;
+                        case 'always':
+                            // A failed record write must never crash the pass:
+                            // fall back to a session allow (templates run).
+                            await gate
+                                .always(currentDoc.meta.id)
+                                .catch(() => gate.allowOnce(currentDoc.meta.id));
+                            break;
+                        case 'denyOnce':
+                            gate.denyOnce(currentDoc.meta.id);
+                            break;
+                        case 'never':
+                            // A failed record write must still block: fall back
+                            // to a session deny.
+                            await gate
+                                .never(currentDoc.meta.id)
+                                .catch(() => gate.denyOnce(currentDoc.meta.id));
+                            break;
+                        case 'none':
+                        default:
+                            // Displaced prompt: no write; stays `ask`, re-prompts.
+                            break;
+                    }
                     trust = await gate.resolve(currentDoc.meta.id);
                 }
                 trustRef.current = { docId: currentDoc.meta.id, trust };

@@ -4,7 +4,7 @@ import { trustGateFor } from '../../store/trustGate';
 import type { LabelDoc } from '../../core/doc/types';
 import type { CsvRecord } from '../../data/csvRepo';
 import { docHasTemplateSources, type TrustDecision, type TrustGate } from '../../core/trust';
-import { promptTemplateTrust } from '../../editor/trustPrompt';
+import { promptTemplateTrust, type TemplateTrustDecision } from '../../editor/trustPrompt';
 import { createGlobalsCache, type GlobalWarning, type GlobalsCache } from '../../templates/globals';
 import { createJavaScriptTemplateEngine, type JavaScriptTemplateEngine } from '../../templates/jsEngine';
 import type { TemplateContext, TemplateEngine, Value } from '../../templates/engine';
@@ -50,7 +50,11 @@ import { contentSourceOf } from '../../editor/contentSource';
  * so the pass re-resolves and executed output cannot outlive a revoke. Passes
  * are additionally **single-flighted**: a new pass is queued behind the
  * in-flight one and superseded passes are skipped before they touch the
- * serial-use engine, so two `evaluate` calls never overlap.
+ * serial-use engine, so two `evaluate` calls never overlap. A 1 s refresh tick
+ * (D5) re-enqueues a pass through this same queue for **approved** template
+ * documents and for documents with remote globals, so live data (and `ctx.now`)
+ * stays fresh; it is gated off while templates are unapproved (`ask`) or blocked
+ * (`never`) and while a trust prompt is open.
  */
 
 export interface SampleRowState {
@@ -175,6 +179,10 @@ const templateCodeIndex = (doc: LabelDoc): Map<string, string[]> => {
     return index;
 };
 
+/** True when the document declares at least one **remote** global (a live URL). */
+export const hasRemoteGlobals = (doc: LabelDoc): boolean =>
+    doc.data.globals.some((spec) => spec.kind === 'remote');
+
 export interface ResolvePassInput {
     doc: LabelDoc;
     csv: CsvRecord | null;
@@ -242,6 +250,20 @@ export const useSampleRow = (): SampleRowState => {
 
     const [state, setState] = useState<SampleRowState>(initialState);
 
+    // True while a template-trust prompt is awaiting the user's choice. Feeds the
+    // refresh tick gate: ticking during an open prompt re-prompts and piles up
+    // queued passes behind the await.
+    const [promptPending, setPromptPending] = useState(false);
+
+    // The effective trust as of the last **synchronous** decision point in a
+    // resolve pass (the last `gate.resolve`), NOT the last committed `state.trust`
+    // — which only updates when a pass finally calls `setState`. Ticking is gated
+    // on this ref so a pass that has resolved `ask` but not yet committed cannot
+    // be re-enqueued (and re-prompted) by a tick that fires after `promptPending`
+    // clears but before the commit lands. Reset on document identity change so a
+    // newly opened doc never inherits the previous doc's resolved trust.
+    const resolvedTrustRef = useRef<TrustDecision | null>(null);
+
     // Latest doc, read at pass time without re-triggering the effect.
     const docRef = useRef<LabelDoc | null>(doc);
     docRef.current = doc;
@@ -267,6 +289,46 @@ export const useSampleRow = (): SampleRowState => {
     const resolveKey = useMemo(() => resolveKeyOf(doc), [doc]);
     const docId = doc?.meta.id ?? null;
     const globalsKey = doc ? JSON.stringify(doc.data.globals) : '';
+
+    // Refresh tick (D5): a 1 s re-render keeps live data fresh for documents
+    // that can change without a store edit — template sources read `ctx.now`, and
+    // remote globals can change server-side. The tick only feeds the resolve-pass
+    // effect's deps, so it enqueues through the existing single-flight queue; it
+    // adds no parallel enqueue path. Static-only globals never tick, and a
+    // document with neither a template source nor a remote global gets no
+    // interval at all.
+    const [tick, setTick] = useState(0);
+    // The tick exists to keep live data and `ctx.now` fresh. For a doc WITH
+    // template sources there is nothing to refresh while templates are unapproved
+    // (`ask`) or blocked (`never`), and ticking an unresolved doc both re-prompts
+    // (`promptTemplateTrust`) and piles up queued passes — so a template doc ticks
+    // only when its template trust is `always`. Remote globals, which are
+    // independent of template trust, still arm the tick for a doc WITHOUT template
+    // sources.
+    //
+    // Two guards keep that gate honest:
+    // - `resolvedTrustRef` is the effective trust as of the last synchronous
+    //   `gate.resolve` in a pass. A pass that has resolved `ask` but not yet
+    //   committed must not be re-enqueued (and re-prompted) by a tick firing in
+    //   the window before its `setState` lands — `state.trust` is stale there
+    //   (`'always'` from the previous commit) and would wrongly arm the tick.
+    // - `promptPending` blocks ticks only while a trust prompt is actually in
+    //   flight. It clears before the pass commits, so it cannot be the sole gate.
+    // A fresh template doc has a `null` ref and `ask` state, so it does not tick
+    // until its own first pass resolves.
+    const hasTemplates = doc !== null && docHasTemplateSources(doc);
+    const tickEnabled =
+        doc !== null &&
+        !promptPending &&
+        (hasTemplates ? resolvedTrustRef.current === 'always' : hasRemoteGlobals(doc));
+
+    useEffect(() => {
+        if (!tickEnabled) return;
+        // StrictMode double-invokes this effect (mount → cleanup → mount); the
+        // cleanup clears the first interval, so exactly one survives.
+        const id = setInterval(() => setTick((current) => current + 1), 1000);
+        return () => clearInterval(id);
+    }, [tickEnabled]);
 
     // A changed globals list / document invalidates every cached value.
     useEffect(() => {
@@ -307,15 +369,66 @@ export const useSampleRow = (): SampleRowState => {
             let trust: TrustDecision = 'ask';
             if (hasTemplates) {
                 trust = gate ? await gate.resolve(currentDoc.meta.id) : 'ask';
+                // Publish the effective trust synchronously, before any prompt
+                // opens: this is what the tick gate reads, so a later prompt
+                // settling cannot re-arm ticking while `state.trust` is stale.
+                resolvedTrustRef.current = trust;
                 if (trust === 'ask' && gate && isCurrent()) {
                     // Prompt once per open; `promptTemplateTrust` dedupes by id.
-                    const choice = await promptTemplateTrust({
-                        docId: currentDoc.meta.id,
-                        docName: currentDoc.meta.name,
-                    });
-                    if (choice === 'allow') gate.allowOnce(currentDoc.meta.id);
-                    else if (choice === 'deny') gate.denyOnce(currentDoc.meta.id);
+                    if (mountedRef.current) setPromptPending(true);
+                    // A rejecting prompt must not propagate out of the pass: the
+                    // catch fails closed (like a displaced prompt) so the pass
+                    // continues and re-resolves `trust` below, committing the real
+                    // decision (`ask`) instead of leaving stale state (e.g. a
+                    // previous `always`) that would re-prompt on every tick.
+                    // `finally` clears the pending flag for the same reason;
+                    // guarded by `mountedRef` to avoid a state update after
+                    // unmount.
+                    let choice: TemplateTrustDecision = 'none';
+                    try {
+                        choice = await promptTemplateTrust({
+                            docId: currentDoc.meta.id,
+                            docName: currentDoc.meta.name,
+                        });
+                    } catch {
+                        // Fail-closed: a prompt failure is treated like a
+                        // displaced prompt — no gate write; `trust` is
+                        // re-resolved below and commits as `ask`.
+                        choice = 'none';
+                    } finally {
+                        if (mountedRef.current) setPromptPending(false);
+                    }
+                    switch (choice) {
+                        case 'allowOnce':
+                            gate.allowOnce(currentDoc.meta.id);
+                            break;
+                        case 'always':
+                            // A failed record write must never crash the pass:
+                            // fall back to a session allow (templates run).
+                            await gate
+                                .always(currentDoc.meta.id)
+                                .catch(() => gate.allowOnce(currentDoc.meta.id));
+                            break;
+                        case 'denyOnce':
+                            gate.denyOnce(currentDoc.meta.id);
+                            break;
+                        case 'never':
+                            // A failed record write must still block: fall back
+                            // to a session deny.
+                            await gate
+                                .never(currentDoc.meta.id)
+                                .catch(() => gate.denyOnce(currentDoc.meta.id));
+                            break;
+                        case 'none':
+                        default:
+                            // Displaced prompt: no write; stays `ask`, re-prompts.
+                            break;
+                    }
                     trust = await gate.resolve(currentDoc.meta.id);
+                    // Re-publish the post-prompt decision synchronously (the
+                    // `setPromptPending(false)` above already ran, so a render
+                    // between now and the commit reads this ref, not staleness).
+                    resolvedTrustRef.current = trust;
                 }
             }
             if (!isCurrent()) return;
@@ -367,11 +480,19 @@ export const useSampleRow = (): SampleRowState => {
 
         // No cleanup that cancels mid-pass: supersession is handled by `runId`
         // so the serial-use engine is never abandoned with a live request.
-    }, [resolveKey, csvRepo, trustRepo, storeGate, trustRevision, globalsCache]);
+    }, [resolveKey, csvRepo, trustRepo, storeGate, trustRevision, globalsCache, tick]);
 
     // Reset all state when the document identity changes (undo/open/close).
+    // `promptPending` is deliberately NOT cleared here: if a trust prompt is
+    // still open for the old document, leaving it true keeps ticking off until
+    // that pass's own `finally` clears it. Clearing it would start a new
+    // (no-templates + remote-globals) doc ticking and pile queued passes behind
+    // the still-blocked old pass.
     useEffect(() => {
         setState(initialState());
+        // Drop the previous document's resolved trust so a newly opened document
+        // never inherits it: ticks stay off until its own first pass resolves.
+        resolvedTrustRef.current = null;
         globalsCache.clear();
     }, [docId, globalsCache]);
 

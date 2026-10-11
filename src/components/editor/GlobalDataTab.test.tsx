@@ -15,7 +15,7 @@ const makeDoc = (globals: GlobalSpec[] = []) => {
     return doc;
 };
 
-const seed: GlobalSpec = { name: 'store', url: 'https://x.test', extract: 'name', expiresAt: 10 };
+const seed: GlobalSpec = { kind: 'remote', name: 'store', url: 'https://x.test', extract: 'name', expiresAt: 10 };
 
 afterEach(() => {
     cleanup();
@@ -49,6 +49,8 @@ describe('GlobalDataTab', () => {
         // `globals.ts` treats an entry as valid only while `expiresAt * 1000 >
         // now`; `0` means "never cached" and would refetch every pass. A fresh
         // spec must cache for the job.
+        expect(spec.kind).toBe('remote');
+        if (spec.kind !== 'remote') return;
         const now = Math.floor(Date.now() / 1000);
         expect(spec.expiresAt).toBeGreaterThan(now);
         expect(spec.expiresAt).toBeLessThanOrEqual(now + 300 + 5);
@@ -76,7 +78,7 @@ describe('GlobalDataTab', () => {
         fireEvent.change(expires, { target: { value: '42' } });
         fireEvent.blur(expires);
 
-        expect(useStore.getState().currentDoc!.data.globals[0]!.expiresAt).toBe(42);
+        expect(useStore.getState().currentDoc!.data.globals[0]).toMatchObject({ kind: 'remote', expiresAt: 42 });
         expect(useStore.getState().docPast).toHaveLength(1);
     });
 
@@ -91,7 +93,7 @@ describe('GlobalDataTab', () => {
 
         expect(screen.getByRole('alert')).toBeTruthy();
         // The committed spec is unchanged and no undo entry is created.
-        expect(useStore.getState().currentDoc!.data.globals[0]!.expiresAt).toBe(10);
+        expect(useStore.getState().currentDoc!.data.globals[0]).toMatchObject({ kind: 'remote', expiresAt: 10 });
         expect(useStore.getState().docPast).toHaveLength(0);
     });
 
@@ -135,5 +137,57 @@ describe('GlobalDataTab', () => {
         useStore.setState({ currentDoc: doc });
         render(<GlobalDataTab doc={doc} />);
         expect(screen.getByText('No global data specs.')).toBeTruthy();
+    });
+
+    it('switches a remote row to static and swaps the fields', () => {
+        const doc = makeDoc([seed]);
+        useStore.setState({ currentDoc: doc });
+        render(<GlobalDataTab doc={doc} />);
+
+        // Remote fields are visible up front.
+        expect(screen.getByLabelText('URL')).toBeTruthy();
+        expect(screen.getByLabelText('Extract')).toBeTruthy();
+
+        fireEvent.change(screen.getByTestId('global-kind'), { target: { value: 'static' } });
+
+        // Static fields replace the remote ones.
+        expect(screen.queryByLabelText('URL')).toBeNull();
+        expect(screen.queryByLabelText('Extract')).toBeNull();
+        expect(screen.queryByLabelText('Expires at')).toBeNull();
+        expect(screen.getByTestId('global-value')).toBeTruthy();
+        expect(useStore.getState().currentDoc!.data.globals[0]).toMatchObject({
+            kind: 'static',
+            name: 'store',
+        });
+        expect(useStore.getState().docPast).toHaveLength(1);
+    });
+
+    it('renders a static seed with a value input and no remote fields', () => {
+        const doc = makeDoc([{ kind: 'static', name: 'store', value: 'Main' }]);
+        useStore.setState({ currentDoc: doc });
+        render(<GlobalDataTab doc={doc} />);
+
+        expect(screen.queryByLabelText('URL')).toBeNull();
+        expect((screen.getByTestId('global-value') as HTMLInputElement).value).toBe('Main');
+    });
+
+    it('commits a static value edit as one undoable change', () => {
+        const doc = makeDoc([{ kind: 'static', name: 'store', value: 'Main' }]);
+        useStore.setState({ currentDoc: doc });
+        render(<GlobalDataTab doc={doc} />);
+
+        const value = screen.getByTestId('global-value') as HTMLInputElement;
+        fireEvent.change(value, { target: { value: 'Branch' } });
+        fireEvent.blur(value);
+
+        expect(useStore.getState().currentDoc!.data.globals).toEqual([
+            { kind: 'static', name: 'store', value: 'Branch' },
+        ]);
+        expect(useStore.getState().docPast).toHaveLength(1);
+
+        useStore.getState().undoDoc();
+        expect(useStore.getState().currentDoc!.data.globals).toEqual([
+            { kind: 'static', name: 'store', value: 'Main' },
+        ]);
     });
 });

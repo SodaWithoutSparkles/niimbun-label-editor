@@ -144,7 +144,19 @@ describe('prepareResolvedContent — template binding', () => {
             label: { name: 'L' },
             globals: { greet: 'hi' },
             fmt: { locale: 'en-US' },
+            seeds: { docSeed: 'doc-1' },
         });
+    });
+
+    it('seeds ctx.seeds.docSeed from doc.meta.id', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(NOW_MS);
+        const { engine, calls } = createFakeEngine(() => 'hello');
+        const doc = docWith([leaf('t1', 'text', { kind: 'template', code: 'x', fallback: 'F' })]);
+        doc.meta.id = 'doc-xyz';
+
+        await prepareResolvedContent({ doc, csv: null, rowIndex: 0, engine });
+
+        expect(calls[0]!.context.seeds).toEqual({ docSeed: 'doc-xyz' });
     });
 
     it('coerces primitive results and falls back on reject/empty/undefined', async () => {

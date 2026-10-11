@@ -583,18 +583,25 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             if (!doc) return;
             // Normalize to the stored shape and drop specs the template layer
             // could never use: a blank `name` cannot be addressed as
-            // `globals.<name>`, and `expiresAt` must be a finite epoch-second
-            // value. A malformed spec is dropped rather than persisted.
+            // `globals.<name>`. Remote specs trim their URL and floor
+            // `expiresAt` to a finite epoch-second value; static specs keep
+            // their literal value verbatim. A malformed spec is dropped rather
+            // than persisted.
             const next_globals: GlobalSpec[] = [];
             for (const spec of globals) {
                 const name = spec.name.trim();
                 if (name.length === 0) continue;
-                next_globals.push({
-                    name,
-                    url: spec.url.trim(),
-                    extract: spec.extract,
-                    expiresAt: Number.isFinite(spec.expiresAt) ? Math.max(0, Math.floor(spec.expiresAt)) : 0,
-                });
+                if (spec.kind === 'static') {
+                    next_globals.push({ kind: 'static', name, value: spec.value });
+                } else {
+                    next_globals.push({
+                        kind: 'remote',
+                        name,
+                        url: spec.url.trim(),
+                        extract: spec.extract,
+                        expiresAt: Number.isFinite(spec.expiresAt) ? Math.max(0, Math.floor(spec.expiresAt)) : 0,
+                    });
+                }
             }
             // No-op guard: an identical list must not create a dead undo entry.
             if (JSON.stringify(doc.data.globals) === JSON.stringify(next_globals)) return;

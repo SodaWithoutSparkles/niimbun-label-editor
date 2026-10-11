@@ -29,10 +29,29 @@ export interface AlertOptions {
     confirmLabel?: string;
 }
 
+export interface ChoiceAction {
+    value: string;
+    label: string;
+    variant?: 'primary' | 'default' | 'danger';
+}
+
+export interface ChoiceOptions {
+    title?: string;
+    message: string;
+    actions: ReadonlyArray<ChoiceAction>;
+    /**
+     * Value that a *user dismissal* (Escape / backdrop / close) resolves. A
+     * *displaced* request (a newer request cancels this one) always resolves
+     * `null`, never this value -- the two paths must not be conflated.
+     */
+    cancelValue?: string;
+}
+
 export type PendingDialog =
     | { id: number; kind: 'confirm'; options: ConfirmOptions; resolve: (value: boolean) => void }
     | { id: number; kind: 'prompt'; options: PromptOptions; resolve: (value: string | null) => void }
-    | { id: number; kind: 'alert'; options: AlertOptions; resolve: () => void };
+    | { id: number; kind: 'alert'; options: AlertOptions; resolve: () => void }
+    | { id: number; kind: 'choice'; options: ChoiceOptions; resolve: (value: string | null) => void };
 
 /** The module-level pending object itself -- a stable reference for useSyncExternalStore. */
 let pending: PendingDialog | null = null;
@@ -71,6 +90,10 @@ export function alert(options: AlertOptions): Promise<void> {
     return request<void>((id, resolve) => ({ id, kind: 'alert', options, resolve }));
 }
 
+export function promptChoice(options: ChoiceOptions): Promise<string | null> {
+    return request<string | null>((id, resolve) => ({ id, kind: 'choice', options, resolve }));
+}
+
 export function subscribe(listener: () => void): () => void {
     listeners.add(listener);
     return () => {
@@ -86,6 +109,10 @@ export function getPending(): PendingDialog | null {
  * The single exit path for every dialog: confirm, cancel, Escape, backdrop and
  * the close button all route through here. A missing value settles as
  * cancelled (`false` / `null` / nothing).
+ *
+ * A `choice` request distinguishes a user dismissal from displacement: the
+ * dialog passes the explicit `cancelValue` on dismissal, while the service's
+ * own displacement call (no argument) settles `null`.
  */
 export function resolvePending(value?: unknown): void {
     const current = pending;
@@ -104,6 +131,9 @@ export function resolvePending(value?: unknown): void {
             break;
         case 'alert':
             current.resolve();
+            break;
+        case 'choice':
+            current.resolve(typeof value === 'string' ? value : null);
             break;
     }
 }

@@ -5,6 +5,7 @@ import { TEXT_WRAPS } from './objects';
 import {
     isAssetRef,
     isColorString,
+    isGlobalSpec,
     isHm,
     isLabelDoc,
     isNode,
@@ -770,8 +771,75 @@ describe('isLabelDoc — acceptance and repair', () => {
         if (!result.ok) return;
         expect(result.doc.resources.fonts).toHaveLength(2);
         expect(result.doc.resources.images[0]).toMatchObject({ widthPx: 10, heightPx: 21 });
-        expect(result.doc.data.globals[0]?.expiresAt).toBe(1);
+        expect(result.doc.data.globals[0]).toMatchObject({ kind: 'remote', expiresAt: 1 });
         expect(result.doc.data.csv?.csvId).toBe('c1');
+    });
+});
+
+describe('isGlobalSpec — remote/static union (P6)', () => {
+    it('hydrates a legacy spec without `kind` to a remote spec (round-trip)', () => {
+        const parsed = isGlobalSpec({ name: 'g', url: 'https://x', extract: '$.v', expiresAt: 1.9 });
+        expect(parsed).toEqual({ name: 'g', kind: 'remote', url: 'https://x', extract: '$.v', expiresAt: 1 });
+    });
+
+    it('keeps an explicit `kind: "remote"` spec', () => {
+        const parsed = isGlobalSpec({ kind: 'remote', name: 'g', url: 'https://x', extract: 'v', expiresAt: 5 });
+        expect(parsed).toEqual({ name: 'g', kind: 'remote', url: 'https://x', extract: 'v', expiresAt: 5 });
+    });
+
+    it('treats an unknown `kind` as remote (legacy tolerance)', () => {
+        const parsed = isGlobalSpec({ kind: 'ftp', name: 'g', url: 'https://x', extract: 'v', expiresAt: 5 });
+        expect(parsed).toEqual({ name: 'g', kind: 'remote', url: 'https://x', extract: 'v', expiresAt: 5 });
+    });
+
+    it('parses a static spec with a string value', () => {
+        expect(isGlobalSpec({ kind: 'static', name: 'g', value: 'hello' })).toEqual({
+            name: 'g',
+            kind: 'static',
+            value: 'hello',
+        });
+    });
+
+    it('defaults a missing/non-string static value to "" (not an error)', () => {
+        expect(isGlobalSpec({ kind: 'static', name: 'g' })).toEqual({ name: 'g', kind: 'static', value: '' });
+        expect(isGlobalSpec({ kind: 'static', name: 'g', value: 7 })).toEqual({ name: 'g', kind: 'static', value: '' });
+    });
+
+    it('rejects an invalid remote spec (missing url/extract/expiresAt)', () => {
+        expect(isGlobalSpec({ name: 'g', extract: 'v', expiresAt: 5 })).toBeUndefined();
+        expect(isGlobalSpec({ name: 'g', url: 'https://x', extract: 'v' })).toBeUndefined();
+        expect(isGlobalSpec({ name: 'g', url: 'https://x', extract: 'v', expiresAt: 'nope' })).toBeUndefined();
+        expect(isGlobalSpec({ kind: 'remote', name: 'g' })).toBeUndefined();
+    });
+
+    it('rejects a static spec without a name', () => {
+        expect(isGlobalSpec({ kind: 'static', value: 'x' })).toBeUndefined();
+        expect(isGlobalSpec({ kind: 'static', name: 7, value: 'x' })).toBeUndefined();
+    });
+
+    it('round-trips static and legacy globals through isLabelDoc', () => {
+        const result = isLabelDoc(
+            validRaw({
+                data: {
+                    sampleRowIndex: 0,
+                    globals: [
+                        { kind: 'static', name: 's', value: 'v' },
+                        { name: 'legacy', url: 'https://x', extract: 'a', expiresAt: 3 },
+                    ],
+                },
+            }),
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.data.globals).toEqual([
+            { kind: 'static', name: 's', value: 'v' },
+            { kind: 'remote', name: 'legacy', url: 'https://x', extract: 'a', expiresAt: 3 },
+        ]);
+    });
+
+    it('rejects a document whose global spec is an invalid remote', () => {
+        const result = isLabelDoc(validRaw({ data: { sampleRowIndex: 0, globals: [{ name: 'bad' }] } }));
+        expect(result.ok).toBe(false);
     });
 });
 

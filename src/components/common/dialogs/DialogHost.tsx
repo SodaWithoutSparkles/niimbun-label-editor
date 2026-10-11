@@ -3,6 +3,7 @@ import { getPending, resolvePending, subscribe } from './dialogService';
 import { ConfirmDialog } from './ConfirmDialog';
 import { PromptDialog } from './PromptDialog';
 import { AlertDialog } from './AlertDialog';
+import { ChoiceDialog } from './ChoiceDialog';
 
 /**
  * The unmount-settle token, shared across host instances so a root remount can
@@ -89,6 +90,20 @@ export const DialogHost: React.FC = () => {
                     message={pending.options.message}
                     confirmLabel={pending.options.confirmLabel}
                     onConfirm={() => resolvePending()}
+                />
+            );
+        case 'choice':
+            return (
+                <ChoiceDialog
+                    key={pending.id}
+                    open
+                    title={pending.options.title}
+                    message={pending.options.message}
+                    actions={pending.options.actions}
+                    onSelect={(value) => resolvePending(value)}
+                    // Escape/backdrop/X: settle the explicit cancel value (a
+                    // displaced request instead settles `null`, see the service).
+                    onCancel={() => resolvePending(pending.options.cancelValue ?? null)}
                 />
             );
     }

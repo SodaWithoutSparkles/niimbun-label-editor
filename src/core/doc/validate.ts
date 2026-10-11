@@ -617,12 +617,17 @@ export const isCsvRef = (value: unknown): CsvRef | undefined => {
 
 export const isGlobalSpec = (value: unknown): GlobalSpec | undefined => {
     if (!isRecord(value)) return undefined;
-    if (!isString(value.name) || !isString(value.url) || !isString(value.extract)) {
-        return undefined;
+    if (!isString(value.name)) return undefined;
+    // `kind` absent, `'remote'`, or any unknown value is treated as a remote spec
+    // (legacy tolerance); only an explicit `'static'` takes the static branch.
+    if (value.kind === 'static') {
+        return { name: value.name, kind: 'static', value: isString(value.value) ? value.value : '' };
     }
+    if (!isString(value.url) || !isString(value.extract)) return undefined;
     if (!isFiniteNumber(value.expiresAt)) return undefined;
     return {
         name: value.name,
+        kind: 'remote',
         url: value.url,
         extract: value.extract,
         expiresAt: Math.floor(value.expiresAt),

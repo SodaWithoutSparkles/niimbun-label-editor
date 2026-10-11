@@ -111,6 +111,7 @@ export const prepareResolvedContent = async (input: PrepareContentInput): Promis
         ...(ctx?.label === undefined ? {} : { label: ctx.label }),
         ...(ctx?.globals === undefined ? {} : { globals: ctx.globals }),
         ...(ctx?.fmt === undefined ? {} : { fmt: ctx.fmt }),
+        seeds: { docSeed: doc.meta.id },
         now,
     });
 

@@ -259,8 +259,9 @@ export interface AppState {
     attachCsv: (csv: DocCsvAttachment | null) => void;
     /**
      * Replace `doc.data.globals` as one undo entry. Blank-named specs are
-     * dropped and `expiresAt` is floored to an integer probability epoch-second
-     * value; an identical list is a no-op (no undo entry).
+     * dropped; remote specs have `expiresAt` floored to an integer epoch-second
+     * value and their URL trimmed; static specs keep their value verbatim. An
+     * identical list is a no-op (no undo entry).
      */
     setDocGlobals: (globals: GlobalSpec[]) => void;
     /** Gesture seam: applies `patch` to `currentDoc` without history, `updatedAt`

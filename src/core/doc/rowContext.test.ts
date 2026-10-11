@@ -20,7 +20,22 @@ describe('buildRowContext', () => {
             now: 1_700_000_000_000,
             label: {},
             globals: {},
+            seeds: { docSeed: '' },
         });
+    });
+
+    it('defaults seeds to an empty docSeed and forwards an explicit seed', () => {
+        const defaulted = buildRowContext({ columns: [], rows: [], index: 0, now: 1 });
+        expect(defaulted.seeds).toEqual({ docSeed: '' });
+
+        const seeded = buildRowContext({
+            columns: [],
+            rows: [],
+            index: 0,
+            now: 1,
+            seeds: { docSeed: 'doc-42' },
+        });
+        expect(seeded.seeds).toEqual({ docSeed: 'doc-42' });
     });
 
     it('forwards label, globals and fmt, defaulting label/globals to {}', () => {

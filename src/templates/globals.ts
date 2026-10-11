@@ -3,10 +3,11 @@
  * then hand the resolved values to the template worker as `globals.<name>`.
  *
  * Owner decision (plan §Templates, decision 33): the **host** owns network
- * egress for globals. Templates never fetch. Each spec is fetched once per
- * job, the response is run through a non-Turing extractor, the value is
- * returned structured-cloneable, and the job passes `{ ...result.values }`
- * straight into `TemplateContext.globals`. The worker receives a deep clone
+ * egress for globals. Templates never fetch. Each **remote** spec is fetched
+ * once per job, the response is run through a non-Turing extractor, the value
+ * is returned structured-cloneable, and the job passes `{ ...result.values }`
+ * straight into `TemplateContext.globals`. **Static** specs carry a literal
+ * value and never fetch. The worker receives a deep clone
  * by `postMessage`; it never sees a fetch, a URL, or a callable.
  *
  * `src/templates/` is the browser edge, so `fetch` is available — but every
@@ -21,12 +22,16 @@
  * convenience that creates a private cache — call it per job, or use the cache
  * factory when several rows/specs must share results within one job.
  *
- * Entries are keyed by the **full spec identity** (`name`, `url`, `extract`,
- * `expiresAt`), not by `expiresAt` alone — two specs that share an expiry can
- * never serve each other's value. An in-flight fetch is stored under the same
+ * Entries are keyed by the **full spec identity** (`name`, `kind`, and the
+ * kind-specific fields), not by `expiresAt` alone — two specs that share an
+ * expiry (or a static spec and a remote one) can never serve each other's
+ * value. An in-flight fetch is stored under the same
  * key so concurrent callers of one spec await a single fetch. Boundary: an
  * entry is valid only while `expiresAt * 1000 > now` (strict); at exactly
  * `now` it is expired.
+ *
+ * Static specs carry no URL and no expiry: their literal `value` is resolved
+ * locally (no fetch, no timeout) and cached as always-valid for the job.
  *
  * ## Read-only posture
  *
@@ -43,6 +48,9 @@
  *
  *     path                  → required; segments split on `.`
  *     path '|' fallback     → value, or `fallback` when the path is absent
+ *
+ * The path is trimmed, then a leading `$.`, `$`, or single `.` is stripped
+ * (so `.rate`, `$.rate`, `$rate`, and `rate` are equivalent).
  *
  * - A segment is a property key, or a non-negative integer index for arrays
  *   (`items.0.name`). Keys containing `.` or `|` cannot be addressed. Only
@@ -61,7 +69,7 @@
  * machinery.
  */
 
-import type { GlobalSpec } from '../core/doc/types';
+import type { GlobalSpec, RemoteGlobalSpec } from '../core/doc/types';
 
 /** Default cap on concurrent fetches per prefetch call. */
 export const DEFAULT_CONCURRENCY = 4;
@@ -116,6 +124,19 @@ const parseFallback = (raw: string): unknown => {
 };
 
 /**
+ * Normalize the path half of an `extract` string. After trimming, a leading
+ * `$.`, `$`, or a single leading `.` is stripped (JSONPath-flavoured sugar), so
+ * `.rate`, `$.rate`, `$rate`, and `rate` all address the same key. Only one
+ * leading `.` is stripped, so a dotted path is otherwise unchanged.
+ */
+const normalizePath = (path: string): string => {
+    if (path.startsWith('$.')) return path.slice(2);
+    if (path.startsWith('$')) return path.slice(1);
+    if (path.startsWith('.')) return path.slice(1);
+    return path;
+};
+
+/**
  * Build an {@link Extract} from a spec's `extract` grammar. The returned
  * function only walks/probes — it never evaluates the string, and it reads
  * only **own data properties**, never accessors. A getter/setter is treated as
@@ -124,7 +145,7 @@ const parseFallback = (raw: string): unknown => {
  */
 export const createExtract = (expr: string): Extract => {
     const pipeIndex = expr.indexOf('|');
-    const path = (pipeIndex === -1 ? expr : expr.slice(0, pipeIndex)).trim();
+    const path = normalizePath((pipeIndex === -1 ? expr : expr.slice(0, pipeIndex)).trim());
     const hasFallback = pipeIndex !== -1;
     const fallback = hasFallback ? parseFallback(expr.slice(pipeIndex + 1).trim()) : undefined;
     const segments = path.length === 0 ? [] : path.split('.');
@@ -271,13 +292,18 @@ const dedupeByName = (specs: readonly GlobalSpec[], warnings?: GlobalWarning[]):
 };
 
 /**
- * Cache identity for a spec. Keyed on the full spec (name, url, extract,
- * `expiresAt`), **not** `expiresAt` alone, so two specs that share an expiry
- * (or a url) can never serve each other's value. `\u0000` cannot appear in a
- * document string, so the join is unambiguous.
+ * Cache identity for a spec. Keyed on the full union identity — `name`, `kind`,
+ * and the kind-specific fields (`value`, or `url`/`extract`/`expiresAt`) — so
+ * two specs that share a name or an expiry can never serve each other's value,
+ * and a static spec can never collide with a remote one. The fields are
+ * JSON-encoded as a tuple, so distinct field lists always produce distinct keys:
+ * a delimiter character cannot make two different specs collide, because any
+ * character in a field is quoted/escaped by `JSON.stringify`.
  */
 const cacheKey = (spec: GlobalSpec): string =>
-    `${spec.name}\u0000${spec.url}\u0000${spec.extract}\u0000${spec.expiresAt}`;
+    spec.kind === 'static'
+        ? JSON.stringify([spec.name, 'static', spec.value])
+        : JSON.stringify([spec.name, 'remote', spec.url, spec.extract, spec.expiresAt]);
 
 /** A cache entry: a resolved frozen value, or an in-flight fetch to await. */
 interface CacheEntry {
@@ -286,19 +312,21 @@ interface CacheEntry {
 }
 
 /**
- * Is a cached entry reusable? `expiresAt` is epoch seconds, so multiply by
- * 1000 and require it to be strictly in the future. **Boundary decision:**
- * `expiresAt * 1000 === now` is treated as **expired** (`>` is strict), so a
- * second granularity expiry is never used for the exact second it lapses.
+ * Is a cached **remote** entry reusable? `expiresAt` is epoch seconds, so
+ * multiply by 1000 and require it to be strictly in the future. **Boundary
+ * decision:** `expiresAt * 1000 === now` is treated as **expired** (`>` is
+ * strict), so a second granularity expiry is never used for the exact second it
+ * lapses. Static entries carry no expiry and are always valid.
  */
-const isEntryValid = (spec: GlobalSpec, nowMs: number): boolean =>
+const isEntryValid = (spec: RemoteGlobalSpec, nowMs: number): boolean =>
     Number.isFinite(spec.expiresAt) && spec.expiresAt * 1000 > nowMs;
 
 const warn = (spec: GlobalSpec, kind: GlobalWarning['kind'], message: string): GlobalWarning => ({
     name: spec.name,
     kind,
     message,
-    url: spec.url,
+    // A static spec has no URL; the warning carries an empty source.
+    url: spec.kind === 'static' ? '' : spec.url,
 });
 
 /** Default fetch: `fetch` the URL and parse JSON, aborted by `signal`. */
@@ -311,12 +339,12 @@ const defaultFetchJson = async (url: string, signal?: AbortSignal): Promise<unkn
 };
 
 /**
- * Fetch one spec once, extract, validate, clone, and freeze. Never throws:
- * every failure becomes a {@link GlobalWarning} plus an absent value, so one
- * bad spec can never reject the job.
+ * Fetch one **remote** spec once, extract, validate, clone, and freeze. Never
+ * throws: every failure becomes a {@link GlobalWarning} plus an absent value, so
+ * one bad spec can never reject the job.
  */
 const fetchSpec = async (
-    spec: GlobalSpec,
+    spec: RemoteGlobalSpec,
     fetchJson: NonNullable<GlobalFetchDeps['fetchJson']>,
     timeoutMs: number,
 ): Promise<{ name: string; value: unknown } | GlobalWarning> => {
@@ -411,6 +439,20 @@ const prefetchInto = async (
     const results = await mapWithConcurrency(unique, DEFAULT_CONCURRENCY, async (spec) => {
         const key = cacheKey(spec);
         const entry = cache.get(key);
+
+        // Static specs never fetch and never expire: resolve their literal value
+        // once and cache it as always-valid for the job.
+        if (spec.kind === 'static') {
+            if (entry?.value !== undefined) {
+                return { name: spec.name, value: entry.value } as { name: string; value: unknown };
+            }
+            const cloned = cloneAndFreeze(spec.value);
+            if (!cloned.ok) {
+                return warn(spec, 'invalid', 'static value could not be cloned');
+            }
+            cache.set(key, { value: cloned.value });
+            return { name: spec.name, value: cloned.value } as { name: string; value: unknown };
+        }
 
         if (entry !== undefined && isEntryValid(spec, nowMs) && entry.value !== undefined) {
             return { name: spec.name, value: entry.value } as { name: string; value: unknown };

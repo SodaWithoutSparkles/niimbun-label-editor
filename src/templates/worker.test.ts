@@ -11,6 +11,7 @@ const makeContext = (overrides: Partial<TemplateContext> = {}): TemplateContext 
     now: 1_700_000_000_000,
     label: { name: 'Demo', dpi: 300 },
     globals: {},
+    seeds: { docSeed: 'doc-1' },
     ...overrides,
 });
 
@@ -131,6 +132,7 @@ describe('createTemplateContext', () => {
             now: 123,
             label: {},
             globals: {},
+            seeds: { docSeed: '' },
         });
     });
 

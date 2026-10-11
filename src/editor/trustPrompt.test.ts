@@ -1,19 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { confirmMock, getPendingMock } = vi.hoisted(() => ({
-    confirmMock: vi.fn(),
-    getPendingMock: vi.fn(),
+const { promptChoiceMock } = vi.hoisted(() => ({
+    promptChoiceMock: vi.fn(),
 }));
 
 vi.mock('../components/common/dialogs/dialogService', () => ({
-    confirm: confirmMock,
-    getPending: getPendingMock,
+    promptChoice: promptChoiceMock,
 }));
 
 import {
     promptTemplateTrust,
     resetTrustPromptForTests,
-    type TemplateTrustSessionDecision,
+    type TemplateTrustDecision,
 } from './trustPrompt';
 
 /**
@@ -28,73 +26,62 @@ const deferred = <T>() => {
     return { promise, resolve };
 };
 
-/** A pending-request stand-in; only `id` is consulted by the prompt. */
-const pendingWith = (id: number) => ({ id });
-
 beforeEach(() => {
     resetTrustPromptForTests();
-    confirmMock.mockReset();
-    getPendingMock.mockReset();
-    // Default: nothing pending (i.e. the dialog was not displaced).
-    getPendingMock.mockReturnValue(null);
+    promptChoiceMock.mockReset();
 });
 
 describe('promptTemplateTrust', () => {
-    it('returns allow when the user confirms', async () => {
-        confirmMock.mockImplementation(() => {
-            getPendingMock.mockReturnValueOnce(pendingWith(1));
-            return Promise.resolve(true);
-        });
-
-        await expect(promptTemplateTrust({ docId: 'a' })).resolves.toBe('allow');
-        expect(confirmMock).toHaveBeenCalledTimes(1);
+    it('maps each of the four choices to its own result', async () => {
+        for (const choice of ['allowOnce', 'always', 'denyOnce', 'never'] as const) {
+            promptChoiceMock.mockResolvedValueOnce(choice);
+            await expect(promptTemplateTrust({ docId: 'a' })).resolves.toBe(choice);
+        }
+        expect(promptChoiceMock).toHaveBeenCalledTimes(4);
     });
 
-    it('returns deny when the user cancels and no other dialog is pending', async () => {
-        confirmMock.mockImplementation(() => {
-            getPendingMock.mockReturnValueOnce(pendingWith(1));
-            return Promise.resolve(false);
-        });
+    it('offers the four actions and marks dismissal as denyOnce (cancelValue)', async () => {
+        promptChoiceMock.mockResolvedValueOnce('denyOnce');
 
-        await expect(promptTemplateTrust({ docId: 'a' })).resolves.toBe('deny');
+        await expect(promptTemplateTrust({ docId: 'a' })).resolves.toBe('denyOnce');
+
+        const [options] = promptChoiceMock.mock.calls[0]!;
+        expect(options.cancelValue).toBe('denyOnce');
+        expect(options.actions.map((action: { value: string }) => action.value)).toEqual([
+            'allowOnce',
+            'always',
+            'denyOnce',
+            'never',
+        ]);
     });
 
-    it('returns none when a different request is pending (displaced)', async () => {
-        confirmMock.mockImplementation(() => {
-            // Ours had id 1; by settle time another request (id 2) is pending.
-            getPendingMock.mockReturnValueOnce(pendingWith(1));
-            getPendingMock.mockReturnValue(pendingWith(2));
-            return Promise.resolve(false);
-        });
+    it('returns none when the prompt is displaced (null)', async () => {
+        promptChoiceMock.mockResolvedValueOnce(null);
 
         await expect(promptTemplateTrust({ docId: 'a' })).resolves.toBe('none');
     });
 
     it('de-dupes concurrent prompts for the same document', async () => {
-        const gate = deferred<boolean>();
-        confirmMock.mockImplementation(() => {
-            getPendingMock.mockReturnValueOnce(pendingWith(1));
-            return gate.promise;
-        });
+        const gate = deferred<string | null>();
+        promptChoiceMock.mockReturnValue(gate.promise);
 
         const first = promptTemplateTrust({ docId: 'a', docName: 'Label A' });
         const second = promptTemplateTrust({ docId: 'a', docName: 'Label A' });
 
-        gate.resolve(true);
+        gate.resolve('allowOnce');
 
-        await expect(first).resolves.toBe('allow');
-        await expect(second).resolves.toBe('allow');
+        await expect(first).resolves.toBe('allowOnce');
+        await expect(second).resolves.toBe('allowOnce');
         // One dialog for both callers.
-        expect(confirmMock).toHaveBeenCalledTimes(1);
+        expect(promptChoiceMock).toHaveBeenCalledTimes(1);
     });
 
     it('keeps different documents independent (no cross-doc decision leak)', async () => {
-        const firstGate = deferred<boolean>();
-        const secondGate = deferred<boolean>();
+        const firstGate = deferred<string | null>();
+        const secondGate = deferred<string | null>();
         let call = 0;
-        confirmMock.mockImplementation(() => {
+        promptChoiceMock.mockImplementation(() => {
             call += 1;
-            getPendingMock.mockReturnValueOnce(pendingWith(call));
             return call === 1 ? firstGate.promise : secondGate.promise;
         });
 
@@ -102,44 +89,38 @@ describe('promptTemplateTrust', () => {
         const docB = promptTemplateTrust({ docId: 'b' });
 
         // Two distinct prompts, each keyed by its own document.
-        expect(confirmMock).toHaveBeenCalledTimes(2);
+        expect(promptChoiceMock).toHaveBeenCalledTimes(2);
 
         // A is allowed; B is denied. A must never receive B's decision.
-        firstGate.resolve(true);
-        secondGate.resolve(false);
+        firstGate.resolve('allowOnce');
+        secondGate.resolve('denyOnce');
 
-        await expect(docA).resolves.toBe('allow');
-        await expect(docB).resolves.toBe('deny');
+        await expect(docA).resolves.toBe('allowOnce');
+        await expect(docB).resolves.toBe('denyOnce');
     });
 
     it('allows re-prompting the same document after the first settles', async () => {
-        confirmMock.mockImplementation(() => {
-            getPendingMock.mockReturnValueOnce(pendingWith(1));
-            return Promise.resolve(true);
-        });
+        promptChoiceMock.mockResolvedValue('allowOnce');
 
-        await expect(promptTemplateTrust({ docId: 'a' })).resolves.toBe('allow');
-        await expect(promptTemplateTrust({ docId: 'a' })).resolves.toBe('allow');
-        expect(confirmMock).toHaveBeenCalledTimes(2);
+        await expect(promptTemplateTrust({ docId: 'a' })).resolves.toBe('allowOnce');
+        await expect(promptTemplateTrust({ docId: 'a' })).resolves.toBe('allowOnce');
+        expect(promptChoiceMock).toHaveBeenCalledTimes(2);
     });
 
     it('settles each caller exactly once', async () => {
-        const gate = deferred<boolean>();
-        confirmMock.mockImplementation(() => {
-            getPendingMock.mockReturnValueOnce(pendingWith(1));
-            return gate.promise;
-        });
+        const gate = deferred<string | null>();
+        promptChoiceMock.mockReturnValue(gate.promise);
 
         const first = promptTemplateTrust({ docId: 'a' });
         const second = promptTemplateTrust({ docId: 'a' });
-        const results: TemplateTrustSessionDecision[] = [];
+        const results: TemplateTrustDecision[] = [];
         void first.then((value) => results.push(value));
         void second.then((value) => results.push(value));
 
-        gate.resolve(false);
+        gate.resolve('denyOnce');
         await first;
         await second;
 
-        expect(results).toEqual(['deny', 'deny']);
+        expect(results).toEqual(['denyOnce', 'denyOnce']);
     });
 });

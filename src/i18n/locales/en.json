@@ -176,7 +176,11 @@
       "message": "\"{{name}}\" contains template code. Templates run as trusted code on this device.",
       "messageNoName": "This label contains template code. Templates run as trusted code on this device.",
       "allow": "Allow this session",
-      "deny": "Deny this session"
+      "deny": "Deny this session",
+      "allowOnce": "Allow once",
+      "always": "Always allow",
+      "denyOnce": "Deny once",
+      "never": "Never allow"
     }
   },
   "toolSettings": {
@@ -474,6 +478,11 @@
       "globalName": "Name",
       "globalUrl": "URL",
       "globalExtract": "Extract",
+      "globalKind": "Type",
+      "globalKindRemote": "Online (URL)",
+      "globalKindStatic": "Static value",
+      "globalValue": "Value",
+      "globalValueHint": "Templates read this fixed value under the global's name.",
       "globalExpiresAt": "Expires at",
       "globalExpiresAtHint": "Epoch seconds. New globals cache for 5 minutes; 0 disables caching.",
       "globalExpiresAtInvalid": "Enter a whole number of epoch seconds.",

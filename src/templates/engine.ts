@@ -59,6 +59,17 @@ export interface TemplateLabel {
 export type TemplateFormat = Record<string, unknown>;
 
 /**
+ * Host-supplied per-document seeds. `docSeed` is **stable per document** —
+ * `= doc.meta.id` — so a template can derive repeatable pseudo-random values
+ * (task ids, asset tags) for the same document + data across passes and saves.
+ * It carries no persisted state of its own: it is always derived from
+ * `meta.id`, which is required, unique, and survives round-trip.
+ */
+export interface TemplateSeeds {
+    docSeed: string;
+}
+
+/**
  * Per-evaluation context. `now` is epoch **milliseconds** at resolve time and is
  * supplied by the host — the worker never reads the clock. It is a
  * template-resolution detail only and is never stored; document `meta`
@@ -78,6 +89,8 @@ export interface TemplateContext {
     label: TemplateLabel;
     globals: Record<string, unknown>;
     fmt?: TemplateFormat;
+    /** Stable per-document seed (`docSeed = doc.meta.id`). */
+    seeds: TemplateSeeds;
 }
 
 /**
@@ -96,6 +109,8 @@ export interface TemplateContextInput {
     label?: TemplateLabel;
     globals?: Record<string, unknown>;
     fmt?: TemplateFormat;
+    /** Defaults to `{ docSeed: '' }`. */
+    seeds?: TemplateSeeds;
 }
 
 /**
@@ -112,6 +127,7 @@ export const createTemplateContext = (input: TemplateContextInput): TemplateCont
     now: input.now,
     label: input.label ?? {},
     globals: input.globals ?? {},
+    seeds: input.seeds ?? { docSeed: '' },
     ...(input.fmt === undefined ? {} : { fmt: input.fmt }),
 });
 
