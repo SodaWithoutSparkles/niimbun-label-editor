@@ -26,9 +26,20 @@ Global data tabs, or the sample-row preview.
 ## Row binding (W2)
 
 - `src/core/doc/rowContext.ts` `buildRowContext(...)` — the resolve context
-  `{index,total,row,rowCount,now,label,globals}`. `row` is a **null-prototype**
+  `{index,total,row,rowCount,now,label,globals,fmt?,seeds}`. `row` is a
+  **null-prototype**
   object built via `Object.defineProperty` so `__proto__`/`constructor` columns
   read normally. Duplicate columns are **first-wins** (matches `columns.indexOf`).
+- **`ctx.seeds.docSeed` (P6)** — `TemplateSeeds { docSeed: string }`, required on
+  `TemplateContext` (defaults `{docSeed:''}`). `prepareContent` supplies
+  `seeds: { docSeed: doc.meta.id }`, so the seed is stable per document, survives
+  round-trip, and needs no persisted field. The same document + the same data
+  therefore always generates the same label (asset-tag UUID case).
+- **Contract surface (P6)**: `docs/user-guide/templates.md` (author-facing) and
+  `docs/developer-guide/template-context.md` (the `TemplateContext` contract,
+  extract grammar, `docSeed`, trust model). `src/templates/contextContract.test.ts`
+  pins the documented member list to `keyof TemplateContext` at compile time and
+  asserts the members/tokens appear in those Markdown files.
 - `src/editor/render/prepareContent.ts` `prepareResolvedContent({doc,csv,rowIndex,
   engine,ctx})` — async pre-pass returning an **override map** keyed by resolved
   node id (only csv/template sources; static omitted). `Date.now()` is read
@@ -66,21 +77,40 @@ Global data tabs, or the sample-row preview.
   `never` first.
 - `src/store/trustGate.ts` `trustGateFor(repo)` — **one gate/overlay per repo**,
   shared by the editor and Settings, so a Settings revoke lifts a session Allow.
-- `promptTemplateTrust({docId, docName})` → `'allow'|'deny'|'none'`; deduped per
-  doc id; `'none'` (displaced dialog) = stay `ask`, re-prompt. Escape/backdrop =
-  `'deny'` (shared confirm exposes no reason).
+- `promptTemplateTrust({docId, docName})` → `'allowOnce'|'always'|'denyOnce'|'never'|'none'`
+  (P6). Four buttons via the **`promptChoice`** service kind (`dialogService.ts`
+  `kind:'choice'` → `ChoiceDialog` rendered by `DialogHost`), deduped per doc id.
+  Escape/backdrop/X resolve the dialog's explicit `cancelValue` = `'denyOnce'`
+  (session deny, fail-closed); a **displaced** request resolves `null` → `'none'`
+  (no write; stays `ask`); a **rejected** prompt is caught and likewise treated as
+  `'none'`. Keep dismissal and displacement distinct: the service's own
+  `resolvePending()` (no argument) is the only path that yields `null`.
+- **Persistent branches are wired (P6)**: `gate.always` / `gate.never` now have
+  production callers (editor sample-row pass + print job). Each is awaited with a
+  `.catch` fallback to the matching *session* decision, so a failed IDB write
+  neither crashes the pass nor silently un-gates it (`never` still blocks).
 - **Editor is fail-closed**: templates execute ONLY when the effective decision is
   `always`. `ask` / no gate ⇒ render fallbacks + `needsApproval`; `never` ⇒
   fallbacks + `blocked`. A doc with no template sources is never gated.
 
 ## Globals (W5)
 
+- **`GlobalSpec` is a discriminated union (P6)** — `{kind:'remote', name, url,
+  extract, expiresAt}` | `{kind:'static', name, value: string}`. `kind` is required
+  in the type; persisted legacy specs omit it and `validate.ts` hydrates them to
+  `'remote'` (unknown `kind` ⇒ remote; `static` with a missing/non-string `value`
+  ⇒ `''`, not an error). Static specs resolve **inside the cache**: no fetch, no
+  timeout, no expiry, cached always-valid, value deep-frozen like a remote one.
 - `src/templates/globals.ts` `prefetchGlobals` + `createGlobalsCache()` (**one
-  per job**). Cache key = full spec identity (`name\0url\0extract\0expiresAt`);
+  per job**). Cache key = `JSON.stringify` of the union identity tuple
+  (`[name, kind, value]` / `[name, kind, url, extract, expiresAt]`) — **not** a
+  `\u0000` join (spec strings may contain NUL; that join was ambiguous);
   valid while `expiresAt*1000 > now` (**strict**; `===` is expired). Concurrency
   cap, per-spec timeout/abort, in-flight dedupe. `extract` is a dotted path +
   `|`-literal fallback read via **own data descriptors only** (no getters, no
-  arbitrary code). Values are cloned + deep-frozen per spec; an uncloneable value
+  arbitrary code). A leading `.` / `$` / `$.` is stripped (P6) so `.rate` and
+  `$.rate` both work; `a.b.0.c` (dot-numeric index) is the only index form — no
+  brackets, no jq. Values are cloned + deep-frozen per spec; an uncloneable value
   is a per-spec `invalid` warning, never a job rejection.
 - `expiresAt` is epoch **seconds**. The Global-data UI seeds a **future** default
   (`now + 300`); `expiresAt: 0` means "never cached".
@@ -98,6 +128,18 @@ Global data tabs, or the sample-row preview.
   that regressed live editing once.
 - `trustRevision` (store) is bumped by `TrustSection` after revoke/reset so the
   editor's rendered output can't outlive a trust change.
+- **Refresh tick (P6)** — a 1 s `setInterval` bumps a `tick` counter that is in the
+  resolve-pass effect deps, so passes ride the **same** single-flight queue and
+  superseded ones bail by `runId`. Gated by
+  `doc !== null && !promptPending && (hasTemplates ? resolvedTrustRef.current === 'always' : hasRemoteGlobals(doc))`:
+  a template-bearing doc ticks only once trust is resolved `always`; remote globals
+  arm the tick only for docs with **no** template sources; static-only globals never
+  tick. `resolvedTrustRef` (a ref, reset on doc change) carries the *synchronously*
+  resolved trust because `state.trust` lags until the pass commits — gating on the
+  lagging state let a tick slip into the window after a Settings revoke and
+  re-prompt. `promptPending` is the "a prompt is in flight" guard; a rejected
+  prompt is caught as `'none'` (fail-closed) so the pass still commits the real
+  trust and cannot loop.
 
 ## Tests / gotchas
 
