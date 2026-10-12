@@ -108,6 +108,41 @@ Printing a **25 mm** label on the **567-dot (~48 mm)** printhead left-aligns con
   - **Cache identity** — a rebuild effect must key on **content** (doc/csv/override *values*), not on function/object identities; unstable `prepareRow`/`overrides` recreate the cache every render and starve it.
   - Stubbed unit tests cannot see either class — the `?printcsv=1` headed check found it.
 
+## Printer surface + connect method (P7 commit B, `9d4058b`)
+
+- **`PrinterStatus` is wider than the 5 connect-time fields:** `deviceName`, `dpi`, `batteryPercent`,
+  `rollWidthHm`/`rollHeightHm`, `capabilities`, plus `hardwareVersion`, `softwareVersion` and
+  `rfid?: { tagPresent, usedPaper?, allPaper?, consumablesType? }`. `rfid` comes from
+  `CombinedRfidInfo.labelRfidInfo` (NOT `ribbonRfidInfo`), is `undefined` when absent, and is captured
+  once at connect — `refreshInfo?()` re-fetches printer+RFID and re-emits.
+- **Paper dims are NOT duplicated:** the RFID dimensions cell renders `hmToMm(rollWidthHm) ×
+  hmToMm(rollHeightHm)`. **There is no firmware field in the lib** — the reference's `HW | sw | FW`
+  strip is 4 cells where "FW" is a trailing *tag*, not a value.
+- **Battery is polled, not latched:** `setHeartbeatInterval(15_000)` + `startHeartbeat()` after a
+  successful connect (lib default is 2000 ms). `stopHeartbeat()` on `disconnect()` **and** on the
+  `connect()` error path. A heartbeat updates **only** `batteryPercent` and never changes `state`
+  (must not downgrade `'printing'`); `heartbeatfailed` must NOT set `state:'error'` — the link is up.
+  `lastConnected` must be kept fresh: `print()` re-emits it when a job settles, so a stale copy would
+  clobber a newer reading.
+- **⚠ Lib quirk:** `isHeartbeatStarted()` returns `heartbeatTimer === undefined` — **inverted** (true
+  when *stopped*). Do not gate on it; assert the `startHeartbeat`/`stopHeartbeat` calls instead.
+- **Swapping transports needs all four caches reset** (a bare config change silently keeps talking to a
+  dead instance): the `appTransport` **module memo**, the **runner memo** (`getAppJobRunner` captures
+  the transport), the **React** chip (`useMemo(..., [])` pinned it), and `EditorShell`'s
+  `useMemo(() => getAppJobRunner(), [])`. `setAppTransportKind(kind)` disconnects the live transport,
+  drops both singletons, and is **serialized** through a promise chain (overlapping swaps must not
+  orphan a live transport). `resetAppTransport()` is the test seam only — it does not disconnect.
+- **Connect method** is the persisted `connectMethod` (`'bluetooth' | 'serial'`, default `bluetooth`)
+  — the `gridSpacingHm` precedence, 6 files. `refreshInfo` during a print re-emits with the state
+  preserved rather than being a no-op.
+- **Non-modal popovers must be native `<dialog open>`**, because every global shortcut guard in the app
+  bails on `document.querySelector('dialog[open]')`; a `<div role="dialog">` leaks Ctrl+Z/arrows into
+  the editor. A non-modal dialog must therefore be excluded from **modal-only** logic with an attribute
+  (`[data-popover]`, e.g. `NotificationCenter`'s toast re-insert/swallow paths) — `:modal` is not
+  reliable in happy-dom.
+- UA dialog styles must be reset explicitly: `m-0` (kills `margin:auto`) and **`left-auto`** (the spec
+  `inset-inline-start:0` + author `right-0` + a fixed width over-constrains and pins the box left).
+
 ## Conventions
 
 - Deps are added with `bun add` in the phase that needs them (`@mmote/niimbluelib@0.47.0` was P1). Never npm.
