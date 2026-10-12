@@ -1,9 +1,14 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment happy-dom
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { act, cleanup, render } from '@testing-library/react';
 import type Konva from 'konva';
+import '../../i18n';
+import { installCanvasShim } from '../../test/canvasHarness';
+import { useStore } from '../../store/useStore';
 import { createLabelDoc } from '../../core/doc/factory';
-import type { ContentSource, Node } from '../../core/doc/types';
+import type { ContentSource, Node, Region } from '../../core/doc/types';
 import type { ResolvedContent } from '../../editor/render/resolve';
-import { isTransformerTarget, resolvePreviewTree, transformerTargetIds } from './PreviewStage';
+import { isTransformerTarget, PreviewStage, resolvePreviewTree, transformerTargetIds } from './PreviewStage';
 
 /**
  * W6 wiring: `PreviewStage` feeds the shared sample-row **override map** into
@@ -112,5 +117,87 @@ describe('transformerTargetIds — groups excluded from the Transformer (#13/D-1
         // The downstream `.filter(Boolean)` on the Konva refs drops unknown ids;
         // this helper only filters groups.
         expect(transformerTargetIds(['g', 'missing'], [group])).toEqual(['missing']);
+    });
+});
+
+/**
+ * H2 regression: the preview-warnings producer must not touch the store when a
+ * transient `doc` change leaves the derived warnings unchanged.
+ * `updateNodeTransient` mints a fresh `doc` on every pointer-move and the
+ * producer effect depends on `doc`, so before the fix each drag frame cleared
+ * and republished the `preview` group — a store write cascading to every
+ * `editorWarnings` subscriber (part of the owner-reported drag lag).
+ */
+describe('PreviewStage preview-warnings producer (H2: no per-frame store write)', () => {
+    beforeAll(() => {
+        installCanvasShim();
+        // happy-dom has no layout; give the pane a non-degenerate box.
+        Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 600 });
+        Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 400 });
+    });
+
+    afterEach(() => {
+        cleanup();
+        useStore.setState({ currentDoc: null, selectedNodeIds: [], activeTool: 'select', editorWarnings: {} });
+    });
+
+    it('skips the store write when a doc identity change leaves the warnings unchanged', async () => {
+        // A node fully outside the printable region yields a keep-out warning
+        // synchronously (no asset/sample-row pass needed).
+        const region: Region = { kind: 'rect', x: 0, y: 0, w: 1000, h: 1000 };
+        const outside: Node = {
+            id: 'r',
+            parentId: null,
+            type: 'shape',
+            shape: 'rectangle',
+            visible: true,
+            locked: false,
+            transform: { x: 2000, y: 2000, rotDeg: 0, scaleX: 1, scaleY: 1 },
+            size: { w: 1000, h: 1000 },
+        };
+        const doc = createLabelDoc({
+            id: 'doc-1',
+            backingW: 4000,
+            backingH: 3000,
+            regions: [region],
+            nodes: [outside],
+        });
+
+        useStore.setState({ view: 'editor', currentDoc: doc, selectedNodeIds: [], activeTool: 'select', snapEnabled: false });
+        render(<PreviewStage />);
+        // Flush the async producers (fonts/prepared assets) that also rebuild the
+        // aggregated `editorWarnings` object, so the counter below is stable.
+        await act(async () => {});
+
+        const published = useStore.getState().editorWarnings.preview?.warnings ?? [];
+        expect(published.map((entry) => entry.kind)).toContain('keep-out');
+
+        // Count only `preview`-group identity changes: the fonts producer may
+        // write the same `editorWarnings` object but leaves `.preview` intact.
+        let previewWrites = 0;
+        let last = useStore.getState().editorWarnings.preview;
+        const unsubscribe = useStore.subscribe((state) => {
+            if (state.editorWarnings.preview !== last) {
+                last = state.editorWarnings.preview;
+                previewWrites += 1;
+            }
+        });
+
+        // One transient drag frame: a new `doc` identity with identical content,
+        // hence identical derived warnings (the moved node stays outside).
+        const moved = createLabelDoc({
+            id: 'doc-1',
+            backingW: 4000,
+            backingH: 3000,
+            regions: [region],
+            nodes: [{ ...outside, transform: { ...outside.transform, x: 2100 } }],
+        });
+        act(() => {
+            useStore.setState({ currentDoc: moved });
+        });
+        await act(async () => {});
+
+        unsubscribe();
+        expect(previewWrites).toBe(0);
     });
 });

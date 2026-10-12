@@ -7,6 +7,7 @@ import { cn } from '../../utils/cn';
 import { flattenResolved, resolve, DEFAULT_FONT_FAMILY } from '../../editor/render/resolve';
 import type { ResolvedContent, ResolvedNode } from '../../editor/render/resolve';
 import type { GlobalWarning } from '../../templates/globals';
+import type { EditorWarning } from '../../editor/warnings';
 import { buildFontWarnings, buildPreviewWarnings } from '../../editor/previewWarnings';
 import type { LabelDoc, Node, TextNode } from '../../core/doc/types';
 import { matrixToKonvaAttrs } from '../../editor/render/konvaFactory';
@@ -83,6 +84,30 @@ export const resolvePreviewTree = (
     doc: LabelDoc | null,
     overrides: ReadonlyMap<string, ResolvedContent> | undefined,
 ): ResolvedNode[] => (doc ? resolve(doc, overrides ? { overrides } : {}) : EMPTY_RESOLVED);
+
+/**
+ * Value-equality of two warning lists for the `preview` producer. That effect
+ * re-runs on every drag frame (`updateNodeTransient` mints a fresh `doc`), so an
+ * unconditional store write re-rendered every `editorWarnings` subscriber per
+ * frame; this lets the effect skip a write when nothing actually changed.
+ * Entries are flat records of primitives, so a key-set + value compare is exact
+ * (a nested value would compare by reference — that can only cause a redundant
+ * write, never a missed change).
+ */
+const sameWarnings = (a: readonly EditorWarning[], b: readonly EditorWarning[]): boolean => {
+    if (a === b) return true;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) {
+        const left = a[i] as unknown as Record<string, unknown>;
+        const right = b[i] as unknown as Record<string, unknown>;
+        const keys = Object.keys(left);
+        if (keys.length !== Object.keys(right).length) return false;
+        for (const key of keys) {
+            if (left[key] !== right[key]) return false;
+        }
+    }
+    return true;
+};
 
 interface MarqueeState {
     start: Point;
@@ -289,7 +314,22 @@ export const PreviewStage: React.FC = () => {
         const anchored = wheelZoomRef.current;
         wheelZoomRef.current = null; // consumed: only the wheel's own run may skip
         if (!forced && anchored !== null && Math.abs(anchored - zoom) < 1e-6) return;
-        setViewport(centeredViewport(zoom, backing, innerSize, viewRotation));
+        // `backing` is re-memoed from `doc`, so it is a fresh object every drag
+        // frame and this effect re-runs per frame. Skip the state write when the
+        // centred viewport is value-equal: it would otherwise re-render the whole
+        // stage (and every child) every frame for no visual change. Returning the
+        // current object bails React out of that re-render; the deliberate
+        // triggers above (`forced`/Fit-Real, the wheel token, rotation, backing
+        // values, pane resize) still re-derive here, they just skip a no-op write.
+        setViewport((current) => {
+            const centered = centeredViewport(zoom, backing, innerSize, viewRotation);
+            return current.x === centered.x &&
+                current.y === centered.y &&
+                current.zoom === centered.zoom &&
+                current.rotation === centered.rotation
+                ? current
+                : centered;
+        });
     }, [zoom, recenterToken, viewRotation, backing, innerSize]);
 
     useEffect(() => {
@@ -346,31 +386,44 @@ export const PreviewStage: React.FC = () => {
         return nodesIntersectNonPrintable(doc, assetSizes.size > 0 ? assetSizes : undefined);
     }, [doc, assets]);
     // Preview warnings are aggregated by the pure `buildPreviewWarnings` and
-    // published under `preview`, scoped to the document id. The effect owns the
-    // cleanup: on doc change/unmount it drops only the group it published, so a
-    // re-mounted producer can never clear a newer group.
+    // published under `preview`, scoped to the document id. The cleanup lives in
+    // its own effect, keyed on the doc id alone: it drops only the group it
+    // published, so a re-mounted producer can never clear a newer group — and,
+    // unlike folding the cleanup into the publisher, a transient `doc` identity
+    // change (every drag frame) cannot clear+republish the group per frame.
     useEffect(() => {
-        if (!doc) {
+        const docId = doc?.meta.id;
+        if (!docId) {
             clearEditorWarnings('preview');
             return;
         }
-        const docId = doc.meta.id;
-        setEditorWarnings('preview', {
-            docId,
-            scopeId: docId,
-            warnings: buildPreviewWarnings(doc, {
-                assetWarnings: warnings,
-                assetLabels,
-                keepOutIds,
-                globalWarnings,
-                templateErrors,
-                blocked,
-                needsApproval,
-                sampleRowError,
-            }),
-        });
         return () => clearEditorWarnings('preview', docId);
-    }, [doc, warnings, keepOutIds, assetLabels, globalWarnings, templateErrors, blocked, needsApproval, sampleRowError, setEditorWarnings, clearEditorWarnings]);
+    }, [doc?.meta.id, clearEditorWarnings]);
+
+    // Publish the preview group only when it actually changes. The deps include
+    // `doc` (and its derived inputs), whose identity changes every drag frame, so
+    // an unconditional `setEditorWarnings` fired a store write — and a re-render
+    // of every `editorWarnings` subscriber — per frame. Compare the derived
+    // entries against the live group instead and skip the write when they are
+    // equal; a real change (e.g. a keep-out warning appearing mid-drag) differs
+    // and still writes.
+    useEffect(() => {
+        if (!doc) return;
+        const docId = doc.meta.id;
+        const next = buildPreviewWarnings(doc, {
+            assetWarnings: warnings,
+            assetLabels,
+            keepOutIds,
+            globalWarnings,
+            templateErrors,
+            blocked,
+            needsApproval,
+            sampleRowError,
+        });
+        const current = useStore.getState().editorWarnings.preview;
+        if (current?.docId === docId && sameWarnings(current.warnings, next)) return;
+        setEditorWarnings('preview', { docId, scopeId: docId, warnings: next });
+    }, [doc, warnings, keepOutIds, assetLabels, globalWarnings, templateErrors, blocked, needsApproval, sampleRowError, setEditorWarnings]);
     // Font availability is a preview-scope producer (the tab is a pure reader).
     // It runs on the always-mounted stage, is scoped to the document id, and
     // swallows provider failures. StrictMode-safe: the cancelled flag drops a

@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../../store/useStore';
-import type { LabelDoc } from '../../core/doc/types';
+import type { ImageRef, LabelDoc } from '../../core/doc/types';
 import { HM_PER_INCH } from '../../core/render';
 import type { AssetDeps, AssetWarning, BytesProvider, PreparedAsset } from '../../editor/render/assets';
 import { createFontProvider } from '../../editor/render/fontAssets';
 import { prepareResolvedAssets } from '../../editor/render/prepareAssets';
-import type { ResolvedNode } from '../../editor/render/resolve';
+import type {
+    ResolvedBarcode,
+    ResolvedImage,
+    ResolvedNode,
+    ResolvedQr,
+} from '../../editor/render/resolve';
 import type { ResourceRepo } from '../../data/resourceRepo';
 
 /**
@@ -19,10 +24,13 @@ import type { ResourceRepo } from '../../data/resourceRepo';
  * `effectiveZoom * devicePixelRatio`, so a preview never decodes more pixels
  * than the viewport needs. Print uses the document dpi instead (the default).
  *
- * Cancellation: a change to the doc / resolved tree / deps abandons the
+ * Cancellation: a change to the prepare's **content** inputs / deps abandons the
  * in-flight result; a stale prepare can never overwrite a newer one. The result
- * is keyed to its inputs, so a changed document never briefly shows the previous
- * document's assets, and imported fonts are registered before preparing.
+ * is keyed to a content signature (see {@link assetSignatureOf}), so a changed
+ * document never briefly shows the previous document's assets, while a re-resolve
+ * that produces identical content (the editor re-resolves synchronously on every
+ * render) keeps the rasters instead of flashing a placeholder. Imported fonts are
+ * registered before preparing.
  */
 
 /** Empty result, stable identity so callers can compare cheaply. */
@@ -97,6 +105,133 @@ export const createResourceAssetDeps = (
     return deps;
 };
 
+/** Sentinel never produced by {@link assetSignatureOf} (which always emits JSON). */
+const UNPREPARED = '\u0000unprepared';
+
+/**
+ * Content key of an asset source (`ImageRef.source` / `FontRef.source`), cached
+ * per source-object identity.
+ *
+ * The signature is rebuilt on every render — i.e. every drag frame — so an
+ * `inline` source's multi-MB data URL must never be serialized per frame. The
+ * `WeakMap` is keyed by the **source object**, so an unchanged source is an
+ * O(1) lookup and a replaced source is keyed once.
+ *
+ * The cache value is a content key, not a bare monotonic token: the first
+ * transient drag frame deep-clones the document (`editorSlice.updateNodeTransient`
+ * → `cloneDoc` = `structuredClone`), minting new-but-equal source objects. A
+ * monotonic token would change there and clear every raster for one frame — a
+ * new flash at drag start — whereas equal content keeps the signature stable.
+ * Like the old identity-based cache key, this detects **replacement** only, not
+ * in-place mutation of a source object (the model replaces resources, it does
+ * not mutate them).
+ */
+const sourceKeys = new WeakMap<object, string>();
+const sourceKey = (source: object): string => {
+    const cached = sourceKeys.get(source);
+    if (cached !== undefined) return cached;
+    const key = JSON.stringify(source);
+    sourceKeys.set(source, key);
+    return key;
+};
+
+/** One asset-bearing leaf's signature; mirrors what `prepareResolvedAssets` reads. */
+const leafSignature = (
+    node: ResolvedImage | ResolvedQr | ResolvedBarcode,
+    imageRefs: ReadonlyMap<string, ImageRef>,
+): unknown[] => {
+    switch (node.type) {
+        case 'image': {
+            // `prepareAssets.image` looks the ref up by `imageId` and then reads
+            // `ref.source` (both `loadImageRef` and the decode-cache key
+            // `cacheKeyFor`), so the source is the bytes identity. Absent ref →
+            // `null`, so a ref that appears/disappears changes the key.
+            const ref = imageRefs.get(node.imageId);
+            return [
+                'image',
+                node.id,
+                node.w,
+                node.h,
+                node.imageId,
+                ref ? sourceKey(ref.source) : null,
+            ];
+        }
+        case 'qr':
+            // `prepareAssets.qr` reads exactly these.
+            return [
+                'qr',
+                node.id,
+                node.w,
+                node.h,
+                node.placeholder,
+                node.text,
+                node.errorCorrection,
+                node.quietModules,
+                node.fill,
+            ];
+        case 'barcode':
+            // `prepareAssets.barcode` reads exactly these.
+            return [
+                'barcode',
+                node.id,
+                node.w,
+                node.h,
+                node.placeholder,
+                node.text,
+                node.symbology,
+                node.quietModules,
+                node.fill,
+            ];
+    }
+};
+
+/**
+ * Content signature of the inputs the asset prepare actually reads. Two
+ * different `nodes`/`doc` identities with byte-identical content produce the
+ * same key; a genuine edit produces a different one.
+ *
+ * The leaf fields mirror `prepareResolvedAssets` (`prepareAssets.ts:206-263`)
+ * exactly — `id` (the asset/warning map keys), `w`/`h` (the required px), and,
+ * per type, only the fields that case reads. The referenced `ImageRef.source` is
+ * included so replacing an image's bytes re-prepares; sources (and the fonts'
+ * `source`) go through {@link sourceKey} so the payload is keyed once per source
+ * object, never serialized per render.
+ *
+ * `doc.meta.id` makes a real document switch clear (must-fix #6); `doc.label.dpi`
+ * feeds the default decode scale; the fonts are the effect's other input
+ * (`ensureFonts`), so a newly imported font still registers.
+ */
+export const assetSignatureOf = (
+    nodes: readonly ResolvedNode[],
+    doc: LabelDoc | null,
+): { key: string; hasLeaves: boolean } => {
+    if (!doc) return { key: JSON.stringify(['none']), hasLeaves: false };
+    const imageRefs = new Map((doc.resources.images ?? []).map((ref) => [ref.imageId, ref] as const));
+    const leaves: unknown[] = [];
+    // Pre-order, matching `prepareResolvedAssets`'s own `collect`.
+    const collect = (list: readonly ResolvedNode[]): void => {
+        for (const node of list) {
+            if (node.type === 'group') collect(node.children);
+            else if (node.type === 'image' || node.type === 'qr' || node.type === 'barcode') {
+                leaves.push(leafSignature(node, imageRefs));
+            }
+        }
+    };
+    collect(nodes);
+    const fonts = doc.resources.fonts.map((ref) => [ref.fontId, ref.familyName, sourceKey(ref.source)]);
+    return {
+        key: JSON.stringify([doc.meta.id, doc.label.dpi, fonts, leaves]),
+        hasLeaves: leaves.length > 0,
+    };
+};
+
+/**
+ * Asset faults a later retry could clear. A `too-small` symbol still produced a
+ * raster (it is a warning, not a failure), so it must not arm the retry.
+ */
+const retryableFailure = (warning: AssetWarning): boolean =>
+    warning === 'missing' || warning === 'invalid';
+
 /**
  * Prepare the resolved tree's assets for the preview. Returns an empty result
  * while no document is open (or before the first prepare settles).
@@ -126,19 +261,49 @@ export const usePreparedAssets = (
               };
     }, [providers, effectiveZoom, doc?.label.dpi]);
 
-    // The prepared result is only valid for the inputs it was built from. Keying
-    // it to the exact `nodes`/`doc` identity means a changed document reports
-    // empty assets on the very next render, instead of briefly showing the
-    // previous document's rasters until the new prepare settles (must-fix #6).
+    // The content signature of the prepare inputs (NOT `nodes`/`doc` identity:
+    // the editor mints a fresh `resolved` array every render and every 1 s tick,
+    // even when the content is identical).
+    const { key: signature, hasLeaves } = useMemo(() => assetSignatureOf(nodes, doc), [nodes, doc]);
+
+    // The prepared result is only valid for the content signature it was built
+    // from. Reusing it whenever the signature is unchanged — regardless of
+    // `deps` — means an unchanged re-resolve reports the previous rasters
+    // instead of an empty frame (the canvas flash), and a zoom keeps the
+    // previous raster on screen for the one frame before the re-capped one
+    // lands (pre-fix behaviour: a zoom does not change the resolved content).
+    // A genuine content change still reports empty for one render, then commits
+    // the async prepare, so a changed document never briefly shows the previous
+    // document's rasters (must-fix #6). `deps` stays an effect dep (below), so a
+    // zoom still re-caps and commits the new raster.
     const [state, setState] = useState<{
-        nodes: readonly ResolvedNode[];
-        doc: LabelDoc | null;
+        signature: string;
         prepared: PreparedAssets;
-    }>(() => ({ nodes, doc, prepared: EMPTY }));
+    }>(() => ({ signature: UNPREPARED, prepared: EMPTY }));
+
+    // The currently-valid result (empty until the first prepare for this
+    // signature settles). Also the input to the self-heal retry below.
+    const prepared = state.signature === signature ? state.prepared : EMPTY;
+    // A failed asset (`missing`/`invalid`) is retried on the next online/focus;
+    // a `too-small` symbol still produced a raster, so it is not a failure.
+    const hasFailures = useMemo(
+        () => [...prepared.warnings.values()].some(retryableFailure),
+        [prepared],
+    );
+    // Bumped by the retry listeners to re-run the prepare effect. It is NOT part
+    // of the signature, so it never changes what is displayed.
+    const [retryToken, setRetryToken] = useState(0);
 
     useEffect(() => {
+        const commit = (next: PreparedAssets): void => {
+            setState((prev) =>
+                prev.signature === signature && prev.prepared === next
+                    ? prev
+                    : { signature, prepared: next },
+            );
+        };
         if (!doc) {
-            setState({ nodes, doc, prepared: EMPTY });
+            commit(EMPTY);
             return;
         }
         let cancelled = false;
@@ -152,19 +317,46 @@ export const usePreparedAssets = (
             } catch {
                 // Fall back to the resolved `fontFamily`.
             }
+            // A shapes/text-only document has nothing to rasterize: skip the
+            // prepare entirely (its maps would be empty anyway).
+            if (!hasLeaves) return EMPTY;
             return prepareResolvedAssets(nodes, doc, deps);
         };
         run()
-            .then((prepared) => {
-                if (!cancelled) setState({ nodes, doc, prepared });
+            .then((next) => {
+                if (!cancelled) commit(next);
             })
             .catch(() => {
-                if (!cancelled) setState({ nodes, doc, prepared: EMPTY });
+                if (!cancelled) commit(EMPTY);
             });
         return () => {
             cancelled = true;
         };
-    }, [nodes, doc, deps]);
+        // Keyed on the content signature + the scale deps (+ a retry bump). A new
+        // `nodes`/`doc` identity with unchanged content must NOT re-run the async
+        // prepare (that is the flash and the per-frame work); a zoom (`deps`)
+        // change must, so the re-capped raster is committed. `nodes`/`doc`/
+        // `hasLeaves` are captured from the render that changed the signature or
+        // deps, so they are current when it runs. (Their identities are
+        // deliberately NOT deps — that was the bug.)
+    }, [signature, deps, retryToken]);
 
-    return state.nodes === nodes && state.doc === doc ? state.prepared : EMPTY;
+    // Self-heal: the content signature removed the per-frame re-prepare that used
+    // to retry a transient decode/fetch/IDB failure, so a blank leaf + `missing`
+    // warning would otherwise persist until the user edited something. Arm a
+    // bounded retry on the next `online`/`focus` (no polling): only a real
+    // failure arms it, a failure-free commit disarms it, and a listener only ever
+    // re-runs the same prepare — it cannot loop.
+    useEffect(() => {
+        if (!hasFailures || typeof window === 'undefined') return;
+        const retry = (): void => setRetryToken((token) => token + 1);
+        window.addEventListener('online', retry);
+        window.addEventListener('focus', retry);
+        return () => {
+            window.removeEventListener('online', retry);
+            window.removeEventListener('focus', retry);
+        };
+    }, [hasFailures]);
+
+    return prepared;
 };
