@@ -20,6 +20,7 @@ const renderMenu = (overrides: Partial<Props> = {}): Props => {
         onPrint: vi.fn(),
         saveDisabled: false,
         printDisabled: false,
+        onHome: vi.fn(),
         ...overrides,
     };
     render(<FileMenu {...props} />);
@@ -51,5 +52,16 @@ describe('FileMenu — Print item', () => {
     it('advertises the Ctrl/Cmd+P shortcut', () => {
         renderMenu();
         expect(screen.getByText('Ctrl+P')).toBeInTheDocument();
+    });
+});
+
+describe('FileMenu — Home item', () => {
+    it('returns to the gallery and closes the menu', () => {
+        const props = renderMenu();
+
+        fireEvent.click(screen.getByText('Home'));
+
+        expect(props.onHome).toHaveBeenCalledTimes(1);
+        expect(props.onCloseMenu).toHaveBeenCalledTimes(1);
     });
 });

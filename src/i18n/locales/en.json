@@ -1,26 +1,10 @@
 {
   "fileMenu": {
+    "home": "Home",
     "title": "File",
     "saveProject": "Save Label",
     "print": "Print…",
     "autoSave": "Auto-save"
-  },
-  "bottomBar": {
-    "autoSaveOff": "Auto-save off",
-    "autoSaveOn": "Auto-save on",
-    "autoSavedJustNow": "Auto-saved just now",
-    "autoSaved": "Auto-saved {{time}}",
-    "autoSavedShort": "{{time}}",
-    "autoSaveShortOff": "Off",
-    "autoSaveShortOn": "On",
-    "lastSavedNone": "Last saved: —",
-    "lastSavedNotSaved": "Not saved",
-    "lastSavedJustNow": "Last saved: just now",
-    "lastSaved": "Last saved: {{time}}",
-    "lastSavedShort": "{{time}}",
-    "shortJustNow": "Just now",
-    "tool": "Tool:",
-    "toggleAutoSave": "Toggle auto-save"
   },
   "keyLabels": {
     "ctrl": "Ctrl",
@@ -28,14 +12,6 @@
     "shift": "Shift",
     "esc": "Esc",
     "space": "Space"
-  },
-  "toolHints": {
-    "select": "Select: {{modifier}} to multi-sel, drag to move",
-    "rectangle": "Rectangle: {{modifier}} to square",
-    "ellipse": "Ellipse: {{modifier}} to circle",
-    "callout": "Callout: Space to start arrow; {{modifier}} to straight arrow",
-    "line": "Line: {{modifier}} to straight line",
-    "arrow": "Arrow: Space to start arrow, {{modifier}} to straight arrow"
   },
   "dialog": {
     "ok": "OK",
@@ -90,7 +66,7 @@
   },
   "about": {
     "title": "About",
-    "message": "Drawing App v0.1.0\nBuilt with React & Vite"
+    "message": "Label Editor v0.1.0\nBuilt with React & Vite"
   },
   "options": {
     "title": "Options"
@@ -270,13 +246,11 @@
   "nav": {
     "recent": "Recent",
     "paperManagement": "Paper management",
-    "templates": "Templates",
+    "templates": "Label presets",
     "dataSource": "Data source (CSV)",
     "newLabel": "New label",
     "comingSoon": "Coming soon",
-    "emptyRecent": "No labels yet",
-    "backToGallery": "Gallery",
-    "backToGalleryTitle": "Back to gallery"
+    "emptyRecent": "No labels yet"
   },
   "gallery": {
     "loading": "Loading labels…",
@@ -572,7 +546,14 @@
       "rowPrev": "Previous row",
       "rowNext": "Next row",
       "rowJump": "Go to row",
-      "rowIndex": "Row (1-based)"
+      "rowIndex": "Row (1-based)",
+      "autoSaveOff": "Auto-save off",
+      "autoSaveOn": "Auto-save on",
+      "autoSavedJustNow": "Auto-saved just now",
+      "autoSaved": "Auto-saved {{time}}",
+      "lastSavedNone": "Last saved: —",
+      "lastSavedJustNow": "Last saved: just now",
+      "lastSaved": "Last saved: {{time}}"
     },
     "csvPreview": {
       "label": "CSV preview",

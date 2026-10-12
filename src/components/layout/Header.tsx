@@ -21,6 +21,7 @@ export const Header: React.FC = () => {
 
     // Store actions
     const view = useStore(state => state.view);
+    const setView = useStore(state => state.setView);
     const isEditor = view === 'editor';
     // The centre title is the open document's name — the only name the app
     // actually persists. Hidden in the gallery (there is no document to name).
@@ -159,6 +160,7 @@ export const Header: React.FC = () => {
                 onPrint={openPrint}
                 saveDisabled={!isEditor}
                 printDisabled={!isEditor || !hasDoc}
+                onHome={() => setView('gallery')}
             />
 
             <div className="absolute left-1/2 top-0 h-full -translate-x-1/2 flex items-center max-w-[480px] w-full justify-center px-4">

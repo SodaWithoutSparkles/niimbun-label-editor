@@ -15,6 +15,8 @@ interface FileMenuProps {
     saveDisabled: boolean;
     /** Print needs an open document in the editor. */
     printDisabled: boolean;
+    /** Returns to the gallery home surface. */
+    onHome: () => void;
 }
 
 /**
@@ -33,6 +35,7 @@ export const FileMenu: React.FC<FileMenuProps> = ({
     onPrint,
     saveDisabled,
     printDisabled,
+    onHome,
 }) => {
     const { t } = useTranslation();
     return (
@@ -48,6 +51,10 @@ export const FileMenu: React.FC<FileMenuProps> = ({
             </div>
             {activeMenu === 'file' && (
                 <div className="absolute top-full left-0 bg-gray-800 border border-gray-600 shadow-xl py-1 rounded-b-md min-w-[260px]">
+                    <MenuItem
+                        label={t('fileMenu.home')}
+                        onClick={() => { onHome(); onCloseMenu(); }}
+                    />
                     <MenuItem
                         label={t('fileMenu.saveProject')}
                         disabled={saveDisabled}

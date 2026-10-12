@@ -44,7 +44,14 @@ const renderBar = (rowCount: number, sampleRowIndex = 0) => {
 
 afterEach(() => {
     cleanup();
-    useStore.setState({ currentDoc: null, docPast: [], docFuture: [] });
+    useStore.setState({
+        currentDoc: null,
+        docPast: [],
+        docFuture: [],
+        autoSave: true,
+        lastSavedAt: null,
+        lastAutoSaveAt: null,
+    });
 });
 
 describe('EditorStatusBar — sample-row navigation (BLOCKER)', () => {
@@ -103,5 +110,34 @@ describe('EditorStatusBar — sample-row navigation (BLOCKER)', () => {
         expect((screen.getByText('Next row') as HTMLButtonElement).disabled).toBe(true);
         fireEvent.click(screen.getByText('Previous row'));
         expect(useStore.getState().currentDoc!.data.sampleRowIndex).toBe(1);
+    });
+});
+
+describe('EditorStatusBar — save readouts (relocated from the gallery BottomBar)', () => {
+    it('shows the empty last-saved and auto-save-off readouts when nothing is stored', () => {
+        useStore.setState({ autoSave: false, lastSavedAt: null, lastAutoSaveAt: null });
+        renderBar(3, 0);
+
+        expect(screen.getByText('Last saved: —')).toBeTruthy();
+        expect(screen.getByText('Auto-save off')).toBeTruthy();
+    });
+
+    it('shows relative last-saved and auto-saved readouts when timestamps exist', () => {
+        const now = Date.now();
+        useStore.setState({ autoSave: true, lastSavedAt: now - 60_000, lastAutoSaveAt: now - 60_000 });
+        renderBar(3, 0);
+
+        // Not the empty variant, and each carries the relative time.
+        expect(screen.queryByText('Last saved: —')).toBeNull();
+        expect(screen.getByText(/^Last saved: \d+ /)).toBeTruthy();
+        expect(screen.getByText(/^Auto-saved \d+ /)).toBeTruthy();
+    });
+
+    it('no longer renders the printer connection chip', () => {
+        const { container } = renderBar(3, 0);
+
+        expect(screen.queryByRole('status')).toBeNull();
+        expect(screen.queryByText(/Connect|Disconnect/)).toBeNull();
+        expect(container.querySelector('svg.lucide-printer')).toBeNull();
     });
 });
