@@ -19,6 +19,7 @@ import {
 } from '../../editor/render/printOrientation';
 import { planSequence, type PrintOrder } from '../../print/sequence';
 import { buildCsvPrintJob, renderOptionsOf, type PrintOverrides } from '../../print/printLabel';
+import { LABEL_TYPE_OPTIONS } from '../../print/labelTypeNames';
 import type { JobProgress, JobRunner } from '../../print/jobRunner';
 import type { PrinterStatus } from '../../print/transport';
 import { useStore } from '../../store/useStore';
@@ -69,18 +70,6 @@ type Outcome =
     | { kind: 'success'; pagesPrinted: number }
     | { kind: 'cancelled'; pagesPrinted: number }
     | { kind: 'error'; message: string };
-
-/** All selectable paper types; ones absent from `paperTypes` are marked, not blocked. */
-const LABEL_TYPE_OPTIONS = [
-    { value: LabelType.WithGaps, key: 'print.labelTypeNames.withGaps' },
-    { value: LabelType.Black, key: 'print.labelTypeNames.black' },
-    { value: LabelType.Continuous, key: 'print.labelTypeNames.continuous' },
-    { value: LabelType.Perforated, key: 'print.labelTypeNames.perforated' },
-    { value: LabelType.Transparent, key: 'print.labelTypeNames.transparent' },
-    { value: LabelType.PvcTag, key: 'print.labelTypeNames.pvcTag' },
-    { value: LabelType.BlackMarkGap, key: 'print.labelTypeNames.blackMarkGap' },
-    { value: LabelType.HeatShrinkTube, key: 'print.labelTypeNames.heatShrinkTube' },
-] as const;
 
 const messageOf = (error: unknown): string =>
     error instanceof Error ? error.message : String(error);

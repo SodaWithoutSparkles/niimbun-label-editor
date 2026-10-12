@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { EncodedImage } from '@mmote/niimbluelib';
+import type { EncodedImage, LabelType } from '@mmote/niimbluelib';
 import { MockTransport } from './mockTransport';
 import { PrintAbortedError } from './transport';
 import type { PrintJob, PrintPage, PrinterStatus } from './transport';
@@ -353,5 +353,62 @@ describe('MockTransport capabilities', () => {
 
     expect(connected).not.toHaveProperty('rollWidthHm');
     expect(connected).not.toHaveProperty('rollHeightHm');
+  });
+});
+
+describe('MockTransport printer info', () => {
+  const connectedStatus = async (
+    options: ConstructorParameters<typeof MockTransport>[0] = {},
+  ): Promise<PrinterStatus | undefined> => {
+    const transport = new MockTransport(options);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+    await transport.connect();
+    return statuses.find((status) => status.state === 'connected');
+  };
+
+  it('reports the version and RFID fields when configured', async () => {
+    const connected = await connectedStatus({
+      hardwareVersion: 'HW-1',
+      softwareVersion: 'SW-2',
+      rfid: { tagPresent: true, usedPaper: 12, allPaper: 100, consumablesType: 1 as LabelType },
+    });
+
+    expect(connected).toMatchObject({
+      hardwareVersion: 'HW-1',
+      softwareVersion: 'SW-2',
+      rfid: { tagPresent: true, usedPaper: 12, allPaper: 100, consumablesType: 1 },
+    });
+  });
+
+  it('omits the new fields when not configured', async () => {
+    const connected = await connectedStatus();
+
+    expect(connected).not.toHaveProperty('hardwareVersion');
+    expect(connected).not.toHaveProperty('softwareVersion');
+    expect(connected).not.toHaveProperty('rfid');
+  });
+
+  it('refreshInfo re-emits an independent copy of the status', async () => {
+    const transport = new MockTransport({
+      rfid: { tagPresent: true, usedPaper: 1, allPaper: 10 },
+    });
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    await transport.connect();
+    await transport.refreshInfo();
+
+    const connected = statuses.filter((status) => status.state === 'connected');
+    expect(connected).toHaveLength(2);
+    expect(connected[0]).not.toBe(connected[1]);
+    expect(connected[0].capabilities?.paperTypes).not.toBe(connected[1].capabilities?.paperTypes);
+    expect(connected[0].rfid).not.toBe(connected[1].rfid);
+
+    // ...so mutating one never touches an earlier/later status.
+    connected[0].rfid!.usedPaper = 99;
+    connected[0].capabilities!.paperTypes!.push(99 as never);
+    expect(connected[1].rfid).toEqual({ tagPresent: true, usedPaper: 1, allPaper: 10 });
+    expect(connected[1].capabilities?.paperTypes).toEqual([1, 2, 5]);
   });
 });

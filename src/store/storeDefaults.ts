@@ -1,5 +1,5 @@
 import type { SupportedLanguage } from '../i18n/languages';
-import type { AppState, KeyboardShortcutConfig } from './storeTypes';
+import type { AppState, ConnectMethod, KeyboardShortcutConfig } from './storeTypes';
 
 export const defaultAutoSave = true;
 
@@ -23,6 +23,19 @@ export const SCREEN_DPI_MAX = 400;
 export const DEFAULT_GRID_SPACING_HM = 500;
 export const GRID_SPACING_MIN_HM = 100;
 export const GRID_SPACING_MAX_HM = 5000;
+
+/**
+ * Printer connect methods the chooser can remember, in display order
+ * (ui-spec.md §11). Shared with the validation allow-list so the two cannot
+ * drift; `capacitor-ble`/`virtual` are not offered in the browser.
+ */
+export const CONNECT_METHODS: readonly ConnectMethod[] = ['bluetooth', 'serial'];
+
+/**
+ * Default printer connect method — matches the reference
+ * (`PrinterConnector.svelte`), which falls back to Bluetooth.
+ */
+export const DEFAULT_CONNECT_METHOD: ConnectMethod = 'bluetooth';
 
 export const defaultKeyboardShortcuts: KeyboardShortcutConfig = {
     modifyKey: 'ctrl',

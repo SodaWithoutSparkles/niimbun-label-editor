@@ -53,6 +53,13 @@ export type NodePatch = Partial<DistributiveOmit<Node, 'id' | 'parentId' | 'type
 export type ModifierKey = 'ctrl' | 'alt' | 'shift';
 export type TextSaveModifier = ModifierKey | 'none';
 
+/**
+ * Printer transport the connect chooser remembers (ui-spec.md §11). The lib's
+ * `NiimbotClientType` also carries `capacitor-ble`/`virtual`; only the two
+ * browser transports are ever persisted.
+ */
+export type ConnectMethod = 'bluetooth' | 'serial';
+
 export type NotificationType = 'info' | 'success' | 'warning' | 'error';
 
 export interface Notification {
@@ -122,6 +129,12 @@ export interface AppState {
     /** Preview grid spacing in hm (1/100 mm); drives the overlay and snap step. */
     gridSpacingHm: number;
     setGridSpacingHm: (hm: number) => void;
+    /**
+     * Printer connect method (`web bluetooth` vs `web serial`), persisted so the
+     * printer popover's chooser can restore the last pick. Never document data.
+     */
+    connectMethod: ConnectMethod;
+    setConnectMethod: (method: ConnectMethod) => void;
     resetSettings: () => void;
 
     // Settings window (shared so the global Ctrl/Cmd+, binding can open it)

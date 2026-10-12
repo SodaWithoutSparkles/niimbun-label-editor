@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect } from 'react';
 import { useStore } from '../../store/useStore';
 import { getAppJobRunner } from '../../print/appTransport';
 import { PrintDialog } from '../print/PrintDialog';
@@ -38,8 +38,12 @@ export const EditorShell: React.FC = () => {
     const setPrintDirection = useStore((state) => state.setPrintDirection);
 
     // One runner for the whole app (`createJobRunner` is memoised on the shared
-    // transport), so two dialogs can never run concurrently.
-    const runner = useMemo(() => getAppJobRunner(), []);
+    // transport), so two dialogs can never run concurrently. Read it at render
+    // time, not via a `[]` memo: a transport swap (commit B) replaces the module
+    // runner, and a memo would pin this dialog to the dead transport's runner
+    // (R7a). `getAppJobRunner()` is a memoised module getter, so the identity is
+    // stable until a swap, and opening the dialog re-renders this component.
+    const runner = getAppJobRunner();
     const printJob = usePrintJob({ open: isPrintOpen });
 
     // Leaving the editor must not leave an insert action armed for the next

@@ -29,6 +29,9 @@ interface FakeClient {
   waitForPageFinished: ReturnType<typeof vi.fn>;
   waitForFinished: ReturnType<typeof vi.fn>;
   printEnd: ReturnType<typeof vi.fn>;
+  startHeartbeat: ReturnType<typeof vi.fn>;
+  stopHeartbeat: ReturnType<typeof vi.fn>;
+  setHeartbeatInterval: ReturnType<typeof vi.fn>;
 }
 
 function makeFakeClient(
@@ -36,10 +39,23 @@ function makeFakeClient(
     taskType?: string;
     failOnPage?: number;
     metadata?: Record<string, unknown>;
+    printerInfo?: Record<string, unknown>;
+    rfidInfo?: Record<string, unknown>;
   } = {},
 ): FakeClient {
   const order: string[] = [];
   const handlers: Record<string, (event: unknown) => void> = {};
+
+  const printerInfo = {
+    serial: 'SN-1',
+    batteryPercents: 77,
+    resolutionClass: 3,
+    ...options.printerInfo,
+  };
+  const rfidInfo = {
+    paperInfo: { valid: true, paperWidth: 40, paperHeight: 30 },
+    ...options.rfidInfo,
+  };
 
   const printInit = vi.fn(async () => {
     order.push('printInit');
@@ -72,6 +88,10 @@ function makeFakeClient(
     waitForFinished,
   }));
 
+  const startHeartbeat = vi.fn();
+  const stopHeartbeat = vi.fn();
+  const setHeartbeatInterval = vi.fn();
+
   const raw = {
     getPrintTaskType: vi.fn(() => options.taskType),
     protocol: { newPrintTask, printEnd },
@@ -87,18 +107,13 @@ function makeFakeClient(
     }),
     disconnect: vi.fn(async () => undefined),
     isConnected: vi.fn(() => true),
-    fetchPrinterInfo: vi.fn(async () => ({
-      serial: 'SN-1',
-      batteryPercents: 77,
-      resolutionClass: 3,
-    })),
-    fetchRfidInfo: vi.fn(async () => ({
-      paperInfo: { valid: true, paperWidth: 40, paperHeight: 30 },
-    })),
+    startHeartbeat,
+    stopHeartbeat,
+    setHeartbeatInterval,
+    fetchPrinterInfo: vi.fn(async () => printerInfo),
+    fetchRfidInfo: vi.fn(async () => rfidInfo),
     getPrinterInfo: vi.fn(() => ({})),
-    getRfidInfo: vi.fn(() => ({
-      paperInfo: { valid: true, paperWidth: 40, paperHeight: 30 },
-    })),
+    getRfidInfo: vi.fn(() => rfidInfo),
     getModelMetadata: vi.fn(() => options.metadata),
   };
 
@@ -112,6 +127,9 @@ function makeFakeClient(
     waitForPageFinished,
     waitForFinished,
     printEnd,
+    startHeartbeat,
+    stopHeartbeat,
+    setHeartbeatInterval,
   };
 }
 
@@ -600,6 +618,179 @@ describe('NiimbotTransport capabilities', () => {
   });
 });
 
+describe('NiimbotTransport printer info + heartbeat', () => {
+  const connectAndCollect = async (fake: FakeClient): Promise<PrinterStatus | undefined> => {
+    const transport = new NiimbotTransport({ createClient: () => fake.client });
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+    await transport.connect();
+    return statuses.find((status) => status.state === 'connected');
+  };
+
+  it('populates versions and the RFID label block from the connect-time info', async () => {
+    const fake = makeFakeClient({
+      taskType: 'B1',
+      printerInfo: { hardwareVersion: 'HW-1', softwareVersion: 'SW-2' },
+      rfidInfo: {
+        labelRfidInfo: {
+          tagPresent: true,
+          usedPaper: 12,
+          allPaper: 100,
+          consumablesType: 1,
+        },
+      },
+    });
+
+    const connected = await connectAndCollect(fake);
+
+    expect(connected).toMatchObject({
+      hardwareVersion: 'HW-1',
+      softwareVersion: 'SW-2',
+      rfid: { tagPresent: true, usedPaper: 12, allPaper: 100, consumablesType: 1 },
+    });
+  });
+
+  it('omits rfid when there is no label tag info', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+
+    const connected = await connectAndCollect(fake);
+
+    expect(connected).not.toHaveProperty('rfid');
+  });
+
+  it('omits consumablesType when the tag does not report one', async () => {
+    const fake = makeFakeClient({
+      taskType: 'B1',
+      rfidInfo: { labelRfidInfo: { tagPresent: false, usedPaper: 0, allPaper: 0 } },
+    });
+
+    const connected = await connectAndCollect(fake);
+
+    expect(connected?.rfid).toEqual({ tagPresent: false, usedPaper: 0, allPaper: 0 });
+    expect(connected?.rfid).not.toHaveProperty('consumablesType');
+  });
+
+  it('refreshInfo re-fetches and re-emits the updated info', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    vi.mocked(fake.client.fetchPrinterInfo).mockResolvedValue({
+      serial: 'SN-2',
+      batteryPercents: 88,
+      hardwareVersion: 'HW-9',
+      softwareVersion: 'SW-9',
+      resolutionClass: 3,
+    } as never);
+
+    await transport.refreshInfo();
+
+    expect(statuses.at(-1)).toMatchObject({
+      state: 'connected',
+      batteryPercent: 88,
+      hardwareVersion: 'HW-9',
+      softwareVersion: 'SW-9',
+    });
+  });
+
+  it('refreshInfo rejects when not connected', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = new NiimbotTransport({ createClient: () => fake.client });
+
+    await expect(transport.refreshInfo()).rejects.toThrow('Not connected');
+  });
+
+  it('starts the heartbeat with a slow 15 s interval on connect', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+
+    await connectedTransport(fake);
+
+    expect(fake.setHeartbeatInterval).toHaveBeenCalledWith(15_000);
+    expect(fake.startHeartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops the heartbeat and unwires its events on disconnect', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = await connectedTransport(fake);
+
+    await transport.disconnect();
+
+    expect(fake.stopHeartbeat).toHaveBeenCalled();
+    expect(fake.client.off).toHaveBeenCalledWith('heartbeat', expect.any(Function));
+    expect(fake.client.off).toHaveBeenCalledWith('heartbeatfailed', expect.any(Function));
+  });
+
+  it('leaves no heartbeat running when connect rejects', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    vi.mocked(fake.client.connect).mockRejectedValueOnce(new Error('connect boom'));
+    const transport = new NiimbotTransport({ createClient: () => fake.client });
+
+    await expect(transport.connect()).rejects.toThrow('connect boom');
+
+    expect(fake.startHeartbeat).not.toHaveBeenCalled();
+    expect(fake.stopHeartbeat).toHaveBeenCalled();
+  });
+
+  it('a heartbeat updates only the battery and keeps the state', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    fake.handlers['heartbeat']?.({ data: { batteryPercents: 42 } });
+
+    const last = statuses.at(-1);
+    expect(last).toMatchObject({ state: 'connected', batteryPercent: 42, deviceName: 'Fake' });
+  });
+
+  it('keeps the last battery value when a heartbeat carries none', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    fake.handlers['heartbeat']?.({ data: { batteryPercents: 55 } });
+    fake.handlers['heartbeat']?.({ data: {} });
+
+    expect(statuses.at(-1)?.batteryPercent).toBe(55);
+  });
+
+  it('a heartbeat during printing never downgrades the state', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    fake.printPage.mockImplementationOnce(async () => {
+      fake.handlers['heartbeat']?.({ data: { batteryPercents: 12 } });
+    });
+
+    await transport.print(jobOf([1]));
+
+    expect(statuses.map((status) => status.state)).toEqual([
+      'printing',
+      'printing',
+      'connected',
+    ]);
+    // The settling job re-emits `lastConnected`, which now carries the fresh
+    // battery reading rather than the stale connect-time value.
+    expect(statuses.at(-1)).toMatchObject({ state: 'connected', batteryPercent: 12 });
+  });
+
+  it('a failed heartbeat never flips the status to error', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    fake.handlers['heartbeatfailed']?.({ failedAttempts: 1 });
+
+    expect(statuses.some((status) => status.state === 'error')).toBe(false);
+    expect(statuses).toHaveLength(0);
+  });
+});
+
 describe('NiimbotTransport niimbluelib interop', () => {
   it('loads the real CJS client and exposes newPrintTask and printEnd', () => {
     const client = instantiateClient('virtual');
@@ -621,6 +812,8 @@ describe('NiimbotTransport niimbluelib interop', () => {
     await transport.connect();
 
     expect(connectSpy.mock.instances[0]).toBe(real);
+    // connect() starts the client heartbeat; clear the live timer.
+    await transport.disconnect();
   });
 
   it('constructs a virtual transport without connecting', () => {

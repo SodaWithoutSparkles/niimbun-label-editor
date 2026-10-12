@@ -7,21 +7,25 @@ import {
 } from '@mmote/niimbluelib';
 import type {
   CombinedRfidInfo,
+  HeartbeatData,
   LabelType,
   NiimbotAbstractClient,
   NiimbotClientType,
   PrinterInfo,
   PrintOptions,
   PrintProgressEvent,
+  RfidInfo,
 } from '@mmote/niimbluelib';
 import { PrintAbortedError } from './transport';
 import type {
   PrinterCapabilities,
+  PrinterRfidInfo,
   PrinterTransport,
   PrintJob,
   PrintResult,
   PrinterStatus,
   PrintProgress,
+  TransportState,
 } from './transport';
 import { mmToHm } from '../core/hm';
 
@@ -52,6 +56,9 @@ export class NiimbotTransport implements PrinterTransport {
 
   /** Last rich status, re-emitted when a print job settles back to idle. */
   private lastConnected: PrinterStatus = { state: 'connected' };
+
+  /** State most recently emitted; heartbeats/refreshes re-emit it unchanged. */
+  private currentState: TransportState = 'disconnected';
 
   /** Total pages of the in-flight job; used to detect upstream progress swap. */
   private activeTotalPages?: number;
@@ -91,6 +98,25 @@ export class NiimbotTransport implements PrinterTransport {
     this.emitStatus({ state: 'disconnected' });
   };
 
+  private readonly handleHeartbeat = (event: { data?: HeartbeatData }): void => {
+    const batteryPercent = event?.data?.batteryPercents;
+    if (batteryPercent === undefined) {
+      // No reading in this packet; keep the last known battery value.
+      return;
+    }
+    // Only the battery moves. `lastConnected` stays the rich 'connected' copy
+    // (print() re-emits it when a job settles), while the *emitted* state is
+    // preserved verbatim so a heartbeat mid-print never downgrades 'printing'.
+    this.lastConnected = { ...this.lastConnected, batteryPercent };
+    this.emitStatus({ ...this.lastConnected, state: this.currentState });
+  };
+
+  private readonly handleHeartbeatFailed = (): void => {
+    // A failed heartbeat does NOT mean the connection dropped: never flip the
+    // status to 'error' and keep the last known battery value. The library
+    // disconnects itself once it passes its own fail threshold.
+  };
+
   constructor(options: NiimbotTransportOptions = {}) {
     this.options = options;
   }
@@ -108,24 +134,20 @@ export class NiimbotTransport implements PrinterTransport {
       const printerInfo = await this.safeFetchPrinterInfo(client);
       const rfidInfo = await this.safeFetchRfidInfo(client);
 
-      const status: PrinterStatus = {
-        state: 'connected',
-        deviceName:
-          info.deviceName ??
-          printerInfo.serial ??
-          client.getModelMetadata()?.model,
-        dpi: dpiOf(printerInfo),
-        batteryPercent: printerInfo.batteryPercents,
-        rollWidthHm: hmOf(rfidInfo.paperInfo?.paperWidth),
-        rollHeightHm: hmOf(rfidInfo.paperInfo?.paperHeight),
-        capabilities: capabilitiesOf(client),
-      };
+      const status = this.buildConnectedStatus(client, printerInfo, rfidInfo, info.deviceName);
 
       this.connected = true;
       this.lastConnected = status;
       this.emitStatus(status);
+
+      // The library default (2 s) is too chatty for a battery readout nobody
+      // watches live; slow it down before starting. startHeartbeat() clears any
+      // prior timer, so a StrictMode double-connect stays idempotent.
+      client.setHeartbeatInterval(15_000);
+      client.startHeartbeat();
     } catch (error) {
       this.unwire(client);
+      this.stopHeartbeat(client);
       this.client = undefined;
       this.connected = false;
       this.emitStatus({ state: 'error', error: messageOf(error) });
@@ -135,6 +157,8 @@ export class NiimbotTransport implements PrinterTransport {
 
   async disconnect(): Promise<void> {
     const client = this.client;
+    // A rejected connect must not leave a live timer; also safe with no client.
+    this.stopHeartbeat(client);
     if (!client) {
       this.connected = false;
       this.emitStatus({ state: 'disconnected' });
@@ -149,6 +173,27 @@ export class NiimbotTransport implements PrinterTransport {
       this.connected = false;
       this.emitStatus({ state: 'disconnected' });
     }
+  }
+
+  /**
+   * Re-fetch device + RFID info and re-emit the connected status. Throws when
+   * not connected; never changes the state while a print job is in flight.
+   */
+  async refreshInfo(): Promise<void> {
+    const client = this.requireClient();
+
+    const printerInfo = await this.safeFetchPrinterInfo(client);
+    const rfidInfo = await this.safeFetchRfidInfo(client);
+
+    const status = this.buildConnectedStatus(
+      client,
+      printerInfo,
+      rfidInfo,
+      this.lastConnected.deviceName,
+    );
+    this.lastConnected = status;
+    // A refresh must not clobber an in-flight print's state.
+    this.emitStatus({ ...status, state: this.currentState });
   }
 
   async print(job: PrintJob): Promise<PrintResult> {
@@ -300,6 +345,8 @@ export class NiimbotTransport implements PrinterTransport {
     client.on('printprogress', this.handlePrintProgress);
     client.on('connect', this.handleConnect);
     client.on('disconnect', this.handleDisconnect);
+    client.on('heartbeat', this.handleHeartbeat);
+    client.on('heartbeatfailed', this.handleHeartbeatFailed);
     this.wired = true;
   }
 
@@ -310,7 +357,44 @@ export class NiimbotTransport implements PrinterTransport {
     client.off('printprogress', this.handlePrintProgress);
     client.off('connect', this.handleConnect);
     client.off('disconnect', this.handleDisconnect);
+    client.off('heartbeat', this.handleHeartbeat);
+    client.off('heartbeatfailed', this.handleHeartbeatFailed);
     this.wired = false;
+  }
+
+  /** Stop the client's heartbeat timer if one is running; safe with no client. */
+  private stopHeartbeat(client: NiimbotAbstractClient | undefined): void {
+    client?.stopHeartbeat();
+  }
+
+  /** Build the rich 'connected' status from freshly fetched printer + RFID info.
+   * Shared by connect() and refreshInfo() so the two can never drift. */
+  private buildConnectedStatus(
+    client: NiimbotAbstractClient,
+    printerInfo: PrinterInfo,
+    rfidInfo: CombinedRfidInfo,
+    deviceName: string | undefined,
+  ): PrinterStatus {
+    const status: PrinterStatus = {
+      state: 'connected',
+      deviceName: deviceName ?? printerInfo.serial ?? client.getModelMetadata()?.model,
+      dpi: dpiOf(printerInfo),
+      batteryPercent: printerInfo.batteryPercents,
+      rollWidthHm: hmOf(rfidInfo.paperInfo?.paperWidth),
+      rollHeightHm: hmOf(rfidInfo.paperInfo?.paperHeight),
+      capabilities: capabilitiesOf(client),
+    };
+    if (printerInfo.hardwareVersion !== undefined) {
+      status.hardwareVersion = printerInfo.hardwareVersion;
+    }
+    if (printerInfo.softwareVersion !== undefined) {
+      status.softwareVersion = printerInfo.softwareVersion;
+    }
+    const rfid = rfidOf(rfidInfo.labelRfidInfo);
+    if (rfid !== undefined) {
+      status.rfid = rfid;
+    }
+    return status;
   }
 
   private async safeFetchPrinterInfo(client: NiimbotAbstractClient): Promise<PrinterInfo> {
@@ -330,6 +414,7 @@ export class NiimbotTransport implements PrinterTransport {
   }
 
   private emitStatus(status: PrinterStatus): void {
+    this.currentState = status.state;
     for (const listener of this.statusListeners) {
       listener(status);
     }
@@ -389,6 +474,25 @@ function capabilitiesOf(client: NiimbotAbstractClient): PrinterCapabilities | un
 
 function hmOf(mm: number | undefined): number | undefined {
   return mm === undefined ? undefined : mmToHm(mm);
+}
+
+/** Map a label RFID tag onto {@link PrinterRfidInfo}; `undefined` when there is
+ * no label tag info. `consumablesType` is runtime-optional in the library. */
+function rfidOf(labelRfidInfo: RfidInfo | undefined): PrinterRfidInfo | undefined {
+  if (labelRfidInfo === undefined) {
+    return undefined;
+  }
+  const rfid: PrinterRfidInfo = { tagPresent: labelRfidInfo.tagPresent };
+  if (labelRfidInfo.usedPaper !== undefined) {
+    rfid.usedPaper = labelRfidInfo.usedPaper;
+  }
+  if (labelRfidInfo.allPaper !== undefined) {
+    rfid.allPaper = labelRfidInfo.allPaper;
+  }
+  if (labelRfidInfo.consumablesType !== undefined) {
+    rfid.consumablesType = labelRfidInfo.consumablesType;
+  }
+  return rfid;
 }
 
 function messageOf(error: unknown): string {

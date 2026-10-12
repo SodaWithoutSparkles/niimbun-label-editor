@@ -9,7 +9,7 @@ import { SettingsModal } from './SettingsModal';
 afterEach(() => {
     cleanup();
     // Reset for the next test; every test that assumes 96 seeds it explicitly.
-    useStore.setState({ screenDpi: 96, gridSpacingHm: 500 });
+    useStore.setState({ screenDpi: 96, gridSpacingHm: 500, connectMethod: 'bluetooth' });
 });
 
 // The section now has two numeric inputs (plus the dialog's DPI slider, whose
@@ -88,6 +88,22 @@ describe('GeneralSection grid spacing', () => {
         fireEvent.keyDown(input, { key: 'Enter' });
 
         expect(useStore.getState().gridSpacingHm).toBe(2000);
+    });
+});
+
+describe('GeneralSection printer connection', () => {
+    it('reflects the persisted method and writes the chosen one', () => {
+        useStore.setState({ connectMethod: 'bluetooth' });
+        render(<GeneralSection />);
+        const select = screen.getByRole('combobox', {
+            name: /printer connection/i,
+        }) as HTMLSelectElement;
+
+        expect(select.value).toBe('bluetooth');
+        expect(screen.getByRole('option', { name: 'Web Bluetooth' })).toBeTruthy();
+
+        fireEvent.change(select, { target: { value: 'serial' } });
+        expect(useStore.getState().connectMethod).toBe('serial');
     });
 });
 

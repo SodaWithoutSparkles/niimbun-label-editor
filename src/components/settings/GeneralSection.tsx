@@ -2,15 +2,17 @@ import React, { useEffect, useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import { SUPPORTED_LANGUAGES } from '../../i18n/languages';
-import { normalizeLanguage } from '../../store/preferenceValidation';
+import { normalizeConnectMethod, normalizeLanguage } from '../../store/preferenceValidation';
 import { Input, Select, SettingRow, Toggle } from '../common/forms';
 import { CalibrationDialog } from './CalibrationDialog';
 import {
+    CONNECT_METHODS,
     GRID_SPACING_MAX_HM,
     GRID_SPACING_MIN_HM,
     SCREEN_DPI_MAX,
     SCREEN_DPI_MIN,
 } from '../../store/storeDefaults';
+import type { ConnectMethod } from '../../store/storeTypes';
 
 /** hm are hundredths of a millimetre; the grid control speaks mm. */
 const HM_PER_MM = 100;
@@ -23,21 +25,31 @@ const LANGUAGE_LABEL_KEYS = {
     en: 'settings.languages.en',
 } as const satisfies Partial<Record<(typeof SUPPORTED_LANGUAGES)[number], string>>;
 
+/** Same literal-map rule for the printer connect-method options. */
+const CONNECT_METHOD_LABEL_KEYS = {
+    bluetooth: 'settings.general.connectMethodBluetooth',
+    serial: 'settings.general.connectMethodSerial',
+} as const satisfies Record<ConnectMethod, string>;
+
 /**
- * General preferences: UI language and auto-save. Both write straight to the
- * settings store. The language action deliberately does not call
- * `i18n.changeLanguage` here -- a subscription applies the persisted value.
+ * General preferences: UI language, auto-save and the printer connect method.
+ * All write straight to the settings store. The language action deliberately
+ * does not call `i18n.changeLanguage` here -- a subscription applies the
+ * persisted value.
  */
 export const GeneralSection: React.FC = () => {
     const { t } = useTranslation();
     const languageId = useId();
     const autoSaveId = useId();
+    const connectMethodId = useId();
     const screenDpiId = useId();
     const gridSpacingId = useId();
     const language = useStore((state) => state.language);
     const setLanguage = useStore((state) => state.setLanguage);
     const autoSave = useStore((state) => state.autoSave);
     const toggleAutoSave = useStore((state) => state.toggleAutoSave);
+    const connectMethod = useStore((state) => state.connectMethod);
+    const setConnectMethod = useStore((state) => state.setConnectMethod);
     const screenDpi = useStore((state) => state.screenDpi);
     const setScreenDpi = useStore((state) => state.setScreenDpi);
     const gridSpacingHm = useStore((state) => state.gridSpacingHm);
@@ -83,6 +95,13 @@ export const GeneralSection: React.FC = () => {
         [t]
     );
 
+    // Data-driven off the shared allow-list so the options cannot drift from
+    // validation; the store setter takes the narrowed `ConnectMethod`.
+    const connectMethodOptions = useMemo(
+        () => CONNECT_METHODS.map((value) => ({ value, label: t(CONNECT_METHOD_LABEL_KEYS[value]) })),
+        [t]
+    );
+
     return (
         <div>
             <SettingRow label={t('settings.general.language')} htmlFor={languageId}>
@@ -100,6 +119,23 @@ export const GeneralSection: React.FC = () => {
             </SettingRow>
             <SettingRow label={t('settings.general.autoSave')} htmlFor={autoSaveId}>
                 <Toggle id={autoSaveId} checked={autoSave} onChange={() => toggleAutoSave()} />
+            </SettingRow>
+            <SettingRow
+                label={t('settings.general.connectMethod')}
+                description={t('settings.general.connectMethodDescription')}
+                htmlFor={connectMethodId}
+            >
+                <Select
+                    id={connectMethodId}
+                    value={connectMethod}
+                    onChange={(value) => {
+                        // Validate instead of casting: an unknown transport
+                        // string must never reach the persisted preference.
+                        const next = normalizeConnectMethod(value);
+                        if (next) setConnectMethod(next);
+                    }}
+                    options={connectMethodOptions}
+                />
             </SettingRow>
             <SettingRow
                 label={t('settings.general.screenDpi')}

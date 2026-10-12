@@ -3,6 +3,7 @@ import type { hm } from '../core/hm';
 import { PrintAbortedError } from './transport';
 import type {
   PrinterCapabilities,
+  PrinterRfidInfo,
   PrinterStatus,
   PrintJob,
   PrintProgress,
@@ -53,6 +54,12 @@ export interface MockTransportOptions {
   rollWidthHm?: hm;
   /** Printer-reported roll height in hm, surfaced in status when set. */
   rollHeightHm?: hm;
+  /** Printer-reported hardware version, surfaced in status when set. */
+  hardwareVersion?: string;
+  /** Printer-reported software version, surfaced in status when set. */
+  softwareVersion?: string;
+  /** RFID label-tag block, surfaced in status when set. */
+  rfid?: PrinterRfidInfo;
 }
 
 /**
@@ -71,6 +78,9 @@ export class MockTransport implements PrinterTransport {
   private readonly capabilities?: PrinterCapabilities;
   private readonly rollWidthHm?: hm;
   private readonly rollHeightHm?: hm;
+  private readonly hardwareVersion?: string;
+  private readonly softwareVersion?: string;
+  private readonly rfid?: PrinterRfidInfo;
 
   private connected = false;
 
@@ -98,6 +108,9 @@ export class MockTransport implements PrinterTransport {
           };
     this.rollWidthHm = options.rollWidthHm;
     this.rollHeightHm = options.rollHeightHm;
+    this.hardwareVersion = options.hardwareVersion;
+    this.softwareVersion = options.softwareVersion;
+    this.rfid = options.rfid;
   }
 
   async connect(): Promise<void> {
@@ -110,6 +123,11 @@ export class MockTransport implements PrinterTransport {
   async disconnect(): Promise<void> {
     this.connected = false;
     this.emitStatus('disconnected');
+  }
+
+  /** Re-emit the current status as a fresh, independent copy. */
+  async refreshInfo(): Promise<void> {
+    this.emitStatus(this.connected ? 'connected' : 'disconnected');
   }
 
   onStatus(listener: (status: PrinterStatus) => void): () => void {
@@ -212,6 +230,16 @@ export class MockTransport implements PrinterTransport {
     }
     if (this.rollHeightHm !== undefined) {
       status.rollHeightHm = this.rollHeightHm;
+    }
+    if (this.hardwareVersion !== undefined) {
+      status.hardwareVersion = this.hardwareVersion;
+    }
+    if (this.softwareVersion !== undefined) {
+      status.softwareVersion = this.softwareVersion;
+    }
+    if (this.rfid !== undefined) {
+      // Fresh RFID object per emit: consumers never share state.
+      status.rfid = { ...this.rfid };
     }
     for (const listener of this.statusListeners) {
       listener(status);

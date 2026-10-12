@@ -57,16 +57,23 @@ export const NotificationCenter: React.FC = () => {
         }
     }, []);
 
-    // A dialog opened after the popover sits higher in the top layer and buries
-    // the toast under its backdrop. Re-insert the popover on every dialog that
-    // gains `[open]`, so it lands above. StrictMode/idempotency-safe because
-    // `ensurePopoverOpen` hide-then-shows only when already open.
+    // A modal dialog opened after the popover sits higher in the top layer and
+    // buries the toast under its backdrop. Re-insert the popover on every dialog
+    // that gains `[open]`, so it lands above. Non-modal popovers
+    // (`[data-popover]`, e.g. the connection chip) are excluded: they do not sit
+    // in the modal top layer, so the toast does not need re-inserting for them.
+    // StrictMode/idempotency-safe because `ensurePopoverOpen` hide-then-shows
+    // only when already open.
     useEffect(() => {
         if (typeof MutationObserver === 'undefined') return;
         const observer = new MutationObserver((records) => {
             for (const record of records) {
                 const target = record.target as HTMLElement;
-                if (target.tagName === 'DIALOG' && target.hasAttribute('open')) {
+                if (
+                    target.tagName === 'DIALOG' &&
+                    !target.hasAttribute('data-popover') &&
+                    target.hasAttribute('open')
+                ) {
                     ensurePopoverOpen();
                     return;
                 }
@@ -83,9 +90,11 @@ export const NotificationCenter: React.FC = () => {
     // The common case: a save/load failure raises a toast WHILE a modal is
     // already open. The observer above only fires when a dialog *opens*, so
     // re-insert here whenever the toast set grows and a dialog is currently open.
+    // Non-modal popovers (`[data-popover]`, e.g. the connection chip) are NOT
+    // modals: they leave the toast interactive, so they must not count here.
     useEffect(() => {
         if (!hasNotifications) return;
-        if (document.querySelector('dialog[open]')) ensurePopoverOpen();
+        if (document.querySelector('dialog[open]:not([data-popover])')) ensurePopoverOpen();
     }, [notifications, hasNotifications, ensurePopoverOpen]);
 
     // While a modal <dialog> is open it makes every other top-layer element
@@ -98,13 +107,15 @@ export const NotificationCenter: React.FC = () => {
     // visible toast box while a dialog is open, at the window capture phase
     // (earliest in the event path), so they never reach the dialog's close
     // handler. The toast stays visible but non-interactive under a modal, which
-    // is the documented, acceptable behaviour.
+    // is the documented, acceptable behaviour. The `:not([data-popover])` on the
+    // query below keeps non-modal popovers out of this path — under one of those
+    // the toast is still interactive.
     useEffect(() => {
         if (!hasNotifications) return;
         const swallowIfOverToast = (e: Event) => {
             const el = containerRef.current;
             if (!el || el.children.length === 0) return;
-            if (!document.querySelector('dialog[open]')) return;
+            if (!document.querySelector('dialog[open]:not([data-popover])')) return;
             const mouse = e as MouseEvent;
             if (typeof mouse.clientX !== 'number') return;
             const r = el.getBoundingClientRect();

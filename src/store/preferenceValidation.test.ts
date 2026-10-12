@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     normalizeBoolean,
+    normalizeConnectMethod,
     normalizeGridSpacingHm,
     normalizeKeyboardShortcuts,
     normalizeLanguage,
@@ -10,6 +11,7 @@ import {
     type PersistedSettings,
 } from './preferenceValidation';
 import {
+    DEFAULT_CONNECT_METHOD,
     DEFAULT_GRID_SPACING_HM,
     DEFAULT_SCREEN_DPI,
     GRID_SPACING_MAX_HM,
@@ -33,6 +35,22 @@ describe('normalizeLanguage', () => {
         expect(normalizeLanguage(null)).toBeUndefined();
         expect(normalizeLanguage(undefined)).toBeUndefined();
         expect(normalizeLanguage({})).toBeUndefined();
+    });
+});
+
+describe('normalizeConnectMethod', () => {
+    it('returns the known transports', () => {
+        expect(normalizeConnectMethod('bluetooth')).toBe('bluetooth');
+        expect(normalizeConnectMethod('serial')).toBe('serial');
+    });
+
+    it('returns undefined for unknown / junk values', () => {
+        expect(normalizeConnectMethod('wifi')).toBeUndefined();
+        expect(normalizeConnectMethod('capacitor-ble')).toBeUndefined();
+        expect(normalizeConnectMethod('virtual')).toBeUndefined();
+        expect(normalizeConnectMethod(42)).toBeUndefined();
+        expect(normalizeConnectMethod(null)).toBeUndefined();
+        expect(normalizeConnectMethod(undefined)).toBeUndefined();
     });
 });
 
@@ -118,6 +136,7 @@ const defaults: PersistedSettings = {
     language: defaultLanguage,
     screenDpi: DEFAULT_SCREEN_DPI,
     gridSpacingHm: DEFAULT_GRID_SPACING_HM,
+    connectMethod: DEFAULT_CONNECT_METHOD,
 };
 
 describe('validatePersistedSettings', () => {
@@ -150,6 +169,17 @@ describe('validatePersistedSettings', () => {
         // Absent => the default.
         expect(validatePersistedSettings({}, defaults).gridSpacingHm).toBe(DEFAULT_GRID_SPACING_HM);
     });
+
+    it('round-trips a valid connectMethod and falls back to bluetooth otherwise', () => {
+        // Both known transports survive.
+        expect(validatePersistedSettings({ connectMethod: 'bluetooth' }, defaults).connectMethod).toBe('bluetooth');
+        expect(validatePersistedSettings({ connectMethod: 'serial' }, defaults).connectMethod).toBe('serial');
+        // Unknown / wrong-typed => the bluetooth default.
+        expect(validatePersistedSettings({ connectMethod: 'wifi' }, defaults).connectMethod).toBe('bluetooth');
+        expect(validatePersistedSettings({ connectMethod: null }, defaults).connectMethod).toBe('bluetooth');
+        // Absent => the bluetooth default.
+        expect(validatePersistedSettings({}, defaults).connectMethod).toBe('bluetooth');
+    });
 });
 
 describe('pickPersistedKeys', () => {
@@ -171,5 +201,12 @@ describe('pickPersistedKeys', () => {
     it('picks a normalized gridSpacingHm only when present', () => {
         expect(pickPersistedKeys({ gridSpacingHm: 1234.7 }, defaults)).toEqual({ gridSpacingHm: 1235 });
         expect('gridSpacingHm' in pickPersistedKeys({}, defaults)).toBe(false);
+    });
+
+    it('picks a validated connectMethod only when present', () => {
+        expect(pickPersistedKeys({ connectMethod: 'serial' }, defaults)).toEqual({ connectMethod: 'serial' });
+        // An invalid value is repaired to the default, not dropped.
+        expect(pickPersistedKeys({ connectMethod: 'wifi' }, defaults)).toEqual({ connectMethod: 'bluetooth' });
+        expect('connectMethod' in pickPersistedKeys({}, defaults)).toBe(false);
     });
 });

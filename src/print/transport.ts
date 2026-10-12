@@ -85,6 +85,14 @@ export interface PrinterCapabilities {
   supportsSpeed?: boolean;
 }
 
+/** RFID label-tag info, from the connect-time CombinedRfidInfo. */
+export interface PrinterRfidInfo {
+  tagPresent: boolean;
+  usedPaper?: number;
+  allPaper?: number;
+  consumablesType?: LabelType;
+}
+
 export interface PrinterStatus {
   state: TransportState;
   deviceName?: string;
@@ -95,8 +103,19 @@ export interface PrinterStatus {
   rollHeightHm?: hm;
   batteryPercent?: number;
   error?: string;
-  /** Reported capabilities; absent when the printer model is unknown (no gating). */
+  /**
+   * Reported capabilities; absent when the printer model is unknown (no gating).
+   */
   capabilities?: PrinterCapabilities;
+  /** Printer-reported hardware version, when known. */
+  hardwareVersion?: string;
+  /** Printer-reported software version, when known. */
+  softwareVersion?: string;
+  /**
+   * RFID label-tag block, when a label tag was present at connect time. The
+   * roll dimensions live in `rollWidthHm`/`rollHeightHm`, not here.
+   */
+  rfid?: PrinterRfidInfo;
 }
 
 export interface PrintProgress {
@@ -126,6 +145,8 @@ export interface PrinterTransport {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   print(job: PrintJob): Promise<PrintResult>;
+  /** Re-fetch device + RFID info. No-op-safe when disconnected. */
+  refreshInfo?(): Promise<void>;
   /** Subscribe to status; returns an unsubscribe function. */
   onStatus(listener: (status: PrinterStatus) => void): () => void;
   /** Subscribe to print progress; returns an unsubscribe function. */

@@ -1,5 +1,6 @@
 import type { StoreSlice } from '../storeTypes';
 import {
+    DEFAULT_CONNECT_METHOD,
     DEFAULT_GRID_SPACING_HM,
     DEFAULT_SCREEN_DPI,
     GRID_SPACING_MAX_HM,
@@ -75,6 +76,11 @@ export const createSettingsSlice: StoreSlice = (set) => ({
         gridSpacingHm: Math.min(GRID_SPACING_MAX_HM, Math.max(GRID_SPACING_MIN_HM, Math.round(hm))),
     }),
 
+    // Printer connect method (§11). Persisted with the other global settings so
+    // the printer popover's chooser remembers the last pick; never document data.
+    connectMethod: DEFAULT_CONNECT_METHOD,
+    setConnectMethod: (connectMethod) => set({ connectMethod }),
+
     // Settings-window open state lives in the store (not `Header` local state)
     // so the global Ctrl/Cmd+, handler can open it without prop-drilling.
     isSettingsOpen: false,
@@ -88,5 +94,6 @@ export const createSettingsSlice: StoreSlice = (set) => ({
         language: defaultLanguage,
         screenDpi: DEFAULT_SCREEN_DPI,
         gridSpacingHm: DEFAULT_GRID_SPACING_HM,
+        connectMethod: DEFAULT_CONNECT_METHOD,
     }),
 });

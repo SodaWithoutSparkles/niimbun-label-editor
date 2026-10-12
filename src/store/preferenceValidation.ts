@@ -1,7 +1,14 @@
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n/languages';
-import { GRID_SPACING_MAX_HM, GRID_SPACING_MIN_HM, SCREEN_DPI_MAX, SCREEN_DPI_MIN } from './storeDefaults';
+import {
+    CONNECT_METHODS,
+    GRID_SPACING_MAX_HM,
+    GRID_SPACING_MIN_HM,
+    SCREEN_DPI_MAX,
+    SCREEN_DPI_MIN,
+} from './storeDefaults';
 import type {
     AppState,
+    ConnectMethod,
     KeyboardShortcutConfig,
     ModifierKey,
     TextSaveModifier,
@@ -10,7 +17,13 @@ import type {
 /** The only state that belongs in localStorage. Everything else is runtime. */
 export type PersistedSettings = Pick<
     AppState,
-    'autoSave' | 'keyboardShortcuts' | 'toolSettings' | 'language' | 'screenDpi' | 'gridSpacingHm'
+    | 'autoSave'
+    | 'keyboardShortcuts'
+    | 'toolSettings'
+    | 'language'
+    | 'screenDpi'
+    | 'gridSpacingHm'
+    | 'connectMethod'
 >;
 
 /**
@@ -145,6 +158,14 @@ export const normalizeGridSpacingHm = (
 };
 
 /**
+ * Returns a known connect method, or `undefined` when the value is missing or
+ * not one of `CONNECT_METHODS`. Guards the persisted chooser preference against
+ * a stale/unknown transport string in a corrupt blob.
+ */
+export const normalizeConnectMethod = (value: unknown): ConnectMethod | undefined =>
+    isOneOf(value, CONNECT_METHODS) ? value : undefined;
+
+/**
  * Validates the `ui_settings` payload and returns a complete
  * `PersistedSettings`, filling anything absent or malformed from `defaults`.
  */
@@ -169,6 +190,7 @@ export const validatePersistedSettings = (
         gridSpacingHm:
             normalizeGridSpacingHm(persisted.gridSpacingHm, GRID_SPACING_MIN_HM, GRID_SPACING_MAX_HM) ??
             defaults.gridSpacingHm,
+        connectMethod: normalizeConnectMethod(persisted.connectMethod) ?? defaults.connectMethod,
     };
 };
 
@@ -192,5 +214,6 @@ export const pickPersistedKeys = (
     if ('language' in persisted) picked.language = repaired.language;
     if ('screenDpi' in persisted) picked.screenDpi = repaired.screenDpi;
     if ('gridSpacingHm' in persisted) picked.gridSpacingHm = repaired.gridSpacingHm;
+    if ('connectMethod' in persisted) picked.connectMethod = repaired.connectMethod;
     return picked;
 };
