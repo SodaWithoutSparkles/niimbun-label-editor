@@ -22,8 +22,7 @@ const makeStorage = (): Storage => {
 
 const store = () => createAppStore(makeStorage());
 
-describe('viewSlice — default view orientation (must-fix #8)', () => {
-    it('puts a portrait label on its side (long axis horizontal) and leaves landscape flat', () => {
+describe('viewSlice — default view orientation (must-fix #8)', () => {    it('puts a portrait label on its side (long axis horizontal) and leaves landscape flat', () => {
         const s = store();
         s.getState().applyDefaultViewOrientation(2000, 3000);
         expect(s.getState().viewRotation).toBe(90);
@@ -67,5 +66,18 @@ describe('viewSlice — default view orientation (must-fix #8)', () => {
         expect(s.getState().viewRotationUserSet).toBe(false);
         s.getState().applyDefaultViewOrientation(2000, 3000);
         expect(s.getState().viewRotation).toBe(90);
+    });
+});
+
+describe('viewSlice — gallery section', () => {
+    it('rests on `recent` and lifts the sidebar pick into the store', () => {
+        const s = store();
+        expect(s.getState().gallerySection).toBe('recent');
+
+        s.getState().setGallerySection('paper');
+        expect(s.getState().gallerySection).toBe('paper');
+
+        s.getState().setGallerySection('csv');
+        expect(s.getState().gallerySection).toBe('csv');
     });
 });

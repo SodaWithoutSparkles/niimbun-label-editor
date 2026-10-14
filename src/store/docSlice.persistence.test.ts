@@ -35,6 +35,7 @@ vi.mock('../data/db', async (importOriginal) => {
 
 import { createAppStore } from './useStore';
 import { createMemoryAdapter } from '../data/db';
+import type { StorageAdapter } from '../data/db';
 import { createLabelRepo } from '../data/labelRepo';
 
 /** Minimal in-memory Storage, mirroring `docSlice.test.ts`. */
@@ -99,5 +100,41 @@ describe('docSlice.initPersistence — boot safety', () => {
 
         expect(store.getState().storageError).toBe(false);
         expect(store.getState().labelRepo).not.toBeNull();
+    });
+
+    it('publishes paperRepo only after the built-in catalogue is seeded', async () => {
+        createIdbAdapterMock.mockReset();
+        // Track any `papers` write synchronously so the store subscription can
+        // read it at the exact instant `paperRepo` becomes visible.
+        const base = createMemoryAdapter();
+        let papersWritten = false;
+        const adapter: StorageAdapter = {
+            ...base,
+            put: (store, key, value) => {
+                if (store === 'papers') papersWritten = true;
+                return base.put(store, key, value);
+            },
+        };
+        createIdbAdapterMock.mockResolvedValueOnce(adapter);
+        // Seeding reads `localStorage`; node has none, so provide a fresh one
+        // (unset marker → the catalogue is seeded).
+        vi.stubGlobal('localStorage', makeStorage());
+
+        const store = createAppStore(makeStorage());
+        let seededWhenPublished: boolean | null = null;
+        const unsubscribe = store.subscribe((state, previous) => {
+            if (!previous.paperRepo && state.paperRepo) seededWhenPublished = papersWritten;
+        });
+
+        await store.getState().initPersistence();
+        unsubscribe();
+
+        const paperRepo = store.getState().paperRepo;
+        expect(paperRepo).not.toBeNull();
+        // Publication is ordered after seeding: when `paperRepo` first became
+        // visible the seed writes had already landed (the old order published
+        // the empty repo first, so this would be `false`).
+        expect(seededWhenPublished).toBe(true);
+        expect((await paperRepo!.list()).length).toBeGreaterThan(0);
     });
 });

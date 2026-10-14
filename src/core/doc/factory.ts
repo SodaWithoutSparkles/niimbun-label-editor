@@ -18,8 +18,13 @@ const clone = <T>(value: T): T =>
         ? structuredClone(value)
         : (JSON.parse(JSON.stringify(value)) as T);
 
-const DEFAULT_BACKING_W = 4000;
-const DEFAULT_BACKING_H = 3000;
+/**
+ * Fallback backing size (hm) when neither explicit geometry nor a paper type
+ * supplies one. Exported so the create-label dialog's "custom" fallback seeds
+ * the same 40×30 mm geometry instead of repeating magic numbers.
+ */
+export const DEFAULT_BACKING_W = 4000;
+export const DEFAULT_BACKING_H = 3000;
 
 /** Integer hm, or 0 when the caller passed a non-finite number. */
 const safeRoundHm = (value: number): hm => (Number.isFinite(value) ? roundHm(value) : 0);

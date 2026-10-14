@@ -14,7 +14,19 @@ import type { StoreSlice } from '../storeTypes';
 
 export type ZoomMode = 'fit' | 'real' | 'manual';
 
+/**
+ * The gallery's nav sections (ui-spec.md §2). Lifted out of `NavSidebar`'s local
+ * `useState` so `MainLayout` can swap the main pane (`paper` → the paper-type
+ * manager, the rest → `GalleryView`). View-only and never persisted: a reload
+ * starts on `recent`, matching today's behaviour.
+ */
+export type GallerySection = 'recent' | 'paper' | 'templates' | 'csv';
+
 export const createViewSlice: StoreSlice = (set) => ({
+    /** Active gallery nav section; `recent` is the default resting pane. */
+    gallerySection: 'recent',
+    setGallerySection: (gallerySection) => set({ gallerySection }),
+
     /** Grid overlay on the preview. */
     gridVisible: false,
     toggleGrid: () => set((state) => ({ gridVisible: !state.gridVisible })),

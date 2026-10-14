@@ -1,9 +1,9 @@
 import type { StateCreator } from 'zustand';
 import type { SupportedLanguage } from '../i18n/languages';
 import type { InsertAction } from './slices/toolsSlice';
-import type { ZoomMode } from './slices/viewSlice';
+import type { GallerySection, ZoomMode } from './slices/viewSlice';
 import type { hm } from '../core/hm';
-import type { FontRef, ImageRef, LabelDoc, Node, Region, GlobalSpec } from '../core/doc/types';
+import type { FontRef, Guide, ImageRef, LabelDoc, Node, Region, GlobalSpec } from '../core/doc/types';
 import type { ResizeOptions, Size } from '../core/doc/geometry';
 import type { CsvRepo } from '../data/csvRepo';
 import type { LabelRepo, LabelSummary } from '../data/labelRepo';
@@ -22,6 +22,8 @@ export interface CreateLabelSpec {
     backingH?: hm;
     dpi?: number;
     regions?: Region[];
+    /** Non-printable editor guides copied onto `label.guides` (e.g. an F-tag score line). */
+    guides?: Guide[];
     printDirection?: LabelDoc['label']['printDirection'];
 }
 
@@ -340,6 +342,12 @@ export interface AppState {
     clearNodeSelection: () => void;
 
     // Editor view state (viewSlice) — view-only, never persisted, never doc data.
+    /**
+     * Active gallery nav section (viewSlice). Lifted from `NavSidebar`'s local
+     * state so `MainLayout` can swap the gallery main pane.
+     */
+    gallerySection: GallerySection;
+    setGallerySection: (section: GallerySection) => void;
     gridVisible: boolean;
     toggleGrid: () => void;
     snapEnabled: boolean;

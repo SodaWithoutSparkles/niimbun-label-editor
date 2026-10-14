@@ -138,6 +138,9 @@ export const createDocSlice: StoreSlice = (set, get) => {
             // becomes `null` so the caller surfaces one visible error path.
             let doc: LabelDoc;
             try {
+                // `spec` is forwarded wholesale, so explicit `backingW`/`backingH`/
+                // `regions`/`guides` plus the `paperTypeId` provenance all reach
+                // `createLabelDoc` (the geometry wins; the id is provenance only).
                 const built = createLabelDoc(spec);
                 const result = isLabelDoc(built);
                 if (!result.ok) return null;
@@ -261,15 +264,26 @@ export const createDocSlice: StoreSlice = (set, get) => {
                             set({ csvRepo: createCsvRepo(adapter) });
                         }
                         if (!get().paperRepo) {
-                            set({ paperRepo: createPaperRepo(adapter) });
-                        }
-                        // First-run seed of the built-in catalogue from
-                        // `PAPER_TYPE_SEEDS`. Idempotent (marker-guarded) and
-                        // never throws; the marker stops it resurrecting a
-                        // deleted seed.
-                        const paperRepo = get().paperRepo;
-                        if (paperRepo) {
+                            // Build the repo, seed the built-in catalogue, and
+                            // only then publish it. A `paperRepo` visible in
+                            // the store must already list the seeds:
+                            // `CreateLabelDialog` reads the catalogue once per
+                            // repo change, so a dialog that opened in the gap
+                            // between `set` and seeding would see an empty
+                            // catalogue and never retry (no later repo change
+                            // re-triggers it). First-run seed of
+                            // `PAPER_TYPE_SEEDS`; idempotent (marker-guarded)
+                            // and never throws — the marker stops it
+                            // resurrecting a deleted seed.
+                            const paperRepo = createPaperRepo(adapter);
                             await ensurePaperTypesSeeded(paperRepo);
+                            set({ paperRepo });
+                        } else {
+                            // An injected repo wins over the real one; seed it
+                            // too (marker-guarded, idempotent) so a repo
+                            // supplied before boot still lists the catalogue.
+                            const injected = get().paperRepo;
+                            if (injected) await ensurePaperTypesSeeded(injected);
                         }
                         if (!get().trustRepo) {
                             const trustRepo = createTrustRepo(adapter);
