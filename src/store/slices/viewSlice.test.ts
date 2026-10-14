@@ -79,5 +79,8 @@ describe('viewSlice — gallery section', () => {
 
         s.getState().setGallerySection('csv');
         expect(s.getState().gallerySection).toBe('csv');
+
+        s.getState().setGallerySection('media');
+        expect(s.getState().gallerySection).toBe('media');
     });
 });

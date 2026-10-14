@@ -52,4 +52,36 @@ describe('createResourceRepo', () => {
         expect(isResourceRecord({ id: 'r', mediaType: 'x', bytes: [1, 2] })).toBe(false);
         expect(isResourceRecord(null)).toBe(false);
     });
+
+    it('accepts optional metadata and still loads a legacy record without it (phase 9, D2)', async () => {
+        // Optional metadata is accepted when present…
+        expect(
+            isResourceRecord({
+                id: 'r',
+                mediaType: 'image/png',
+                bytes: new Uint8Array([1]),
+                name: 'logo.png',
+                widthPx: 9,
+                heightPx: 7,
+            }),
+        ).toBe(true);
+        // …never required: a legacy `{id,mediaType,bytes}` row still validates.
+        expect(isResourceRecord({ id: 'legacy', mediaType: 'image/png', bytes: new Uint8Array() })).toBe(
+            true,
+        );
+        // Wrong-typed metadata is rejected (the bytes check is unchanged).
+        expect(
+            isResourceRecord({
+                id: 'r',
+                mediaType: 'image/png',
+                bytes: new Uint8Array(),
+                widthPx: 'wide',
+            }),
+        ).toBe(false);
+
+        // A legacy row round-trips through the repo unchanged.
+        const repo = createResourceRepo(createMemoryAdapter());
+        await repo.put({ id: 'legacy', mediaType: 'image/png', bytes: new Uint8Array([4, 5]) });
+        expect(await repo.get('legacy')).toMatchObject({ id: 'legacy', mediaType: 'image/png' });
+    });
 });

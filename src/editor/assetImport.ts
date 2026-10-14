@@ -1,5 +1,5 @@
 import type { FontRef, ImageRef } from '../core/doc/types';
-import type { ResourceRepo } from '../data/resourceRepo';
+import type { ResourceRecord, ResourceRepo } from '../data/resourceRepo';
 import { sha256Hex } from '../data/hash';
 import { decodeImageBytes } from './render/imageAssets';
 
@@ -101,11 +101,21 @@ export const importImageFile = async (
 
     // `imageId` and the IDB resource key are the same id: the ref is the lookup.
     const resourceId = newResourceId();
-    await repo.put({ id: resourceId, mediaType, bytes });
+    // Persist display metadata alongside the bytes (phase 9, D2) so the media
+    // gallery can name/dimension a resource without decoding it again.
+    const name = opts.name ?? file.name;
+    await repo.put({
+        id: resourceId,
+        mediaType,
+        name,
+        widthPx: decoded.widthPx,
+        heightPx: decoded.heightPx,
+        bytes,
+    });
 
     const ref: ImageRef = {
         imageId: resourceId,
-        name: opts.name ?? file.name,
+        name,
         ...(opts.alt !== undefined ? { alt: opts.alt } : {}),
         source: { kind: 'local', mediaType, resourceId, fingerprint },
         widthPx: decoded.widthPx,
@@ -164,11 +174,14 @@ export const importFontFile = async (
     const fingerprint = await sha256Hex(bytes);
 
     const fontId = newResourceId();
-    await repo.put({ id: fontId, mediaType, bytes });
+    // The record's display name mirrors the ref's family name (phase 9, D2);
+    // fonts carry no pixel dimensions.
+    const familyName = opts.familyName ?? stripExtension(file.name);
+    await repo.put({ id: fontId, mediaType, name: familyName, bytes });
 
     const ref: FontRef = {
         fontId,
-        familyName: opts.familyName ?? stripExtension(file.name),
+        familyName,
         name: opts.name ?? file.name,
         ...(opts.alt !== undefined ? { alt: opts.alt } : {}),
         source: {
@@ -178,4 +191,73 @@ export const importFontFile = async (
         },
     };
     return { ref, bytes };
+};
+
+/**
+ * "Import an existing resource" choice (phase 9, W3):
+ *
+ * - `reference` — point the new ref at the **shared** stored record; deleting
+ *   the source document never touches it (the `resources` store is not part of
+ *   document delete).
+ * - `clone` — copy the record under a fresh id so later edits/deletes of the
+ *   original do not affect this document.
+ */
+export type ExistingImportMode = 'clone' | 'reference';
+
+/**
+ * Copy a stored resource under a fresh id ("import by clone"). Display metadata
+ * (name, dimensions, media type) is preserved and the bytes are copied so the
+ * clone never aliases the original's buffer.
+ */
+export const cloneResourceRecord = (
+    record: ResourceRecord,
+    id: string = newResourceId(),
+): ResourceRecord => ({
+    ...record,
+    id,
+    bytes: record.bytes.slice(),
+});
+
+/**
+ * Build the `ImageRef` for a resource that already exists in the media store.
+ *
+ * - `reference`: `imageId` is a fresh document-local id while
+ *   `source.resourceId` stays the original key. They are intentionally
+ *   different — the render seam resolves `local` bytes by `source.resourceId`
+ *   (`loadImageRef` → `deps.images.getBytes(ref.source.resourceId)`), so the
+ *   ref works against the shared record.
+ * - `clone`: `imageId === source.resourceId === newId`; the caller must write
+ *   the cloned record under `newId` first (see {@link cloneResourceRecord}).
+ */
+export const buildImageRefForExisting = (
+    record: Pick<ResourceRecord, 'id' | 'mediaType' | 'name'>,
+    dimensions: { widthPx: number; heightPx: number },
+    mode: ExistingImportMode,
+    newId: string = newResourceId(),
+): ImageRef => {
+    const resourceId = mode === 'clone' ? newId : record.id;
+    return {
+        imageId: newId,
+        name: record.name ?? record.id,
+        source: { kind: 'local', mediaType: record.mediaType, resourceId },
+        widthPx: dimensions.widthPx,
+        heightPx: dimensions.heightPx,
+    };
+};
+
+/**
+ * Natural pixel dimensions of an existing image resource: the stored metadata
+ * when present, otherwise the same decode path `importImageFile` uses. A decode
+ * failure yields `0 × 0` rather than throwing (the UI can still show the name).
+ */
+export const resolveResourceDimensions = async (
+    record: Pick<ResourceRecord, 'mediaType' | 'bytes' | 'widthPx' | 'heightPx'>,
+): Promise<{ widthPx: number; heightPx: number }> => {
+    if (record.widthPx !== undefined && record.heightPx !== undefined) {
+        return { widthPx: record.widthPx, heightPx: record.heightPx };
+    }
+    const decoded = await decodeImageBytes(record.bytes, record.mediaType);
+    return decoded
+        ? { widthPx: decoded.widthPx, heightPx: decoded.heightPx }
+        : { widthPx: 0, heightPx: 0 };
 };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createMemoryAdapter } from './db';
-import { createCsvRepo, isCsvRecord, type CsvRecord } from './csvRepo';
+import { createCsvRepo, cloneCsvRecord, isCsvRecord, type CsvRecord } from './csvRepo';
 
 const record = (id: string): CsvRecord => ({
     id,
@@ -67,5 +67,15 @@ describe('createCsvRepo', () => {
         expect(isCsvRecord({ id: 'c', name: 'x', columns: [1], rows: [] })).toBe(false);
         expect(isCsvRecord({ id: 'c', name: 'x', columns: [], rows: [['a', 1]] })).toBe(false);
         expect(isCsvRecord(undefined)).toBe(false);
+    });
+});
+
+describe('cloneCsvRecord (phase 9 W3)', () => {
+    it('copies the table under a fresh id, preserving name/columns/rows', () => {
+        const source = record('c1');
+        const clone = cloneCsvRecord(source, 'copy-1');
+
+        expect(clone).toEqual({ ...source, id: 'copy-1' });
+        expect(clone.columns).toBe(source.columns);
     });
 });

@@ -4,14 +4,17 @@ import { Header } from './Header';
 import { NavSidebar } from './NavSidebar';
 import { GalleryView } from '../gallery/GalleryView';
 import { PaperTypeSection } from '../gallery/PaperTypeSection';
+import { CsvSection } from '../gallery/CsvSection';
+import { MediaSection } from '../gallery/MediaSection';
 import { EditorShell } from '../editor/EditorShell';
 
 /**
  * App shell. `Header` is shared; the gallery renders `NavSidebar` + a main pane
- * (the label card grid, or the paper-type manager when the sidebar selects it),
- * while the editor renders the P3 `EditorShell` (ui-spec.md §2), which owns its
- * own status bar. The template's `LeftSidebar` / `RightSidebar` /
- * `DrawingCanvas` are no longer referenced from either path (stripped in W6).
+ * (the label card grid, the paper-type manager, the CSV manager, or the media
+ * manager when the sidebar selects one), while the editor renders the P3
+ * `EditorShell` (ui-spec.md §2), which owns its own status bar. The template's
+ * `LeftSidebar` / `RightSidebar` / `DrawingCanvas` are no longer referenced from
+ * either path (stripped in W6).
  */
 export const MainLayout: React.FC = () => {
     const view = useStore((state) => state.view);
@@ -33,7 +36,15 @@ export const MainLayout: React.FC = () => {
             {view === 'gallery' ? (
                 <div className="flex-1 flex overflow-hidden relative">
                     <NavSidebar />
-                    {gallerySection === 'paper' ? <PaperTypeSection /> : <GalleryView />}
+                    {gallerySection === 'paper' ? (
+                        <PaperTypeSection />
+                    ) : gallerySection === 'csv' ? (
+                        <CsvSection />
+                    ) : gallerySection === 'media' ? (
+                        <MediaSection />
+                    ) : (
+                        <GalleryView />
+                    )}
                 </div>
             ) : (
                 <EditorShell />

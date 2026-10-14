@@ -36,6 +36,17 @@ export const isCsvRecord = (value: unknown): value is CsvRecord =>
     value.rows.every(isStringArray);
 
 /**
+ * Copy a stored CSV table under a fresh id ("import by clone", phase 9 W3). The
+ * id is supplied by the caller so this stays a pure, storage-free helper; the
+ * columns/rows are shared by reference (records are treated as immutable once
+ * stored).
+ */
+export const cloneCsvRecord = (record: CsvRecord, id: string): CsvRecord => ({
+    ...record,
+    id,
+});
+
+/**
  * Cheap shape check for reads: verifies the container but not every row.
  * `isCsvRecord`'s per-row scan is O(rows) and must not run on every `get`/`list`
  * of a large table; the full check runs on `put` (the write boundary).

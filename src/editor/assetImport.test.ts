@@ -88,6 +88,18 @@ describe('importImageFile', () => {
         expect([...stored!.bytes]).toEqual([...bytes]);
     });
 
+    it('stores display metadata (name + natural size) on the record (phase 9, D2)', async () => {
+        const bytes = pngBytes(12, 5);
+        const file = new File([bytes], 'photo.png', { type: 'image/png' });
+        const repo = createResourceRepo(createMemoryAdapter());
+
+        const { ref } = await importImageFile(file, repo);
+
+        const stored = await repo.get(ref.imageId);
+        expect(stored).not.toBeNull();
+        expect(stored).toMatchObject({ name: 'photo.png', widthPx: 12, heightPx: 5 });
+    });
+
     it('applies name/alt overrides', async () => {
         const file = new File([pngBytes(2, 2)], 'original.png', { type: 'image/png' });
         const { ref } = await importImageFile(file, createResourceRepo(createMemoryAdapter()), {
@@ -166,6 +178,18 @@ describe('importFontFile', () => {
         const stored = await repo.get(ref.fontId);
         expect(stored).not.toBeNull();
         expect(stored!.mediaType).toBe('font/ttf');
+    });
+
+    it('stores the family name on the record (phase 9, D2)', async () => {
+        const file = new File([textBytes('font-bytes')], 'My Font.ttf');
+        const repo = createResourceRepo(createMemoryAdapter());
+
+        const { ref } = await importFontFile(file, repo);
+
+        const stored = await repo.get(ref.fontId);
+        expect(stored).toMatchObject({ name: 'My Font' });
+        expect(stored!.widthPx).toBeUndefined();
+        expect(stored!.heightPx).toBeUndefined();
     });
 
     it('honours an explicit file MIME and family/name/alt overrides', async () => {

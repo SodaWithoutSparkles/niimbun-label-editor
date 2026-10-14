@@ -6,12 +6,23 @@ import { errorMessage, isRecord } from './guards';
  *
  * Storage only (plan P2): import/export policy, fingerprinting, and asset UI
  * are P8/P5. Keys are the `AssetRef.local.resourceId`.
+ *
+ * Phase 9 (W2, decision D2) adds **optional** display metadata so the media
+ * gallery can render a name/dimensions without decoding the bytes. These are
+ * additive and never required: a legacy record (`{id,mediaType,bytes}`) still
+ * validates, and the UI falls back to the id + a type icon.
  */
 
 export interface ResourceRecord {
     id: string;
     mediaType: string;
     bytes: Uint8Array;
+    /** Display name (source filename / font family). Optional for legacy rows. */
+    name?: string;
+    /** Natural pixel width — images only; absent for fonts/legacy rows. */
+    widthPx?: number;
+    /** Natural pixel height — images only; absent for fonts/legacy rows. */
+    heightPx?: number;
 }
 
 export interface ResourceRepo {
@@ -29,7 +40,12 @@ export const isResourceRecord = (value: unknown): value is ResourceRecord =>
     typeof value.id === 'string' &&
     value.id.length > 0 &&
     typeof value.mediaType === 'string' &&
-    value.bytes instanceof Uint8Array;
+    value.bytes instanceof Uint8Array &&
+    // Optional metadata (D2): accepted when present, never required — a legacy
+    // record without any of these still validates.
+    (value.name === undefined || typeof value.name === 'string') &&
+    (value.widthPx === undefined || typeof value.widthPx === 'number') &&
+    (value.heightPx === undefined || typeof value.heightPx === 'number');
 
 export const createResourceRepo = (adapter: StorageAdapter): ResourceRepo => {
     const repo: ResourceRepo = {

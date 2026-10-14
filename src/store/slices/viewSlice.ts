@@ -20,7 +20,7 @@ export type ZoomMode = 'fit' | 'real' | 'manual';
  * manager, the rest → `GalleryView`). View-only and never persisted: a reload
  * starts on `recent`, matching today's behaviour.
  */
-export type GallerySection = 'recent' | 'paper' | 'templates' | 'csv';
+export type GallerySection = 'recent' | 'paper' | 'templates' | 'csv' | 'media';
 
 export const createViewSlice: StoreSlice = (set) => ({
     /** Active gallery nav section; `recent` is the default resting pane. */

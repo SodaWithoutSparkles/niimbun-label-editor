@@ -8,6 +8,7 @@ import type { CsvRecord } from '../../data/csvRepo';
 import type { LabelDoc } from '../../core/doc/types';
 import type { EditorWarning } from '../../editor/warnings';
 import { CsvPreviewTable } from './CsvPreviewTable';
+import { CsvPickDialog } from './CsvPickDialog';
 import { Select, SettingRow } from '../common/forms';
 
 /**
@@ -75,6 +76,7 @@ export const DataSourceTab: React.FC<DataSourceTabProps> = ({ doc }) => {
     const [loading, setLoading] = useState(false);
     const [attaching, setAttaching] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [pickerOpen, setPickerOpen] = useState(false);
     /**
      * Parse warnings for one (doc, CSV) pair. Keyed rather than bare so a
      * document/CSV switch can never display (or republish) another scope's
@@ -165,15 +167,17 @@ export const DataSourceTab: React.FC<DataSourceTabProps> = ({ doc }) => {
             };
             await csvRepo.put(nextRecord);
             // The doc may have been switched/closed while parsing: never attach to
-            // the wrong doc. The just-stored record is left for the orphan sweep
-            // (see below) rather than deleted on the write path.
+            // the wrong doc. The just-stored record is left for the gallery's
+            // orphan sweep (`src/data/orphans.ts`, surfaced by `CsvSection`)
+            // rather than deleted on the write path.
             if (!mountedRef.current || docIdRef.current !== originDocId) return;
             // One undo entry: attach + reset the sample row. The previous table is
             // intentionally NOT deleted here. The `csvs` store is not part of undo,
             // so deleting the bytes on replace would leave `Ctrl+Z` restoring a
             // `data.csv` ref that points at nothing (panel loses its columns and
-            // the status bar reads `Row: 0`). Orphaned records are reclaimed by a
-            // later cleanup pass, not the write path.
+            // the status bar reads `Row: 0`). Orphaned records are reclaimed by
+            // the gallery's orphan sweep (`src/data/orphans.ts` → `CsvSection`),
+            // not the write path.
             attachCsv({ csvId: nextId, name: file.name });
             setParseWarnings({ docId: originDocId, csvId: nextId, warnings: parsed.warnings });
             // Publish at parse time so the warning center keeps the entries after
@@ -194,6 +198,21 @@ export const DataSourceTab: React.FC<DataSourceTabProps> = ({ doc }) => {
         }
     };
 
+    /**
+     * Attach a table that already exists in the `csvs` store ("Use existing",
+     * phase 9 W3). The clone write (if any) happened in the picker; here the id
+     * is attached and the sample row reset in one undo entry. Parse warnings are
+     * not available for a pre-stored table, so the new scope publishes an empty
+     * group (clearing any previous table's entries).
+     */
+    const handleExistingPick = (csvId: string, name: string) => {
+        setError(null);
+        setParseWarnings(null);
+        const originDocId = docIdRef.current;
+        attachCsv({ csvId, name });
+        setEditorWarnings('csv', { docId: originDocId, scopeId: csvId, warnings: [] });
+    };
+
     const handleDetach = () => {
         setError(null);
         setParseWarnings(null);
@@ -201,8 +220,9 @@ export const DataSourceTab: React.FC<DataSourceTabProps> = ({ doc }) => {
         // dropped, so a newer group (e.g. StrictMode re-fire) survives.
         if (csvId !== undefined) clearEditorWarnings('csv', csvId);
         // Clearing the ref is undoable; the stored bytes are intentionally kept so
-        // an undo can restore the attachment. The orphan sweep reclaims them later
-        // (the `csvs` store is not part of undo).
+        // an undo can restore the attachment. The gallery's orphan sweep
+        // (`src/data/orphans.ts` → `CsvSection`) reclaims them later (the `csvs`
+        // store is not part of undo).
         setDocCsv(null);
     };
 
@@ -219,6 +239,14 @@ export const DataSourceTab: React.FC<DataSourceTabProps> = ({ doc }) => {
                         className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
                     >
                         {t('editor.mfp.csvChoose')}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setPickerOpen(true)}
+                        disabled={!csvRepo}
+                        className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700 disabled:opacity-50"
+                    >
+                        {t('dataSource.useExisting')}
                     </button>
                     {csvId !== undefined && (
                         <button
@@ -299,6 +327,12 @@ export const DataSourceTab: React.FC<DataSourceTabProps> = ({ doc }) => {
                     event.target.value = '';
                     if (file) void handleFile(file);
                 }}
+            />
+
+            <CsvPickDialog
+                open={pickerOpen}
+                onClose={() => setPickerOpen(false)}
+                onPick={handleExistingPick}
             />
         </div>
     );

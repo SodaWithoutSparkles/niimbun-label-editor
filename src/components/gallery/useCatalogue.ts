@@ -1,18 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import type { PaperRecord } from '../../data/paperRepo';
 import { useStore } from '../../store/useStore';
 
 /**
- * Paper-type catalogue access for the gallery's paper-type section (phase 8,
- * W4b).
+ * Repo-agnostic catalogue access for the gallery sections (phase 9, W1).
  *
- * Loads `paperRepo.list()` on mount (and whenever the injected repo identity
- * changes) and exposes `reload` plus two storage-failure-reporting mutations.
+ * Extracted from `usePaperTypes` (phase 8) so the CSV and media sections can
+ * share one shape. The hook knows nothing about *what* it lists: it takes any
+ * repo exposing `list`/`put`/`remove` and pre-resolved failure strings.
+ *
  * Every failure is surfaced — a `list()` rejection flips `error` (the section
  * renders a read-error state) and a failed `put`/`remove` calls
- * `addNotification`, mirroring `gallery.deleteFailed` (`docSlice.ts`). Nothing
- * here is silent.
+ * `addNotification`. Nothing here is silent.
  *
  * StrictMode + the async read: a mount/cleanup/mount replay starts two
  * overlapping `list()` calls. A monotonic token makes only the newest load
@@ -20,24 +18,48 @@ import { useStore } from '../../store/useStore';
  * unmount invalidates any in-flight load).
  */
 
-export interface UsePaperTypesResult {
-    items: PaperRecord[];
+/** The subset of a repo a catalogue needs. `PaperRepo`/`CsvRepo`/… satisfy it. */
+export interface CatalogueRepo<T> {
+    list(): Promise<T[]>;
+    put(record: T): Promise<void>;
+    remove(id: string): Promise<void>;
+}
+
+/**
+ * Failure messages for the mutations. Pass **pre-resolved `t()` strings** — the
+ * hook must not build dynamic i18n keys (that would defeat the typed-key rule).
+ */
+export interface CatalogueMessages {
+    saveFailed: string;
+    deleteFailed: string;
+}
+
+export interface UseCatalogueOptions<T> {
+    /** `null` means storage is not booted: an empty catalogue, never an error. */
+    repo: CatalogueRepo<T> | null;
+    messages: CatalogueMessages;
+}
+
+export interface UseCatalogueResult<T> {
+    items: T[];
     loading: boolean;
     /** A `list()` read failed (distinct from a genuinely empty catalogue). */
     error: boolean;
     reload: () => Promise<void>;
     /** `put` then reload; `false` (and a notification) on failure. */
-    save: (record: PaperRecord) => Promise<boolean>;
+    save: (record: T) => Promise<boolean>;
     /** `remove` then reload; `false` (and a notification) on failure. */
     remove: (id: string) => Promise<boolean>;
 }
 
-export const usePaperTypes = (): UsePaperTypesResult => {
-    const { t } = useTranslation();
-    const paperRepo = useStore((state) => state.paperRepo);
+export const useCatalogue = <T>({
+    repo,
+    messages,
+}: UseCatalogueOptions<T>): UseCatalogueResult<T> => {
     const addNotification = useStore((state) => state.addNotification);
+    const { saveFailed, deleteFailed } = messages;
 
-    const [items, setItems] = useState<PaperRecord[]>([]);
+    const [items, setItems] = useState<T[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
 
@@ -45,7 +67,6 @@ export const usePaperTypes = (): UsePaperTypesResult => {
     const loadTokenRef = useRef(0);
 
     const reload = useCallback(async () => {
-        const repo = paperRepo;
         const token = ++loadTokenRef.current;
         if (!repo) {
             // Storage not booted (or unavailable): empty, not an error — there is
@@ -68,7 +89,7 @@ export const usePaperTypes = (): UsePaperTypesResult => {
             setLoading(false);
             setError(true);
         }
-    }, [paperRepo]);
+    }, [repo]);
 
     useEffect(() => {
         void reload();
@@ -79,41 +100,39 @@ export const usePaperTypes = (): UsePaperTypesResult => {
     }, [reload]);
 
     const save = useCallback(
-        async (record: PaperRecord): Promise<boolean> => {
-            const repo = paperRepo;
+        async (record: T): Promise<boolean> => {
             if (!repo) {
-                addNotification({ type: 'error', message: t('paperTypes.saveFailed') });
+                addNotification({ type: 'error', message: saveFailed });
                 return false;
             }
             try {
                 await repo.put(record);
             } catch {
-                addNotification({ type: 'error', message: t('paperTypes.saveFailed') });
+                addNotification({ type: 'error', message: saveFailed });
                 return false;
             }
             await reload();
             return true;
         },
-        [paperRepo, addNotification, reload, t],
+        [repo, addNotification, reload, saveFailed],
     );
 
     const remove = useCallback(
         async (id: string): Promise<boolean> => {
-            const repo = paperRepo;
             if (!repo) {
-                addNotification({ type: 'error', message: t('paperTypes.deleteFailed') });
+                addNotification({ type: 'error', message: deleteFailed });
                 return false;
             }
             try {
                 await repo.remove(id);
             } catch {
-                addNotification({ type: 'error', message: t('paperTypes.deleteFailed') });
+                addNotification({ type: 'error', message: deleteFailed });
                 return false;
             }
             await reload();
             return true;
         },
-        [paperRepo, addNotification, reload, t],
+        [repo, addNotification, reload, deleteFailed],
     );
 
     return { items, loading, error, reload, save, remove };

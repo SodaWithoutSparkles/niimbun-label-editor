@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Clock, FileText, FolderOpen, Plus, Table2 } from 'lucide-react';
+import { Clock, FileText, FolderOpen, Image as ImageIcon, Plus, Table2 } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import type { GallerySection } from '../../store/slices/viewSlice';
 import { cn } from '../../utils/cn';
@@ -12,6 +12,7 @@ const SECTION_LABEL_KEYS = {
     paper: 'nav.paperManagement',
     templates: 'nav.templates',
     csv: 'nav.dataSource',
+    media: 'nav.media',
 } as const;
 
 const SECTION_ICONS = {
@@ -19,16 +20,18 @@ const SECTION_ICONS = {
     paper: FileText,
     templates: FolderOpen,
     csv: Table2,
+    media: ImageIcon,
 } as const;
 
-const ORDERED_SECTIONS: GallerySection[] = ['recent', 'paper', 'templates', 'csv'];
+const ORDERED_SECTIONS: GallerySection[] = ['recent', 'paper', 'templates', 'csv', 'media'];
 
 /**
- * Gallery nav sidebar: Recent / Paper management / Templates / Data source,
- * plus the `＋ New label` CTA. The active section lives in the store
+ * Gallery nav sidebar: Recent / Paper management / Templates / Data source /
+ * Media, plus the `＋ New label` CTA. The active section lives in the store
  * (`gallerySection`) so `MainLayout` can swap the pane; `Recent` lists the
- * labels while `Paper management` points at the paper-type manager. Templates
- * and CSV stay placeholders (P9).
+ * labels, `Paper management` points at the paper-type manager, `Data source` at
+ * the CSV manager and `Media` at the media manager. `Templates` stays a
+ * placeholder (P9).
  */
 export const NavSidebar: React.FC = () => {
     const { t } = useTranslation();
@@ -105,7 +108,13 @@ export const NavSidebar: React.FC = () => {
                     )
                 ) : (
                     <p className="px-2 py-3 text-xs text-gray-500">
-                        {gallerySection === 'paper' ? t('paperTypes.sidebarHint') : t('nav.comingSoon')}
+                        {gallerySection === 'paper'
+                            ? t('paperTypes.sidebarHint')
+                            : gallerySection === 'csv'
+                              ? t('csvs.sidebarHint')
+                              : gallerySection === 'media'
+                                ? t('media.sidebarHint')
+                                : t('nav.comingSoon')}
                     </p>
                 )}
             </div>

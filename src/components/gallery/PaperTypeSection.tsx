@@ -1,19 +1,19 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus } from 'lucide-react';
 import type { PaperRecord } from '../../data/paperRepo';
 import { useStore } from '../../store/useStore';
 import { mmString } from '../../utils/mm';
 import { confirm } from '../common/dialogs/dialogService';
-import { Input } from '../common/forms';
 import { PaperTypeDialog } from '../paper/PaperTypeDialog';
-import { usePaperTypes } from '../paper/usePaperTypes';
+import { CatalogueLayout, type CatalogueStatus } from './CatalogueLayout';
 import { PaperTypeCard } from './PaperTypeCard';
+import { useCatalogue } from './useCatalogue';
 
 /**
  * Gallery main pane for paper types (phase 8, W4b): a searchable card grid with
- * add / edit / delete / set-default. Modeled on `GalleryView`'s grid so the two
- * catalogue surfaces read the same (P9 reuses this shape for CSV + media).
+ * add / edit / delete / set-default. Since phase 9 (W1) the shell is the shared
+ * {@link CatalogueLayout} and the load/mutation semantics come from
+ * {@link useCatalogue}, so the CSV and media sections read the same.
  *
  * The search is a pure exported predicate ({@link filterPaperTypes}) so it is
  * unit-testable without a DOM.
@@ -47,7 +47,14 @@ export const filterPaperTypes = (items: readonly PaperRecord[], query: string): 
 
 export const PaperTypeSection: React.FC = () => {
     const { t } = useTranslation();
-    const { items, loading, error, reload, remove } = usePaperTypes();
+    const paperRepo = useStore((state) => state.paperRepo);
+    const { items, loading, error, reload, remove } = useCatalogue<PaperRecord>({
+        repo: paperRepo,
+        messages: {
+            saveFailed: t('paperTypes.saveFailed'),
+            deleteFailed: t('paperTypes.deleteFailed'),
+        },
+    });
     const defaultPaperTypeId = useStore((state) => state.defaultPaperTypeId);
     const setDefaultPaperTypeId = useStore((state) => state.setDefaultPaperTypeId);
 
@@ -81,79 +88,50 @@ export const PaperTypeSection: React.FC = () => {
         }
     };
 
-    const body = (() => {
-        if (loading) {
-            return (
-                <p role="status" className="text-sm text-gray-400">
-                    {t('paperTypes.loading')}
-                </p>
-            );
-        }
-        if (error) {
-            return (
-                <p role="alert" className="text-sm text-red-400">
-                    {t('paperTypes.readError')}
-                </p>
-            );
-        }
-        if (items.length === 0) {
-            return <p className="text-sm text-gray-500">{t('paperTypes.empty')}</p>;
-        }
-        if (visible.length === 0) {
-            return <p className="text-sm text-gray-500">{t('paperTypes.searchEmpty', { query })}</p>;
-        }
-        return (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
-                {visible.map((record) => (
-                    <PaperTypeCard
-                        key={record.id}
-                        record={record}
-                        isDefault={defaultPaperTypeId === record.id}
-                        onEdit={() => openEdit(record)}
-                        onDelete={() => {
-                            void handleDelete(record);
-                        }}
-                        onSetDefault={() => setDefaultPaperTypeId(record.id)}
-                    />
-                ))}
-            </div>
-        );
-    })();
+    const status: CatalogueStatus = loading
+        ? { kind: 'loading', message: t('paperTypes.loading') }
+        : error
+          ? { kind: 'error', message: t('paperTypes.readError') }
+          : items.length === 0
+            ? { kind: 'empty', message: t('paperTypes.empty') }
+            : visible.length === 0
+              ? { kind: 'searchEmpty', message: t('paperTypes.searchEmpty', { query }) }
+              : { kind: 'ready' };
 
     return (
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-gray-900">
-            <div className="flex shrink-0 items-center justify-between gap-4 border-b border-gray-700 px-6 py-4">
-                <h1 className="text-lg font-semibold text-gray-100">{t('paperTypes.title')}</h1>
-                <button
-                    type="button"
-                    onClick={openAdd}
-                    className="flex items-center gap-2 rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-500"
-                >
-                    <Plus size={16} />
-                    {t('paperTypes.add')}
-                </button>
-            </div>
-
-            <div className="shrink-0 px-6 pt-4">
-                <Input
-                    value={query}
-                    onChange={setQuery}
-                    placeholder={t('paperTypes.searchPlaceholder')}
-                    aria-label={t('paperTypes.searchPlaceholder')}
-                    className="max-w-sm"
+        <CatalogueLayout
+            title={t('paperTypes.title')}
+            addLabel={t('paperTypes.add')}
+            onAdd={openAdd}
+            search={{
+                value: query,
+                onChange: setQuery,
+                placeholder: t('paperTypes.searchPlaceholder'),
+            }}
+            status={status}
+            dialog={
+                <PaperTypeDialog
+                    open={dialogOpen}
+                    initial={editing}
+                    onClose={() => setDialogOpen(false)}
+                    onSaved={() => {
+                        void reload();
+                    }}
                 />
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto p-6">{body}</div>
-
-            <PaperTypeDialog
-                open={dialogOpen}
-                initial={editing}
-                onClose={() => setDialogOpen(false)}
-                onSaved={() => {
-                    void reload();
-                }}
-            />
-        </div>
+            }
+        >
+            {visible.map((record) => (
+                <PaperTypeCard
+                    key={record.id}
+                    record={record}
+                    isDefault={defaultPaperTypeId === record.id}
+                    onEdit={() => openEdit(record)}
+                    onDelete={() => {
+                        void handleDelete(record);
+                    }}
+                    onSetDefault={() => setDefaultPaperTypeId(record.id)}
+                />
+            ))}
+        </CatalogueLayout>
     );
 };
