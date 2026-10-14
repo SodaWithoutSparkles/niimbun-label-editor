@@ -4,6 +4,8 @@ import { isLabelDoc } from '../../core/doc/validate';
 import { createIdbAdapter } from '../../data/db';
 import { createCsvRepo } from '../../data/csvRepo';
 import { createLabelRepo } from '../../data/labelRepo';
+import { createPaperRepo } from '../../data/paperRepo';
+import { ensurePaperTypesSeeded } from '../../data/paperSeeds';
 import { createResourceRepo } from '../../data/resourceRepo';
 import { createTrustRepo } from '../../data/trustRepo';
 import { trustGateFor } from '../trustGate';
@@ -81,6 +83,7 @@ export const createDocSlice: StoreSlice = (set, get) => {
         labelRepo: null,
         resourceRepo: null,
         csvRepo: null,
+        paperRepo: null,
         trustRepo: null,
         trustGate: null,
         // Bumped by Settings when it revokes/resets trust; the sample-row pass
@@ -94,6 +97,7 @@ export const createDocSlice: StoreSlice = (set, get) => {
         setLabelRepo: (labelRepo) => set({ labelRepo }),
         setResourceRepo: (resourceRepo) => set({ resourceRepo }),
         setCsvRepo: (csvRepo) => set({ csvRepo }),
+        setPaperRepo: (paperRepo) => set({ paperRepo }),
         // The gate shares the repo's session overlay; Settings and the editor
         // must read/write the SAME gate so a revoke lifts a session Allow.
         setTrustRepo: (trustRepo) => set({ trustRepo, trustGate: trustGateFor(trustRepo) }),
@@ -255,6 +259,17 @@ export const createDocSlice: StoreSlice = (set, get) => {
                         }
                         if (!get().csvRepo) {
                             set({ csvRepo: createCsvRepo(adapter) });
+                        }
+                        if (!get().paperRepo) {
+                            set({ paperRepo: createPaperRepo(adapter) });
+                        }
+                        // First-run seed of the built-in catalogue from
+                        // `PAPER_TYPE_SEEDS`. Idempotent (marker-guarded) and
+                        // never throws; the marker stops it resurrecting a
+                        // deleted seed.
+                        const paperRepo = get().paperRepo;
+                        if (paperRepo) {
+                            await ensurePaperTypesSeeded(paperRepo);
                         }
                         if (!get().trustRepo) {
                             const trustRepo = createTrustRepo(adapter);

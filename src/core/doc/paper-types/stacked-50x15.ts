@@ -1,5 +1,5 @@
 import type { Region } from '../types';
-import type { LabelPreset } from './types';
+import type { PaperType } from './types';
 
 /**
  * Two identical 50×15 mm stickers stacked on one 5000×3000 hm (50×30 mm)
@@ -18,10 +18,11 @@ export const stacked50x15Regions = (): Region[] => [
     { kind: 'roundedRect', x: 0, y: 1500, w: 5000, h: 1500, r: 200 },
 ];
 
-export const stacked50x15Preset: LabelPreset = {
+export const stacked50x15PaperType: PaperType = {
     id: 'stacked50x15',
     name: '2× Rounded 50×15 (50×30)',
     backingW: 5000,
     backingH: 3000,
     regions: stacked50x15Regions(),
+    guides: [],
 };

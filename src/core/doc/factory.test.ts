@@ -16,6 +16,10 @@ const GEOMETRY_KEYS = new Set([
     'fontSize',
     'cornerRadius',
     'strokeWidth',
+    'x1',
+    'y1',
+    'x2',
+    'y2',
 ]);
 
 const assertIntegerGeometry = (value: unknown, path = 'doc'): void => {
@@ -65,17 +69,60 @@ describe('createLabelDoc', () => {
         expect(createLabelDoc({ dpi: 12 }).label.dpi).toBe(100);
     });
 
-    it('does not let callers mutate preset regions through the returned doc', () => {
+    it('does not let callers mutate paper-type regions through the returned doc', () => {
         const first = createFtagSpareDoc();
         const second = createFtagSpareDoc();
         (first.label.regions[0] as { x: number }).x = -999;
         expect(second.label.regions[0]).toMatchObject({ x: 0 });
     });
 
-    it('records meta.presetId when created from a preset', () => {
-        expect(createFtagSpareDoc().meta.presetId).toBe('ftagSpare-25x78');
-        expect(createLabelDoc({ preset: 'rounded30x20' }).meta.presetId).toBe('rounded30x20');
-        expect(createLabelDoc().meta.presetId).toBeUndefined();
+    it('records meta.paperTypeId when created from a paper type', () => {
+        expect(createFtagSpareDoc().meta.paperTypeId).toBe('ftagSpare-25x78');
+        expect(createLabelDoc({ paperTypeId: 'rounded30x20' }).meta.paperTypeId).toBe('rounded30x20');
+        expect(createLabelDoc().meta.paperTypeId).toBeUndefined();
+    });
+
+    it('records an unknown user-authored paperTypeId (no built-in preset)', () => {
+        const doc = createLabelDoc({
+            paperTypeId: 'user-123',
+            backingW: 1000,
+            backingH: 500,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 1000, h: 500 }],
+        });
+        // The caller's id is provenance, not just a preset lookup key.
+        expect(doc.meta.paperTypeId).toBe('user-123');
+        // Explicit geometry still wins over the (absent) preset fallback.
+        expect(doc.label.backingW).toBe(1000);
+        expect(doc.label.backingH).toBe(500);
+        expect(doc.label.regions).toEqual([{ kind: 'rect', x: 0, y: 0, w: 1000, h: 500 }]);
+        expect(isLabelDoc(doc).ok).toBe(true);
+    });
+
+    it('copies the paper-type guides onto label.guides (F-tag score line)', () => {
+        expect(createFtagSpareDoc().label.guides).toEqual([
+            { id: 'ftag-spare-score', kind: 'score', line: { x1: 1250, y1: 0, x2: 1250, y2: 3800 } },
+        ]);
+        // A paper type with no guide, and a bare doc, both get an empty list.
+        expect(createLabelDoc({ paperTypeId: 'rounded30x20' }).label.guides).toEqual([]);
+        expect(createLabelDoc().label.guides).toEqual([]);
+    });
+
+    it('lets explicit guides win over the paper type and rounds their hm geometry', () => {
+        const doc = createLabelDoc({
+            paperTypeId: 'ftagSpare-25x78',
+            guides: [{ id: 'g', kind: 'score', line: { x1: 1.4, y1: 2.6, x2: 3.5, y2: 4.4 } }],
+        });
+        expect(doc.label.guides).toEqual([
+            { id: 'g', kind: 'score', line: { x1: 1, y1: 3, x2: 4, y2: 4 } },
+        ]);
+        assertIntegerGeometry(doc);
+    });
+
+    it('does not let callers mutate paper-type guides through the returned doc', () => {
+        const first = createFtagSpareDoc();
+        const second = createFtagSpareDoc();
+        first.label.guides[0]!.line.x1 = -999;
+        expect(second.label.guides[0]!.line.x1).toBe(1250);
     });
 
     it('rounds caller-supplied node geometry (size/fontSize/cornerRadius/points/strokeWidth)', () => {

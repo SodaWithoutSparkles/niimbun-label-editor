@@ -196,12 +196,13 @@ describe('resolveContent — no template execution', () => {
     });
 });
 
-describe('resolveGuides — seam', () => {
-    it('returns [] when the document records no preset', () => {
+describe('resolveGuides — persisted label.guides', () => {
+    it('returns [] when the document has no guides', () => {
         expect(resolveGuides(smallDoc())).toEqual([]);
     });
 
     it('guides are not regions: the score line is absent from label.regions', () => {
+        // The F-tag guide now comes from the preset's data via createLabelDoc.
         const doc = createFtagSpareDoc();
         const guides = resolveGuides(doc);
         expect(guides).toHaveLength(1);

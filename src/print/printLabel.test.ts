@@ -59,7 +59,7 @@ const rect = (id: string, x: number, y: number, w: number, h: number): Node =>
 /** An F-tag spare doc with a filled rect + text inside the flag region (real ink). */
 const ftagDoc = (printDirection?: LabelDoc['label']['printDirection']): LabelDoc =>
     createLabelDoc({
-        preset: 'ftagSpare-25x78',
+        paperTypeId: 'ftagSpare-25x78',
         ...(printDirection ? { printDirection } : {}),
         nodes: [rect('r', 300, 300, 1900, 1400), text('t', 300, 2000, 'PRINT W4')],
     });

@@ -14,6 +14,7 @@ import type {
     ContentSource,
     FontRef,
     GlobalSpec,
+    Guide,
     ImageNode,
     ImageRef,
     LabelDoc,
@@ -98,6 +99,33 @@ const clampRegionExtent = (value: hm, label: string, repairs?: string[]): hm => 
     if (value >= 0) return value;
     repairs?.push(label);
     return 0;
+};
+
+/**
+ * A non-printing guide. Structurally wrong entries are rejected (the collection
+ * helper records the index); the four line coordinates are rounded through the
+ * same `isHm` discipline as regions. An optional `label` is kept only when it is
+ * a string. A guide has no extent, so there is nothing to clamp — a negative
+ * coordinate is a legal line position.
+ */
+export const isGuide = (value: unknown): Guide | undefined => {
+    if (!isRecord(value)) return undefined;
+    if (!isString(value.id) || value.id.length === 0) return undefined;
+    if (value.kind !== 'score') return undefined;
+    if (!isRecord(value.line)) return undefined;
+    const x1 = isHm(value.line.x1);
+    const y1 = isHm(value.line.y1);
+    const x2 = isHm(value.line.x2);
+    const y2 = isHm(value.line.y2);
+    if (x1 === undefined || y1 === undefined || x2 === undefined || y2 === undefined) {
+        return undefined;
+    }
+    return {
+        id: value.id,
+        kind: 'score',
+        line: { x1, y1, x2, y2 },
+        ...(isString(value.label) ? { label: value.label } : {}),
+    };
 };
 
 export const isRegion = (value: unknown, repairs?: string[]): Region | undefined => {
@@ -837,7 +865,7 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
         : undefined;
     if (updatedAt === undefined) errors.push('meta.updatedAt: must be a finite epoch-seconds number');
     const thumb = toThumb(metaRaw.thumb);
-    const presetId = isString(metaRaw.presetId) ? metaRaw.presetId : undefined;
+    const paperTypeId = isString(metaRaw.paperTypeId) ? metaRaw.paperTypeId : undefined;
 
     if (!isRecord(raw.label)) return { ok: false, errors: [...errors, 'label: must be an object'] };
     const labelRaw = raw.label;
@@ -851,6 +879,7 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
     }
     const dpi = normalizeDpi(labelRaw.dpi);
     const regions = toArray(labelRaw.regions, isRegion, 'label.regions', errors, repairs);
+    const guides = toArray(labelRaw.guides, isGuide, 'label.guides', errors, repairs);
     const printDirection = isOneOf(labelRaw.printDirection, PRINT_DIRECTIONS)
         ? labelRaw.printDirection
         : 'top';
@@ -902,13 +931,14 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
                 createdAt: createdAt!,
                 updatedAt: updatedAt!,
                 ...(thumb ? { thumb } : {}),
-                ...(presetId !== undefined ? { presetId } : {}),
+                ...(paperTypeId !== undefined ? { paperTypeId } : {}),
             },
             label: {
                 backingW: backingW!,
                 backingH: backingH!,
                 dpi,
                 regions,
+                guides,
                 printDirection,
             },
             nodes,

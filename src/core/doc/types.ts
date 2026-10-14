@@ -20,6 +20,28 @@ export type Region =
     | { kind: 'circle'; cx: hm; cy: hm; r: hm }
     | { kind: 'polygon'; points: [hm, hm][]; closed: boolean };
 
+/**
+ * Guides seam (ui-spec §5, phase3 action-plan §5).
+ *
+ * A **guide** is a non-printable editor annotation (e.g. the F-tag's grey dashed
+ * semi-cut / fold score line). It is deliberately NOT a `Region`: it never
+ * clips, never prints, and never contributes to `union(regions)` or to
+ * `label.regions`. Appearance is the owner's design; this is data only.
+ *
+ * Derivation: guides travel with the document on `label.guides`. The paper type
+ * (preset) carries the initial set, which `createLabelDoc` copies onto the label
+ * the way it copies `regions`; a source with no declared guide yields `[]`.
+ */
+export interface Guide {
+    id: string;
+    /** `score` = semi-cut/fold; kept open for future guide kinds. */
+    kind: 'score';
+    /** Guide line in label-local hm coordinates. */
+    line: { x1: hm; y1: hm; x2: hm; y2: hm };
+    /** Optional human label (i18n key owned by the UI). */
+    label?: string;
+}
+
 export type NodeType = 'group' | 'text' | 'image' | 'shape' | 'qr' | 'barcode';
 
 /** Local bounding box in hm (integer hundredths of a mm). */
@@ -241,14 +263,19 @@ export interface LabelDoc {
         // longest side, ≤ 64 KB decoded — reject otherwise. Auto updates on
         // save/export. Not user overridable.
         thumb?: { mediaType: string; dataUrl: string; at: number };
-        /** Originating preset id. Drives non-printing guide derivation. */
-        presetId?: string;
+        /**
+         * Originating paper-type id. Provenance only — non-printing guides are
+         * persisted on `label.guides`, never derived from this id.
+         */
+        paperTypeId?: string;
     };
     label: {
         backingW: hm;
         backingH: hm;
         dpi: number; // default 300; printer-reported; clamp 100–1200
         regions: Region[];
+        /** Non-printable editor guides (never clip, print, or join the union). */
+        guides: Guide[];
         printDirection: 'top' | 'right' | 'bottom' | 'left';
     };
     nodes: Node[];

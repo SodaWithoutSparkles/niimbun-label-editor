@@ -6,6 +6,7 @@ import {
     isAssetRef,
     isColorString,
     isGlobalSpec,
+    isGuide,
     isHm,
     isLabelDoc,
     isNode,
@@ -167,6 +168,87 @@ describe('isRegion', () => {
             r: 0,
         });
         expect(circleRepairs.join(' ')).toContain('region.r: negative radius clamped to 0');
+    });
+});
+
+describe('isGuide / label.guides', () => {
+    it('accepts a score guide, rounds float hm, and keeps an optional label', () => {
+        expect(
+            isGuide({
+                id: 'g1',
+                kind: 'score',
+                line: { x1: 1.4, y1: 2.6, x2: 3.5, y2: 4.4 },
+                label: 'Fold',
+            }),
+        ).toEqual({
+            id: 'g1',
+            kind: 'score',
+            line: { x1: 1, y1: 3, x2: 4, y2: 4 },
+            label: 'Fold',
+        });
+        // A non-string label is dropped (absent), never fatal.
+        expect(
+            isGuide({ id: 'g2', kind: 'score', line: { x1: 0, y1: 0, x2: 0, y2: 3800 }, label: 7 }),
+        ).toEqual({ id: 'g2', kind: 'score', line: { x1: 0, y1: 0, x2: 0, y2: 3800 } });
+    });
+
+    it('rejects malformed guides', () => {
+        expect(isGuide(null)).toBeUndefined();
+        expect(isGuide({ kind: 'score', line: { x1: 0, y1: 0, x2: 0, y2: 0 } })).toBeUndefined();
+        expect(isGuide({ id: '', kind: 'score', line: { x1: 0, y1: 0, x2: 0, y2: 0 } })).toBeUndefined();
+        expect(isGuide({ id: 'g', kind: 'fold', line: { x1: 0, y1: 0, x2: 0, y2: 0 } })).toBeUndefined();
+        expect(isGuide({ id: 'g', kind: 'score' })).toBeUndefined();
+        expect(isGuide({ id: 'g', kind: 'score', line: { x1: 0, y1: 0, x2: 0 } })).toBeUndefined();
+        expect(
+            isGuide({ id: 'g', kind: 'score', line: { x1: 0, y1: 0, x2: 0, y2: 'x' } }),
+        ).toBeUndefined();
+        expect(
+            isGuide({ id: 'g', kind: 'score', line: { x1: 0, y1: 0, x2: 0, y2: Number.NaN } }),
+        ).toBeUndefined();
+    });
+
+    it('round-trips guides through isLabelDoc (serialize → parse → serialize)', () => {
+        const raw = validRaw({
+            label: {
+                backingW: 2500,
+                backingH: 7800,
+                dpi: 300,
+                regions: [],
+                printDirection: 'top',
+                guides: [{ id: 'g', kind: 'score', line: { x1: 1250, y1: 0, x2: 1250, y2: 3800 } }],
+            },
+        });
+        const first = isLabelDoc(raw);
+        expect(first.ok).toBe(true);
+        if (!first.ok) return;
+        expect(first.doc.label.guides).toEqual([
+            { id: 'g', kind: 'score', line: { x1: 1250, y1: 0, x2: 1250, y2: 3800 } },
+        ]);
+        const second = isLabelDoc(JSON.parse(JSON.stringify(first.doc)));
+        expect(second.ok).toBe(true);
+        if (!second.ok) return;
+        expect(JSON.stringify(second.doc)).toBe(JSON.stringify(first.doc));
+    });
+
+    it('defaults a missing label.guides to [] and rejects a malformed entry', () => {
+        const absent = isLabelDoc(validRaw());
+        expect(absent.ok).toBe(true);
+        if (!absent.ok) return;
+        expect(absent.doc.label.guides).toEqual([]);
+
+        const bad = isLabelDoc(
+            validRaw({ label: { backingW: 100, backingH: 100, guides: [{ id: 'g', kind: 'score' }] } }),
+        );
+        expect(bad.ok).toBe(false);
+        if (bad.ok) return;
+        expect(bad.errors.join(' ')).toContain('label.guides[0]');
+    });
+
+    it('rejects a non-array guides value instead of blanking it', () => {
+        const result = isLabelDoc(validRaw({ label: { backingW: 100, backingH: 100, guides: {} } }));
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(result.errors.join(' ')).toContain('label.guides: must be an array');
     });
 });
 
@@ -727,20 +809,20 @@ describe('isLabelDoc — acceptance and repair', () => {
         expect(result.doc.meta.updatedAt).toBe(11);
     });
 
-    it('keeps a string meta.presetId and drops a non-string one', () => {
+    it('keeps a string meta.paperTypeId and drops a non-string one', () => {
         const ok = isLabelDoc(
-            validRaw({ meta: { id: 'd', name: 'n', createdAt: 1, updatedAt: 1, presetId: 'ftagSpare-25x78' } }),
+            validRaw({ meta: { id: 'd', name: 'n', createdAt: 1, updatedAt: 1, paperTypeId: 'ftagSpare-25x78' } }),
         );
         expect(ok.ok).toBe(true);
         if (!ok.ok) return;
-        expect(ok.doc.meta.presetId).toBe('ftagSpare-25x78');
+        expect(ok.doc.meta.paperTypeId).toBe('ftagSpare-25x78');
 
         const dropped = isLabelDoc(
-            validRaw({ meta: { id: 'd', name: 'n', createdAt: 1, updatedAt: 1, presetId: 7 } }),
+            validRaw({ meta: { id: 'd', name: 'n', createdAt: 1, updatedAt: 1, paperTypeId: 7 } }),
         );
         expect(dropped.ok).toBe(true);
         if (!dropped.ok) return;
-        expect(dropped.doc.meta.presetId).toBeUndefined();
+        expect(dropped.doc.meta.paperTypeId).toBeUndefined();
     });
 
     it('accepts every AssetRef provenance and FontRef source inside resources', () => {

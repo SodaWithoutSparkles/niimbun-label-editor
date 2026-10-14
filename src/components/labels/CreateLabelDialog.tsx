@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, Trash2 } from 'lucide-react';
 import { hmToMm, mmToHm } from '../../core/hm';
-import { LABEL_PRESETS, type LabelPresetId } from '../../core/doc/label-presets';
+import { PAPER_TYPE_SEEDS } from '../../core/doc/paper-types';
 import type { Region } from '../../core/doc/types';
 import type { CreateLabelSpec } from '../../store/storeTypes';
 import { useStore } from '../../store/useStore';
@@ -24,9 +24,9 @@ const REGION_KIND_KEYS = {
     polygon: 'regionKinds.polygon',
 } as const;
 
-type PresetChoice = LabelPresetId | 'custom';
+type PresetChoice = keyof typeof PRESET_LABEL_KEYS;
 
-const DEFAULT_PRESET: LabelPresetId = 'ftagSpare-25x78';
+const DEFAULT_PRESET: PresetChoice = 'ftagSpare-25x78';
 const DEFAULT_DPI = 300;
 
 /** mm string for an hm value, without trailing `.0`. */
@@ -137,7 +137,7 @@ export const CreateLabelDialog: React.FC<CreateLabelDialogProps> = ({ open, onCl
     // Re-seed the form each time the dialog opens. Idempotent under StrictMode.
     useEffect(() => {
         if (!open) return;
-        const preset = LABEL_PRESETS[DEFAULT_PRESET];
+        const preset = PAPER_TYPE_SEEDS[DEFAULT_PRESET];
         setName(tRef.current(PRESET_LABEL_KEYS[DEFAULT_PRESET]));
         setPresetChoice(DEFAULT_PRESET);
         setBackingW(mmString(preset.backingW));
@@ -152,7 +152,7 @@ export const CreateLabelDialog: React.FC<CreateLabelDialogProps> = ({ open, onCl
         const choice = value as PresetChoice;
         setPresetChoice(choice);
         if (choice === 'custom') return;
-        const preset = LABEL_PRESETS[choice];
+        const preset = PAPER_TYPE_SEEDS[choice];
         setName(t(PRESET_LABEL_KEYS[choice]));
         setBackingW(mmString(preset.backingW));
         setBackingH(mmString(preset.backingH));
@@ -196,7 +196,7 @@ export const CreateLabelDialog: React.FC<CreateLabelDialogProps> = ({ open, onCl
         const dpiValue = Number(dpi);
         const spec: CreateLabelSpec = {
             name: name.trim() || undefined,
-            ...(presetChoice === 'custom' ? { backingW: w, backingH: h } : { preset: presetChoice }),
+            ...(presetChoice === 'custom' ? { backingW: w, backingH: h } : { paperTypeId: presetChoice }),
             dpi: Number.isFinite(dpiValue) && dpiValue > 0 ? Math.round(dpiValue) : DEFAULT_DPI,
             regions,
         };
@@ -222,7 +222,7 @@ export const CreateLabelDialog: React.FC<CreateLabelDialogProps> = ({ open, onCl
     };
 
     const presetOptions = [
-        ...(Object.keys(LABEL_PRESETS) as LabelPresetId[]).map((id) => ({
+        ...(Object.keys(PAPER_TYPE_SEEDS) as Exclude<PresetChoice, 'custom'>[]).map((id) => ({
             value: id,
             label: t(PRESET_LABEL_KEYS[id]),
         })),

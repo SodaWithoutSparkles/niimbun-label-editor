@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LABEL_PRESETS } from './index';
+import { PAPER_TYPE_SEEDS } from './index';
 import { pointInUnion } from './point-in-region';
 import { rounded30x20Regions } from './rounded-30x20';
 
@@ -8,9 +8,11 @@ describe('Rounded 30×20 preset (rounded30x20)', () => {
         expect(rounded30x20Regions()).toEqual([
             { kind: 'roundedRect', x: 0, y: 0, w: 3000, h: 2000, r: 200 },
         ]);
-        expect(LABEL_PRESETS['rounded30x20'].regions).toEqual(rounded30x20Regions());
-        expect(LABEL_PRESETS['rounded30x20'].backingW).toBe(3000);
-        expect(LABEL_PRESETS['rounded30x20'].backingH).toBe(2000);
+        expect(PAPER_TYPE_SEEDS['rounded30x20'].regions).toEqual(rounded30x20Regions());
+        expect(PAPER_TYPE_SEEDS['rounded30x20'].backingW).toBe(3000);
+        expect(PAPER_TYPE_SEEDS['rounded30x20'].backingH).toBe(2000);
+        // A die-cut preset carries no guides.
+        expect(PAPER_TYPE_SEEDS['rounded30x20'].guides).toEqual([]);
     });
 
     it('returns a fresh region array each call', () => {

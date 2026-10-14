@@ -1,5 +1,5 @@
 import type { Region } from '../types';
-import type { LabelPreset } from './types';
+import type { PaperType } from './types';
 
 /**
  * Die-cut label: a single rounded rectangle filling a 5000×3000 hm (50×30 mm)
@@ -9,10 +9,11 @@ export const rounded50x30Regions = (): Region[] => [
     { kind: 'roundedRect', x: 0, y: 0, w: 5000, h: 3000, r: 200 },
 ];
 
-export const rounded50x30Preset: LabelPreset = {
+export const rounded50x30PaperType: PaperType = {
     id: 'rounded50x30',
     name: 'Rounded 50×30 (r 2)',
     backingW: 5000,
     backingH: 3000,
     regions: rounded50x30Regions(),
+    guides: [],
 };

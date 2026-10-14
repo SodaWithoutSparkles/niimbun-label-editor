@@ -80,7 +80,7 @@ const SAMPLE_NODES: Node[] = [
 
 const SAMPLE_DOC: LabelDoc = createLabelDoc({
     name: 'Print CSV smoke',
-    preset: 'rounded50x30',
+    paperTypeId: 'rounded50x30',
     nodes: SAMPLE_NODES,
 });
 

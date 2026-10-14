@@ -215,7 +215,7 @@ const rulerNodes = (): Node[] => {
 const buildSampleDoc = (kind: SampleKind): LabelDoc => {
     const built = createLabelDoc({
         name: kind === 'ruler' ? 'Ruler calibration sample' : 'Print smoke sample',
-        preset: 'rounded50x30',
+        paperTypeId: 'rounded50x30',
         nodes: kind === 'ruler' ? rulerNodes() : sampleNodes,
     });
     if (kind === 'objects') {

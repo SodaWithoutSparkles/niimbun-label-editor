@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createMemoryAdapter, runUpgrade, STORE_NAMES } from './db';
+import { createMemoryAdapter, DB_VERSION, runUpgrade, STORE_NAMES } from './db';
 
 describe('createMemoryAdapter', () => {
     it('round-trips values per store', async () => {
@@ -42,6 +42,17 @@ describe('createMemoryAdapter', () => {
         expect(STORE_NAMES).toContain('trust');
     });
 
+    it('includes papers in STORE_NAMES and bumps DB_VERSION to 3', () => {
+        expect(STORE_NAMES).toContain('papers');
+        expect(DB_VERSION).toBe(3);
+    });
+
+    it('seeds the papers store', async () => {
+        const adapter = createMemoryAdapter({ papers: { p1: { id: 'p1' } } });
+        expect(await adapter.get('papers', 'p1')).toEqual({ id: 'p1' });
+        expect(await adapter.keys('papers')).toEqual(['p1']);
+    });
+
     it('preserves reference identity of values (no copy)', async () => {
         const adapter = createMemoryAdapter();
         const value = new Uint8Array([1, 2, 3]);
@@ -57,7 +68,7 @@ describe('createMemoryAdapter', () => {
     });
 });
 
-describe('runUpgrade (P6 bump-friendly, non-destructive guarantee)', () => {
+describe('runUpgrade (bump-friendly, non-destructive guarantee)', () => {
     /** A stub `IDBDatabase`-like recording created store names. */
     const makeDatabase = (existing: readonly string[]) => {
         const created: string[] = [];
@@ -72,13 +83,13 @@ describe('runUpgrade (P6 bump-friendly, non-destructive guarantee)', () => {
     };
 
     it('creates only the missing stores and never recreates existing ones', () => {
-        // Simulates a v1 → v2 bump: the four v1 stores already exist and only
-        // the new `trust` store is missing.
+        // Simulates a v1 → v3 bump: the four v1 stores already exist and the
+        // two stores added since (`trust` in v2, `papers` in v3) are missing.
         const db = makeDatabase(['labels', 'resources', 'csvs', 'thumbs']);
 
         runUpgrade(db);
 
-        expect(db.created).toEqual(['trust']);
+        expect(db.created).toEqual(['trust', 'papers']);
         expect(db.created).not.toContain('labels');
         expect(db.created).not.toContain('resources');
         expect(db.created).not.toContain('csvs');
@@ -91,6 +102,22 @@ describe('runUpgrade (P6 bump-friendly, non-destructive guarantee)', () => {
         runUpgrade(db);
 
         expect(db.created).toEqual([...STORE_NAMES]);
+    });
+
+    it('adds papers on a v2 → v3 bump without recreating existing stores', () => {
+        // Simulates the v2 → v3 bump: the five v2 stores already exist and only
+        // the new `papers` store is missing. The upgrade is additive, so no
+        // existing store is dropped or recreated (existing records survive).
+        const db = makeDatabase(['labels', 'resources', 'csvs', 'thumbs', 'trust']);
+
+        runUpgrade(db);
+
+        expect(db.created).toEqual(['papers']);
+        expect(db.created).not.toContain('labels');
+        expect(db.created).not.toContain('resources');
+        expect(db.created).not.toContain('csvs');
+        expect(db.created).not.toContain('thumbs');
+        expect(db.created).not.toContain('trust');
     });
 
     it('creates nothing when all stores already exist (bump is a no-op)', () => {

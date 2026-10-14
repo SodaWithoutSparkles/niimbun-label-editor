@@ -5,9 +5,9 @@ import type { ZoomMode } from './slices/viewSlice';
 import type { hm } from '../core/hm';
 import type { FontRef, ImageRef, LabelDoc, Node, Region, GlobalSpec } from '../core/doc/types';
 import type { ResizeOptions, Size } from '../core/doc/geometry';
-import type { LabelPresetId } from '../core/doc/label-presets';
 import type { CsvRepo } from '../data/csvRepo';
 import type { LabelRepo, LabelSummary } from '../data/labelRepo';
+import type { PaperRepo } from '../data/paperRepo';
 import type { ResourceRepo } from '../data/resourceRepo';
 import type { TrustRepo } from '../data/trustRepo';
 import type { TrustGate } from '../core/trust';
@@ -17,7 +17,7 @@ import type { EditorWarningGroup, EditorWarningSource } from '../editor/warnings
 /** Input for the `createLabel` store action — forwarded to `createLabelDoc`. */
 export interface CreateLabelSpec {
     name?: string;
-    preset?: LabelPresetId;
+    paperTypeId?: string;
     backingW?: hm;
     backingH?: hm;
     dpi?: number;
@@ -135,6 +135,15 @@ export interface AppState {
      */
     connectMethod: ConnectMethod;
     setConnectMethod: (method: ConnectMethod) => void;
+    /**
+     * Preferred paper type for a new label, persisted across sessions. Optional
+     * on purpose: unset (`undefined`) is valid and means "no preference", so the
+     * create-label dialog falls back to the first seed / `custom`. Never
+     * document data. The id may dangle if the record is later deleted; the
+     * dialog must tolerate that.
+     */
+    defaultPaperTypeId?: string;
+    setDefaultPaperTypeId: (id: string | undefined) => void;
     resetSettings: () => void;
 
     // Settings window (shared so the global Ctrl/Cmd+, binding can open it)
@@ -178,6 +187,9 @@ export interface AppState {
     /** Parsed CSV table storage; shared adapter with `labelRepo`. */
     csvRepo: CsvRepo | null;
     setCsvRepo: (repo: CsvRepo | null) => void;
+    /** User-authored paper types (backing size + regions + guides); shared adapter with `labelRepo`. */
+    paperRepo: PaperRepo | null;
+    setPaperRepo: (repo: PaperRepo | null) => void;
     /**
      * Template trust decisions (local state, never doc data); shared adapter
      * with `labelRepo`. The editor trust gate and Settings both read it.

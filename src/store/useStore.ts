@@ -34,6 +34,8 @@ const persistedDefaults: PersistedSettings = {
     screenDpi: DEFAULT_SCREEN_DPI,
     gridSpacingHm: DEFAULT_GRID_SPACING_HM,
     connectMethod: DEFAULT_CONNECT_METHOD,
+    // Optional: `undefined` is the "no preference" default (see `storeTypes`).
+    defaultPaperTypeId: undefined,
 };
 
 /**
@@ -149,6 +151,7 @@ export const createAppStore = (storage?: Storage) => {
                     screenDpi: s.screenDpi,
                     gridSpacingHm: s.gridSpacingHm,
                     connectMethod: s.connectMethod,
+                    defaultPaperTypeId: s.defaultPaperTypeId,
                 }),
                 migrate: (persisted) => persisted as PersistedSettings,
                 // `persist`'s default merge is a *shallow* spread over the seed,

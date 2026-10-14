@@ -24,6 +24,7 @@ export type PersistedSettings = Pick<
     | 'screenDpi'
     | 'gridSpacingHm'
     | 'connectMethod'
+    | 'defaultPaperTypeId'
 >;
 
 /**
@@ -166,6 +167,15 @@ export const normalizeConnectMethod = (value: unknown): ConnectMethod | undefine
     isOneOf(value, CONNECT_METHODS) ? value : undefined;
 
 /**
+ * Returns a non-empty paper-type id, or `undefined` when the value is missing,
+ * blank or not a string. `undefined` is a legitimate value (the preference is
+ * optional), so a corrupt blob can only ever clear the preference, never
+ * inject a bogus id.
+ */
+export const normalizeDefaultPaperTypeId = (value: unknown): string | undefined =>
+    isString(value) && value.length > 0 ? value : undefined;
+
+/**
  * Validates the `ui_settings` payload and returns a complete
  * `PersistedSettings`, filling anything absent or malformed from `defaults`.
  */
@@ -191,6 +201,11 @@ export const validatePersistedSettings = (
             normalizeGridSpacingHm(persisted.gridSpacingHm, GRID_SPACING_MIN_HM, GRID_SPACING_MAX_HM) ??
             defaults.gridSpacingHm,
         connectMethod: normalizeConnectMethod(persisted.connectMethod) ?? defaults.connectMethod,
+        // Absent (or unusable) => the caller's default, which is `undefined`:
+        // "no preference". Never coerced to an empty string.
+        defaultPaperTypeId:
+            normalizeDefaultPaperTypeId(persisted.defaultPaperTypeId) ??
+            defaults.defaultPaperTypeId,
     };
 };
 
@@ -215,5 +230,9 @@ export const pickPersistedKeys = (
     if ('screenDpi' in persisted) picked.screenDpi = repaired.screenDpi;
     if ('gridSpacingHm' in persisted) picked.gridSpacingHm = repaired.gridSpacingHm;
     if ('connectMethod' in persisted) picked.connectMethod = repaired.connectMethod;
+    // The `in` guard (not a truthiness check) keeps a present-but-empty value
+    // distinguishable from an absent key: the former repairs to `undefined`
+    // and is allowed to override the seed, the latter falls through to it.
+    if ('defaultPaperTypeId' in persisted) picked.defaultPaperTypeId = repaired.defaultPaperTypeId;
     return picked;
 };

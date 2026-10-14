@@ -5,11 +5,18 @@ import '../../i18n';
 import { useStore } from '../../store/useStore';
 import { GeneralSection } from './GeneralSection';
 import { SettingsModal } from './SettingsModal';
+import type { PaperRepo } from '../../data/paperRepo';
 
 afterEach(() => {
     cleanup();
     // Reset for the next test; every test that assumes 96 seeds it explicitly.
-    useStore.setState({ screenDpi: 96, gridSpacingHm: 500, connectMethod: 'bluetooth' });
+    useStore.setState({
+        screenDpi: 96,
+        gridSpacingHm: 500,
+        connectMethod: 'bluetooth',
+        paperRepo: null,
+        defaultPaperTypeId: undefined,
+    });
 });
 
 // The section now has two numeric inputs (plus the dialog's DPI slider, whose
@@ -104,6 +111,38 @@ describe('GeneralSection printer connection', () => {
 
         fireEvent.change(select, { target: { value: 'serial' } });
         expect(useStore.getState().connectMethod).toBe('serial');
+    });
+});
+
+describe('GeneralSection default paper type (P8)', () => {
+    const paperTypeSelect = () =>
+        screen.getByRole('combobox', { name: /default paper type/i }) as HTMLSelectElement;
+
+    it('is disabled when no paper repo is available yet', () => {
+        useStore.setState({ paperRepo: null });
+        render(<GeneralSection />);
+
+        expect(paperTypeSelect().disabled).toBe(true);
+        expect(screen.getByRole('option', { name: 'None' })).toBeTruthy();
+    });
+
+    it('lists the catalogue and writes the chosen id', async () => {
+        const repo = {
+            list: async () => [{ id: 'p1', name: 'Paper One' }],
+        } as unknown as PaperRepo;
+        useStore.setState({ paperRepo: repo, defaultPaperTypeId: undefined });
+        render(<GeneralSection />);
+
+        const select = paperTypeSelect();
+        expect(select.disabled).toBe(false);
+        await screen.findByRole('option', { name: 'Paper One' });
+
+        fireEvent.change(select, { target: { value: 'p1' } });
+        expect(useStore.getState().defaultPaperTypeId).toBe('p1');
+
+        // Back to the sentinel clears the preference to `undefined`.
+        fireEvent.change(select, { target: { value: '' } });
+        expect(useStore.getState().defaultPaperTypeId).toBeUndefined();
     });
 });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     normalizeBoolean,
     normalizeConnectMethod,
+    normalizeDefaultPaperTypeId,
     normalizeGridSpacingHm,
     normalizeKeyboardShortcuts,
     normalizeLanguage,
@@ -51,6 +52,19 @@ describe('normalizeConnectMethod', () => {
         expect(normalizeConnectMethod(42)).toBeUndefined();
         expect(normalizeConnectMethod(null)).toBeUndefined();
         expect(normalizeConnectMethod(undefined)).toBeUndefined();
+    });
+});
+
+describe('normalizeDefaultPaperTypeId', () => {
+    it('returns a non-empty id verbatim', () => {
+        expect(normalizeDefaultPaperTypeId('ftagSpare-25x78')).toBe('ftagSpare-25x78');
+    });
+
+    it('returns undefined for blank / junk values (unset is legitimate)', () => {
+        expect(normalizeDefaultPaperTypeId('')).toBeUndefined();
+        expect(normalizeDefaultPaperTypeId(42)).toBeUndefined();
+        expect(normalizeDefaultPaperTypeId(null)).toBeUndefined();
+        expect(normalizeDefaultPaperTypeId(undefined)).toBeUndefined();
     });
 });
 
@@ -180,6 +194,22 @@ describe('validatePersistedSettings', () => {
         // Absent => the bluetooth default.
         expect(validatePersistedSettings({}, defaults).connectMethod).toBe('bluetooth');
     });
+
+    it('round-trips a non-empty defaultPaperTypeId and clears blank/invalid ones', () => {
+        expect(
+            validatePersistedSettings({ defaultPaperTypeId: 'ftagSpare-25x78' }, defaults)
+                .defaultPaperTypeId,
+        ).toBe('ftagSpare-25x78');
+        // Blank / wrong-typed => unset (the preference is optional).
+        expect(
+            validatePersistedSettings({ defaultPaperTypeId: '' }, defaults).defaultPaperTypeId,
+        ).toBeUndefined();
+        expect(
+            validatePersistedSettings({ defaultPaperTypeId: 7 }, defaults).defaultPaperTypeId,
+        ).toBeUndefined();
+        // Absent => the (undefined) default.
+        expect(validatePersistedSettings({}, defaults).defaultPaperTypeId).toBeUndefined();
+    });
 });
 
 describe('pickPersistedKeys', () => {
@@ -208,5 +238,17 @@ describe('pickPersistedKeys', () => {
         // An invalid value is repaired to the default, not dropped.
         expect(pickPersistedKeys({ connectMethod: 'wifi' }, defaults)).toEqual({ connectMethod: 'bluetooth' });
         expect('connectMethod' in pickPersistedKeys({}, defaults)).toBe(false);
+    });
+
+    it('picks a validated defaultPaperTypeId only when present', () => {
+        expect(pickPersistedKeys({ defaultPaperTypeId: 'p1' }, defaults)).toEqual({
+            defaultPaperTypeId: 'p1',
+        });
+        expect('defaultPaperTypeId' in pickPersistedKeys({}, defaults)).toBe(false);
+        // A present-but-blank value repairs to `undefined` and still overrides
+        // the seed (`in` guard, not truthiness).
+        const picked = pickPersistedKeys({ defaultPaperTypeId: '' }, defaults);
+        expect('defaultPaperTypeId' in picked).toBe(true);
+        expect(picked.defaultPaperTypeId).toBeUndefined();
     });
 });

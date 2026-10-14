@@ -11,7 +11,7 @@ import {
     regionUnionBounds,
 } from './derive';
 import type { Node } from './types';
-import { LABEL_PRESETS } from './label-presets';
+import { PAPER_TYPE_SEEDS } from './paper-types';
 
 const makeNode = (over: Record<string, unknown>): Node =>
     ({
@@ -189,10 +189,10 @@ describe('regionBounds / regionUnionBounds', () => {
         expect(bounds).toEqual({ x: 0, y: 0, w: 225, h: 300 });
     });
 
-    it('reproduces the F-tag preset union', () => {
-        // Read the real preset, not a private copy of the region numbers: a
+    it('reproduces the F-tag paper-type union', () => {
+        // Read the real paper type, not a private copy of the region numbers: a
         // hardcoded copy could pass while the shipped geometry regressed.
-        const bounds = regionUnionBounds(LABEL_PRESETS['ftagSpare-25x78'].regions);
+        const bounds = regionUnionBounds(PAPER_TYPE_SEEDS['ftagSpare-25x78'].regions);
         expect(bounds).toEqual({ x: 0, y: 0, w: 2500, h: 7800 });
         expect(Number.isInteger(bounds?.x) && Number.isInteger(bounds?.w)).toBe(true);
     });

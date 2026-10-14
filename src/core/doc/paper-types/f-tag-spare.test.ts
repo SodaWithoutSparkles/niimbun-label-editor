@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createFtagSpareDoc } from '../factory';
-import { ftagSpareRegions } from './f-tag-spare';
-import { LABEL_PRESETS } from './index';
+import { ftagSpareGuides, ftagSpareRegions } from './f-tag-spare';
+import { PAPER_TYPE_SEEDS } from './index';
 import { pointInUnion } from './point-in-region';
 
 /** The helper's arithmetic is pinned by the shared `point-in-region` module. */
@@ -27,17 +27,33 @@ describe('F-tag spare preset (ftagSpare-25x78)', () => {
         ]);
         expect(ftagSpareRegions()).toHaveLength(3);
         // The registry must expose the same regions the module builds.
-        expect(LABEL_PRESETS['ftagSpare-25x78'].regions).toEqual(ftagSpareRegions());
+        expect(PAPER_TYPE_SEEDS['ftagSpare-25x78'].regions).toEqual(ftagSpareRegions());
     });
 
     it('is registered under the expected preset id', () => {
-        expect(LABEL_PRESETS['ftagSpare-25x78'].backingW).toBe(2500);
-        expect(LABEL_PRESETS['ftagSpare-25x78'].backingH).toBe(7800);
+        expect(PAPER_TYPE_SEEDS['ftagSpare-25x78'].backingW).toBe(2500);
+        expect(PAPER_TYPE_SEEDS['ftagSpare-25x78'].backingH).toBe(7800);
     });
 
     it('returns a fresh region array each call', () => {
         expect(ftagSpareRegions()).not.toBe(ftagSpareRegions());
         expect(ftagSpareRegions()).toEqual(ftagSpareRegions());
+    });
+
+    it('carries the fold score line as a guide, never as a region', () => {
+        // Owner-pinned vertical semi-cut: x = 1250, y = 0…3800 hm.
+        expect(ftagSpareGuides()).toEqual([
+            { id: 'ftag-spare-score', kind: 'score', line: { x1: 1250, y1: 0, x2: 1250, y2: 3800 } },
+        ]);
+        expect(ftagSpareGuides()).not.toBe(ftagSpareGuides());
+        // The registry must expose the same guides the module builds.
+        expect(PAPER_TYPE_SEEDS['ftagSpare-25x78'].guides).toEqual(ftagSpareGuides());
+        // A guide is not geometry: no region matches the score segment.
+        expect(
+            ftagSpareRegions().some(
+                (r) => r.kind === 'roundedRect' && r.x === 1250 && r.y === 0 && r.h === 3800,
+            ),
+        ).toBe(false);
     });
 });
 
@@ -70,6 +86,6 @@ describe('F-tag spare preset union coverage (caliper geometry)', () => {
         // Guards the exact "dishonest test" failure: if this hardcoded the
         // regions it could pass while the preset regressed. It must be the same
         // array the registry ships.
-        expect(pointInUnion(1800, 1900, LABEL_PRESETS['ftagSpare-25x78'].regions)).toBe(true);
+        expect(pointInUnion(1800, 1900, PAPER_TYPE_SEEDS['ftagSpare-25x78'].regions)).toBe(true);
     });
 });

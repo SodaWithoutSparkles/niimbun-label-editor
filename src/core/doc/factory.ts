@@ -1,7 +1,7 @@
 import { roundHm, type hm } from '../hm';
-import { LABEL_PRESETS, type LabelPresetId } from './label-presets';
+import { PAPER_TYPE_SEEDS } from './paper-types';
 import { normalizeDpi } from './validate';
-import type { LabelDoc, Node, Region, Transform } from './types';
+import type { Guide, LabelDoc, Node, Region, Transform } from './types';
 
 /** Mint a fresh, globally-unique label id (plan decision 39). */
 export const newLabelId = (): string => {
@@ -70,6 +70,22 @@ const roundTransform = (transform: Transform): Transform => ({
 });
 
 /**
+ * Round the hm geometry of a caller-supplied guide. `createLabelDoc` accepts
+ * `guides` from UI code (and copies a paper type's), so the four line coordinates go
+ * through the same integer discipline as a region's `x`/`y`: a float would
+ * otherwise persist verbatim while `parseDoc` rounds on read.
+ */
+const roundGuide = (guide: Guide): Guide => ({
+    ...guide,
+    line: {
+        x1: safeRoundHm(guide.line.x1),
+        y1: safeRoundHm(guide.line.y1),
+        x2: safeRoundHm(guide.line.x2),
+        y2: safeRoundHm(guide.line.y2),
+    },
+});
+
+/**
  * Round the hm geometry a caller attached to a node: the transform, the optional
  * `size`, `fontSize`, `cornerRadius`, `strokeWidth`, and any `points` vertices.
  * Non-hm numeric props (letterSpacing, lineHeight, rotation, scale) pass through.
@@ -114,11 +130,12 @@ export const roundNode = (node: Node): Node => {
 export interface CreateLabelDocOptions {
     id?: string;
     name?: string;
-    preset?: LabelPresetId;
+    paperTypeId?: string;
     backingW?: hm;
     backingH?: hm;
     dpi?: number;
     regions?: Region[];
+    guides?: Guide[];
     nodes?: Node[];
     printDirection?: LabelDoc['label']['printDirection'];
     /** Epoch seconds; injectable so tests are deterministic. */
@@ -127,7 +144,7 @@ export interface CreateLabelDocOptions {
 
 /** Build a valid `LabelDoc` v1. Dates are epoch seconds, never ms. */
 export const createLabelDoc = (options: CreateLabelDocOptions = {}): LabelDoc => {
-    const preset = options.preset ? LABEL_PRESETS[options.preset] : undefined;
+    const preset = options.paperTypeId ? PAPER_TYPE_SEEDS[options.paperTypeId] : undefined;
     const now = Math.floor(options.now ?? Date.now() / 1000);
 
     return {
@@ -137,7 +154,7 @@ export const createLabelDoc = (options: CreateLabelDocOptions = {}): LabelDoc =>
             name: options.name ?? preset?.name ?? '',
             createdAt: now,
             updatedAt: now,
-            ...(preset ? { presetId: preset.id } : {}),
+            ...(options.paperTypeId !== undefined ? { paperTypeId: options.paperTypeId } : {}),
         },
         label: {
             backingW: roundHm(options.backingW ?? preset?.backingW ?? DEFAULT_BACKING_W),
@@ -145,6 +162,9 @@ export const createLabelDoc = (options: CreateLabelDocOptions = {}): LabelDoc =>
             dpi: normalizeDpi(options.dpi ?? 300),
             regions: (options.regions ?? preset?.regions.map(clone) ?? []).map((region) =>
                 roundRegion(region),
+            ),
+            guides: (options.guides ?? preset?.guides.map(clone) ?? []).map((guide) =>
+                roundGuide(guide),
             ),
             printDirection: options.printDirection ?? 'top',
         },
@@ -155,5 +175,5 @@ export const createLabelDoc = (options: CreateLabelDocOptions = {}): LabelDoc =>
 };
 
 export const createFtagSpareDoc = (
-    options: Omit<CreateLabelDocOptions, 'preset'> = {},
-): LabelDoc => createLabelDoc({ ...options, preset: 'ftagSpare-25x78' });
+    options: Omit<CreateLabelDocOptions, 'paperTypeId'> = {},
+): LabelDoc => createLabelDoc({ ...options, paperTypeId: 'ftagSpare-25x78' });

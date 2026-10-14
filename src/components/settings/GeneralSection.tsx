@@ -42,6 +42,7 @@ export const GeneralSection: React.FC = () => {
     const languageId = useId();
     const autoSaveId = useId();
     const connectMethodId = useId();
+    const defaultPaperTypeId = useId();
     const screenDpiId = useId();
     const gridSpacingId = useId();
     const language = useStore((state) => state.language);
@@ -50,6 +51,9 @@ export const GeneralSection: React.FC = () => {
     const toggleAutoSave = useStore((state) => state.toggleAutoSave);
     const connectMethod = useStore((state) => state.connectMethod);
     const setConnectMethod = useStore((state) => state.setConnectMethod);
+    const paperRepo = useStore((state) => state.paperRepo);
+    const defaultPaperTypeIdValue = useStore((state) => state.defaultPaperTypeId);
+    const setDefaultPaperTypeId = useStore((state) => state.setDefaultPaperTypeId);
     const screenDpi = useStore((state) => state.screenDpi);
     const setScreenDpi = useStore((state) => state.setScreenDpi);
     const gridSpacingHm = useStore((state) => state.gridSpacingHm);
@@ -59,6 +63,11 @@ export const GeneralSection: React.FC = () => {
     const [screenDpiDraft, setScreenDpiDraft] = useState(String(screenDpi));
     const [gridSpacingDraft, setGridSpacingDraft] = useState(String(gridSpacingHm / HM_PER_MM));
     const [calibrationOpen, setCalibrationOpen] = useState(false);
+    // The paper-type catalogue, loaded lazily from the shared `paperRepo`. Kept
+    // minimal (id + name) — the W4 gallery owns the full record model.
+    const [paperTypeOptions, setPaperTypeOptions] = useState<{ value: string; label: string }[]>(
+        [],
+    );
 
     // Keep the draft in step with the committed value (external change / reset).
     useEffect(() => {
@@ -68,6 +77,30 @@ export const GeneralSection: React.FC = () => {
     useEffect(() => {
         setGridSpacingDraft(String(gridSpacingHm / HM_PER_MM));
     }, [gridSpacingHm]);
+
+    // Lazy catalogue load. The `cancelled` flag keeps a StrictMode double-effect
+    // (and a late resolve after `paperRepo` swaps) from clobbering a newer list;
+    // a read failure degrades to the "None" option only.
+    useEffect(() => {
+        if (!paperRepo) {
+            setPaperTypeOptions([]);
+            return;
+        }
+        let cancelled = false;
+        void paperRepo
+            .list()
+            .then((records) => {
+                if (cancelled) return;
+                setPaperTypeOptions(records.map((record) => ({ value: record.id, label: record.name })));
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setPaperTypeOptions([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [paperRepo]);
 
     /** Commit the typed DPI; an unparseable value reverts to the committed one. */
     const commitScreenDpi = () => {
@@ -100,6 +133,12 @@ export const GeneralSection: React.FC = () => {
     const connectMethodOptions = useMemo(
         () => CONNECT_METHODS.map((value) => ({ value, label: t(CONNECT_METHOD_LABEL_KEYS[value]) })),
         [t]
+    );
+
+    // `''` is the "no preference" sentinel; the store owns `undefined`.
+    const defaultPaperTypeOptions = useMemo(
+        () => [{ value: '', label: t('settings.general.defaultPaperTypeNone') }, ...paperTypeOptions],
+        [t, paperTypeOptions]
     );
 
     return (
@@ -135,6 +174,21 @@ export const GeneralSection: React.FC = () => {
                         if (next) setConnectMethod(next);
                     }}
                     options={connectMethodOptions}
+                />
+            </SettingRow>
+            <SettingRow
+                label={t('settings.general.defaultPaperType')}
+                description={t('settings.general.defaultPaperTypeDescription')}
+                htmlFor={defaultPaperTypeId}
+            >
+                <Select
+                    id={defaultPaperTypeId}
+                    value={defaultPaperTypeIdValue ?? ''}
+                    // No catalogue yet (storage still booting, or read failed):
+                    // the row is still shown, but cannot be edited.
+                    disabled={!paperRepo}
+                    onChange={(value) => setDefaultPaperTypeId(value === '' ? undefined : value)}
+                    options={defaultPaperTypeOptions}
                 />
             </SettingRow>
             <SettingRow

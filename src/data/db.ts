@@ -16,12 +16,13 @@ import { ensureLegacyMigrated } from './migrate';
  *     existing database is never recreated and existing records survive.
  */
 
-export type StoreName = 'labels' | 'resources' | 'csvs' | 'thumbs' | 'trust';
+export type StoreName = 'labels' | 'resources' | 'csvs' | 'thumbs' | 'trust' | 'papers';
 
 export const DB_NAME = 'labeleditor.v1';
-// v2 added the `trust` store (P6). The upgrade is additive: `runUpgrade` only
-// creates stores that do not already exist, so v1 data is preserved.
-export const DB_VERSION = 2;
+// v2 added the `trust` store (P6); v3 added `papers` (P8). The upgrade is
+// additive: `runUpgrade` only creates stores that do not already exist, so
+// existing data is preserved.
+export const DB_VERSION = 3;
 
 export const STORE_NAMES: readonly StoreName[] = [
     'labels',
@@ -29,6 +30,7 @@ export const STORE_NAMES: readonly StoreName[] = [
     'csvs',
     'thumbs',
     'trust',
+    'papers',
 ];
 
 /** One failing record in a bulk operation, tagged with the record it belongs to. */
@@ -64,6 +66,7 @@ interface LabelEditorDB extends DBSchema {
     csvs: { key: string; value: unknown };
     thumbs: { key: string; value: Blob };
     trust: { key: string; value: unknown };
+    papers: { key: string; value: unknown };
 }
 
 const createAdapterFromDb = (db: IDBPDatabase<LabelEditorDB>): StorageAdapter => {
@@ -184,6 +187,7 @@ export const createMemoryAdapter = (
         csvs: new Map(),
         thumbs: new Map(),
         trust: new Map(),
+        papers: new Map(),
     };
 
     if (initial) {

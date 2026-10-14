@@ -81,6 +81,13 @@ export const createSettingsSlice: StoreSlice = (set) => ({
     connectMethod: DEFAULT_CONNECT_METHOD,
     setConnectMethod: (connectMethod) => set({ connectMethod }),
 
+    // Preferred paper type for a new label (§11, P8). Optional on purpose: an
+    // unset preference means "no default", so the create-label dialog falls
+    // back to the first seed / `custom`. Persisted with the other global
+    // settings; never document data.
+    defaultPaperTypeId: undefined,
+    setDefaultPaperTypeId: (defaultPaperTypeId) => set({ defaultPaperTypeId }),
+
     // Settings-window open state lives in the store (not `Header` local state)
     // so the global Ctrl/Cmd+, handler can open it without prop-drilling.
     isSettingsOpen: false,
@@ -95,5 +102,6 @@ export const createSettingsSlice: StoreSlice = (set) => ({
         screenDpi: DEFAULT_SCREEN_DPI,
         gridSpacingHm: DEFAULT_GRID_SPACING_HM,
         connectMethod: DEFAULT_CONNECT_METHOD,
+        defaultPaperTypeId: undefined,
     }),
 });

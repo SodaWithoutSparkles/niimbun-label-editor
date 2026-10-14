@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAppStore } from './useStore';
 import { createMemoryAdapter } from '../data/db';
 import { createLabelRepo } from '../data/labelRepo';
-import { LABEL_PRESETS } from '../core/doc/label-presets';
+import { PAPER_TYPE_SEEDS } from '../core/doc/paper-types';
 import { createLabelDoc } from '../core/doc/factory';
 import type { LabelDoc, Node, Region } from '../core/doc/types';
 
@@ -72,7 +72,7 @@ describe('docSlice — create → reload → reopen', () => {
         store1.getState().setLabelRepo(createLabelRepo(adapter));
 
         const created = await store1.getState().createLabel({
-            preset: 'ftagSpare-25x78',
+            paperTypeId: 'ftagSpare-25x78',
             name: 'F-tag spare',
         });
         expect(created).not.toBeNull();
@@ -128,7 +128,7 @@ describe('docSlice — create → reload → reopen', () => {
         const store = createAppStore(makeStorage());
         store.getState().setLabelRepo(createLabelRepo(adapter));
 
-        const created = await store.getState().createLabel({ preset: 'ftagSpare-25x78' });
+        const created = await store.getState().createLabel({ paperTypeId: 'ftagSpare-25x78' });
         expect(created).not.toBeNull();
 
         await store.getState().deleteLabel(created!.meta.id);
@@ -171,7 +171,7 @@ describe('docSlice — create → reload → reopen', () => {
         // Seed one good label through a separate store/repo over the same adapter.
         const seedStore = createAppStore(makeStorage());
         seedStore.getState().setLabelRepo(createLabelRepo(adapter));
-        const good = await seedStore.getState().createLabel({ preset: 'ftagSpare-25x78', name: 'Good' });
+        const good = await seedStore.getState().createLabel({ paperTypeId: 'ftagSpare-25x78', name: 'Good' });
         expect(good).not.toBeNull();
 
         const store = createAppStore(makeStorage());
@@ -185,17 +185,17 @@ describe('docSlice — create → reload → reopen', () => {
         expect(notifications.some((n) => n.type === 'error')).toBe(true);
     });
 
-    it("persists the dialog's exact submit spec through createLabel (regions + preset)", async () => {
+    it("persists the dialog's exact submit spec through createLabel (regions + paperTypeId)", async () => {
         const adapter = createMemoryAdapter();
         const store = createAppStore(makeStorage());
         store.getState().setLabelRepo(createLabelRepo(adapter));
 
         // Exactly what `CreateLabelDialog.handleSubmit` builds for the F-tag
-        // default: it always passes `regions`, and the preset (not backingW/H).
-        const preset = LABEL_PRESETS['ftagSpare-25x78'];
+        // default: it always passes `regions`, and the paper type (not backingW/H).
+        const preset = PAPER_TYPE_SEEDS['ftagSpare-25x78'];
         const spec = {
             name: 'F-tag spare 25×78',
-            preset: 'ftagSpare-25x78' as const,
+            paperTypeId: 'ftagSpare-25x78' as const,
             dpi: 300,
             regions: preset.regions.map((region) => structuredClone(region)),
         };
@@ -231,7 +231,7 @@ describe('docSlice — create → reload → reopen', () => {
         store.getState().setLabelRepo(repo);
 
         await expect(
-            store.getState().createLabel({ preset: 'ftagSpare-25x78' }),
+            store.getState().createLabel({ paperTypeId: 'ftagSpare-25x78' }),
         ).resolves.toBeNull();
     });
 });

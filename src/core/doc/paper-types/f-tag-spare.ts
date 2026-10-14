@@ -1,5 +1,5 @@
-import type { Region } from '../types';
-import type { LabelPreset } from './types';
+import type { Guide, Region } from '../types';
+import type { PaperType } from './types';
 
 /**
  * F-tag spare preset regions, backing 2500×7800 hm (25×78 mm). Re-measured
@@ -27,9 +27,9 @@ import type { LabelPreset } from './types';
  *      overkill for a ~2 mm area — so the abutting rects are left as measured and
  *      the small bite is accepted. Do NOT overlap the regions or add a polygon.
  *   2. **The grey dashed semi-cut / score line (fold-half guide) is NOT geometry.**
- *      It is a physical fold score; it never clips or prints. A future editor may
- *      show it as a non-printable guide overlay (P3 seam, see the P3 action plan);
- *      it is never a `Region` and never contributes to `union(regions)`.
+ *      It is a physical fold score; it never clips or prints. It is carried as a
+ *      non-printable `Guide` (see `ftagSpareGuides`), never a `Region`, and never
+ *      contributes to `union(regions)`.
  *
  * The `flag`/`spare`/`tail` names are descriptive comments only — regions carry
  * no role/id (decision 25).
@@ -43,10 +43,28 @@ export const ftagSpareRegions = (): Region[] => [
     { kind: 'roundedRect', x: 1500, y: 0, w: 725, h: 7800, r: 200 },
 ];
 
-export const ftagSparePreset: LabelPreset = {
+/**
+ * F-tag spare fold score line — a non-printable **guide**, not geometry.
+ *
+ * Owner-pinned (2026-10-04): the grey semi-cut is a **vertical** segment running
+ * down the middle of the flag, at `x = 12.5 mm` (half of the 25 mm width), from
+ * `y = 0` to `y = 38 mm` (half of the 78 mm height). In hm that is a segment at
+ * `x = 1250`, spanning `y = 0 … 3800`. `createLabelDoc` copies these onto
+ * `label.guides` exactly as it copies `regions`.
+ */
+export const ftagSpareGuides = (): Guide[] => [
+    {
+        id: 'ftag-spare-score',
+        kind: 'score',
+        line: { x1: 1250, y1: 0, x2: 1250, y2: 3800 },
+    },
+];
+
+export const ftagSparePaperType: PaperType = {
     id: 'ftagSpare-25x78',
     name: 'F-tag spare 25×78',
     backingW: 2500,
     backingH: 7800,
     regions: ftagSpareRegions(),
+    guides: ftagSpareGuides(),
 };

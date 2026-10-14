@@ -14,6 +14,7 @@ const sampleDoc = (): LabelDoc => ({
         backingH: 7800,
         dpi: 300,
         regions: [{ kind: 'rect', x: 0, y: 0, w: 2500, h: 7800 }],
+        guides: [],
         printDirection: 'top',
     },
     nodes: [
