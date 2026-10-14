@@ -40,11 +40,6 @@ export const PaperTypeCard: React.FC<PaperTypeCardProps> = ({
                     <div className="truncate text-sm font-medium text-gray-100" title={name}>
                         {name}
                     </div>
-                    {isDefault && (
-                        <span className="shrink-0 rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-                            {t('paperTypes.defaultBadge')}
-                        </span>
-                    )}
                 </div>
                 <div className="text-xs text-gray-400">
                     {t('paperTypes.dimensions', { w: mmString(record.backingW), h: mmString(record.backingH) })}
@@ -68,8 +63,7 @@ export const PaperTypeCard: React.FC<PaperTypeCardProps> = ({
                             : 'border-gray-600 text-gray-300 hover:bg-gray-700',
                     )}
                 >
-                    <Star size={14} />
-                    <span>{isDefault ? t('paperTypes.isDefault') : t('paperTypes.setDefault')}</span>
+                    <Star size={16} fill={isDefault ? 'currentColor' : 'none'} />
                 </button>
 
                 <div className="flex shrink-0 items-center gap-1">

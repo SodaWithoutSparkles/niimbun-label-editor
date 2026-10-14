@@ -321,7 +321,6 @@
     "deleteConfirm": "Delete \"{{name}}\"? This cannot be undone.",
     "setDefault": "Set as default",
     "isDefault": "Default for new labels",
-    "defaultBadge": "Default",
     "loading": "Loading paper types…",
     "readError": "Could not load paper types.",
     "deleteFailed": "Could not delete the paper type.",

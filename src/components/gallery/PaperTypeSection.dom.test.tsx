@@ -69,7 +69,7 @@ describe('PaperTypeSection', () => {
         render(<PaperTypeSection />);
 
         await screen.findByText('F-tag spare');
-        expect(screen.getByText('Default')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Default for new labels' })).toBeDisabled();
 
         fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0]!);
 
@@ -101,7 +101,8 @@ describe('PaperTypeSection', () => {
         fireEvent.click(screen.getAllByRole('button', { name: 'Set as default' })[0]!);
 
         expect(useStore.getState().defaultPaperTypeId).toBe('p1');
-        expect(screen.getByText('Default')).toBeInTheDocument();
+        const defaultBtn = screen.getByRole('button', { name: 'Default for new labels' });
+        expect(defaultBtn).toBeDisabled();
     });
 
     it('shows the read-error state when list() rejects', async () => {
