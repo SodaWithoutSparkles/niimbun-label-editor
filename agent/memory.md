@@ -15,12 +15,13 @@ Label editor for NIIMBOT thermal printers (React 19, TypeScript, Tailwind v4, zu
 - [`niimblue-reference.md`](memory/niimblue-reference.md) — what the niim.blue clone (`references/niimblue/`, gitignored) does, and where our plan beats / should adopt it. Read before P2–P8.
 - [`ui-design-workflow.md`](memory/ui-design-workflow.md) — **owner designs the UI** (screenshot/mspaint = spec; never redesign), and the label-editor shell direction (bounded canvas, keep layer stack, shrink tool rail, reserve right-side object config). Read before any UI-facing phase.
 - [`warning-center.md`](memory/warning-center.md) — the 5th MFP "Warnings" tab: the `editorWarnings` slice, the `previewWarnings` pure builders, the producer/scoping rules (CSV parse-time publish, hidden-node exclusion, font-effect keying), and the "QR data is arbitrary text" rule. Read before touching any warning producer or the Warnings tab.
+- [`paper-types.md`](memory/paper-types.md) — **P8** paper-type catalogue (`paperRepo` + `'papers'` store), first-run seeding (per-record `has`-gated marker), guides as **persisted doc data** (`LabelDoc.label.guides`), the main-pane paper-type UI, and the preview canvas (nonzero silhouette + separate guide pass). Read before touching the catalogue, `factory.ts` guides, or the create-label dialog.
 - [`tech-debt.md`](memory/tech-debt.md) — **debt register**: known deliberate debt carried across phases (print/render/editor/assets/CSV/trust). Check before planning a phase; add an item instead of leaving debt only in a handoff.
 
 ## Agent workflow
 
 - **Parallel fan-out with background subagents.** `subagent` supports `background: true`: it returns immediately with a `sessionID` and wakes the coordinator when the child finishes. Dispatch independent tasks in one turn in background mode, then continue other work — do not poll or sleep. Verify each: the wake-up notification carries the child's final text. Use `sessionID` to resume the same child (e.g. after a `needs-info`).
-- **Reviewer routing (owner instruction, 2026-10-03).** Use **`experimental-review` as the primary reviewer** — its model is a trial that may vanish, and it has repeatedly outperformed `review`/`review-alt` here (P2: it caught exit-criterion bugs the first pass missed). Keep `review-alt` as the fallback for when it disappears; `review-fast` still suffices for mechanical/narrow re-reviews. Re-check availability before the ~2026-10-10 window.
+- **Reviewer routing (owner instruction, 2026-10-10).** Use **`review` as the primary reviewer**; `review-alt` is the fallback when `review`'s model is region-blocked, and `review-fast` suffices for mechanical/narrow re-reviews. (The earlier 2026-10-03 note preferring `experimental-review` is retired.)
 
 
 ## Essentials
@@ -35,4 +36,4 @@ Label editor for NIIMBOT thermal printers (React 19, TypeScript, Tailwind v4, zu
 - `<React.StrictMode>` is active — lifecycle effects fire twice; dialog/portal code must be idempotent.
 - `cn()` (`src/utils/cn.ts`) = `twMerge(clsx(...))`; use it rather than string-concatenating class names.
 - Settings window opens via OptionsMenu or `Ctrl/Cmd+,`; language lives in the settings store and drives `i18n.changeLanguage`.
-- User: i18n `en.json` can be handled later after round finished. Workflow: dispatch parallel first (without edits to en.json), just let agents report missing keys and then do a single pass to add them all at once (no per-phase edits to en.json). Speeds up the round and avoids merge conflicts.
+- **i18n workflow (owner override 2026-10-12):** the earlier "batch all `en.json` edits to the end of the round" rule is **superseded**. Agents edit `en.json` **directly in their phase** — including key **deletions** and value edits. Typed `t()` keys make a stale reference a `tsc` error, which is the safety net. Still: **one `en.json` writer per wave**, and agents report any key they couldn't add.

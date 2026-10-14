@@ -34,5 +34,7 @@ The template is a freeform drawing app; the label editor is not. Do **not** inhe
 
 - Regions stay **pure geometry**; per-region features (e.g. mirroring) are **editor configuration addressed by
   region index**, never stored as region fields — see `niimblue-reference.md`.
-- Non-printable guides (e.g. the F-tag grey semi-cut score line) are **not** regions and never clip/print;
-  they appear via an editor guide overlay seam only — see `phase3_action-plan.md` §5.
+- Non-printable guides (e.g. the F-tag grey semi-cut score line) are **not** regions and never
+  clip/print. Since **P8** they are **persisted doc data** — `LabelDoc.label.guides`, carried from the
+  paper type by `createLabelDoc`, read by `resolveGuides(doc)` — **not** an id-keyed overlay seam
+  (the old `PRESET_GUIDES` lookup is gone). See [`paper-types.md`](paper-types.md).
