@@ -150,3 +150,17 @@ Global data tabs, or the sample-row preview.
   `performance.getEntriesByType('resource')`.
 - The suite is ~23 s; `vitest.config.ts` still pins `testTimeout: 15000` from P5
   and could likely return to the default now.
+
+## Gallery CSV management + orphan sweep (P9)
+
+- `CsvSection` (main pane when `gallerySection === 'csv'`) lists `csvRepo` records: **upload** (reuses
+  `parseCsvFile` from `src/data/csvImport.ts` — no reimplemented parser), read-only **view**
+  (`CsvViewDialog`, ≤50 rows + a truncation note), **rename**, **delete** (confirm). Built on the shared
+  `useCatalogue` + `CatalogueLayout` (P9 W1a) extracted from the P8 paper-type shell; `filterCsvs` is a
+  pure predicate (name + joined columns).
+- CSV **attach** stays in `editorSlice` (`setDocCsv`/`attachCsv`); the gallery never attaches. The editor's
+  `DataSourceTab` gains "Use existing": attach an existing `csvId` (**reference**) or a cloned record (**clone**).
+- **Orphan sweep** (`src/data/orphans.ts`): `collectReferencedIds(docs)` + `findOrphanIds(all, referenced)`.
+  Conservative — a stored CSV is referenced if any doc's `doc.data.csv?.csvId` matches. `useOrphans` loads
+  it (O(docs) `get()`, non-throwing per doc) and both the CSV and Media sections badge unused records +
+  offer "Delete unused (N)". Sweep cost = **D-49**; an in-flight clone `put` can orphan a record = **D-48**.

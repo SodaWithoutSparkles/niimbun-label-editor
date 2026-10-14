@@ -99,3 +99,18 @@ Real-canvas tests via `src/test/canvasHarness.ts`. Heavy render tests need the
 raised `testTimeout` (15 s) — they flake at the 5 s default under full-suite
 parallel load. bwip-js is exercised at the engine level; injected `resolveImage`
 keeps tests offline.
+
+## Media management + "use existing" (P9)
+
+- `ResourceRecord` now carries **optional** `name?`, `widthPx?`, `heightPx?` (set on import in
+  `editor/render/assetImport.ts`); legacy `{id,mediaType,bytes}` rows still validate. **No DB bump** —
+  the `'resources'` store is reused.
+- `MediaSection` (nav `media`) lists `resourceRepo` records with an object-URL `<img>` preview
+  (created + **revoked** in an effect) or a font icon; rename + delete; built on
+  `useCatalogue`/`CatalogueLayout`.
+- **"Use existing" import** (`ImageImportDialog`): pick a stored image and either **Reference**
+  (`ImageRef.imageId` = a new id, `source = {kind:'local', resourceId: <existing>}` — **no write**; the
+  asset provider keys on `source.resourceId`, so a reference renders) or **Clone** (`resourceRepo.put` a
+  copy under a new id, `imageId === source.resourceId`). CSV equivalent via `CsvPickDialog`/`DataSourceTab`.
+- Async pickers use a per-operation **generation token** (not a shared boolean), so a close/reopen
+  mid-flight cannot fire a stale continuation against a later session.
