@@ -115,6 +115,32 @@ describe('PopoverSlider portal', () => {
         expect(queryPanel()).toBeNull();
     });
 
+    it('focuses the number input when the panel opens', () => {
+        render(<PopoverSlider value={5} onChange={() => {}} />);
+
+        fireEvent.click(screen.getByText('5'));
+
+        const input = screen.getByRole('spinbutton') as HTMLInputElement;
+        expect(document.activeElement).toBe(input);
+        // Caret at the end where the browser supports it (number inputs may not).
+        if (input.selectionStart !== null) {
+            expect(input.selectionStart).toBe(input.value.length);
+        }
+    });
+
+    it('focuses the input on open under StrictMode without a duplicate panel', () => {
+        render(
+            <StrictMode>
+                <PopoverSlider value={5} onChange={() => {}} />
+            </StrictMode>,
+        );
+
+        fireEvent.click(screen.getByText('5'));
+
+        expect(screen.getAllByTestId('popover-slider-panel')).toHaveLength(1);
+        expect(document.activeElement).toBe(screen.getByRole('spinbutton'));
+    });
+
     it('survives StrictMode double-mount with a single panel and working dismissal', () => {
         render(
             <StrictMode>

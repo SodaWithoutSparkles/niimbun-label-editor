@@ -83,6 +83,7 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
     const [isOpen, setIsOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const panelRef = useRef<HTMLDivElement | null>(null);
+    const inputRef = useRef<HTMLInputElement | null>(null);
     const [tempValue, setTempValue] = useState(value);
     const [pos, setPos] = useState<PanelPosition | null>(null);
 
@@ -209,6 +210,29 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
             window.removeEventListener('resize', reposition);
         };
     }, [isOpen, measure]);
+
+    /**
+     * Focus the number input the moment the panel opens so the user can type or
+     * press Backspace straight away. `<input type="number">` rejects
+     * `setSelectionRange` in several browsers, so the caret-to-end attempt is
+     * wrapped: where it throws, the caret that `focus()` already places at the
+     * end is what remains. Keyed on `isOpen` only — the panel mounts in the same
+     * commit that `measure()` set `pos`, and depending on `pos` would steal
+     * focus on every scroll re-measure.
+     */
+    useEffect(() => {
+        if (!isOpen) return;
+        const input = inputRef.current;
+        if (!input) return;
+        input.focus();
+        try {
+            const end = input.value.length;
+            input.setSelectionRange(end, end);
+        } catch {
+            // Number inputs disallow caret placement; `focus()` already put the
+            // caret at the end where this throws.
+        }
+    }, [isOpen]);
 
     // Compute a min width so the popover can fit all preset columns
     const popoverMinWidth = useMemo(() => {
@@ -340,7 +364,7 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
             {/* Trigger Component */}
             <div
                 onClick={toggleOpen}
-                className="cursor-pointer group flex items-center gap-1 hover:text-blue-400 transition-colors select-none"
+                className="cursor-pointer group flex items-center gap-1 text-gray-200 hover:text-blue-400 transition-colors select-none"
             >
                 <div className="border-b-2 border-dashed border-gray-500/50 group-hover:border-blue-500/50 pb-0.5">
                     {valueDisplay ? valueDisplay(value) : (
@@ -405,6 +429,7 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
                                 )}
                                 <div className="relative flex-1 min-w-[60px]">
                                     <input
+                                        ref={inputRef}
                                         type="number"
                                         value={tempValue}
                                         onChange={(e) => {
