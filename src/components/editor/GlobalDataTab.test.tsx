@@ -190,4 +190,30 @@ describe('GlobalDataTab', () => {
             { kind: 'static', name: 'store', value: 'Main' },
         ]);
     });
+
+    it('lays the cards out in an adaptive 3 → 2 → 1 column grid', () => {
+        const doc = makeDoc([seed]);
+        useStore.setState({ currentDoc: doc });
+        render(<GlobalDataTab doc={doc} />);
+
+        const grid = screen.getByTestId('global-cards');
+        expect(grid.className).toContain('grid-cols-1');
+        expect(grid.className).toContain('lg:grid-cols-2');
+        expect(grid.className).toContain('xl:grid-cols-3');
+    });
+
+    it('lets a compact card control fill the card width and puts name + kind on one row', () => {
+        const doc = makeDoc([seed]);
+        useStore.setState({ currentDoc: doc });
+        render(<GlobalDataTab doc={doc} />);
+
+        // The remote fields no longer use the fixed `w-36` that wasted the pane.
+        const url = screen.getByLabelText('URL') as HTMLInputElement;
+        expect(url.className).toContain('w-full');
+        expect(url.className).not.toContain('w-36');
+
+        // Name and kind share one header row inside the card.
+        const name = screen.getByLabelText('Name');
+        expect(name.parentElement).toBe((screen.getByTestId('global-kind') as HTMLElement).parentElement);
+    });
 });

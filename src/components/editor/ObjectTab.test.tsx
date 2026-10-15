@@ -14,8 +14,6 @@ import { SampleRowContext } from './sampleRowContext';
 import type { SampleRowState } from './useSampleRow';
 import {
     ObjectTab,
-    TILE_GAP_HM,
-    alignTransformPatch,
     clampSizeHm,
     colorDefault,
     dataContentPatch,
@@ -25,9 +23,8 @@ import {
     sizePatch,
     textContentPatch,
     textContentValue,
-    tileLayout,
-    tileTransformPatch,
 } from './ObjectTab';
+import { TILE_GAP_HM, alignTransformPatch, tileLayout, tileTransformPatch } from '../../editor/arrange';
 
 vi.mock('../../editor/assetImport', () => ({
     importImageFile: vi.fn(),
@@ -920,46 +917,6 @@ describe('tile vertical / horizontal (H2 mixed-selection alignment)', () => {
         expect(second.map((n) => n.transform)).toEqual(first.map((n) => n.transform));
     });
 
-    it('tiles the selection through the Tile vertical button', () => {
-        const a = rect('a', 0, 0, 400, 300);
-        const b = rect('b', 100, 1000, 200, 500);
-        useStore.setState({ currentDoc: doc([a, b]), selectedNodeIds: ['a', 'b'], docPast: [] });
-        render(<ObjectTab selected={[a, b]} />);
-
-        fireEvent.click(screen.getByRole('button', { name: 'Tile vertical' }));
-
-        const persisted = useStore.getState().currentDoc!.nodes;
-        // The anchor keeps its position, the next node sits directly below it.
-        expect(persisted.find((n) => n.id === 'a')!.transform).toEqual({
-            x: 0,
-            y: 0,
-            rotDeg: 0,
-            scaleX: 1,
-            scaleY: 1,
-        });
-        expect(persisted.find((n) => n.id === 'b')!.transform).toEqual({
-            x: 0,
-            y: 400,
-            rotDeg: 0,
-            scaleX: 1,
-            scaleY: 1,
-        });
-    });
-
-    it('renders a Tile horizontal button that tiles left-to-right', () => {
-        const a = rect('a', 0, 0, 400, 300);
-        const b = rect('b', 1000, 50, 200, 500);
-        useStore.setState({ currentDoc: doc([a, b]), selectedNodeIds: ['a', 'b'], docPast: [] });
-        render(<ObjectTab selected={[a, b]} />);
-
-        fireEvent.click(screen.getByRole('button', { name: 'Tile horizontal' }));
-
-        const persisted = useStore.getState().currentDoc!.nodes;
-        expect(persisted.find((n) => n.id === 'a')!.transform.x).toBe(0);
-        expect(persisted.find((n) => n.id === 'b')!.transform.x).toBe(500);
-        expect(persisted.find((n) => n.id === 'b')!.transform.y).toBe(0);
-    });
-
     it('drops a geometry-less group instead of anchoring on its fake origin', () => {
         // A group resolves `[]` local points → degenerate world bounds at 0,0.
         // Left unfiltered, its centre 0 wins the sort, becomes the anchor, and
@@ -983,46 +940,50 @@ describe('tile vertical / horizontal (H2 mixed-selection alignment)', () => {
         expect(targets.get('a')).toEqual({ x: 500, y: 500 });
         expect(targets.get('b')).toEqual({ x: 500, y: 900 });
     });
+});
 
-    it('leaves a selected group untouched when tiling a mixed selection', () => {
-        const group = node({
-            id: 'g',
-            parentId: null,
-            type: 'group',
-            visible: true,
-            locked: false,
-            transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
-        });
-        const a = rect('a', 500, 500, 400, 300);
-        const b = rect('b', 100, 1000, 200, 500);
-        useStore.setState({ currentDoc: doc([group, a, b]), selectedNodeIds: ['g', 'a', 'b'], docPast: [] });
-        render(<ObjectTab selected={[group, a, b]} />);
+describe('ObjectTab — adaptive 3-block layout (W1)', () => {
+    const headingNames = () => screen.getAllByRole('heading').map((el) => el.textContent);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Tile vertical' }));
+    it('groups the non-transform fields into TEXT and APPEARANCE blocks', () => {
+        const selected = textNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
 
-        const persisted = useStore.getState().currentDoc!.nodes;
-        // The group is untouched — never teleported to the world origin.
-        expect(persisted.find((n) => n.id === 'g')!.transform).toEqual({
-            x: 0,
-            y: 0,
-            rotDeg: 0,
-            scaleX: 1,
-            scaleY: 1,
-        });
-        // Real nodes tile relative to their own anchor, not the origin.
-        expect(persisted.find((n) => n.id === 'a')!.transform).toEqual({
-            x: 500,
-            y: 500,
-            rotDeg: 0,
-            scaleX: 1,
-            scaleY: 1,
-        });
-        expect(persisted.find((n) => n.id === 'b')!.transform).toEqual({
-            x: 500,
-            y: 900,
-            rotDeg: 0,
-            scaleX: 1,
-            scaleY: 1,
-        });
+        expect(screen.getByRole('heading', { name: 'Transform' })).toBeTruthy();
+        expect(screen.getByRole('heading', { name: 'Text' })).toBeTruthy();
+        expect(screen.getByRole('heading', { name: 'Appearance' })).toBeTruthy();
+        // Block order: transform → text → appearance.
+        expect(headingNames().slice(0, 3)).toEqual(['Transform', 'Text', 'Appearance']);
+    });
+
+    it('sizes the block grid 3 → 2 → 1 columns', () => {
+        const selected = textNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        const grid = screen.getByTestId('object-blocks');
+        expect(grid.className).toContain('grid-cols-1');
+        expect(grid.className).toContain('lg:grid-cols-2');
+        expect(grid.className).toContain('xl:grid-cols-3');
+    });
+
+    it('renders each block once', () => {
+        const selected = textNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        for (const name of ['Transform', 'Text', 'Appearance']) {
+            expect(screen.getAllByRole('heading', { name })).toHaveLength(1);
+        }
+    });
+
+    it('moved align + tile out of the tab (they live in the ViewControls block)', () => {
+        const selected = shapeNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['s'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        expect(screen.queryByRole('heading', { name: 'Align' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Tile vertical' })).toBeNull();
     });
 });

@@ -8,8 +8,6 @@ import { Input, Select, SettingRow, Toggle } from '../common/forms';
 import { bulkFieldModel, quantizerParamsApply, type FieldDescriptor, type FieldReason } from '../../editor/inspectorModel';
 import { roundHm, type hm } from '../../core/hm';
 import { nodeSize, pointsExtent } from '../../core/doc/geometry';
-import { effectiveTransform, nodeLookup } from '../../core/doc/derive';
-import { nodeLocalPoints, transformedBounds } from '../../editor/render/resolve';
 import {
     DEFAULT_BARCODE_SYMBOLOGY,
     DEFAULT_IMAGE_FIT,
@@ -33,7 +31,6 @@ import { bytesProviderFor } from './usePreparedAssets';
 import { useSampleRowState } from './sampleRowContext';
 import { contentSourceOf } from '../../editor/contentSource';
 import { ImageImportDialog } from './ImageImportDialog';
-import { translateWorldPatch } from '../../editor/transformPatch';
 
 /**
  * MFP → Object tab (ui-spec.md §8/§10). Renders the field model from
@@ -353,112 +350,6 @@ export const shapeKindPatch = (node: ShapeNode, next: ShapeKind): NodePatch => {
         return { shape: next, points: undefined, size: { w: Math.max(1, roundHm(w)), h: Math.max(1, roundHm(h)) } };
     }
     return { shape: next };
-};
-
-/** World-space AABB of a node under its effective parent chain. */
-export const nodeWorldBounds = (node: Node, byId: ReadonlyMap<string, Node>) =>
-    transformedBounds(nodeLocalPoints(node), effectiveTransform(node, byId));
-
-/**
- * True when a node carries real local geometry. A `group` (and a point-shape
- * with no points) has none: `nodeLocalPoints` returns `[]`, so `nodeWorldBounds`
- * is the degenerate `{0,0,0,0}` box at the world origin. Such a fake origin must
- * never win a tiling sort or be aligned, so tile/align skip these nodes.
- */
-export const hasLocalGeometry = (node: Node): boolean => nodeLocalPoints(node).length > 0;
-
-/**
- * Patch that aligns a node to a backing edge (must-fix #10). The target is
- * computed from the node's resolved **world** bounds and its real geometry
- * (`nodeLocalPoints`, so line/polygon work too). The resulting world delta is
- * converted into the parent-local space before it is folded into `transform.x/y`,
- * so aligning under a translated/rotated parent does not jump.
- *
- * A geometry-less node (a group, or a point-shape with no points) has no bounds
- * to align — its degenerate world box sits at the origin — so this returns
- * `null` and the caller leaves it untouched.
- */
-export const alignTransformPatch = (
-    node: Node,
-    byId: ReadonlyMap<string, Node>,
-    backingW: number,
-    backingH: number,
-    edge: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom',
-): NodePatch | null => {
-    if (!hasLocalGeometry(node)) return null;
-    const bounds = nodeWorldBounds(node, byId);
-    let worldDx = 0;
-    let worldDy = 0;
-    if (edge === 'left') worldDx = -bounds.x;
-    else if (edge === 'center') worldDx = Math.round(backingW / 2 - (bounds.x + bounds.w / 2));
-    else if (edge === 'right') worldDx = Math.round(backingW - (bounds.x + bounds.w));
-    else if (edge === 'top') worldDy = -bounds.y;
-    else if (edge === 'middle') worldDy = Math.round(backingH / 2 - (bounds.y + bounds.h / 2));
-    else worldDy = Math.round(backingH - (bounds.y + bounds.h));
-
-    return translateWorldPatch(node, byId, worldDx, worldDy);
-};
-
-/**
- * Re-exported from its canonical home `editor/transformPatch` (a pure module),
- * so existing importers (align/tile, and tests) keep resolving it from here.
- */
-export { translateWorldPatch };
-
-/** Gap between tiled neighbours in hm (1/100 mm): 100 hm = 1 mm. */
-export const TILE_GAP_HM = 100;
-
-/** World-space center along the tiling axis (`vertical` stacks by cy). */
-const centerAlong = (node: Node, byId: ReadonlyMap<string, Node>, axis: 'vertical' | 'horizontal'): number => {
-    const bounds = nodeWorldBounds(node, byId);
-    return axis === 'vertical' ? bounds.y + bounds.h / 2 : bounds.x + bounds.w / 2;
-};
-
-/**
- * Target world top-left for every node in a vertical/horizontal tile. The
- * anchor is the first node ordered by world center along the axis (smallest `cy`
- * for vertical, smallest `cx` for horizontal) and keeps its position. Each
- * following node is placed adjacent to the previous one with a fixed `gapHm`,
- * cross-axis-aligned to the anchor's bounds edge. Tiling only translates, so
- * each node keeps its own size.
- *
- * Geometry-less nodes (groups, empty point-shapes) are dropped entirely: their
- * degenerate `{0,0,0,0}` world bounds would otherwise sort to the fake origin,
- * become the anchor, and tile the whole selection into the world origin. They
- * are neither in the returned map nor eligible as the anchor.
- */
-export const tileLayout = (
-    nodes: readonly Node[],
-    byId: ReadonlyMap<string, Node>,
-    axis: 'vertical' | 'horizontal',
-    gapHm: number,
-): Map<string, { x: number; y: number }> => {
-    const targets = new Map<string, { x: number; y: number }>();
-    const ordered = nodes
-        .filter(hasLocalGeometry)
-        .sort((a, b) => centerAlong(a, byId, axis) - centerAlong(b, byId, axis));
-    const anchor = ordered[0];
-    if (!anchor) return targets;
-    const anchorBounds = nodeWorldBounds(anchor, byId);
-    const cross = axis === 'vertical' ? anchorBounds.x : anchorBounds.y;
-    let cursor = axis === 'vertical' ? anchorBounds.y : anchorBounds.x;
-    for (const node of ordered) {
-        targets.set(node.id, axis === 'vertical' ? { x: cross, y: cursor } : { x: cursor, y: cross });
-        const bounds = nodeWorldBounds(node, byId);
-        cursor += (axis === 'vertical' ? bounds.h : bounds.w) + gapHm;
-    }
-    return targets;
-};
-
-/** Patch that translates a node so its world top-left lands on the target. */
-export const tileTransformPatch = (
-    node: Node,
-    byId: ReadonlyMap<string, Node>,
-    targetWorldX: number,
-    targetWorldY: number,
-): NodePatch | null => {
-    const bounds = nodeWorldBounds(node, byId);
-    return translateWorldPatch(node, byId, targetWorldX - bounds.x, targetWorldY - bounds.y);
 };
 
 export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
@@ -897,39 +788,15 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
         }
     };
 
-    const align = (edge: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
-        const doc = useStore.getState().currentDoc;
-        if (!doc) return;
-        const byId = nodeLookup(doc.nodes);
-        for (const node of selected) {
-            const patch = alignTransformPatch(node, byId, doc.label.backingW, doc.label.backingH, edge);
-            if (patch) updateNode(node.id, patch);
-        }
-    };
-
-    /**
-     * Tile the selection along one axis (H2 / mixed-selection alignment). The
-     * nodes are ordered by world center; the anchor (first) keeps its position
-     * and every following node is placed adjacent with `TILE_GAP_HM`, aligned to
-     * the anchor's bounds edge. Tiling only translates, so sizes are preserved.
-     * Geometry-less nodes (groups, empty point-shapes) are skipped entirely —
-     * `tileLayout` already omits them, and this guard keeps the commit honest.
-     */
-    const tile = (axis: 'vertical' | 'horizontal') => {
-        const doc = useStore.getState().currentDoc;
-        if (!doc) return;
-        const byId = nodeLookup(doc.nodes);
-        const targets = tileLayout(selected, byId, axis, TILE_GAP_HM);
-        for (const node of selected) {
-            if (!hasLocalGeometry(node)) continue;
-            const target = targets.get(node.id);
-            if (!target) continue;
-            const patch = tileTransformPatch(node, byId, target.x, target.y);
-            if (patch) updateNode(node.id, patch);
-        }
-    };
-
     const hasTransform = model.fields.some((field) => field.scope === 'transform');
+
+    // W1: the flat field list splits into a TEXT block (the node's text-specific
+    // props, plus the content-source switcher) and an APPEARANCE block (style,
+    // geometry, symbol and dither fields). Block order: transform → text →
+    // appearance → asset (action-plan D1).
+    const transformFields = model.fields.filter((field) => field.scope === 'transform');
+    const textFields = model.fields.filter(isTextField);
+    const appearanceFields = model.fields.filter((field) => field.scope !== 'transform' && !isTextField(field));
 
     // The selected node's referenced asset, if any, for the name/alt rename UI.
     const firstImageRef =
@@ -954,80 +821,50 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                 </div>
             )}
 
-            {hasTransform && (
-                <section>
-                    <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">
-                        {t('editor.mfp.transform')}
-                    </h4>
-                    <div className="space-y-1">
-                        {model.fields.filter((field) => field.scope === 'transform').map(renderField)}
-                    </div>
-                </section>
-            )}
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3" data-testid="object-blocks">
+                {hasTransform && (
+                    <ObjectSection title={t('editor.mfp.transform')}>
+                        {transformFields.map(renderField)}
+                    </ObjectSection>
+                )}
 
-            <section>
-                <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">
-                    {t('editor.mfp.align')}
-                </h4>
-                <div className="flex flex-wrap gap-1">
-                    {(['left', 'center', 'right', 'top', 'middle', 'bottom'] as const).map((edge) => (
-                        <button
-                            key={edge}
-                            type="button"
-                            onClick={() => align(edge)}
-                            title={t(ALIGN_LABEL_KEYS[edge])}
-                            className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-300 hover:bg-gray-700"
-                        >
-                            {t(ALIGN_LABEL_KEYS[edge])}
-                        </button>
-                    ))}
-                    {(['vertical', 'horizontal'] as const).map((axis) => (
-                        <button
-                            key={axis}
-                            type="button"
-                            onClick={() => tile(axis)}
-                            title={t(TILE_LABEL_KEYS[axis])}
-                            className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-300 hover:bg-gray-700"
-                        >
-                            {t(TILE_LABEL_KEYS[axis])}
-                        </button>
-                    ))}
-                </div>
-            </section>
+                {textFields.length > 0 && (
+                    <ObjectSection title={t('editor.mfp.text')}>{textFields.map(renderField)}</ObjectSection>
+                )}
 
-            {model.fields
-                .filter((field) => field.scope !== 'transform')
-                .map(renderField)}
+                {appearanceFields.length > 0 && (
+                    <ObjectSection title={t('editor.mfp.appearance')}>
+                        {appearanceFields.map(renderField)}
+                    </ObjectSection>
+                )}
 
-            {(firstImageRef || firstFontRef) && (
-                <section>
-                    <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">
-                        {t('editor.mfp.asset')}
-                    </h4>
-                    <AssetRenameFields
-                        key={firstImageRef ? `img:${firstImageRef.imageId}` : `font:${firstFontRef!.fontId}`}
-                        name={firstImageRef ? firstImageRef.name : firstFontRef!.name}
-                        alt={(firstImageRef ? firstImageRef.alt : firstFontRef!.alt) ?? ''}
-                        onCommit={(patch) => {
-                            if (firstImageRef) updateImageRef(firstImageRef.imageId, patch);
-                            else if (firstFontRef) updateFontRef(firstFontRef.fontId, patch);
-                        }}
-                    />
-                    {firstImageRef && (
-                        <SettingRow label={t('editor.mfp.field.imageId')}>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setImageDialog({ mode: 'replace', imageId: firstImageRef.imageId });
-                                }}
-                                className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
-                            >
-                                {t('editor.mfp.replaceImage')}
-                            </button>
-                        </SettingRow>
-                    )}
-                </section>
-            )}
+                {(firstImageRef || firstFontRef) && (
+                    <ObjectSection title={t('editor.mfp.asset')}>
+                        <AssetRenameFields
+                            key={firstImageRef ? `img:${firstImageRef.imageId}` : `font:${firstFontRef!.fontId}`}
+                            name={firstImageRef ? firstImageRef.name : firstFontRef!.name}
+                            alt={(firstImageRef ? firstImageRef.alt : firstFontRef!.alt) ?? ''}
+                            onCommit={(patch) => {
+                                if (firstImageRef) updateImageRef(firstImageRef.imageId, patch);
+                                else if (firstFontRef) updateFontRef(firstFontRef.fontId, patch);
+                            }}
+                        />
+                        {firstImageRef && (
+                            <SettingRow label={t('editor.mfp.field.imageId')}>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setImageDialog({ mode: 'replace', imageId: firstImageRef.imageId });
+                                    }}
+                                    className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                                >
+                                    {t('editor.mfp.replaceImage')}
+                                </button>
+                            </SettingRow>
+                        )}
+                    </ObjectSection>
+                )}
+            </div>
 
             {fontError && <p className="text-xs text-red-400">{fontError}</p>}
 
@@ -1107,16 +944,24 @@ const AssetRenameFields: React.FC<AssetRenameFieldsProps> = ({ name, alt, onComm
     );
 };
 
-const ALIGN_LABEL_KEYS = {
-    left: 'editor.mfp.alignLeft',
-    center: 'editor.mfp.alignCenter',
-    right: 'editor.mfp.alignRight',
-    top: 'editor.mfp.alignTop',
-    middle: 'editor.mfp.alignMiddle',
-    bottom: 'editor.mfp.alignBottom',
-} as const;
+/**
+ * The Object tab's TEXT block: the fields that only a text node owns
+ * (`scope === 'text'`: content, font, wrap, letter-spacing, direction, the text
+ * `align`) plus the `contentSource` kind switcher (action-plan D1). Everything
+ * else — style, colour, geometry, symbol and dither fields — is APPEARANCE.
+ */
+const isTextField = (field: FieldDescriptor): boolean =>
+    field.scope === 'text' || field.key === 'contentSource';
 
-const TILE_LABEL_KEYS = {
-    vertical: 'editor.mfp.tileVertical',
-    horizontal: 'editor.mfp.tileHorizontal',
-} as const;
+/**
+ * One block in the Object tab's adaptive grid. The header markup is the same
+ * inline `<section><h4>` pattern the tab always used, factored out so all four
+ * blocks (transform / text / appearance / asset) stay identical.
+ */
+const ObjectSection: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+    <section className="min-w-0">
+        <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">{title}</h4>
+        <div className="space-y-1">{children}</div>
+    </section>
+);
+

@@ -5,7 +5,7 @@ import type { ContentSource, Node } from '../../core/doc/types';
 import type { NodePatch } from '../../store/storeTypes';
 import { contentSourceOf, contentFieldKey } from '../../editor/contentSource';
 import { useSampleRowState } from './sampleRowContext';
-import { Input, Select, SettingRow } from '../common/forms';
+import { Input, Select } from '../common/forms';
 
 /**
  * MFP → JS tab (ui-spec.md §8, P6 W6).
@@ -49,6 +49,19 @@ const TRUST_LABEL_KEYS = {
 
 /** The node prop key that carries the source for a text/qr/barcode node. */
 const sourceFieldKey = contentFieldKey;
+
+/**
+ * One cell in the JS tab's adaptive control grid: a label above its control.
+ * The tab used `SettingRow` (label and control on one line, fixed `w-36`/`w-40`
+ * control); stacking lets each control fill its grid cell, which is what lets
+ * the Content / Trust / Fallback row fit on one line at wide widths.
+ */
+const TabField: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
+    <div className="flex min-w-0 flex-col gap-1">
+        <span className="text-xs text-gray-400">{label}</span>
+        {children}
+    </div>
+);
 
 export const JsTab: React.FC<JsTabProps> = ({ selected }) => {
     const { t } = useTranslation();
@@ -137,78 +150,103 @@ export const JsTab: React.FC<JsTabProps> = ({ selected }) => {
 
     return (
         <div className="space-y-3 p-3 text-sm">
-            <SettingRow label={t('editor.mfp.contentSource')}>
-                <Select
-                    value={currentKind}
-                    onChange={(value) => switchKind(value as SourceKind)}
-                    options={kindOptions.map((kind) => ({
-                        value: kind,
-                        label: t(KIND_LABEL_KEYS[kind]),
-                    }))}
-                    className="w-36"
-                    aria-label={t('editor.mfp.contentSource')}
-                />
-            </SettingRow>
-
-            {currentKind === 'static' && (
-                <SettingRow label={t(FIELD_LABEL_KEYS[first.type as 'text' | 'qr' | 'barcode'])}>
-                    <Input
-                        value={source?.kind === 'static' ? source.value : ''}
-                        onChange={(value) => write({ [fieldKey]: { kind: 'static', value } } as NodePatch)}
-                        aria-label={t(FIELD_LABEL_KEYS[first.type as 'text' | 'qr' | 'barcode'])}
-                        className="w-40"
+            {/* Top controls: content kind + trust + fallback share one adaptive
+                row at wide, collapsing 3 → 2 → 1 columns as the pane narrows.
+                Trust is only meaningful for a template source and the fallback
+                only exists for csv/template; static shows just the value below. */}
+            <div
+                className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3"
+                data-testid="js-top-row"
+            >
+                <TabField label={t('editor.mfp.contentSource')}>
+                    <Select
+                        value={currentKind}
+                        onChange={(value) => switchKind(value as SourceKind)}
+                        options={kindOptions.map((kind) => ({
+                            value: kind,
+                            label: t(KIND_LABEL_KEYS[kind]),
+                        }))}
+                        className="w-full"
+                        aria-label={t('editor.mfp.contentSource')}
                     />
-                </SettingRow>
-            )}
+                </TabField>
 
-            {currentKind === 'csv' && (
-                <>
-                    <SettingRow label={t('editor.mfp.csvColumn')}>
-                        {csvColumns.length > 0 ? (
-                            <Select
-                                value={source?.kind === 'csv' ? source.column : ''}
-                                onChange={(column) =>
-                                    write({ [fieldKey]: { kind: 'csv', column, fallback: source?.kind === 'csv' ? source.fallback : '' } } as NodePatch)
-                                }
-                                options={[
-                                    { value: '', label: t('editor.mfp.none') },
-                                    ...csvColumns.map((column) => ({ value: column, label: column })),
-                                ]}
-                                className="w-40"
-                                aria-label={t('editor.mfp.csvColumn')}
-                            />
-                        ) : (
-                            <Input
-                                value={source?.kind === 'csv' ? source.column : ''}
-                                onChange={(column) =>
-                                    write({ [fieldKey]: { kind: 'csv', column, fallback: source?.kind === 'csv' ? source.fallback : '' } } as NodePatch)
-                                }
-                                aria-label={t('editor.mfp.csvColumn')}
-                                className="w-40"
-                            />
-                        )}
-                    </SettingRow>
-                    <SettingRow label={t('editor.mfp.contentFallback')}>
+                {currentKind === 'template' && (
+                    <TabField label={t('editor.mfp.templateTrustState')}>
+                        <span
+                            data-testid="js-trust-state"
+                            className="self-start rounded border border-gray-600 px-2 py-0.5 text-xs text-gray-200"
+                        >
+                            {t(TRUST_LABEL_KEYS[trust])}
+                        </span>
+                    </TabField>
+                )}
+
+                {currentKind === 'csv' && (
+                    <TabField label={t('editor.mfp.contentFallback')}>
                         <Input
                             value={source?.kind === 'csv' ? source.fallback : ''}
                             onChange={(fallback) =>
                                 write({ [fieldKey]: { kind: 'csv', column: source?.kind === 'csv' ? source.column : '', fallback } } as NodePatch)
                             }
                             aria-label={t('editor.mfp.contentFallback')}
-                            className="w-40"
                         />
-                    </SettingRow>
-                </>
+                    </TabField>
+                )}
+
+                {currentKind === 'template' && (
+                    <TabField label={t('editor.mfp.contentFallback')}>
+                        <Input
+                            value={source?.kind === 'template' ? source.fallback : ''}
+                            disabled={templateBlocked}
+                            onChange={(fallback) =>
+                                write({ [fieldKey]: { kind: 'template', code: source?.kind === 'template' ? source.code : '', fallback } } as NodePatch)
+                            }
+                            aria-label={t('editor.mfp.contentFallback')}
+                        />
+                    </TabField>
+                )}
+            </div>
+
+            {currentKind === 'static' && (
+                <TabField label={t(FIELD_LABEL_KEYS[first.type as 'text' | 'qr' | 'barcode'])}>
+                    <Input
+                        value={source?.kind === 'static' ? source.value : ''}
+                        onChange={(value) => write({ [fieldKey]: { kind: 'static', value } } as NodePatch)}
+                        aria-label={t(FIELD_LABEL_KEYS[first.type as 'text' | 'qr' | 'barcode'])}
+                    />
+                </TabField>
+            )}
+
+            {currentKind === 'csv' && (
+                <TabField label={t('editor.mfp.csvColumn')}>
+                    {csvColumns.length > 0 ? (
+                        <Select
+                            value={source?.kind === 'csv' ? source.column : ''}
+                            onChange={(column) =>
+                                write({ [fieldKey]: { kind: 'csv', column, fallback: source?.kind === 'csv' ? source.fallback : '' } } as NodePatch)
+                            }
+                            options={[
+                                { value: '', label: t('editor.mfp.none') },
+                                ...csvColumns.map((column) => ({ value: column, label: column })),
+                            ]}
+                            className="w-full"
+                            aria-label={t('editor.mfp.csvColumn')}
+                        />
+                    ) : (
+                        <Input
+                            value={source?.kind === 'csv' ? source.column : ''}
+                            onChange={(column) =>
+                                write({ [fieldKey]: { kind: 'csv', column, fallback: source?.kind === 'csv' ? source.fallback : '' } } as NodePatch)
+                            }
+                            aria-label={t('editor.mfp.csvColumn')}
+                        />
+                    )}
+                </TabField>
             )}
 
             {currentKind === 'template' && (
                 <>
-                    <div className="flex items-center justify-between">
-                        <span className="text-xs text-gray-400">{t('editor.mfp.templateTrustState')}</span>
-                        <span className="rounded border border-gray-600 px-2 py-0.5 text-xs text-gray-200">
-                            {t(TRUST_LABEL_KEYS[trust])}
-                        </span>
-                    </div>
                     {templateBlocked && (
                         <p role="alert" data-testid="js-template-blocked" className="rounded border border-red-700 bg-red-900/30 px-2 py-1 text-xs text-red-200">
                             {t('editor.mfp.trustDisabled')}
@@ -224,7 +262,7 @@ export const JsTab: React.FC<JsTabProps> = ({ selected }) => {
                             {t('editor.mfp.templateError', { message: templateError })}
                         </p>
                     )}
-                    <SettingRow label={t('editor.mfp.templateCode')}>
+                    <TabField label={t('editor.mfp.templateCode')}>
                         <textarea
                             value={source?.kind === 'template' ? source.code : ''}
                             disabled={templateBlocked}
@@ -232,21 +270,11 @@ export const JsTab: React.FC<JsTabProps> = ({ selected }) => {
                                 write({ [fieldKey]: { kind: 'template', code: event.target.value, fallback: source?.kind === 'template' ? source.fallback : '' } } as NodePatch)
                             }
                             rows={6}
+                            spellCheck={false}
                             aria-label={t('editor.mfp.templateCode')}
-                            className="w-40 rounded border border-gray-700 bg-gray-900 px-2 py-1 font-mono text-xs text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 font-mono text-xs text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
                         />
-                    </SettingRow>
-                    <SettingRow label={t('editor.mfp.contentFallback')}>
-                        <Input
-                            value={source?.kind === 'template' ? source.fallback : ''}
-                            disabled={templateBlocked}
-                            onChange={(fallback) =>
-                                write({ [fieldKey]: { kind: 'template', code: source?.kind === 'template' ? source.code : '', fallback } } as NodePatch)
-                            }
-                            aria-label={t('editor.mfp.contentFallback')}
-                            className="w-40"
-                        />
-                    </SettingRow>
+                    </TabField>
                 </>
             )}
         </div>

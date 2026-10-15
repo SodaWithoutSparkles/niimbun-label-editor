@@ -171,3 +171,41 @@ describe('JsTab — never blocks a NEW template source (should-fix)', () => {
         ).toContain('template');
     });
 });
+
+describe('JsTab — adaptive layout (P10 W4)', () => {
+    it('sizes the top control row 3 → 2 → 1 columns', () => {
+        renderWithTrust(textNode({ kind: 'template', code: 'return 1', fallback: 'FB' }), 'ask');
+
+        const row = screen.getByTestId('js-top-row');
+        expect(row.className).toContain('grid-cols-1');
+        expect(row.className).toContain('lg:grid-cols-2');
+        expect(row.className).toContain('xl:grid-cols-3');
+    });
+
+    it('puts content kind, trust and fallback on that one row (in order)', () => {
+        renderWithTrust(textNode({ kind: 'template', code: 'return 1', fallback: 'FB' }), 'always');
+
+        const cells = Array.from(screen.getByTestId('js-top-row').children);
+        expect(cells).toHaveLength(3);
+        expect(cells[0]!.textContent).toContain('Content');
+        // The "Template trust: <state>" readout row is kept, as the middle cell.
+        expect(cells[1]!.textContent).toContain('Template trust');
+        expect(cells[1]!.textContent).toContain('Allowed');
+        expect(cells[2]!.textContent).toContain('Fallback');
+    });
+
+    it('shows only the content kind in the top row for a static source', () => {
+        renderWithTrust(textNode({ kind: 'static', value: 'hi' }), 'ask');
+        expect(Array.from(screen.getByTestId('js-top-row').children)).toHaveLength(1);
+    });
+
+    it('gives the template code a full-width, non-spellchecked textarea', () => {
+        renderWithTrust(textNode({ kind: 'template', code: 'return 1', fallback: 'FB' }), 'ask');
+
+        const code = screen.getByLabelText('Template code') as HTMLTextAreaElement;
+        expect(code.className).toContain('w-full');
+        expect(code.className).not.toContain('w-40');
+        expect(code.getAttribute('spellcheck')).toBe('false');
+        expect(Number(code.getAttribute('rows'))).toBeGreaterThanOrEqual(6);
+    });
+});

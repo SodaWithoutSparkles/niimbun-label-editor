@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import type { GlobalSpec } from '../../core/doc/types';
-import { Input, Select, SettingRow } from '../common/forms';
+import { Input, Select } from '../common/forms';
 
 /**
  * MFP → Global data tab (ui-spec.md §8, O6, P6 W6).
@@ -58,6 +58,24 @@ const newSpec = (existing: readonly GlobalSpec[]): GlobalSpec => {
     while (names.has(`global${n}`)) n += 1;
     return { ...blankSpec(), name: `global${n}` };
 };
+
+/**
+ * A stacked label + control pair for a compact card body. `SettingRow` keeps
+ * the label and the control on one line with a fixed-width control, which is
+ * exactly the horizontal waste the card grid removes; the card body stacks
+ * instead so the control gets the card's full width.
+ */
+const CardField: React.FC<{ label: string; hint?: string; children: React.ReactNode }> = ({
+    label,
+    hint,
+    children,
+}) => (
+    <div className="flex min-w-0 flex-col gap-1">
+        <span className="text-xs text-gray-400">{label}</span>
+        {children}
+        {hint && <span className="text-xs text-gray-500">{hint}</span>}
+    </div>
+);
 
 /** One editable global row, keyed by list position so drafts seed from fresh props. */
 interface GlobalRowProps {
@@ -148,18 +166,18 @@ const GlobalRow: React.FC<GlobalRowProps> = ({ spec, onCommit, onRemove }) => {
     };
 
     return (
-        <div className="space-y-1 rounded border border-gray-700 bg-gray-900 p-2">
-            <SettingRow label={t('editor.mfp.globalName')}>
+        <div className="min-w-0 space-y-2 rounded border border-gray-700 bg-gray-900 p-2">
+            {/* Header row: name + kind share one line so the card stays compact. */}
+            <div className="flex items-center gap-2">
                 <Input
                     value={name}
                     onChange={setName}
                     onBlur={commitText}
                     onKeyDown={onEnter}
                     aria-label={t('editor.mfp.globalName')}
-                    className="w-36"
+                    placeholder={t('editor.mfp.globalName')}
+                    className="min-w-0 flex-1"
                 />
-            </SettingRow>
-            <SettingRow label={t('editor.mfp.globalKind')}>
                 <Select
                     value={kind}
                     onChange={(next) => commitKind(next as GlobalSpec['kind'])}
@@ -169,11 +187,11 @@ const GlobalRow: React.FC<GlobalRowProps> = ({ spec, onCommit, onRemove }) => {
                     ]}
                     aria-label={t('editor.mfp.globalKind')}
                     data-testid="global-kind"
-                    className="w-36"
+                    className="shrink-0"
                 />
-            </SettingRow>
+            </div>
             {kind === 'static' ? (
-                <SettingRow label={t('editor.mfp.globalValue')} description={t('editor.mfp.globalValueHint')}>
+                <CardField label={t('editor.mfp.globalValue')} hint={t('editor.mfp.globalValueHint')}>
                     <Input
                         value={value}
                         onChange={setValue}
@@ -181,32 +199,29 @@ const GlobalRow: React.FC<GlobalRowProps> = ({ spec, onCommit, onRemove }) => {
                         onKeyDown={onEnter}
                         aria-label={t('editor.mfp.globalValue')}
                         data-testid="global-value"
-                        className="w-36"
                     />
-                </SettingRow>
+                </CardField>
             ) : (
                 <>
-                    <SettingRow label={t('editor.mfp.globalUrl')}>
+                    <CardField label={t('editor.mfp.globalUrl')}>
                         <Input
                             value={url}
                             onChange={setUrl}
                             onBlur={commitText}
                             onKeyDown={onEnter}
                             aria-label={t('editor.mfp.globalUrl')}
-                            className="w-36"
                         />
-                    </SettingRow>
-                    <SettingRow label={t('editor.mfp.globalExtract')}>
+                    </CardField>
+                    <CardField label={t('editor.mfp.globalExtract')}>
                         <Input
                             value={extract}
                             onChange={setExtract}
                             onBlur={commitText}
                             onKeyDown={onEnter}
                             aria-label={t('editor.mfp.globalExtract')}
-                            className="w-36"
                         />
-                    </SettingRow>
-                    <SettingRow label={t('editor.mfp.globalExpiresAt')} description={t('editor.mfp.globalExpiresAtHint')}>
+                    </CardField>
+                    <CardField label={t('editor.mfp.globalExpiresAt')} hint={t('editor.mfp.globalExpiresAtHint')}>
                         <Input
                             type="number"
                             min={0}
@@ -216,11 +231,10 @@ const GlobalRow: React.FC<GlobalRowProps> = ({ spec, onCommit, onRemove }) => {
                             onKeyDown={onEnter}
                             inputMode="numeric"
                             aria-label={t('editor.mfp.globalExpiresAt')}
-                            className="w-36"
                         />
-                    </SettingRow>
+                    </CardField>
                     {expiresError && (
-                        <p role="alert" className="text-right text-xs text-red-400">
+                        <p role="alert" className="text-xs text-red-400">
                             {expiresError}
                         </p>
                     )}
@@ -261,19 +275,24 @@ export const GlobalDataTab: React.FC<GlobalDataTabProps> = ({ doc }) => {
         <div className="space-y-3 p-3 text-sm">
             {globals.length === 0 && <p className="text-xs text-gray-500">{t('editor.mfp.globalEmpty')}</p>}
 
-            {globals.map((spec, index) => (
-                <GlobalRow
-                    // Key by list position, NOT `name`+index: a rename must not
-                    // remount and discard the in-progress draft, and `GlobalSpec`
-                    // has no stable id. `GlobalRow` re-seeds its drafts from props
-                    // whenever the spec changes, so undo/redo and a row removal
-                    // re-indexing the list cannot leave a stale draft behind.
-                    key={index}
-                    spec={spec}
-                    onCommit={(next) => updateAt(index, next)}
-                    onRemove={() => removeAt(index)}
-                />
-            ))}
+            {/* Adaptive card grid: 3 columns at wide, 2 at lg, 1 when narrow —
+                the same viewport-breakpoint technique the Object tab's block
+                grid uses (`ObjectTab.tsx` `object-blocks`). */}
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3" data-testid="global-cards">
+                {globals.map((spec, index) => (
+                    <GlobalRow
+                        // Key by list position, NOT `name`+index: a rename must not
+                        // remount and discard the in-progress draft, and `GlobalSpec`
+                        // has no stable id. `GlobalRow` re-seeds its drafts from props
+                        // whenever the spec changes, so undo/redo and a row removal
+                        // re-indexing the list cannot leave a stale draft behind.
+                        key={index}
+                        spec={spec}
+                        onCommit={(next) => updateAt(index, next)}
+                        onRemove={() => removeAt(index)}
+                    />
+                ))}
+            </div>
 
             <button
                 type="button"
