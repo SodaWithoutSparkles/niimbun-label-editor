@@ -72,7 +72,7 @@ export const SYSTEM_FONTS: readonly string[] = [
  * Why a `wired: false` field is disabled, so the panel can show the *right*
  * reason instead of one blanket message. `null` for wired fields.
  */
-export type FieldReason = 'trust' | 'image' | 'qr' | 'barcode' | 'content' | 'size' | 'style';
+export type FieldReason = 'trust' | 'image' | 'qr' | 'barcode' | 'content' | 'style';
 
 export interface FieldDescriptor {
     /** Stable field id — the node prop it edits, or a reserved key. */
@@ -113,9 +113,6 @@ export const GROUP_TRANSFORM_FIELDS: readonly FieldDescriptor[] = TRANSFORM_FIEL
 export const UNIVERSAL_FIELDS: readonly FieldDescriptor[] = [];
 
 export const TEXT_FIELDS: readonly FieldDescriptor[] = [
-    // `size` is a `{w, h}` box, not a scalar; the Object tab edits it as the two
-    // numeric `sizeW`/`sizeH` transform fields, so this aggregate stays a stub.
-    { key: 'size', scope: 'text', kind: 'stub', wired: false, reason: 'size' },
     // A `fontId` links to a `FontRef`; selecting one also resolves `fontFamily`.
     // The options come from `doc.resources.fonts`, resolved by the panel.
     { key: 'fontId', scope: 'text', kind: 'fontRef', wired: true },
@@ -132,8 +129,6 @@ export const TEXT_FIELDS: readonly FieldDescriptor[] = [
 
 export const SHAPE_FIELDS: readonly FieldDescriptor[] = [
     { key: 'shape', scope: 'shape', kind: 'select', wired: true, options: ['line', 'rectangle', 'ellipse', 'polygon'] },
-    // `size` is a `{w, h}` box (see TEXT_FIELDS); edited via sizeW/sizeH.
-    { key: 'size', scope: 'shape', kind: 'stub', wired: false, reason: 'size' },
     // Point editing (vertex handles) ships with the shape tool later; the raw
     // `points` cloud is not edited here yet. Not a CSV/content binding.
     { key: 'points', scope: 'shape', kind: 'stub', wired: false, reason: 'style' },
@@ -167,7 +162,6 @@ export const QR_FIELDS: readonly FieldDescriptor[] = [
     // Symbol background + quiet zone (P2): resolved by the render path, so wired.
     { key: 'fill', scope: 'qr', kind: 'color', wired: true },
     { key: 'quietZone', scope: 'qr', kind: 'number', wired: true },
-    { key: 'size', scope: 'qr', kind: 'stub', wired: false, reason: 'size' },
 ];
 
 /** Barcode fields (P5). `data` is the static payload; `symbology` the bcid. */
@@ -177,7 +171,6 @@ export const BARCODE_FIELDS: readonly FieldDescriptor[] = [
     // Symbol background + quiet zone (P2): resolved by the render path, so wired.
     { key: 'fill', scope: 'barcode', kind: 'color', wired: true },
     { key: 'quietZone', scope: 'barcode', kind: 'number', wired: true },
-    { key: 'size', scope: 'barcode', kind: 'stub', wired: false, reason: 'size' },
 ];
 
 /**

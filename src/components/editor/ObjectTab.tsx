@@ -62,7 +62,6 @@ const FIELD_LABEL_KEYS = {
     y: 'editor.mfp.field.y',
     sizeW: 'editor.mfp.field.sizeW',
     sizeH: 'editor.mfp.field.sizeH',
-    size: 'editor.mfp.field.size',
     rotDeg: 'editor.mfp.field.rotDeg',
     scaleX: 'editor.mfp.field.scaleX',
     scaleY: 'editor.mfp.field.scaleY',
@@ -107,7 +106,6 @@ const REASON_KEYS: Record<FieldReason, string> = {
     qr: 'editor.mfp.qrDisabled',
     barcode: 'editor.mfp.barcodeDisabled',
     content: 'editor.mfp.contentSourceDisabled',
-    size: 'editor.mfp.sizeDisabled',
     style: 'editor.mfp.styleDisabled',
 };
 
@@ -223,6 +221,45 @@ export const sizePatch = (node: Node, key: 'sizeW' | 'sizeH', value: number): { 
     return key === 'sizeW'
         ? { size: { w: clampSizeHm(value), h: current.h } }
         : { size: { w: current.w, h: clampSizeHm(value) } };
+};
+
+/**
+ * Slider bounds for a `kind: 'number'` field. The transform geometry follows the
+ * open label's backing size (hm): `x`/`y` may leave the label on either side
+ * (`-backing … 2 * backing`), while W/H stay inside it (`0 … backing`).
+ * `scaleX`/`scaleY` are unitless factors, so they step by 0.05. Every other
+ * field keeps its fixed range. A missing backing falls back to 0, so bounds are
+ * never NaN.
+ */
+export const numberRange = (
+    key: string,
+    backing: { backingW: number; backingH: number } | undefined,
+): { min: number; max: number; step: number } => {
+    const w = backing?.backingW ?? 0;
+    const h = backing?.backingH ?? 0;
+    switch (key) {
+        case 'x':
+            return { min: -w, max: 2 * w, step: 1 };
+        case 'y':
+            return { min: -h, max: 2 * h, step: 1 };
+        case 'sizeW':
+            return { min: 0, max: w, step: 1 };
+        case 'sizeH':
+            return { min: 0, max: h, step: 1 };
+        case 'scaleX':
+        case 'scaleY':
+            return { min: 0.05, max: 10, step: 0.05 };
+        case 'fontSize':
+            return { min: 1, max: 2000, step: 1 };
+        case 'quantizerThreshold':
+            return { min: 0, max: 255, step: 1 };
+        case 'quantizerStrength':
+            return { min: 0, max: 4, step: 0.1 };
+        case 'quietZone':
+            return { min: 0, max: MAX_QUIET_ZONE, step: 1 };
+        default:
+            return { min: 0, max: 100000, step: 1 };
+    }
 };
 
 const transformPatch = (node: Node, key: string, value: number) => ({
@@ -559,22 +596,25 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                 ) {
                     return null;
                 }
-                return (
-                    <SettingRow
-                        key={field.key}
-                        label={label}
-                        description={field.key === 'strokeWidth' ? t('editor.mfp.field.strokeWidthHint') : undefined}
-                    >
-                        <PopoverSlider
-                            value={numberValue(first, field.key)}
-                            onChange={(value) => setNumber(field.key, value)}
-                            min={field.key === 'fontSize' ? 1 : field.key === 'x' || field.key === 'y' ? -10000 : 0}
-                            max={field.key === 'fontSize' ? 2000 : field.key === 'quantizerThreshold' ? 255 : field.key === 'quantizerStrength' ? 4 : field.key === 'quietZone' ? MAX_QUIET_ZONE : 100000}
-                            step={field.key === 'quantizerStrength' ? 0.1 : 1}
+                {
+                    const range = numberRange(field.key, doc?.label);
+                    return (
+                        <SettingRow
+                            key={field.key}
                             label={label}
-                        />
-                    </SettingRow>
-                );
+                            description={field.key === 'strokeWidth' ? t('editor.mfp.field.strokeWidthHint') : undefined}
+                        >
+                            <PopoverSlider
+                                value={numberValue(first, field.key)}
+                                onChange={(value) => setNumber(field.key, value)}
+                                min={range.min}
+                                max={range.max}
+                                step={range.step}
+                                label={label}
+                            />
+                        </SettingRow>
+                    );
+                }
             case 'string':
                 return (
                     <SettingRow key={field.key} label={label}>

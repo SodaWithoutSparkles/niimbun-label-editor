@@ -314,8 +314,11 @@ describe('ViewControls — centre on selection icons', () => {
 
         const classNameOf = (name: string) =>
             screen.getByRole('button', { name }).querySelector('svg')?.getAttribute('class') ?? '';
-        expect(classNameOf('Centre on selection horizontally')).toContain('lucide-align-center-horizontal');
-        expect(classNameOf('Centre on selection vertically')).toContain('lucide-align-center-vertical');
+        // Lucide names the axis line, not the movement: the horizontal command
+        // (moves along x) shows the vertical-line glyph, and vice versa. Asserting
+        // the swapped pair guards against a regression back to the wrong glyph.
+        expect(classNameOf('Centre on selection horizontally')).toContain('lucide-align-center-vertical');
+        expect(classNameOf('Centre on selection vertically')).toContain('lucide-align-center-horizontal');
     });
 
     it('centres the selection on its own union bounds as exactly one undo step', () => {

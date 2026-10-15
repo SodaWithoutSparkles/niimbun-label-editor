@@ -7,7 +7,7 @@ import { createLabelDoc } from '../../core/doc/factory';
 import { createMemoryAdapter } from '../../data/db';
 import { createResourceRepo } from '../../data/resourceRepo';
 import { importImageFile } from '../../editor/assetImport';
-import { DEFAULT_QR_QUIET_MODULES, barcodeQuietModules } from '../../core/doc/objects';
+import { DEFAULT_QR_QUIET_MODULES, MAX_QUIET_ZONE, barcodeQuietModules } from '../../core/doc/objects';
 import { bytesProviderFor, createResourceAssetDeps } from './usePreparedAssets';
 import type { FontRef, ImageRef, Node } from '../../core/doc/types';
 import { SampleRowContext } from './sampleRowContext';
@@ -19,6 +19,7 @@ import {
     dataContentPatch,
     dataContentValue,
     fontFamilyPatch,
+    numberRange,
     shapeKindPatch,
     sizePatch,
 } from './ObjectTab';
@@ -175,6 +176,83 @@ describe('ObjectTab — selecting a node shows wired transform sliders', () => {
         render(<ObjectTab selected={[selected]} />);
         // Sanity: the tree mounted.
         expect(document.querySelector('.space-y-3')).toBeTruthy();
+    });
+});
+
+describe('numberRange', () => {
+    it('follows the backing label box and steps scale by 0.05', () => {
+        const backing = { backingW: 100, backingH: 50 };
+        // A 100-wide label ⇒ x ∈ [-100, 200]; size stays inside the label.
+        expect(numberRange('x', backing)).toEqual({ min: -100, max: 200, step: 1 });
+        expect(numberRange('y', backing)).toEqual({ min: -50, max: 100, step: 1 });
+        expect(numberRange('sizeW', backing)).toEqual({ min: 0, max: 100, step: 1 });
+        expect(numberRange('sizeH', backing)).toEqual({ min: 0, max: 50, step: 1 });
+        expect(numberRange('scaleX', backing)).toEqual({ min: 0.05, max: 10, step: 0.05 });
+        expect(numberRange('scaleY', backing)).toEqual({ min: 0.05, max: 10, step: 0.05 });
+    });
+
+    it('keeps every other field’s range and never returns NaN without a backing', () => {
+        expect(numberRange('rotDeg', undefined)).toEqual({ min: 0, max: 100000, step: 1 });
+        expect(numberRange('strokeWidth', undefined)).toEqual({ min: 0, max: 100000, step: 1 });
+        expect(numberRange('fontSize', undefined)).toEqual({ min: 1, max: 2000, step: 1 });
+        expect(numberRange('quantizerThreshold', undefined)).toEqual({ min: 0, max: 255, step: 1 });
+        expect(numberRange('quantizerStrength', undefined)).toEqual({ min: 0, max: 4, step: 0.1 });
+        expect(numberRange('quietZone', undefined)).toEqual({ min: 0, max: MAX_QUIET_ZONE, step: 1 });
+    });
+});
+
+describe('ObjectTab — transform slider bounds follow the label size', () => {
+    /**
+     * Open the `PopoverSlider` in the SettingRow labelled `label` and read the
+     * min/max/step it hands to both the number input and the range slider, then
+     * toggle it closed so the next field opens its own single panel.
+     */
+    const openField = (label: string) => {
+        const row = screen.getByText(label).closest('.items-center.justify-between') as HTMLElement;
+        const trigger = row.querySelector('.cursor-pointer') as HTMLElement;
+        fireEvent.click(trigger);
+        const number = document.querySelector('input[type="number"]') as HTMLInputElement;
+        const range = document.querySelector('input[type="range"]') as HTMLInputElement;
+        const bounds = {
+            number: { min: number.min, max: number.max, step: number.step },
+            range: { min: range.min, max: range.max, step: range.step },
+        };
+        fireEvent.click(trigger);
+        return bounds;
+    };
+
+    const renderImage = () => {
+        const selected = imageNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['a'] });
+        render(<ObjectTab selected={[selected]} />);
+    };
+
+    it('derives x/y from the label and keeps W/H inside it', () => {
+        // `doc()` backs the label at 3000 × 2000 hm.
+        renderImage();
+        const expected = [
+            { label: 'X', min: '-3000', max: '6000' },
+            { label: 'Y', min: '-2000', max: '4000' },
+            { label: 'Width', min: '0', max: '3000' },
+            { label: 'Height', min: '0', max: '2000' },
+        ];
+        for (const { label, min, max } of expected) {
+            expect(openField(label).number, label).toEqual({ min, max, step: '1' });
+            expect(openField(label).range, label).toEqual({ min, max, step: '1' });
+        }
+    });
+
+    it('steps Scale X / Scale Y by 0.05 with a usable range', () => {
+        renderImage();
+        for (const label of ['Scale X', 'Scale Y']) {
+            expect(openField(label).number, label).toEqual({ min: '0.05', max: '10', step: '0.05' });
+            expect(openField(label).range, label).toEqual({ min: '0.05', max: '10', step: '0.05' });
+        }
+    });
+
+    it('leaves rotation on its unchanged fixed range', () => {
+        renderImage();
+        expect(openField('Rotation').number).toEqual({ min: '0', max: '100000', step: '1' });
     });
 });
 

@@ -133,9 +133,14 @@ const DISTRIBUTE_ACTIONS: ReadonlyArray<{ axis: TileAxis; Icon: IconType }> = [
     { axis: 'vertical', Icon: AlignVerticalDistributeCenter },
 ];
 
+// Lucide names this pair by the axis line, not by the direction of movement,
+// so they read opposite to the commands: `AlignCenterVertical` draws a vertical
+// centre line (objects move along x), `AlignCenterHorizontal` a horizontal one
+// (objects move along y). Pair each command with the glyph that shows the axis
+// it centres on.
 const CENTER_SELECTION_ACTIONS: ReadonlyArray<{ axis: TileAxis; Icon: IconType }> = [
-    { axis: 'horizontal', Icon: AlignCenterHorizontal },
-    { axis: 'vertical', Icon: AlignCenterVertical },
+    { axis: 'horizontal', Icon: AlignCenterVertical },
+    { axis: 'vertical', Icon: AlignCenterHorizontal },
 ];
 
 const TILE_ACTIONS: ReadonlyArray<{ axis: TileAxis; Icon: IconType }> = [

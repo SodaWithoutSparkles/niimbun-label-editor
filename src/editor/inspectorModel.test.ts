@@ -94,8 +94,10 @@ describe('inspectorModel — field descriptors', () => {
 
     it('tags every unwired field with the engine that owns it', () => {
         for (const field of IMAGE_FIELDS.filter((f) => !f.wired)) expect(field.reason).toBe('image');
-        for (const field of QR_FIELDS.filter((f) => !f.wired)) expect(field.reason).toBe('size');
-        for (const field of BARCODE_FIELDS.filter((f) => !f.wired)) expect(field.reason).toBe('size');
+        // QR / barcode carried a disabled `size` stub; it is gone, so no field
+        // of either type is unwired any more.
+        expect(QR_FIELDS.every((f) => f.wired)).toBe(true);
+        expect(BARCODE_FIELDS.every((f) => f.wired)).toBe(true);
         for (const field of RESERVED_FIELDS.filter((f) => !f.wired)) {
             expect(['trust', 'content']).toContain(field.reason);
         }
@@ -104,13 +106,12 @@ describe('inspectorModel — field descriptors', () => {
         expect(RESERVED_FIELDS.every((f) => f.wired)).toBe(true);
     });
 
-    it('points every size stub at the transform W/H fields, not a shipped engine', () => {
-        // The size box is edited through the numeric sizeW/sizeH transform
-        // fields, so the stub says so for text, shape, qr and barcode alike.
-        expect(TEXT_FIELDS.find((f) => f.key === 'size')?.reason).toBe('size');
-        expect(SHAPE_FIELDS.find((f) => f.key === 'size')?.reason).toBe('size');
-        expect(QR_FIELDS.find((f) => f.key === 'size')?.reason).toBe('size');
-        expect(BARCODE_FIELDS.find((f) => f.key === 'size')?.reason).toBe('size');
+    it('no longer exposes the useless `size` stub on any type', () => {
+        // Size is edited through the numeric sizeW/sizeH transform fields, so the
+        // aggregate `{w,h}` stub was dropped from every type's field list.
+        for (const fields of [TEXT_FIELDS, SHAPE_FIELDS, QR_FIELDS, BARCODE_FIELDS, IMAGE_FIELDS]) {
+            expect(keys(fields)).not.toContain('size');
+        }
     });
 
     it('wires per-node quantizer params as numeric fields', () => {
@@ -148,7 +149,7 @@ describe('inspectorModel — field descriptors', () => {
         expect(typeFields('group')).toEqual([]);
     });
 
-    it('wires the P5 image / qr / barcode options (size stays a stub)', () => {
+    it('wires the P5 image / qr / barcode options (no size stub)', () => {
         const image = Object.fromEntries(IMAGE_FIELDS.map((f) => [f.key, f]));
         expect(image.imageId?.wired).toBe(true);
         expect(image.imageId?.kind).toBe('imageRef');
@@ -166,7 +167,8 @@ describe('inspectorModel — field descriptors', () => {
         expect(qr.fill?.kind).toBe('color');
         expect(qr.quietZone?.wired).toBe(true);
         expect(qr.quietZone?.kind).toBe('number');
-        expect(qr.size?.wired).toBe(false);
+        // The useless `size` stub is gone (size is edited via sizeW/sizeH).
+        expect(qr.size).toBeUndefined();
 
         const barcode = Object.fromEntries(BARCODE_FIELDS.map((f) => [f.key, f]));
         expect(barcode.data?.wired).toBe(true);
@@ -175,7 +177,7 @@ describe('inspectorModel — field descriptors', () => {
         expect(barcode.fill?.kind).toBe('color');
         expect(barcode.quietZone?.wired).toBe(true);
         expect(barcode.quietZone?.kind).toBe('number');
-        expect(barcode.size?.wired).toBe(false);
+        expect(barcode.size).toBeUndefined();
     });
 
     it('offers a font-resource select and a curated system-font picker', () => {
