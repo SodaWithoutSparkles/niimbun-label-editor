@@ -4,6 +4,7 @@ import { nodeLookup } from '../../core/doc/derive';
 import {
     TILE_GAP_HM,
     alignTransformPatch,
+    distributeLayout,
     hasLocalGeometry,
     tileLayout,
     tileTransformPatch,
@@ -14,8 +15,9 @@ import type { Node, TextAlign } from '../../core/doc/types';
 
 /**
  * Arrange commands (ui-spec.md §10) — the single implementation of align / tile /
- * text-align for the whole editor. `ViewControls` renders the object-specific
- * icon block and calls these; the patches come from `editor/arrange`.
+ * distribute / text-align for the whole editor. `ViewControls` renders the
+ * object-specific icon block and calls these; the patches come from
+ * `editor/arrange`.
  *
  * A click is exactly **one** undo entry, however many nodes are selected: the
  * patches go through the store's transient gesture seam
@@ -32,6 +34,8 @@ export interface ArrangeActions {
     align: (edge: AlignEdge) => void;
     /** Tile the selection along one axis, anchored on its first node. */
     tile: (axis: TileAxis) => void;
+    /** Evenly space the selection's centres along one axis (extremes fixed). */
+    distribute: (axis: TileAxis) => void;
     /** Set the text alignment of every selected text node (inspector `align` field). */
     setTextAlign: (align: TextAlign) => void;
 }
@@ -93,6 +97,31 @@ export const useArrange = (selected: readonly Node[]): ArrangeActions => {
         [selected, updateNodeTransient, finish],
     );
 
+    const distribute = useCallback(
+        (axis: TileAxis) => {
+            const doc = useStore.getState().currentDoc;
+            if (!doc) return;
+            const byId = nodeLookup(doc.nodes);
+            const targets = distributeLayout(selected, byId, axis);
+            let changed = false;
+            for (const node of selected) {
+                if (!hasLocalGeometry(node)) continue;
+                const target = targets.get(node.id);
+                if (!target) continue;
+                const patch = tileTransformPatch(node, byId, target.x, target.y);
+                const transform = patch?.transform;
+                if (!patch || !transform) continue;
+                // The extremes are fixed (absent from the map), but any patch
+                // that rounds back onto the node is a no-op too.
+                if (transform.x === node.transform.x && transform.y === node.transform.y) continue;
+                updateNodeTransient(node.id, patch);
+                changed = true;
+            }
+            finish(changed);
+        },
+        [selected, updateNodeTransient, finish],
+    );
+
     const setTextAlign = useCallback(
         (align: TextAlign) => {
             const doc = useStore.getState().currentDoc;
@@ -110,5 +139,5 @@ export const useArrange = (selected: readonly Node[]): ArrangeActions => {
         [selected, updateNodeTransient, finish],
     );
 
-    return { align, tile, setTextAlign };
+    return { align, tile, distribute, setTextAlign };
 };

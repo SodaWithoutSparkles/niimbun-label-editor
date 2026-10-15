@@ -12,10 +12,12 @@ import {
     AlignVerticalJustifyCenter,
     AlignVerticalJustifyEnd,
     AlignVerticalJustifyStart,
+    Columns3,
     Grid3x3,
     Magnet,
     Maximize,
     RotateCw,
+    Rows3,
     Ruler as RulerIcon,
     Scan,
     ZoomIn,
@@ -34,11 +36,12 @@ import type { Node, TextAlign } from '../../core/doc/types';
  * document.
  *
  * Below the general VIEW block sits the **object-specific** icon block
- * (action-plan D2): align 6 + tile 2, shown only with a selection, plus the
- * text-align trio for a text node. The commands live in `useArrange` and the
- * geometry in `editor/arrange`, so this block and the Object tab share one
- * implementation. Icon-only buttons keep an accessible name from the same i18n
- * keys the Object tab's removed ALIGN section used.
+ * (action-plan D2), shown only with a selection and laid out as explicit rows:
+ * align 6 (left/center/right, then top/middle/bottom), distribute 2 + tile 2,
+ * plus the text-align trio for a text node. The commands live in `useArrange`
+ * and the geometry in `editor/arrange`, so this block and the Object tab share
+ * one implementation. Icon-only buttons keep an accessible name from the same
+ * i18n keys the Object tab's removed ALIGN section used.
  */
 
 type IconType = React.ComponentType<{ size?: number }>;
@@ -83,6 +86,11 @@ const TILE_LABEL_KEYS = {
     horizontal: 'editor.mfp.tileHorizontal',
 } as const satisfies Record<TileAxis, string>;
 
+const DISTRIBUTE_LABEL_KEYS = {
+    horizontal: 'editor.mfp.distributeHorizontal',
+    vertical: 'editor.mfp.distributeVertical',
+} as const satisfies Record<TileAxis, string>;
+
 /** Node text alignment (`node.align`). No `justify`: the model/renderer has none. */
 const TEXT_ALIGN_LABEL_KEYS = {
     left: 'editor.mfp.textAlignLeft',
@@ -91,23 +99,33 @@ const TEXT_ALIGN_LABEL_KEYS = {
 } as const satisfies Record<TextAlign, string>;
 
 /**
- * Selection align + tile glyphs. lucide has no `distribute` *action* (R10b), so
- * the closest glyph is the `justify`/`distribute` family: the six edges map to
- * the justify-start/center/end icons on each axis, and tiling maps to the
- * distribute-center icons (spreading nodes along the axis).
+ * Object-specific glyphs, laid out in explicit rows by the JSX below (R10b):
+ *  - **align**: the six edges map to the justify-start/center/end icons per axis;
+ *  - **distribute**: the `distribute-center` icons — the real "distribute"
+ *    action (evenly space centres, extremes fixed);
+ *  - **tile**: `Columns3` / `Rows3` (a stack of cells along the axis), which
+ *    read as "tile" rather than "distribute".
  */
-const ALIGN_ACTIONS: ReadonlyArray<{ edge: AlignEdge; Icon: IconType }> = [
+const ALIGN_H_ACTIONS: ReadonlyArray<{ edge: AlignEdge; Icon: IconType }> = [
     { edge: 'left', Icon: AlignHorizontalJustifyStart },
     { edge: 'center', Icon: AlignHorizontalJustifyCenter },
     { edge: 'right', Icon: AlignHorizontalJustifyEnd },
+];
+
+const ALIGN_V_ACTIONS: ReadonlyArray<{ edge: AlignEdge; Icon: IconType }> = [
     { edge: 'top', Icon: AlignVerticalJustifyStart },
     { edge: 'middle', Icon: AlignVerticalJustifyCenter },
     { edge: 'bottom', Icon: AlignVerticalJustifyEnd },
 ];
 
-const TILE_ACTIONS: ReadonlyArray<{ axis: TileAxis; Icon: IconType }> = [
-    { axis: 'vertical', Icon: AlignVerticalDistributeCenter },
+const DISTRIBUTE_ACTIONS: ReadonlyArray<{ axis: TileAxis; Icon: IconType }> = [
     { axis: 'horizontal', Icon: AlignHorizontalDistributeCenter },
+    { axis: 'vertical', Icon: AlignVerticalDistributeCenter },
+];
+
+const TILE_ACTIONS: ReadonlyArray<{ axis: TileAxis; Icon: IconType }> = [
+    { axis: 'horizontal', Icon: Columns3 },
+    { axis: 'vertical', Icon: Rows3 },
 ];
 
 const TEXT_ALIGN_ACTIONS: ReadonlyArray<{ value: TextAlign; Icon: IconType }> = [
@@ -139,7 +157,7 @@ export const ViewControls: React.FC = () => {
         () => (doc ? doc.nodes.filter((node) => selectedNodeIds.includes(node.id)) : []),
         [doc, selectedNodeIds],
     );
-    const { align, tile, setTextAlign } = useArrange(selected);
+    const { align, tile, distribute, setTextAlign } = useArrange(selected);
     const firstText = selected.find((node) => node.type === 'text');
 
     const step = (factor: number) =>
@@ -192,12 +210,15 @@ export const ViewControls: React.FC = () => {
             </div>
 
             {selected.length > 0 && (
-                <div className="flex flex-col gap-1 border-t border-gray-700 pt-2">
+                <div
+                    className="flex flex-col gap-1 border-t border-gray-700 pt-2"
+                    data-testid="object-align-icons"
+                >
                     <div className="px-1 text-xs font-semibold uppercase tracking-wider text-gray-400">
                         {t('editor.mfp.align')}
                     </div>
-                    <div className="flex flex-wrap items-center gap-1" data-testid="object-align-icons">
-                        {ALIGN_ACTIONS.map(({ edge, Icon }) => (
+                    <div className="flex flex-wrap items-center gap-1" data-testid="align-row-horizontal">
+                        {ALIGN_H_ACTIONS.map(({ edge, Icon }) => (
                             <IconButton
                                 key={edge}
                                 label={t(ALIGN_LABEL_KEYS[edge])}
@@ -206,9 +227,31 @@ export const ViewControls: React.FC = () => {
                                 <Icon size={16} />
                             </IconButton>
                         ))}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1" data-testid="align-row-vertical">
+                        {ALIGN_V_ACTIONS.map(({ edge, Icon }) => (
+                            <IconButton
+                                key={edge}
+                                label={t(ALIGN_LABEL_KEYS[edge])}
+                                onClick={() => align(edge)}
+                            >
+                                <Icon size={16} />
+                            </IconButton>
+                        ))}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1" data-testid="distribute-tile-row">
+                        {DISTRIBUTE_ACTIONS.map(({ axis, Icon }) => (
+                            <IconButton
+                                key={`distribute-${axis}`}
+                                label={t(DISTRIBUTE_LABEL_KEYS[axis])}
+                                onClick={() => distribute(axis)}
+                            >
+                                <Icon size={16} />
+                            </IconButton>
+                        ))}
                         {TILE_ACTIONS.map(({ axis, Icon }) => (
                             <IconButton
-                                key={axis}
+                                key={`tile-${axis}`}
                                 label={t(TILE_LABEL_KEYS[axis])}
                                 onClick={() => tile(axis)}
                             >

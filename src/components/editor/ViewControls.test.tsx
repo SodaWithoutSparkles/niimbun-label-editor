@@ -9,9 +9,9 @@ import { ViewControls } from './ViewControls';
 
 /**
  * ViewControls (action-plan W2 / D2): the general VIEW block is unchanged and an
- * object-specific icon block sits below it — align 6 + tile 2 only with a
- * selection, and the text-align trio only for a text node. Every icon button
- * keeps an accessible name.
+ * object-specific icon block sits below it — align 6 / distribute 2 / tile 2
+ * only with a selection, and the text-align trio only for a text node. Every
+ * icon button keeps an accessible name.
  */
 
 const node = (value: Record<string, unknown>): Node => value as unknown as Node;
@@ -92,7 +92,7 @@ describe('ViewControls — general VIEW block', () => {
 });
 
 describe('ViewControls — object-specific block (D2)', () => {
-    it('shows align 6 + tile 2 for a selection, each with an accessible name', () => {
+    it('shows align 6 + distribute 2 + tile 2 for a selection, each with an accessible name', () => {
         const selected = shapeNode();
         withSelection([selected]);
         render(<ViewControls />);
@@ -105,6 +105,8 @@ describe('ViewControls — object-specific block (D2)', () => {
             'Align top',
             'Align middle vertically',
             'Align bottom',
+            'Distribute horizontally',
+            'Distribute vertically',
             'Tile vertical',
             'Tile horizontal',
         ]) {
@@ -153,6 +155,73 @@ describe('ViewControls — object-specific block (D2)', () => {
 
         const persisted = useStore.getState().currentDoc!.nodes;
         expect(persisted.find((n) => n.id === 'b')!.transform).toMatchObject({ x: 500, y: 0 });
+    });
+
+    it('lays the object icons out in explicit rows', () => {
+        withSelection([textNode()]);
+        render(<ViewControls />);
+
+        expect(screen.getByTestId('align-row-horizontal')).toBeTruthy();
+        expect(screen.getByTestId('align-row-vertical')).toBeTruthy();
+        expect(screen.getByTestId('distribute-tile-row')).toBeTruthy();
+        expect(screen.getByTestId('text-align-icons')).toBeTruthy();
+    });
+
+    it('uses distinct, correct lucide glyphs for distribute and tile', () => {
+        withSelection([shapeNode()]);
+        render(<ViewControls />);
+
+        const classNameOf = (name: string) =>
+            screen.getByRole('button', { name }).querySelector('svg')?.getAttribute('class') ?? '';
+
+        // Distribute uses the distribute-center family…
+        expect(classNameOf('Distribute horizontally')).toContain('lucide-align-horizontal-distribute-center');
+        expect(classNameOf('Distribute vertically')).toContain('lucide-align-vertical-distribute-center');
+        // …tile uses Columns3 (horizontal) / Rows3 (vertical), not the distribute glyphs.
+        expect(classNameOf('Tile horizontal')).toContain('lucide-columns-3');
+        expect(classNameOf('Tile vertical')).toContain('lucide-rows-3');
+    });
+
+    it('distributes the selection horizontally and writes exactly one undo entry', () => {
+        const a = shapeNode({ id: 'a', transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 } });
+        const b = shapeNode({
+            id: 'b',
+            transform: { x: 1000, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+            size: { w: 200, h: 300 },
+        });
+        const c = shapeNode({
+            id: 'c',
+            transform: { x: 2000, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        });
+        withSelection([a, b, c]);
+        render(<ViewControls />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Distribute horizontally' }));
+
+        const persisted = useStore.getState().currentDoc!.nodes;
+        // Extremes fixed, interior centre even-spaced: 200/1200/2200.
+        expect(persisted.find((n) => n.id === 'a')!.transform.x).toBe(0);
+        expect(persisted.find((n) => n.id === 'b')!.transform.x).toBe(1100);
+        expect(persisted.find((n) => n.id === 'c')!.transform.x).toBe(2000);
+        expect(useStore.getState().docPast).toHaveLength(1);
+
+        useStore.getState().undoDoc();
+        expect(useStore.getState().currentDoc!.nodes.find((n) => n.id === 'b')!.transform.x).toBe(1000);
+    });
+
+    it('leaves no undo entry when distribute has fewer than three nodes', () => {
+        const a = shapeNode({ id: 'a' });
+        const b = shapeNode({
+            id: 'b',
+            transform: { x: 1000, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        });
+        withSelection([a, b]);
+        render(<ViewControls />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Distribute horizontally' }));
+
+        expect(useStore.getState().docPast).toHaveLength(0);
+        expect(useStore.getState().currentDoc!.nodes.find((n) => n.id === 'b')!.transform.x).toBe(1000);
     });
 
     it('leaves a selected geometry-less group untouched when tiling', () => {

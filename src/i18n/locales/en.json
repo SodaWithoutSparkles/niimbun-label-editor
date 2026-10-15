@@ -551,6 +551,8 @@
       "alignBottom": "Align bottom",
       "tileVertical": "Tile vertical",
       "tileHorizontal": "Tile horizontal",
+      "distributeHorizontal": "Distribute horizontally",
+      "distributeVertical": "Distribute vertically",
       "text": "Text",
       "appearance": "Appearance",
       "textAlignLeft": "Text align left",

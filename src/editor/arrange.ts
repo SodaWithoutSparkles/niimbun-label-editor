@@ -7,8 +7,9 @@ import type { NodePatch } from '../store/storeTypes';
 /**
  * Arrange geometry (ui-spec.md §10) — pure helpers shared by the Object tab and
  * the top-right icon block (`ViewControls`). Nothing here touches the store or
- * React: `alignTransformPatch` / `tileLayout` / `tileTransformPatch` return
- * world-space patches, and the caller commits them (`useArrange`).
+ * React: `alignTransformPatch` / `tileLayout` / `distributeLayout` /
+ * `tileTransformPatch` return world-space patches, and the caller commits them
+ * (`useArrange`).
  */
 
 export type AlignEdge = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
@@ -61,8 +62,8 @@ export const alignTransformPatch = (
 /** Gap between tiled neighbours in hm (1/100 mm): 100 hm = 1 mm. */
 export const TILE_GAP_HM = 100;
 
-/** World-space center along the tiling axis (`vertical` stacks by cy). */
-const centerAlong = (node: Node, byId: ReadonlyMap<string, Node>, axis: TileAxis): number => {
+/** World-space center along the tiling/distribute axis (`vertical` uses cy). */
+export const centerAlong = (node: Node, byId: ReadonlyMap<string, Node>, axis: TileAxis): number => {
     const bounds = nodeWorldBounds(node, byId);
     return axis === 'vertical' ? bounds.y + bounds.h / 2 : bounds.x + bounds.w / 2;
 };
@@ -99,6 +100,42 @@ export const tileLayout = (
         targets.set(node.id, axis === 'vertical' ? { x: cross, y: cursor } : { x: cursor, y: cross });
         const bounds = nodeWorldBounds(node, byId);
         cursor += (axis === 'vertical' ? bounds.h : bounds.w) + gapHm;
+    }
+    return targets;
+};
+
+/**
+ * Target world top-left for every interior node in a distribute gesture. The
+ * first and last node ordered by world center along the axis are the fixed
+ * extremes; the nodes between them are moved so the centres are evenly spaced
+ * between `firstCenter` and `lastCenter` (rounded to integer hm). Only the
+ * moved (interior) nodes appear in the returned map, and only nodes with local
+ * geometry take part (`groups` / empty point-shapes are dropped, exactly as in
+ * {@link tileLayout}). Fewer than three geometry-bearing nodes ⇒ empty map.
+ */
+export const distributeLayout = (
+    nodes: readonly Node[],
+    byId: ReadonlyMap<string, Node>,
+    axis: TileAxis,
+): Map<string, { x: number; y: number }> => {
+    const targets = new Map<string, { x: number; y: number }>();
+    const ordered = nodes
+        .filter(hasLocalGeometry)
+        .sort((a, b) => centerAlong(a, byId, axis) - centerAlong(b, byId, axis));
+    if (ordered.length < 3) return targets;
+    const firstCenter = centerAlong(ordered[0]!, byId, axis);
+    const lastCenter = centerAlong(ordered[ordered.length - 1]!, byId, axis);
+    const step = (lastCenter - firstCenter) / (ordered.length - 1);
+    for (let i = 1; i < ordered.length - 1; i += 1) {
+        const node = ordered[i]!;
+        const center = Math.round(firstCenter + step * i);
+        const bounds = nodeWorldBounds(node, byId);
+        targets.set(
+            node.id,
+            axis === 'vertical'
+                ? { x: bounds.x, y: center - bounds.h / 2 }
+                : { x: center - bounds.w / 2, y: bounds.y },
+        );
     }
     return targets;
 };
