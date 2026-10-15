@@ -23,7 +23,7 @@ import {
  * refs updated each render, so a caller may hand over a fresh closure or a
  * fresh `overrides` object every render without churning (and disposing) the
  * cache mid-flight. The default `render(rowIndex)` goes through the **shared**
- * render path at ~50 dpi (`renderLabelPage`, invariant 7), applying the
+ * render path at ~100 dpi (`renderLabelPage`, invariant 7), applying the
  * dialog's current render overrides (`invert`/`mirror`/`offset`) so a
  * thumbnail matches the printed raster. The cache is disposed on unmount and
  * rebuilt only when content changes, so a stale doc/override can never serve a
@@ -34,8 +34,14 @@ import {
  * stateful map, so the list re-renders as each thumbnail lands.
  */
 
-/** Thumbnails render at ~50 dpi (owner decision O1). */
-export const THUMBNAIL_DPI = 50;
+/**
+ * Thumbnails render at ~100 dpi (owner decision O1; raised from 50 in W5 so the
+ * queue previews are sharp on 2× displays and for landscape labels, which 50 dpi
+ * upscaled). The cache design (`rowIndex` key, LRU-32, 2 concurrent) is
+ * unchanged: only the raster resolution moved, and render cost — dpi² — stays
+ * far below the doc-dpi page preview.
+ */
+export const THUMBNAIL_DPI = 100;
 
 /** Render-relevant subset of `PrintOverrides` (printer options do not change pixels). */
 export interface PrintThumbnailOverrides {
@@ -87,8 +93,14 @@ export interface PrintThumbnails {
     readonly size: number;
 }
 
-/** Merge notices, keeping the worst `mirror-clipped-ink` loss seen so far. */
-const mergeNotices = (
+/**
+ * Merge notices, keeping the worst `mirror-clipped-ink` loss seen so far.
+ *
+ * Exported so a caller with a **second** render source (the print dialog's
+ * doc-dpi page preview) can fold its notices into the thumbnail hook's with
+ * identical semantics, instead of letting one source overwrite the other.
+ */
+export const mergeNotices = (
     previous: readonly RenderNotice[],
     next: readonly RenderNotice[],
 ): readonly RenderNotice[] => {

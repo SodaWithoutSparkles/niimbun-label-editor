@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '../../i18n';
 import App from '../../App';
 import { PrintCsvSmoke } from './PrintCsvSmoke';
@@ -77,7 +77,11 @@ describe('PrintCsvSmoke — dialog mounts over the in-memory CSV', () => {
             expect(screen.getByTestId('printcsv-state')).toHaveTextContent('connected'),
         );
 
-        // The page list enumerates records, and the plan equals 3×$times(1).
+        // D5: the dialog opens on the single-page preview; the record list is the
+        // `Queue` view, which is what enumerates records over the in-memory CSV.
+        expect(screen.getByTestId('print-page-preview')).toBeInTheDocument();
+        fireEvent.change(screen.getByLabelText('View as'), { target: { value: 'queue' } });
+
         expect(screen.getAllByTestId('print-page-row')).toHaveLength(3);
         expect(screen.getByText('3 pages total')).toBeInTheDocument();
 

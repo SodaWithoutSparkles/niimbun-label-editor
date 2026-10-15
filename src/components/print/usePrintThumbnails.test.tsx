@@ -38,7 +38,7 @@ const makeRender = (page: RenderedLabelPage) =>
     );
 
 describe('usePrintThumbnails', () => {
-    it('renders a row through the shared path at 50 dpi and resolves its data URL', async () => {
+    it('renders a row through the shared path at THUMBNAIL_DPI and resolves its data URL', async () => {
         const renderPage = makeRender(fakePage());
         const prepareRow = vi.fn(async (_rowIndex: number): Promise<ResolveContext> => ({}));
 
@@ -69,7 +69,7 @@ describe('usePrintThumbnails', () => {
             expect(result.current.urlFor(3)).toBe('data:image/png;base64,stub'),
         );
         expect(renderPage.mock.calls[0]![2]).toMatchObject({
-            dpi: 50,
+            dpi: THUMBNAIL_DPI,
             invert: true,
             mirror: true,
             offset: { x: 4, y: -2, type: 'outer' },

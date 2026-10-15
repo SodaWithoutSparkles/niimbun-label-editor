@@ -75,7 +75,7 @@ export interface RenderLabelPageOptions {
      * Effective render dpi; defaults to `doc.label.dpi`. Drives the raster
      * dimensions, the `hm → px` stage scale, `hmPerPx` and the policy-mask
      * scale, so everything downstream stays on one dpi. Thumbnails render at
-     * ~50 dpi through this same path (O1).
+     * ~100 dpi through this same path (O1).
      */
     dpi?: number;
     /** Post-quantize: flip every RGB channel (`v → 255 - v`), so black ↔ white. */

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useState } from 'react';
+import { StrictMode, useState } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { LabelType, type EncodedImage } from '@mmote/niimbluelib';
 import '../../i18n';
@@ -13,6 +13,7 @@ import type { JobProgress, JobRunResult, JobRunner } from '../../print/jobRunner
 import type { PrintJob, PrinterCapabilities, PrinterStatus } from '../../print/transport';
 import { useStore } from '../../store/useStore';
 import { PrintDialog } from './PrintDialog';
+import { THUMBNAIL_DPI } from './usePrintThumbnails';
 
 const { buildCsvPrintJobMock, renderLabelPageMock } = vi.hoisted(() => ({
     buildCsvPrintJobMock: vi.fn(),
@@ -257,7 +258,8 @@ describe('PrintDialog — warnings', () => {
 
         expect(screen.queryByTestId('print-warning-overflow')).not.toBeInTheDocument();
         // The ink check is lazy: no size overflow means no doc-dpi render. (The
-        // thumbnail cache shares this seam, but always passes `dpi: 50`.)
+        // page preview passes `dpi: doc.label.dpi`, the thumbnail cache
+        // `dpi: THUMBNAIL_DPI`; only the ink check omits `dpi` entirely.)
         const inkCheckCalls = renderLabelPageMock.mock.calls.filter(
             ([, , opts]) => (opts as { dpi?: number } | undefined)?.dpi === undefined,
         );
@@ -383,6 +385,181 @@ describe('PrintDialog — progress, cancel and order', () => {
             expect(screen.getByTestId('print-outcome')).toHaveTextContent('Printed 2 pages.'),
         );
         expect(screen.getByTestId('print-progress-bar')).toHaveStyle({ width: '100%' });
+    });
+});
+
+describe('PrintDialog — View as: Page preview (D5)', () => {
+    const callDpis = (): number[] =>
+        renderLabelPageMock.mock.calls
+            .map(([, , opts]) => (opts as { dpi?: number } | undefined)?.dpi)
+            .filter((dpi): dpi is number => typeof dpi === 'number');
+
+    const openPreview = (
+        options: { doc?: ReturnType<typeof narrowDoc>; csv?: CsvRecord | null } = {},
+    ) =>
+        renderDialog({
+            ...(options.doc ? { doc: options.doc } : {}),
+            ...(options.csv !== undefined ? { csv: options.csv } : {}),
+            runner: new FakeRunner(),
+            printerStatus: statusOf(B1_PRO),
+        });
+
+    it('opens on the single page view and renders it at the document dpi', async () => {
+        const doc = narrowDoc();
+        openPreview({ doc, csv: csvOf(3) });
+
+        expect(screen.getByLabelText('View as')).toHaveValue('page');
+        expect(screen.getByTestId('print-page-preview')).toBeInTheDocument();
+        expect(screen.queryByTestId('print-page-list')).not.toBeInTheDocument();
+
+        // The whole point of the `Page` path: the shared render, at doc dpi.
+        await waitFor(() => expect(callDpis()).toContain(doc.label.dpi));
+        // …and never through the thumbnail cache's resolution.
+        expect(callDpis()).not.toContain(THUMBNAIL_DPI);
+
+        // The raster lands as a large image once the async render settles.
+        expect(await screen.findByTestId('print-page-image')).toHaveAttribute(
+            'alt',
+            'Preview of row 1',
+        );
+    });
+
+    it('clamps the stepper to the record bounds', () => {
+        openPreview({ csv: csvOf(3) });
+
+        expect(screen.getByTestId('print-page-stepper')).toHaveTextContent('[1/3]');
+        expect(screen.getByLabelText('Previous page')).toBeDisabled();
+
+        fireEvent.click(screen.getByLabelText('Next page'));
+        expect(screen.getByTestId('print-page-stepper')).toHaveTextContent('[2/3]');
+
+        fireEvent.click(screen.getByLabelText('Next page'));
+        expect(screen.getByTestId('print-page-stepper')).toHaveTextContent('[3/3]');
+        expect(screen.getByLabelText('Next page')).toBeDisabled();
+
+        // Extra presses past the end must not move it.
+        fireEvent.click(screen.getByLabelText('Next page'));
+        expect(screen.getByTestId('print-page-stepper')).toHaveTextContent('[3/3]');
+
+        fireEvent.click(screen.getByLabelText('Previous page'));
+        expect(screen.getByTestId('print-page-stepper')).toHaveTextContent('[2/3]');
+    });
+
+    it('clamps the zoom ladder at both ends', () => {
+        openPreview();
+
+        const zoomOut = screen.getByLabelText('Zoom out');
+        const zoomIn = screen.getByLabelText('Zoom in');
+        expect(screen.getByTestId('print-zoom-factor')).toHaveTextContent('×1');
+
+        for (let press = 0; press < 8; press += 1) fireEvent.click(zoomOut);
+        expect(screen.getByTestId('print-zoom-factor')).toHaveTextContent('×0.5');
+        expect(zoomOut).toBeDisabled();
+
+        for (let press = 0; press < 8; press += 1) fireEvent.click(zoomIn);
+        expect(screen.getByTestId('print-zoom-factor')).toHaveTextContent('×4');
+        expect(zoomIn).toBeDisabled();
+    });
+
+    it('degrades to a notice (no crash) when the doc-dpi render throws a RangeError', async () => {
+        renderLabelPageMock.mockRejectedValue(
+            new RangeError(
+                'renderLabelPage: raster 4000×5000 = 20000000 px exceeds the 16000000-pixel cap',
+            ),
+        );
+        openPreview();
+
+        expect(await screen.findByTestId('print-preview-notice')).toBeInTheDocument();
+        // Still usable: the dialog and the view switch survive the failure.
+        expect(screen.getByLabelText('View as')).toBeEnabled();
+        expect(screen.queryByTestId('print-page-image')).not.toBeInTheDocument();
+    });
+
+    it('drops a previous page’s preview warning when stepping to a clean page', async () => {
+        // Page 1 overflows the palette; every later page renders clean, so a
+        // warning that outlives the step would be stale.
+        let call = 0;
+        renderLabelPageMock.mockImplementation(async (d: LabelDoc) => ({
+            ...fakeRenderedPage(d, false),
+            ...(call++ === 0 ? { policyOverflowCount: 2 } : {}),
+        }));
+        openPreview({ csv: csvOf(2) });
+
+        expect(await screen.findByTestId('print-warning-policy-overflow')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByLabelText('Next page'));
+
+        expect(screen.getByTestId('print-page-stepper')).toHaveTextContent('[2/2]');
+        await waitFor(() =>
+            expect(
+                screen.queryByTestId('print-warning-policy-overflow'),
+            ).not.toBeInTheDocument(),
+        );
+    });
+
+    it('resets the view mode and the selected page each time the dialog opens', () => {
+        const props = {
+            doc: narrowDoc(),
+            csv: csvOf(3),
+            runner: new FakeRunner(),
+            printerStatus: statusOf(B1_PRO),
+        };
+        const onClose = vi.fn();
+        const view = render(<PrintDialog open onClose={onClose} {...props} />);
+
+        fireEvent.click(screen.getByLabelText('Next page'));
+        expect(screen.getByTestId('print-page-stepper')).toHaveTextContent('[2/3]');
+
+        fireEvent.change(screen.getByLabelText('View as'), { target: { value: 'queue' } });
+        expect(screen.getByTestId('print-page-list')).toBeInTheDocument();
+
+        view.rerender(<PrintDialog open={false} onClose={onClose} {...props} />);
+        view.rerender(<PrintDialog open onClose={onClose} {...props} />);
+
+        expect(screen.getByLabelText('View as')).toHaveValue('page');
+        expect(screen.getByTestId('print-page-stepper')).toHaveTextContent('[1/3]');
+    });
+
+    it('renders queue thumbnails above the old 50 dpi, not at the page dpi', async () => {
+        const doc = narrowDoc();
+        openPreview({ doc, csv: csvOf(2) });
+
+        fireEvent.change(screen.getByLabelText('View as'), { target: { value: 'queue' } });
+        // Only the queue's own renders count: the page preview rendered first.
+        renderLabelPageMock.mockClear();
+
+        await waitFor(() => expect(callDpis()).toContain(THUMBNAIL_DPI));
+        // Raised from 50 so the queue previews stay sharp on 2× displays.
+        expect(THUMBNAIL_DPI).toBeGreaterThan(50);
+        expect(callDpis()).not.toContain(doc.label.dpi);
+    });
+    it('lands the page image under a StrictMode double-mount', async () => {
+        // The app renders inside `<React.StrictMode>`: the render effect runs
+        // setup → cleanup → setup. A cleanup that only latched "cancelled" on a
+        // shared flag would drop every result and leave a permanent placeholder.
+        render(
+            <StrictMode>
+                <PrintDialog
+                    open
+                    onClose={vi.fn()}
+                    doc={narrowDoc()}
+                    csv={csvOf(2)}
+                    runner={new FakeRunner()}
+                    printerStatus={statusOf(B1_PRO)}
+                />
+            </StrictMode>,
+        );
+
+        expect(await screen.findByTestId('print-page-image')).toHaveAttribute(
+            'alt',
+            'Preview of row 1',
+        );
+
+        fireEvent.click(screen.getByLabelText('Next page'));
+        expect(await screen.findByTestId('print-page-image')).toHaveAttribute(
+            'alt',
+            'Preview of row 2',
+        );
     });
 });
 

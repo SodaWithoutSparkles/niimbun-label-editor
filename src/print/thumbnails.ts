@@ -7,7 +7,7 @@
  * interactive rows are rendered before the off-screen prefetch warming.
  *
  * Deliberately React/DOM/Konva-free (decision 42): the caller supplies the
- * `render(rowIndex)` callback (typically wrapping `renderLabelPage` at ~50 dpi);
+ * `render(rowIndex)` callback (typically wrapping `renderLabelPage` at ~100 dpi);
  * this module only schedules, de-duplicates and caches the resulting handle
  * (a data URL or any opaque string). The React hook `usePrintThumbnails` wraps
  * this cache.

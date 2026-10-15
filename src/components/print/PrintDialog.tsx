@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { LabelType, PageColorType } from '@mmote/niimbluelib';
 import { Modal } from '../common/dialogs/Modal';
@@ -24,8 +24,13 @@ import type { JobProgress, JobRunner } from '../../print/jobRunner';
 import type { PrinterStatus } from '../../print/transport';
 import { useStore } from '../../store/useStore';
 import type { EditorWarning } from '../../editor/warnings';
-import { usePrintThumbnails, type PrintThumbnailOverrides } from './usePrintThumbnails';
+import {
+    mergeNotices,
+    usePrintThumbnails,
+    type PrintThumbnailOverrides,
+} from './usePrintThumbnails';
 import { PrintPageList } from './PrintPageList';
+import { PrintPagePreview, previewOptionsKey, type PrintPreviewReport } from './PrintPagePreview';
 import {
     activeRecords,
     rollDpiMismatch,
@@ -36,8 +41,9 @@ import {
 /**
  * Print dialog (P7 W4).
  *
- * `Modal`-based batch-print surface: a virtualized record list with ~50 dpi
- * thumbnails, a capability-gated override panel, non-blocking warnings and a
+ * `Modal`-based batch-print surface: a virtualized record list with ~100 dpi
+ * thumbnails (`Queue`) or one doc-dpi page preview (`Page`, D5), a
+ * capability-gated override panel, non-blocking warnings and a
  * monotonic progress bar. The print job itself comes from the shared pipeline
  * (`buildCsvPrintJob` → `planSequence` → `renderLabelPage`/`orientForPrint`,
  * invariant 7); this component only collects options and drives a
@@ -71,6 +77,12 @@ type Outcome =
     | { kind: 'cancelled'; pagesPrinted: number }
     | { kind: 'error'; message: string };
 
+/**
+ * `Pages` column layout (D5). `queue` = the windowed record list of ~100 dpi
+ * thumbnails; `page` = one record at the document dpi (default).
+ */
+export type PrintViewMode = 'queue' | 'page';
+
 const messageOf = (error: unknown): string =>
     error instanceof Error ? error.message : String(error);
 
@@ -103,6 +115,11 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     const [progress, setProgress] = useState<JobProgress | null>(null);
     const [outcome, setOutcome] = useState<Outcome | null>(null);
     const [busy, setBusy] = useState(false);
+    const [viewMode, setViewMode] = useState<PrintViewMode>('page');
+    /** Record position for the `Page` view stepper; clamped when derived. */
+    const [selectedPage, setSelectedPage] = useState(0);
+    /** The page preview's palette-overflow/notice signals (see `previewReport`). */
+    const [previewReport, setPreviewReport] = useState<PrintPreviewReport | null>(null);
 
     // Fresh form each time the dialog opens; never carry a previous job's
     // overrides or outcome into a new one.
@@ -121,6 +138,9 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         setProgress(null);
         setOutcome(null);
         setBusy(false);
+        // The preview always opens on the doc-dpi single page, first record.
+        setViewMode('page');
+        setSelectedPage(0);
     }, [open]);
 
     const rows = rowCountOf(csv);
@@ -129,6 +149,12 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         () => activeRecords(rows, timesFor, copies),
         [rows, timesFor, copies],
     );
+    // `Page` view stepper. It walks the **active records** the queue lists (not
+    // physical pages), so both views show the same N of M; `plan.totalPages`
+    // stays the printer-page count in the section header. Derived (not stored)
+    // so a shrinking record set cannot leave the index past the end.
+    const pageIndex = activeRows.length === 0 ? 0 : Math.min(selectedPage, activeRows.length - 1);
+    const selectedRowIndex = activeRows[pageIndex];
 
     const plan = useMemo(() => {
         try {
@@ -188,7 +214,32 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         [invert, mirror, parsedOffset],
     );
 
-    const { urlFor, prefetch, notices, policyOverflowCount } = usePrintThumbnails({
+    // The `Page` view renders **one** record at the **document** dpi through the
+    // same shared path (invariant 7), with the identical invert/mirror/offset
+    // split the queue thumbnails and the print job use. Deliberately not routed
+    // through `usePrintThumbnails`: that cache is keyed by `rowIndex` alone and
+    // its rasters are sized for 64 px rows, so a doc-dpi page must never enter it.
+    // Memoized because its identity is the render effect's dependency.
+    const previewRenderOptions = useMemo<RenderLabelPageOptions>(
+        () => ({
+            dpi: doc.label.dpi,
+            ...(assets !== undefined ? { assets } : {}),
+            ...thumbnailOverrides,
+        }),
+        [doc.label.dpi, assets, thumbnailOverrides],
+    );
+
+    const handlePreviewReport = useCallback(
+        (report: PrintPreviewReport) => setPreviewReport(report),
+        [],
+    );
+
+    const {
+        urlFor,
+        prefetch,
+        notices: thumbnailNotices,
+        policyOverflowCount: thumbnailPolicyOverflow,
+    } = usePrintThumbnails({
         doc,
         csv,
         prepareRow,
@@ -196,6 +247,32 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         overrides: thumbnailOverrides,
         enabled: open,
     });
+
+    // In `Page` view the queue list is unmounted, so no thumbnail is ever
+    // requested and the hook alone would stay silent about a palette overflow or
+    // a mirror clip. Fold the preview's signals in (worst-loss-wins, exactly as
+    // the hook merges its own), discarding a report from a superseded doc,
+    // render-option value **or page** — otherwise a warning raised for page N
+    // would persist after stepping to a clean page M.
+    const previewKey = previewOptionsKey(previewRenderOptions);
+    const currentPreviewReport =
+        previewReport !== null &&
+        previewReport.doc === doc &&
+        previewReport.key === previewKey &&
+        previewReport.rowIndex === selectedRowIndex
+            ? previewReport
+            : undefined;
+    const notices = useMemo(
+        () =>
+            currentPreviewReport === undefined
+                ? thumbnailNotices
+                : mergeNotices(thumbnailNotices, currentPreviewReport.notices),
+        [thumbnailNotices, currentPreviewReport],
+    );
+    const policyOverflowCount = Math.max(
+        thumbnailPolicyOverflow,
+        currentPreviewReport?.policyOverflowCount ?? 0,
+    );
 
     const printOverrides = useMemo<PrintOverrides>(
         () => ({
@@ -442,13 +519,51 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                 aria-label={t('print.order')}
                             />
                         </SettingRow>
-                        <PrintPageList
-                            rows={activeRows}
-                            copiesFor={(rowIndex) => timesFor(rowIndex) * copies}
-                            urlFor={urlFor}
-                            prefetch={prefetch}
-                            height={320}
-                        />
+                        <SettingRow label={t('print.viewAs')}>
+                            <Select
+                                value={viewMode}
+                                onChange={(value) =>
+                                    setViewMode(value === 'queue' ? 'queue' : 'page')
+                                }
+                                options={[
+                                    { value: 'queue', label: t('print.viewQueue') },
+                                    { value: 'page', label: t('print.viewPage') },
+                                ]}
+                                className="w-40"
+                                aria-label={t('print.viewAs')}
+                            />
+                        </SettingRow>
+                        {viewMode === 'queue' ? (
+                            <PrintPageList
+                                rows={activeRows}
+                                copiesFor={(rowIndex) => timesFor(rowIndex) * copies}
+                                urlFor={urlFor}
+                                prefetch={prefetch}
+                                height={320}
+                            />
+                        ) : selectedRowIndex === undefined ? (
+                            <p className="rounded border border-gray-700 bg-gray-900 px-2 py-3 text-center text-xs text-gray-500 italic">
+                                {t('print.emptyPages')}
+                            </p>
+                        ) : (
+                            <PrintPagePreview
+                                doc={doc}
+                                rowIndex={selectedRowIndex}
+                                renderOptions={previewRenderOptions}
+                                prepareRow={prepareRow}
+                                pageIndex={pageIndex}
+                                total={activeRows.length}
+                                onPrev={() => setSelectedPage(Math.max(0, pageIndex - 1))}
+                                onNext={() =>
+                                    setSelectedPage(
+                                        Math.min(activeRows.length - 1, pageIndex + 1),
+                                    )
+                                }
+                                onReport={handlePreviewReport}
+                                enabled={open}
+                                height={320}
+                            />
+                        )}
                     </section>
 
                     <section className="space-y-1">
