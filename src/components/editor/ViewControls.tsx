@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
     AlignCenter,
+    AlignCenterHorizontal,
+    AlignCenterVertical,
     AlignHorizontalDistributeCenter,
     AlignHorizontalJustifyCenter,
     AlignHorizontalJustifyEnd,
@@ -12,8 +14,10 @@ import {
     AlignVerticalJustifyCenter,
     AlignVerticalJustifyEnd,
     AlignVerticalJustifyStart,
+    Bold,
     Columns3,
     Grid3x3,
+    Italic,
     Magnet,
     Maximize,
     RotateCw,
@@ -27,6 +31,7 @@ import { useStore } from '../../store/useStore';
 import { cn } from '../../utils/cn';
 import { ZOOM_MIN, ZOOM_MAX } from '../../editor/viewportController';
 import { useArrange } from './useArrange';
+import { hasFontStyleToken } from '../../editor/textStyle';
 import type { AlignEdge, TileAxis } from '../../editor/arrange';
 import type { Node, TextAlign } from '../../core/doc/types';
 
@@ -36,12 +41,12 @@ import type { Node, TextAlign } from '../../core/doc/types';
  * document.
  *
  * Below the general VIEW block sits the **object-specific** icon block
- * (action-plan D2), shown only with a selection and laid out as explicit rows:
- * align 6 (left/center/right, then top/middle/bottom), distribute 2 + tile 2,
- * plus the text-align trio for a text node. The commands live in `useArrange`
- * and the geometry in `editor/arrange`, so this block and the Object tab share
- * one implementation. Icon-only buttons keep an accessible name from the same
- * i18n keys the Object tab's removed ALIGN section used.
+ * (action-plan D2), shown only with a selection and laid out as explicit rows
+ * (R10b): align 6 (left/center/right, then top/middle/bottom); centre-on-selection
+ * H/V, then distribute H/V, then tile H/V; plus the text-align trio and the
+ * bold/italic toggles for a text node. The commands live in `useArrange` and the
+ * geometry in `editor/arrange`, so this block and the Object tab share one
+ * implementation. Icon-only buttons keep an accessible name from i18n keys.
  */
 
 type IconType = React.ComponentType<{ size?: number }>;
@@ -91,6 +96,11 @@ const DISTRIBUTE_LABEL_KEYS = {
     vertical: 'editor.mfp.distributeVertical',
 } as const satisfies Record<TileAxis, string>;
 
+const CENTER_SELECTION_LABEL_KEYS = {
+    horizontal: 'editor.mfp.centerSelectionHorizontal',
+    vertical: 'editor.mfp.centerSelectionVertical',
+} as const satisfies Record<TileAxis, string>;
+
 /** Node text alignment (`node.align`). No `justify`: the model/renderer has none. */
 const TEXT_ALIGN_LABEL_KEYS = {
     left: 'editor.mfp.textAlignLeft',
@@ -121,6 +131,11 @@ const ALIGN_V_ACTIONS: ReadonlyArray<{ edge: AlignEdge; Icon: IconType }> = [
 const DISTRIBUTE_ACTIONS: ReadonlyArray<{ axis: TileAxis; Icon: IconType }> = [
     { axis: 'horizontal', Icon: AlignHorizontalDistributeCenter },
     { axis: 'vertical', Icon: AlignVerticalDistributeCenter },
+];
+
+const CENTER_SELECTION_ACTIONS: ReadonlyArray<{ axis: TileAxis; Icon: IconType }> = [
+    { axis: 'horizontal', Icon: AlignCenterHorizontal },
+    { axis: 'vertical', Icon: AlignCenterVertical },
 ];
 
 const TILE_ACTIONS: ReadonlyArray<{ axis: TileAxis; Icon: IconType }> = [
@@ -157,8 +172,10 @@ export const ViewControls: React.FC = () => {
         () => (doc ? doc.nodes.filter((node) => selectedNodeIds.includes(node.id)) : []),
         [doc, selectedNodeIds],
     );
-    const { align, tile, distribute, setTextAlign } = useArrange(selected);
+    const { align, tile, distribute, centerOnSelection, setTextAlign, setFontStyle } = useArrange(selected);
     const firstText = selected.find((node) => node.type === 'text');
+    const bold = firstText ? hasFontStyleToken(firstText.fontStyle, 'bold') : false;
+    const italic = firstText ? hasFontStyleToken(firstText.fontStyle, 'italic') : false;
 
     const step = (factor: number) =>
         setManualZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, effectiveZoom * factor)));
@@ -240,6 +257,15 @@ export const ViewControls: React.FC = () => {
                         ))}
                     </div>
                     <div className="flex flex-wrap items-center gap-1" data-testid="distribute-tile-row">
+                        {CENTER_SELECTION_ACTIONS.map(({ axis, Icon }) => (
+                            <IconButton
+                                key={`center-selection-${axis}`}
+                                label={t(CENTER_SELECTION_LABEL_KEYS[axis])}
+                                onClick={() => centerOnSelection(axis)}
+                            >
+                                <Icon size={16} />
+                            </IconButton>
+                        ))}
                         {DISTRIBUTE_ACTIONS.map(({ axis, Icon }) => (
                             <IconButton
                                 key={`distribute-${axis}`}
@@ -271,6 +297,20 @@ export const ViewControls: React.FC = () => {
                                     <Icon size={16} />
                                 </IconButton>
                             ))}
+                            <IconButton
+                                label={t('editor.mfp.bold')}
+                                active={bold}
+                                onClick={() => setFontStyle('bold', !bold)}
+                            >
+                                <Bold size={16} />
+                            </IconButton>
+                            <IconButton
+                                label={t('editor.mfp.italic')}
+                                active={italic}
+                                onClick={() => setFontStyle('italic', !italic)}
+                            >
+                                <Italic size={16} />
+                            </IconButton>
                         </div>
                     )}
                 </div>

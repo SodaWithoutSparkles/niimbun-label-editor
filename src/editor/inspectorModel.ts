@@ -39,7 +39,6 @@ export type FieldKind =
     | 'boolean'
     | 'select'
     | 'color'
-    | 'textContent'
     /** Editable static content on `node.data` (qr / barcode payload). */
     | 'dataContent'
     /** Select over `doc.resources.images` (options resolved in the panel). */
@@ -108,18 +107,12 @@ export const GROUP_TRANSFORM_FIELDS: readonly FieldDescriptor[] = TRANSFORM_FIEL
  * Props shared by every node type — the only fields shown for a **mixed**
  * multi-selection (`ui-spec.md` §10). `visible`/`locked` are deliberately NOT
  * here: the layers panel owns visibility and lock (ui-spec §7), and the Object
- * tab must not duplicate them. `align` is universal even though it is also a
- * text prop, so mixed selections can still align.
+ * tab must not duplicate them. Text alignment now lives on the toolbar icons
+ * (ViewControls), so a mixed selection exposes no field of its own.
  */
-export const UNIVERSAL_FIELDS: readonly FieldDescriptor[] = [
-    { key: 'align', scope: 'universal', kind: 'select', wired: true, options: ['left', 'center', 'right'] },
-];
+export const UNIVERSAL_FIELDS: readonly FieldDescriptor[] = [];
 
 export const TEXT_FIELDS: readonly FieldDescriptor[] = [
-    // The leaf's editable static content. Backed by `text: { kind: 'static',
-    // value }`; CSV/template execution is P6, so only the static value is
-    // editable here.
-    { key: 'text', scope: 'text', kind: 'textContent', wired: true },
     // `size` is a `{w, h}` box, not a scalar; the Object tab edits it as the two
     // numeric `sizeW`/`sizeH` transform fields, so this aggregate stays a stub.
     { key: 'size', scope: 'text', kind: 'stub', wired: false, reason: 'size' },
@@ -129,12 +122,8 @@ export const TEXT_FIELDS: readonly FieldDescriptor[] = [
     // System-font picker: sets `fontFamily` from the curated family list.
     { key: 'fontFamily', scope: 'text', kind: 'select', wired: true, options: SYSTEM_FONTS },
     { key: 'fontSize', scope: 'text', kind: 'number', wired: true },
-    // The renderer reads `fontStyle` but ignores weight/spacing/direction, so
-    // advertising them as wired would let a user edit a field nothing acts on.
-    // They are `style` stubs, not CSV/template content bindings.
-    { key: 'fontWeight', scope: 'text', kind: 'select', wired: false, options: ['normal', 'bold'], reason: 'style' },
-    { key: 'fontStyle', scope: 'text', kind: 'select', wired: true, options: ['normal', 'italic'] },
-    { key: 'align', scope: 'text', kind: 'select', wired: true, options: ['left', 'center', 'right'] },
+    // Bold/italic and text content are edited inline (ViewControls toggles /
+    // WYSIWYG in place), so they no longer appear as Object-tab fields.
     // How the text fills its box (P5): both renderers read `node.wrap`.
     { key: 'wrap', scope: 'text', kind: 'select', wired: true, options: ['word', 'char', 'clip', 'shrink'] },
     { key: 'letterSpacing', scope: 'text', kind: 'number', wired: false, reason: 'style' },
@@ -276,7 +265,7 @@ export interface BulkFieldModel {
  * - none selected  → `single`, no fields
  * - one selected   → `single`, that node's full field set
  * - all same type  → `same-type`, transform + that type's shared props + universal
- * - mixed types    → `mixed`, universal props only (visible / lock / align)
+ * - mixed types    → `mixed`, universal props only
  */
 export const bulkFieldModel = (selected: readonly Node[]): BulkFieldModel => {
     const types: NodeType[] = [];

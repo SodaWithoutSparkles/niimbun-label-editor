@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TextWrap } from '../../core/doc/objects';
 import type { LabelDoc, TextAlign } from '../../core/doc/types';
+import { fontStyleOf, fontWeightOf } from '../../editor/textStyle';
 import { useStore } from '../../store/useStore';
 
 /**
@@ -404,7 +405,11 @@ export const TextEditorOverlay: React.FC<TextEditorOverlayProps> = ({
                     boxSizing: 'border-box',
                     fontSize: `${session.fontSize}px`,
                     fontFamily: session.fontFamily,
-                    fontStyle: session.fontStyle,
+                    // A node `fontStyle` may be the combined `'bold italic'`,
+                    // which the CSS `font-style` longhand rejects. Split it into
+                    // the two longhands so the WYSIWYG box paints bold too.
+                    fontWeight: fontWeightOf(session.fontStyle),
+                    fontStyle: fontStyleOf(session.fontStyle),
                     lineHeight: session.lineHeight,
                     textAlign: session.align,
                     padding: 0,

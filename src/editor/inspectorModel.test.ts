@@ -53,16 +53,25 @@ describe('inspectorModel — field descriptors', () => {
         // The resolver ignores these text props, so advertising them as wired
         // would let a user edit a field nothing reads (should-fix #13). Their
         // reason is `style`, not the misleading CSV/template `content` message.
-        const unactionable = ['fontWeight', 'letterSpacing', 'direction'];
+        const unactionable = ['letterSpacing', 'direction'];
         for (const key of unactionable) {
             const field = [...TEXT_FIELDS, ...SHAPE_FIELDS].find((f) => f.key === key);
             expect(field?.wired, key).toBe(false);
             expect(field?.reason, key).toBe('style');
         }
         // The ones the renderer *does* read stay wired.
-        for (const key of ['fontFamily', 'fontSize', 'fontStyle', 'align', 'closed', 'shape']) {
+        for (const key of ['fontFamily', 'fontSize', 'closed', 'shape']) {
             const field = [...TEXT_FIELDS, ...SHAPE_FIELDS].find((f) => f.key === key);
             expect(field?.wired, key).toBe(true);
+        }
+    });
+
+    it('drops the fields now edited inline or via toolbar icons', () => {
+        // Text content is edited WYSIWYG in place; bold/italic and text-align
+        // are toolbar toggles (ViewControls). None belong to the Object tab.
+        const gone = ['text', 'fontWeight', 'fontStyle', 'align'];
+        for (const key of gone) {
+            expect(keys(TEXT_FIELDS), key).not.toContain(key);
         }
     });
 
@@ -208,14 +217,11 @@ describe('inspectorModel — single-selection field set', () => {
         expect(new Set(fieldKeys).size).toBe(fieldKeys.length);
         expect(fieldKeys).toContain('x');
         expect(fieldKeys).toContain('fontFamily');
-        expect(fieldKeys).toContain('text');
         expect(fieldKeys).toContain('contentSource');
         // The layers panel owns visible/locked (ui-spec §7), so the Object tab
         // must not advertise them (must-fix #9).
         expect(fieldKeys).not.toContain('visible');
         expect(fieldKeys).not.toContain('locked');
-        // `align` appears in both text and universal sets but only once.
-        expect(fieldKeys.filter((k) => k === 'align')).toHaveLength(1);
     });
 
     it('omits reserved fields for a group', () => {
@@ -244,7 +250,6 @@ describe('inspectorModel — bulk mode', () => {
         const fieldKeys = keys(model.fields);
         expect(fieldKeys).toContain('x');
         expect(fieldKeys).toContain('fontFamily');
-        expect(fieldKeys).toContain('align');
         // visible/locked belong to the layers panel, not the Object tab.
         expect(fieldKeys).not.toContain('visible');
         expect(fieldKeys).not.toContain('locked');
@@ -256,14 +261,15 @@ describe('inspectorModel — bulk mode', () => {
         const model = bulkFieldModel([node('a', 'text'), node('b', 'shape')]);
         expect(model.mode).toBe('mixed');
         expect(model.types).toEqual(['text', 'shape']);
+        // `UNIVERSAL_FIELDS` is now empty: mixed selections expose no field.
         expect(model.fields).toEqual([...UNIVERSAL_FIELDS]);
-        expect(keys(model.fields)).toEqual(['align']);
+        expect(keys(model.fields)).toEqual([]);
     });
 
     it('three mixed types also collapse to universal props', () => {
         const model = bulkFieldModel([node('a', 'text'), node('b', 'shape'), node('c', 'qr')]);
         expect(model.mode).toBe('mixed');
-        expect(keys(model.fields)).toEqual(['align']);
+        expect(keys(model.fields)).toEqual([]);
     });
 
     it('reports duplicate-type order in first-seen order', () => {

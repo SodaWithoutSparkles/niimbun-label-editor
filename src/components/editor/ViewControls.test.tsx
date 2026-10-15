@@ -114,11 +114,13 @@ describe('ViewControls — object-specific block (D2)', () => {
         }
     });
 
-    it('hides the text-align icons for a non-text selection', () => {
+    it('hides the text-align and bold/italic icons for a non-text selection', () => {
         withSelection([shapeNode()]);
         render(<ViewControls />);
         expect(screen.queryByTestId('text-align-icons')).toBeNull();
         expect(screen.queryByRole('button', { name: 'Text align left' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Bold' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Italic' })).toBeNull();
     });
 
     it('aligns the selection to the backing right edge', () => {
@@ -299,6 +301,106 @@ describe('ViewControls — object-specific block (D2)', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Align right' }));
 
         expect(useStore.getState().docPast).toHaveLength(0);
+    });
+});
+
+describe('ViewControls — centre on selection icons', () => {
+    it('shows H/V centre-on-selection icons with accessible names and glyphs', () => {
+        withSelection([shapeNode()]);
+        render(<ViewControls />);
+
+        expect(screen.getByRole('button', { name: 'Centre on selection horizontally' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Centre on selection vertically' })).toBeTruthy();
+
+        const classNameOf = (name: string) =>
+            screen.getByRole('button', { name }).querySelector('svg')?.getAttribute('class') ?? '';
+        expect(classNameOf('Centre on selection horizontally')).toContain('lucide-align-center-horizontal');
+        expect(classNameOf('Centre on selection vertically')).toContain('lucide-align-center-vertical');
+    });
+
+    it('centres the selection on its own union bounds as exactly one undo step', () => {
+        const a = shapeNode({ id: 'a', transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 } });
+        const b = shapeNode({
+            id: 'b',
+            transform: { x: 1000, y: 40, rotDeg: 0, scaleX: 1, scaleY: 1 },
+            size: { w: 200, h: 300 },
+        });
+        const c = shapeNode({ id: 'c', transform: { x: 2000, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 } });
+        withSelection([a, b, c]);
+        render(<ViewControls />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Centre on selection horizontally' }));
+
+        const persisted = useStore.getState().currentDoc!.nodes;
+        // Union x=0..2400 → centre 1200; cross-axis (y) preserved.
+        expect(persisted.find((n) => n.id === 'a')!.transform).toMatchObject({ x: 1000, y: 0 });
+        expect(persisted.find((n) => n.id === 'b')!.transform).toMatchObject({ x: 1100, y: 40 });
+        expect(persisted.find((n) => n.id === 'c')!.transform).toMatchObject({ x: 1000, y: 0 });
+        expect(useStore.getState().docPast).toHaveLength(1);
+
+        useStore.getState().undoDoc();
+        expect(useStore.getState().currentDoc!.nodes.find((n) => n.id === 'b')!.transform.x).toBe(1000);
+    });
+});
+
+describe('ViewControls — bold / italic toggles', () => {
+    it('shows Bold and Italic icon buttons for a text selection', () => {
+        withSelection([textNode()]);
+        render(<ViewControls />);
+
+        expect(screen.getByTestId('text-align-icons')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Bold' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Italic' })).toBeTruthy();
+    });
+
+    it('toggles fontStyle to bold and marks the button pressed (one undo entry)', () => {
+        withSelection([textNode()]);
+        render(<ViewControls />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Bold' }));
+
+        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')! as { fontStyle?: string };
+        expect(persisted.fontStyle).toBe('bold');
+        expect(screen.getByRole('button', { name: 'Bold' }).getAttribute('aria-pressed')).toBe('true');
+        expect(useStore.getState().docPast).toHaveLength(1);
+    });
+
+    it('combines bold + italic into the single "bold italic" style string', () => {
+        withSelection([textNode()]);
+        render(<ViewControls />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Bold' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Italic' }));
+
+        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')! as { fontStyle?: string };
+        expect(persisted.fontStyle).toBe('bold italic');
+        expect(screen.getByRole('button', { name: 'Bold' }).getAttribute('aria-pressed')).toBe('true');
+        expect(screen.getByRole('button', { name: 'Italic' }).getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('removes a token when the active toggle is clicked again', () => {
+        withSelection([textNode({ fontStyle: 'bold italic' })]);
+        render(<ViewControls />);
+
+        expect(screen.getByRole('button', { name: 'Bold' }).getAttribute('aria-pressed')).toBe('true');
+        fireEvent.click(screen.getByRole('button', { name: 'Bold' }));
+
+        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')! as { fontStyle?: string };
+        expect(persisted.fontStyle).toBe('italic');
+    });
+
+    it('applies bold to every selected text node as one undo entry', () => {
+        const a = textNode({ id: 't1' });
+        const b = textNode({ id: 't2' });
+        withSelection([a, b]);
+        render(<ViewControls />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Bold' }));
+
+        const persisted = useStore.getState().currentDoc!.nodes;
+        expect((persisted.find((n) => n.id === 't1') as { fontStyle?: string }).fontStyle).toBe('bold');
+        expect((persisted.find((n) => n.id === 't2') as { fontStyle?: string }).fontStyle).toBe('bold');
+        expect(useStore.getState().docPast).toHaveLength(1);
     });
 });
 

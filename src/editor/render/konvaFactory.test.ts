@@ -427,6 +427,16 @@ describe('createKonvaNode — text wrap (P5 D1/D2a)', () => {
         expect(buildText({ lineHeight: 1.5 }).lineHeight()).toBe(1.5);
     });
 
+    it('preserves a combined bold+italic fontStyle for the print/raster path', () => {
+        // Print builds `new Konva.Text({ fontStyle })` from the resolved string;
+        // Konva composes the canvas font as `fontStyle + size + family`, so
+        // `'bold italic'` must survive verbatim to render a bold glyph.
+        expect(buildText().fontStyle()).toBe('normal');
+        expect(buildText({ fontStyle: 'bold' }).fontStyle()).toBe('bold');
+        expect(buildText({ fontStyle: 'italic' }).fontStyle()).toBe('italic');
+        expect(buildText({ fontStyle: 'bold italic' }).fontStyle()).toBe('bold italic');
+    });
+
     it('does not upscale a short string in shrink mode', () => {
         const text = buildText({
             text: { kind: 'static', value: 'hi' },

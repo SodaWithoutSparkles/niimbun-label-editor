@@ -224,6 +224,14 @@ describe('ResolvedShape — text wrap preview (P5)', () => {
         expect(renderText({ lineHeight: 1.5 }).lineHeight()).toBe(1.5);
     });
 
+    it('passes a combined bold+italic fontStyle through to the Konva Text', () => {
+        // The preview and print factory both read the same resolved `fontStyle`
+        // string verbatim; `'bold italic'` must survive so the glyphs render bold
+        // in the editor preview (Konva builds `fn.fontStyle + size + family`).
+        expect(renderText({}).fontStyle()).toBe('normal');
+        expect(renderText({ fontStyle: 'bold italic' }).fontStyle()).toBe('bold italic');
+    });
+
     it('applies the shrink scale in the preview', () => {
         const shrink = renderText({
             text: { kind: 'static', value: 'a'.repeat(26) },

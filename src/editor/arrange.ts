@@ -8,8 +8,8 @@ import type { NodePatch } from '../store/storeTypes';
  * Arrange geometry (ui-spec.md §10) — pure helpers shared by the Object tab and
  * the top-right icon block (`ViewControls`). Nothing here touches the store or
  * React: `alignTransformPatch` / `tileLayout` / `distributeLayout` /
- * `tileTransformPatch` return world-space patches, and the caller commits them
- * (`useArrange`).
+ * `centerOnSelectionLayout` / `tileTransformPatch` return world-space patches,
+ * and the caller commits them (`useArrange`).
  */
 
 export type AlignEdge = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
@@ -135,6 +135,53 @@ export const distributeLayout = (
             axis === 'vertical'
                 ? { x: bounds.x, y: center - bounds.h / 2 }
                 : { x: center - bounds.w / 2, y: bounds.y },
+        );
+    }
+    return targets;
+};
+
+/**
+ * Target world top-left for every node in a "centre on selection" gesture: the
+ * selection's own **union AABB** centre along `axis` becomes each node's new
+ * world centre, while the cross-axis coordinate is left alone. This re-centres a
+ * selection on itself (differs from {@link alignTransformPatch}, which targets
+ * the backing label edges).
+ *
+ * Only geometry-bearing nodes take part, exactly as in {@link tileLayout}: a
+ * group's degenerate `{0,0,0,0}` box would otherwise skew the union. Fewer than
+ * two such nodes is a no-op (nothing to centre against itself), and a node whose
+ * centre already sits on the union centre is omitted (no move).
+ */
+export const centerOnSelectionLayout = (
+    nodes: readonly Node[],
+    byId: ReadonlyMap<string, Node>,
+    axis: TileAxis,
+): Map<string, { x: number; y: number }> => {
+    const targets = new Map<string, { x: number; y: number }>();
+    const geometry = nodes.filter(hasLocalGeometry);
+    if (geometry.length < 2) return targets;
+
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (const node of geometry) {
+        const bounds = nodeWorldBounds(node, byId);
+        minX = Math.min(minX, bounds.x);
+        minY = Math.min(minY, bounds.y);
+        maxX = Math.max(maxX, bounds.x + bounds.w);
+        maxY = Math.max(maxY, bounds.y + bounds.h);
+    }
+    const unionCenter = axis === 'vertical' ? (minY + maxY) / 2 : (minX + maxX) / 2;
+
+    for (const node of geometry) {
+        if (centerAlong(node, byId, axis) === unionCenter) continue;
+        const bounds = nodeWorldBounds(node, byId);
+        targets.set(
+            node.id,
+            axis === 'vertical'
+                ? { x: bounds.x, y: Math.round(unionCenter - bounds.h / 2) }
+                : { x: Math.round(unionCenter - bounds.w / 2), y: bounds.y },
         );
     }
     return targets;

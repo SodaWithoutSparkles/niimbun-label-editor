@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { distributeLayout } from './arrange';
+import { centerOnSelectionLayout, distributeLayout } from './arrange';
 import { nodeLookup } from '../core/doc/derive';
 import type { Node } from '../core/doc/types';
 
@@ -112,5 +112,75 @@ describe('distributeLayout — edge cases', () => {
 
         // A group plus only two shapes is still fewer than three real nodes.
         expect(distributeLayout([g, a, b], lookup(g, a, b), 'horizontal').size).toBe(0);
+    });
+});
+
+/**
+ * `centerOnSelectionLayout` (P10 fix round): centre the selection on its own
+ * union AABB along one axis. Each participating node's world centre lands on the
+ * union centre; the cross-axis coordinate is untouched. Geometry-less nodes are
+ * dropped (they never skew the union), fewer than two geometry-bearing nodes is
+ * a no-op, and a node already on the union centre is omitted.
+ */
+describe('centerOnSelectionLayout — horizontal', () => {
+    it('moves every node onto the union centre and preserves the cross axis', () => {
+        const a = shape({ id: 'a', transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 }, size: { w: 100, h: 100 } });
+        const b = shape({ id: 'b', transform: { x: 200, y: 50, rotDeg: 0, scaleX: 1, scaleY: 1 }, size: { w: 100, h: 100 } });
+        const c = shape({ id: 'c', transform: { x: 1000, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 }, size: { w: 200, h: 100 } });
+
+        const targets = centerOnSelectionLayout([a, b, c], lookup(a, b, c), 'horizontal');
+
+        // Union box x=0..1200 → centre 600; each node keeps its own width + y.
+        expect(targets.get('a')).toEqual({ x: 550, y: 0 });
+        expect(targets.get('b')).toEqual({ x: 550, y: 50 });
+        expect(targets.get('c')).toEqual({ x: 500, y: 0 });
+        expect(targets.size).toBe(3);
+    });
+
+    it('is empty when the nodes already share the union centre', () => {
+        const a = shape({ id: 'a', transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 }, size: { w: 100, h: 100 } });
+        const b = shape({ id: 'b', transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 }, size: { w: 100, h: 100 } });
+
+        expect(centerOnSelectionLayout([a, b], lookup(a, b), 'horizontal').size).toBe(0);
+    });
+});
+
+describe('centerOnSelectionLayout — vertical', () => {
+    it('centres on the union cy and keeps each node’s x', () => {
+        const a = shape({ id: 'a', transform: { x: 10, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 }, size: { w: 100, h: 100 } });
+        const b = shape({ id: 'b', transform: { x: 50, y: 1000, rotDeg: 0, scaleX: 1, scaleY: 1 }, size: { w: 100, h: 200 } });
+
+        const targets = centerOnSelectionLayout([a, b], lookup(a, b), 'vertical');
+
+        // Union box y=0..1200 → centre 600; widths/x preserved.
+        expect(targets.get('a')).toEqual({ x: 10, y: 550 });
+        expect(targets.get('b')).toEqual({ x: 50, y: 500 });
+    });
+});
+
+describe('centerOnSelectionLayout — edge cases', () => {
+    it('is a no-op (empty map) for fewer than two geometry-bearing nodes', () => {
+        const a = shape({ id: 'a' });
+        expect(centerOnSelectionLayout([a], lookup(a), 'horizontal').size).toBe(0);
+        expect(centerOnSelectionLayout([], new Map(), 'horizontal').size).toBe(0);
+        // A group carries no geometry, so on its own it is still fewer than two.
+        const g = group('g');
+        expect(centerOnSelectionLayout([g], lookup(g), 'horizontal').size).toBe(0);
+    });
+
+    it('ignores geometry-less nodes and excludes them from the union', () => {
+        const g = group('g');
+        const a = shape({ id: 'a', transform: { x: 1000, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 }, size: { w: 200, h: 100 } });
+        const b = shape({ id: 'b', transform: { x: 2000, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 }, size: { w: 200, h: 100 } });
+
+        const targets = centerOnSelectionLayout([g, a, b], lookup(g, a, b), 'horizontal');
+
+        // The group's fake {0,0,0,0} box is excluded: union is 1000..2200 → 1600.
+        expect(targets.has('g')).toBe(false);
+        expect(targets.get('a')).toEqual({ x: 1500, y: 0 });
+        expect(targets.get('b')).toEqual({ x: 1500, y: 0 });
+
+        // A group plus only one real shape is still fewer than two.
+        expect(centerOnSelectionLayout([g, a], lookup(g, a), 'horizontal').size).toBe(0);
     });
 });

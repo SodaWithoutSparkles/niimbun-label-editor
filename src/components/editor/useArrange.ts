@@ -4,6 +4,7 @@ import { nodeLookup } from '../../core/doc/derive';
 import {
     TILE_GAP_HM,
     alignTransformPatch,
+    centerOnSelectionLayout,
     distributeLayout,
     hasLocalGeometry,
     tileLayout,
@@ -11,13 +12,14 @@ import {
     type AlignEdge,
     type TileAxis,
 } from '../../editor/arrange';
+import { normalizeFontStyle, setFontStyleToken, type FontStyleToken } from '../../editor/textStyle';
 import type { Node, TextAlign } from '../../core/doc/types';
 
 /**
  * Arrange commands (ui-spec.md §10) — the single implementation of align / tile /
- * distribute / text-align for the whole editor. `ViewControls` renders the
- * object-specific icon block and calls these; the patches come from
- * `editor/arrange`.
+ * distribute / centre-on-selection / text-style for the whole editor.
+ * `ViewControls` renders the object-specific icon block and calls these; the
+ * patches come from `editor/arrange` (text style tokens from `editor/textStyle`).
  *
  * A click is exactly **one** undo entry, however many nodes are selected: the
  * patches go through the store's transient gesture seam
@@ -36,8 +38,12 @@ export interface ArrangeActions {
     tile: (axis: TileAxis) => void;
     /** Evenly space the selection's centres along one axis (extremes fixed). */
     distribute: (axis: TileAxis) => void;
-    /** Set the text alignment of every selected text node (inspector `align` field). */
+    /** Centre the selection on its own union bounds along one axis. */
+    centerOnSelection: (axis: TileAxis) => void;
+    /** Set the text alignment of every selected text node (toolbar text-align trio). */
     setTextAlign: (align: TextAlign) => void;
+    /** Add/remove a bold/italic token on every selected text node (one undo entry). */
+    setFontStyle: (token: FontStyleToken, on: boolean) => void;
 }
 
 export const useArrange = (selected: readonly Node[]): ArrangeActions => {
@@ -139,5 +145,49 @@ export const useArrange = (selected: readonly Node[]): ArrangeActions => {
         [selected, updateNodeTransient, finish],
     );
 
-    return { align, tile, distribute, setTextAlign };
+    const centerOnSelection = useCallback(
+        (axis: TileAxis) => {
+            const doc = useStore.getState().currentDoc;
+            if (!doc) return;
+            const byId = nodeLookup(doc.nodes);
+            const targets = centerOnSelectionLayout(selected, byId, axis);
+            let changed = false;
+            for (const node of selected) {
+                if (!hasLocalGeometry(node)) continue;
+                const target = targets.get(node.id);
+                if (!target) continue;
+                const patch = tileTransformPatch(node, byId, target.x, target.y);
+                const transform = patch?.transform;
+                if (!patch || !transform) continue;
+                // A node already on the union centre is absent from the map, but
+                // any patch that rounds back onto the node is a no-op too.
+                if (transform.x === node.transform.x && transform.y === node.transform.y) continue;
+                updateNodeTransient(node.id, patch);
+                changed = true;
+            }
+            finish(changed);
+        },
+        [selected, updateNodeTransient, finish],
+    );
+
+    const setFontStyle = useCallback(
+        (token: FontStyleToken, on: boolean) => {
+            const doc = useStore.getState().currentDoc;
+            if (!doc) return;
+            let changed = false;
+            for (const node of selected) {
+                if (node.type !== 'text') continue;
+                const next = setFontStyleToken(node.fontStyle, token, on);
+                // Already in this state (an absent/empty style normalises to
+                // `'normal'`): no write, so no dead undo entry.
+                if (next === normalizeFontStyle(node.fontStyle)) continue;
+                updateNodeTransient(node.id, { fontStyle: next });
+                changed = true;
+            }
+            finish(changed);
+        },
+        [selected, updateNodeTransient, finish],
+    );
+
+    return { align, tile, distribute, centerOnSelection, setTextAlign, setFontStyle };
 };

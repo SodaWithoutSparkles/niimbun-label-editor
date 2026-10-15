@@ -68,14 +68,10 @@ const FIELD_LABEL_KEYS = {
     scaleY: 'editor.mfp.field.scaleY',
     fontFamily: 'editor.mfp.field.fontFamily',
     fontSize: 'editor.mfp.field.fontSize',
-    fontWeight: 'editor.mfp.field.fontWeight',
-    fontStyle: 'editor.mfp.field.fontStyle',
-    align: 'editor.mfp.field.align',
     wrap: 'editor.mfp.field.wrap',
     letterSpacing: 'editor.mfp.field.letterSpacing',
     direction: 'editor.mfp.field.direction',
     shape: 'editor.mfp.field.shape',
-    text: 'editor.mfp.field.text',
     points: 'editor.mfp.field.points',
     closed: 'editor.mfp.field.closed',
     cornerRadius: 'editor.mfp.field.cornerRadius',
@@ -231,18 +227,6 @@ export const sizePatch = (node: Node, key: 'sizeW' | 'sizeH', value: number): { 
 
 const transformPatch = (node: Node, key: string, value: number) => ({
     transform: { ...node.transform, [key]: value },
-});
-
-/** The static text of a text node, or `''` for a non-static source. */
-export const textContentValue = (node: Node): string =>
-    node.type === 'text' && node.text.kind === 'static' ? node.text.value : '';
-
-/**
- * Patch a text node's static content. CSV/template sources are not edited here
- * (execution is P6), so this always writes a `static` source with the new value.
- */
-export const textContentPatch = (value: string): NodePatch => ({
-    text: { kind: 'static', value },
 });
 
 /** The static payload of a qr/barcode node, or `''` for a non-static source. */
@@ -505,10 +489,9 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     };
 
     /**
-     * String edits — including the `text` textarea — are transient during the
-     * gesture and commit exactly **one** undo entry when it ends (must-fix #10).
-     * Otherwise the textarea produced one entry per character, which breaks the
-     * undo/redo demo.
+     * String edits are transient during the gesture and commit exactly **one**
+     * undo entry when it ends (must-fix #10). Otherwise a textarea produced one
+     * entry per character, which breaks the undo/redo demo.
      */
     const setString = (key: string, value: string) => {
         gestureRef.current = true;
@@ -517,13 +500,6 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
             // always renders (must-fix #5).
             if (key === 'shape') {
                 if (node.type === 'shape') updateNodeTransient(node.id, shapeKindPatch(node, value as ShapeKind));
-            } else if (key === 'text') {
-                // `text` is a `ContentSource`; only a static source is authored
-                // here. A csv/template source is left untouched (execution is
-                // P6) so its column/code + fallback survive (must-fix #1).
-                if (node.type === 'text' && node.text.kind === 'static') {
-                    updateNodeTransient(node.id, textContentPatch(value));
-                }
             } else if (key === 'data') {
                 // qr / barcode static payload (CSV/template execution is P6).
                 if ((node.type === 'qr' || node.type === 'barcode') && node.data.kind === 'static') {
@@ -605,14 +581,13 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                         <Input value={stringValue(first, field.key)} onChange={(value) => setString(field.key, value)} className="w-40" />
                     </SettingRow>
                 );
-            case 'textContent':
             case 'dataContent': {
                 // Only a `static` source is editable here. A csv/template source
                 // renders disabled with the same reason its owning engine is
                 // unwired, so an edit can never silently rewrite it to static
                 // and discard its column/code + fallback (must-fix #1).
                 const isStatic = contentSourceOf(first)?.kind === 'static';
-                const value = field.kind === 'textContent' ? textContentValue(first) : dataContentValue(first);
+                const value = dataContentValue(first);
                 return (
                     <SettingRow
                         key={field.key}

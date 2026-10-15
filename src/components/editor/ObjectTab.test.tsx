@@ -21,8 +21,6 @@ import {
     fontFamilyPatch,
     shapeKindPatch,
     sizePatch,
-    textContentPatch,
-    textContentValue,
 } from './ObjectTab';
 import { TILE_GAP_HM, alignTransformPatch, tileLayout, tileTransformPatch } from '../../editor/arrange';
 
@@ -268,54 +266,6 @@ describe('per-node quantizer params', () => {
 
         expect(screen.getByText('Dither strength')).toBeTruthy();
         expect(screen.getByText('128')).toBeTruthy();
-    });
-});
-
-describe('text content authoring (must-fix #3)', () => {
-    it('reads and writes a static ContentSource', () => {
-        expect(textContentValue(textNode())).toBe('');
-        expect(textContentValue(textNode({ text: { kind: 'static', value: 'hi' } }))).toBe('hi');
-        // A non-static source is not editable in the P3 inspector.
-        expect(textContentValue(textNode({ text: { kind: 'csv', column: 'c', fallback: 'f' } }))).toBe('');
-        expect(textContentPatch('hello')).toEqual({ text: { kind: 'static', value: 'hello' } });
-    });
-
-    it('edits the node text through the Object tab', () => {
-        const selected = textNode();
-        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
-        render(<ObjectTab selected={[selected]} />);
-
-        const field = screen.getByLabelText('Text') as HTMLTextAreaElement;
-        fireEvent.change(field, { target: { value: 'authored' } });
-        fireEvent.blur(field);
-
-        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')!;
-        expect(persisted.type).toBe('text');
-        expect((persisted as { text: { kind: string; value: string } }).text).toEqual({
-            kind: 'static',
-            value: 'authored',
-        });
-        // One committed op after the gesture ends, so it is undoable.
-        expect(useStore.getState().docPast).toHaveLength(1);
-    });
-
-    it('batches a multi-keystroke text edit into one undo entry', () => {
-        const selected = textNode();
-        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'], docPast: [] });
-        render(<ObjectTab selected={[selected]} />);
-
-        const field = screen.getByLabelText('Text') as HTMLTextAreaElement;
-        fireEvent.change(field, { target: { value: 'h' } });
-        fireEvent.change(field, { target: { value: 'he' } });
-        fireEvent.change(field, { target: { value: 'hel' } });
-        fireEvent.change(field, { target: { value: 'hell' } });
-        fireEvent.change(field, { target: { value: 'hello' } });
-        // No commit until the gesture ends.
-        expect(useStore.getState().docPast).toHaveLength(0);
-        fireEvent.blur(field);
-        expect(useStore.getState().docPast).toHaveLength(1);
-        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')!;
-        expect((persisted as { text: { value: string } }).text.value).toBe('hello');
     });
 });
 
@@ -711,27 +661,6 @@ describe('createResourceAssetDeps (P5 asset prep seam)', () => {
 });
 
 describe('ObjectTab — non-static content is never rewritten (must-fix #1)', () => {
-    it('renders the text editor disabled for a csv source', () => {
-        const selected = textNode({ text: { kind: 'csv', column: 'name', fallback: 'x' } });
-        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
-        render(<ObjectTab selected={[selected]} />);
-        const field = screen.getByLabelText('Text') as HTMLTextAreaElement;
-        expect(field.disabled).toBe(true);
-    });
-
-    it('never mutates a csv text source when its editor is edited', () => {
-        const source = { kind: 'csv' as const, column: 'name', fallback: 'x' };
-        const selected = textNode({ text: source });
-        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
-        render(<ObjectTab selected={[selected]} />);
-        const field = screen.getByLabelText('Text') as HTMLTextAreaElement;
-        fireEvent.change(field, { target: { value: 'hacked' } });
-        fireEvent.blur(field);
-        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')!;
-        expect((persisted as { text: unknown }).text).toEqual(source);
-        expect(useStore.getState().docPast).toHaveLength(0);
-    });
-
     it('renders the data editor disabled for a template qr source', () => {
         const selected = qrNode({ data: { kind: 'template', code: 'x', fallback: 'y' } });
         useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['q'] });
@@ -814,21 +743,15 @@ describe('ObjectTab — content source switcher + trust (P6)', () => {
         expect(persisted.text).toEqual({ kind: 'template', code: '', fallback: '' });
     });
 
-    it('editing a csv text source never rewrites it to static', () => {
+    it('shows the bound csv kind in the content-source select', () => {
         const source = { kind: 'csv' as const, column: 'name', fallback: 'x' };
         const selected = textNode({ text: source });
         useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
         render(<ObjectTab selected={[selected]} />);
 
-        // The kind select reflects the bound source.
+        // The kind select reflects the bound source (content is edited in the JS
+        // tab now that the Object tab's in-place text field is gone).
         expect(selectWithOption('csv').value).toBe('csv');
-        const field = screen.getByLabelText('Text') as HTMLTextAreaElement;
-        fireEvent.change(field, { target: { value: 'hacked' } });
-        fireEvent.blur(field);
-
-        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')! as { text: unknown };
-        expect(persisted.text).toEqual(source);
-        expect(useStore.getState().docPast).toHaveLength(0);
     });
 
     it('shows the read-only template trust state', () => {
