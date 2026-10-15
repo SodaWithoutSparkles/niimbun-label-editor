@@ -154,6 +154,26 @@ describe('PaperTypePreview', () => {
         expect(carriesGuideLine).toBe(false);
     });
 
+    it('outlines the printable silhouette so it is visible on the white card surface', () => {
+        const calls = recordContextCalls();
+        render(<PaperTypePreview regions={regions} guides={guides} />);
+
+        const fillIndex = calls.findIndex((c) => c.method === 'fill');
+        expect(fillIndex).toBeGreaterThanOrEqual(0);
+
+        // The fill is `#ffffff` and the card art area is white too, so the
+        // silhouette must also be stroked or the card previews blank.
+        const outlineIndex = calls.findIndex((c, index) => index > fillIndex && c.method === 'stroke');
+        expect(outlineIndex).toBeGreaterThan(fillIndex);
+
+        // ...as a **solid** line (the dashed guide stroke comes later).
+        const dashBeforeOutline = calls
+            .slice(fillIndex + 1, outlineIndex)
+            .filter((c) => c.method === 'setLineDash')
+            .pop();
+        expect(dashBeforeOutline?.args[0]).toEqual([]);
+    });
+
     it('mounts with empty regions (backing outline only, never a filled box)', () => {
         const calls = recordContextCalls();
         const { container } = render(<PaperTypePreview regions={[]} guides={[]} />);

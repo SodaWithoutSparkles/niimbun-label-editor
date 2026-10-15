@@ -128,6 +128,14 @@ export const PaperTypePreview: FC<PaperTypePreviewProps> = ({ regions, guides, c
                 traceUnion(ctx, regionUnionPath(regions), scale);
                 ctx.fillStyle = SILHOUETTE_FILL;
                 ctx.fill();
+                // Outline the silhouette: the fill is `#ffffff` and the card's
+                // art area is `bg-white` too, so an unstroked fill is invisible
+                // (the card previewed blank). 1 CSS px: the geometry is already
+                // multiplied by `scale`, so the CTM carries no fit scale.
+                ctx.strokeStyle = BACKING_OUTLINE_STROKE;
+                ctx.lineWidth = 1;
+                ctx.setLineDash([]);
+                ctx.stroke();
             }
 
             // Pass 2 — guides, drawn after the fill in the editor guide style.

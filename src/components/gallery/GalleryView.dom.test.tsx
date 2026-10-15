@@ -49,6 +49,35 @@ describe('GalleryView', () => {
         expect(screen.getByText('25 × 78 mm')).toBeInTheDocument();
     });
 
+    it('draws the placeholder backing outline at a constant 1 px whatever the aspect ratio', async () => {
+        // The `viewBox` is in hm, so a user-unit stroke scales with the fit: a
+        // 25×78 mm label used to render a 0.46 px hairline on the white art area
+        // and the card looked empty.
+        useStore.setState({
+            galleryLoading: false,
+            labelRepo: createLabelRepo(createMemoryAdapter()),
+            gallery: [
+                {
+                    id: 'label-1',
+                    name: 'Tall label',
+                    createdAt: 0,
+                    updatedAt: 0,
+                    backingW: 2500,
+                    backingH: 7800,
+                },
+            ],
+        });
+        const { container } = render(<GalleryView />);
+
+        const rect = await vi.waitFor(() => {
+            const found = container.querySelector('svg rect');
+            if (!found) throw new Error('placeholder not rendered');
+            return found;
+        });
+        expect(rect.getAttribute('stroke-width')).toBe('1');
+        expect(rect.getAttribute('vector-effect')).toBe('non-scaling-stroke');
+    });
+
     it('surfaces an error when opening a corrupt label instead of a silent no-op', async () => {
         const adapter = createMemoryAdapter({
             // Present but unreadable: `get()` yields null rather than a doc.

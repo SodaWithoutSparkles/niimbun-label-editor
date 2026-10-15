@@ -28,7 +28,6 @@ const PlaceholderArt: React.FC<{ backingW: number; backingH: number }> = ({
     // back to a small positive placeholder so a corrupt summary still renders.
     const safeW = Number.isFinite(backingW) && backingW > 0 ? backingW : 100;
     const safeH = Number.isFinite(backingH) && backingH > 0 ? backingH : 100;
-    const strokeWidth = Math.max(1, Math.round(Math.min(safeW, safeH) * 0.01));
     return (
         <svg
             viewBox={`0 0 ${safeW} ${safeH}`}
@@ -37,7 +36,23 @@ const PlaceholderArt: React.FC<{ backingW: number; backingH: number }> = ({
             className="h-auto max-h-full w-auto max-w-full"
             role="img"
         >
-            <rect x={0} y={0} width={safeW} height={safeH} fill="#ffffff" stroke="#9ca3af" strokeWidth={strokeWidth} />
+            {/*
+              * `viewBox` is in hm, so a stroke in user units scales with the
+              * fit: a 25×78 mm label rendered into the 144 px art area drew a
+              * 0.46 px hairline and the card looked blank. `non-scaling-stroke`
+              * keeps the backing outline a constant 1 CSS px on the white art
+              * area, whatever the label's aspect ratio.
+              */}
+            <rect
+                x={0}
+                y={0}
+                width={safeW}
+                height={safeH}
+                fill="#ffffff"
+                stroke="#9ca3af"
+                strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
+            />
         </svg>
     );
 };
