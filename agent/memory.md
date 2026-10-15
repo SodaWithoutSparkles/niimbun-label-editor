@@ -17,6 +17,7 @@ Label editor for NIIMBOT thermal printers (React 19, TypeScript, Tailwind v4, zu
 - [`warning-center.md`](memory/warning-center.md) — the 5th MFP "Warnings" tab: the `editorWarnings` slice, the `previewWarnings` pure builders, the producer/scoping rules (CSV parse-time publish, hidden-node exclusion, font-effect keying), and the "QR data is arbitrary text" rule. Read before touching any warning producer or the Warnings tab.
 - [`paper-types.md`](memory/paper-types.md) — **P8** paper-type catalogue (`paperRepo` + `'papers'` store), first-run seeding (per-record `has`-gated marker), guides as **persisted doc data** (`LabelDoc.label.guides`), the main-pane paper-type UI, and the preview canvas (nonzero silhouette + separate guide pass). Read before touching the catalogue, `factory.ts` guides, or the create-label dialog.
 - [`tech-debt.md`](memory/tech-debt.md) — **debt register**: known deliberate debt carried across phases (print/render/editor/assets/CSV/trust). Check before planning a phase; add an item instead of leaving debt only in a handoff.
+- [`screenstyle-quantization.md`](memory/screenstyle-quantization.md) — **ScreenStyle / ScreenVAE (`references/ScreenStyle/`) assessed as a quantizer: the model is not portable (cost, print physics, and it is continuous not discrete), the idea is.** Read before touching `src/core/render/quantize.ts` or adding a quantizer; carries the screentone design + the head-locked-pitch precondition. Owner is evaluating whether the results are good enough to integrate into the label-editor.
 
 ## Agent workflow
 

@@ -112,19 +112,29 @@ Item: "Paper management is broken".
 - Paper type catalogue: model + `paperRepo` (global store keyed by id, pattern of `csvRepo`), gallery CRUD UI (list/add/edit/search/delete), **default paper** setting used when creating a new label.
 - Rename "preset" → "paper type" in `CreateLabelDialog` + `label-presets` i18n. Design point for the action plan: seed the catalogue from the fixed `LABEL_PRESETS` registry on first run (presets are code; paper types are user data). Existing docs carry their own geometry — no doc migration needed.
 - Tests: store test for default-paper selection; nav smoke; repo tests mirroring `csvRepo.test.ts`.
+- Different from "Label presets" in gallery: label preset is a user-defined pre-designed label, with just data missing. Then the user can use a preset, fill in specific data, and print. 
+- Paper type is a user-defined paper size and shape, such that the user can create a new label with that paper type easily.
+- Maybe worth the time to do a quick sweep to prevent future naming confusion: `LABEL_PRESETS` in code should've been more accurately described as `PAPER_TYPES`, for example. 
+- **[Owner decision 2026-10-13] Polygon authoring = preview canvas + manual (x,y) point rows** (Option A), NOT reuse of the editor's polygon draw gesture. The preview is fed by `traceUnion` — the same tracer the editor overlay and the raster print clip use — so the paper-type preview is WYSIWYG by construction. The gesture was rejected: it is inlined in `PreviewStage` (not extracted), drags in editor-only concerns a paper type has no use for (node-bounds snap, grid preference, `dialog[open]` guards), inherits open bugs **D-32**/**D-37**, and can only *produce* points — no vertex drag, delete or reorder, all of which a re-editable paper type needs. `closed: true` is hard-coded (an open polygon is silently non-printable) and manual points are validated through the existing pure `finishPolygonPoints`. Also decided: `PaperTypeId` is a plain `string`; the built-in registry is demoted to seed data. **⚠ Superseded 2026-10-13 by decision 9** — the "keep the four ids verbatim" caveat is retired. **[Owner decision 2026-10-13] Guides are persisted label data, not derived.** The score line must be **a part of the label**, not a hard-coded `PRESET_GUIDES` lookup keyed on the paper-type id. So `LabelDoc.label` gains `guides: Guide[]` (carried from the paper type by `createLabelDoc`, validated in `validate.ts`), `PaperType` gains `guides`, the `ftagSpare-25x78` seed carries its score line as data, `resolveGuides` collapses to `doc.label.guides ?? []`, and `PRESET_GUIDES` + the `FTAG_SCORE_*_HM` constants are **deleted**. This retires the R8a trap entirely (nothing keys on the id any more), so `meta.presetId` → `meta.paperTypeId` is a safe provenance-only rename. **[Owner decision 2026-10-13] v0 alpha — breaking changes accepted**, no back-compat shims. A guide is still **not** a region: never clip/print, never in `union(regions)`; the paper-type preview draws the silhouette and the guides as two separate passes. Action plan: [`phase8_action-plan.md`](phase8_action-plan.md). 
 
 ### P9 — CSV & media management
 Items: "Data source CSV is broken"; "New media management tab".
 - Gallery-level **CSV** management: list/upload/view/edit/delete via existing `csvRepo` CRUD.
 - Gallery-level **media** management (new nav section, same pattern) via `resourceRepo`.
+- When adding photos to a label, besides the existing File/URL, allow pick from the media repo ("Use existing"). When using this option, allow "Import by Clone" (copy, duplicated and reference to the new) or "Import by Reference" (simple reference to the original).
+- Similarly for CSV, beside "Choose file", we can re-use the same UI and logic for media.
 - **Orphan sweep:** `list()` exists on both repos with no production caller; the sweep named in `DataSourceTab.tsx:169,204` comments does not exist. Implement orphan detection = `list()` diffed against all document refs; surface orphans for deletion.
 - Tests: `csvRepo.test.ts` pattern for the UI; orphan-detection unit tests.
 
-### P10 — MFP panel & print preview rework (owner screenshots)
+### P10 — MFP panel & print preview rework (owner screenshots); and UI changes
 Items: "MFP UI is not user friendly"; "Print preview too small".
 - **Prereq:** owner supplies screenshots as the spec at the phase gate — request them before implementing; never redesign beyond them.
 - MFP: responsive 2+ columns at wide viewports (`EditorShell.tsx` right column + `MfpPanel.tsx` one-column stack today); icon toggles for bold/italic/alignment etc.; light text for popover content (dark-on-dark today); **portal** `PopoverSlider` panels (clipped by the scroll container today); JS tab: collapse controls to one row, code textarea takes the width (it is the panel's focus). Optional icon row between View and Layers — ask owner with the screenshots.
 - Print preview (research facts, 2026-10-09): "View as" `Select` (reuse `PrintDialog.tsx:439-440` pattern) with **Queue | Page**, **default AND reset to `'page'`** (reset in the open effect `PrintDialog.tsx:120-135`); `viewMode: 'queue' | 'page'` + `selectedPage` local state; Page view = one large preview rendered via `renderLabelPage` at `{ dpi: doc.label.dpi, ...overrides }` (`renderLabelPage.ts:80`, dimensions `:453`) filling the area, with a page-number row and prev/next arrows (Chevron stepper pattern `PopoverSlider.tsx:244-254`, `EditorStatusBar.tsx:139-171`); guard `MAX_RASTER_PIXELS = 16_000_000` (`renderLabelPage.ts:128` throws `RangeError` beyond). **Do not share the thumbnail cache** — `usePrintThumbnails.ts:38` is capped at `THUMBNAIL_DPI = 50`, keyed by `rowIndex` only (`thumbnails.ts:112-115`, LRU-32/concurrency-2) — Page needs its own render path. Index `activeRows` (`printDialogModel.ts:36-46`) vs `plan.pages` for "page" — implementer decision. Files: `PrintDialog.tsx`, new `PrintPagePreview.tsx` (or inline), `usePrintThumbnails.ts` sibling path, `en.json`. Validate in `PrintDialog.test.tsx` via `renderLabelPageMock` asserting `opts.dpi === doc.label.dpi`.
+- Owner: right panel is already wide enough; no need to split "view" icons to two rows. The "zoom in/out", "zoom to fill", "zoom to real" buttons can be the same row as the grid/magnet/ruler/rotate icons.
+- Owner: Use icons for alignment buttons, and remove them from MFP. Because they are generic stuff. e.g. `mdi:align-vertical-center`, `mdi:align-horizontal-center`, `mdi:align-horizontal-distribute`, `mdi:align-horizontal-left`, `mdi:format-vertical-align-top`, etc.
+- Text specific buttons only shows on right side when text is selected. e.g. `mdi:format-align-left`, `mdi:format-align-center`, `mdi:format-align-right`, `mdi:format-align-justify`, wrapping, font style, etc.
+
 
 ### P11 — 2D code formats (new object)
 Item: "Minor: Alternative code format than QR code" (decision 6).
@@ -134,6 +144,7 @@ Item: "Minor: Alternative code format than QR code" (decision 6).
 - Tests: per-format render + verdict budget; node round-trip; palette/inspector smoke.
 
 ### P12 — Grid duplication (linked/derived)
+State: Cancelled by owner (2026-10-16) — the feature is **not** needed for v0 alpha yet.
 Item: "Additional feature request: Grid duplication".
 - Dialog: rows × columns × spacing, duplicated from the original selection in a grid pattern. New items are **derived/linked**: they follow edits, move, and delete together. **Unlink** per item or all — unlinked items become independent.
 - Cross-cutting model work (provenance/link metadata on nodes + propagation in slice reducers). Action plan must contain a short model design (link group, propagation rules, unlink semantics) before code. Keep last so it cannot destabilize the earlier phases.
@@ -144,6 +155,10 @@ This section contains debts/issues that are discovered during the fixes.
 - **D-37**: Polygon draw preview is rendered at the lowest layer, it should've been rendered at the top layer.
 - Incorrect select logic for overlapping objects. Click on layer list = selected = priority to be dragged. If the user clicks inside the control box of the selected object, it should take priority over whatever is stacking above it. If user clicks outside the control box of the selected object, it should select the topmost object at that point. 
 - Fix navigation. Maybe use paths `/editor` for the editor. Use `?tag=...` for the document tag. `#settings` or `#gallery` for the view, etc.
+- No way to create "Groups". Add a "folder-plus" icon in the same row as the  "Objects" header, right-aligned, to create a new group. Only show the icon when multiple objects are selected. 
+- user requested a "pan" feature for the editor. Add one more icon in the view icon section.
+- Handle paste properly. Paste images -> imported as a new image object. Paste text -> imported as a new text object. 
+- Recent view in gallery doesnt show a preview of the document. It only shows the label's preview image. Add a small preview of the document in the recent view.
 
 ## Risks & checkpoints
 
