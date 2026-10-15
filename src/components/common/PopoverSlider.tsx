@@ -1,6 +1,23 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Minus, Plus, ChevronLeft, ChevronRight } from 'lucide-react';
+
+/** Viewport coordinates of the portalled panel (`position: fixed`). */
+interface PanelPosition {
+    top: number;
+    left: number;
+    transform: string;
+    /** Side of the trigger the panel sits on (drives the arrow direction). */
+    placement: 'above' | 'below';
+    /** Viewport height cap in px; `undefined` when the panel fits uncapped. */
+    maxHeight: number | undefined;
+}
+
+// Gap between the trigger and the panel (the old `mt-2`) plus the minimum
+// distance the panel keeps from the viewport edges.
+const PANEL_GAP_PX = 8;
+const VIEWPORT_MARGIN_PX = 8;
 
 interface PopoverSliderProps {
     value: number;
@@ -65,31 +82,133 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
     const { t } = useTranslation();
     const [isOpen, setIsOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
+    const panelRef = useRef<HTMLDivElement | null>(null);
     const [tempValue, setTempValue] = useState(value);
-    const [popoverAnchor, setPopoverAnchor] = useState<number | null>(null);
+    const [pos, setPos] = useState<PanelPosition | null>(null);
 
     const arrowStyle = useMemo(() => {
+        // A panel flipped above the trigger points its arrow down at it.
+        const vertical = pos?.placement === 'above' ? 'translateY(-50%)' : 'translateY(50%)';
         switch (popoverAlign) {
             case 'center':
-                return { left: '50%', transform: 'translateX(-50%) translateY(50%)' };
+                return { left: '50%', transform: `translateX(-50%) ${vertical}` };
             case 'start':
-                return { left: '16px', transform: 'translateX(-50%) translateY(50%)' };
+                return { left: '16px', transform: `translateX(-50%) ${vertical}` };
             case 'end':
-                return { right: '16px', transform: 'translateX(-50%) translateY(50%)' };
+                return { right: '16px', transform: `translateX(-50%) ${vertical}` };
         }
-    }, [popoverAlign]);
+    }, [popoverAlign, pos]);
 
     useEffect(() => {
         setTempValue(value);
     }, [value]);
 
-    useLayoutEffect(() => {
-        if (isOpen && containerRef.current && popoverAlign === 'center') {
-            setPopoverAnchor(containerRef.current.offsetWidth / 2);
-        } else {
-            setPopoverAnchor(null);
+    /**
+     * Anchor the portalled panel to the trigger's live viewport rect. Runs on
+     * open, again once the panel mounts (so its width can bound the viewport
+     * clamp), and on any window resize / ancestor scroll (capture phase -- scroll
+     * does not bubble out of the MFP panel's scroll container).
+     */
+    const measure = useCallback(() => {
+        const trigger = containerRef.current;
+        if (!trigger) return;
+        const rect = trigger.getBoundingClientRect();
+        // The anchor has scrolled out of view: there is nothing left to point at.
+        if (rect.bottom < 0 || rect.top > window.innerHeight) {
+            setIsOpen(false);
+            return;
         }
-    }, [isOpen, popoverAlign]);
+        const transform =
+            popoverAlign === 'center'
+                ? 'translateX(-50%)'
+                : popoverAlign === 'end'
+                    ? 'translateX(-100%)'
+                    : 'none';
+        const anchor =
+            popoverAlign === 'center'
+                ? rect.left + rect.width / 2
+                : popoverAlign === 'end'
+                    ? rect.right
+                    : rect.left;
+        // Keep the panel inside the viewport once its rendered width is known
+        // (the right-edge clip this portal exists to fix).
+        const width = panelRef.current?.offsetWidth ?? 0;
+        const shift = transform === 'translateX(-50%)' ? width / 2 : transform === 'translateX(-100%)' ? width : 0;
+        const min = VIEWPORT_MARGIN_PX + shift;
+        const max = window.innerWidth - VIEWPORT_MARGIN_PX - (width - shift);
+        const left = width > 0 && max >= min ? Math.min(Math.max(anchor, min), max) : anchor;
+        // Vertical: the panel opens below the trigger, which runs offscreen near
+        // the viewport bottom. Once its height is known, flip it above the
+        // trigger when it does not fit below and there is more room above;
+        // otherwise clamp `top` inside the viewport and cap the height so the
+        // panel scrolls instead of overflowing.
+        const height = panelRef.current?.offsetHeight ?? 0;
+        const belowTop = rect.bottom + PANEL_GAP_PX;
+        const spaceBelow = window.innerHeight - VIEWPORT_MARGIN_PX - belowTop;
+        const spaceAbove = rect.top - PANEL_GAP_PX - VIEWPORT_MARGIN_PX;
+        const flipped = height > 0 && height > spaceBelow && spaceAbove > spaceBelow;
+        let top = flipped ? rect.top - PANEL_GAP_PX - height : belowTop;
+        let maxHeight: number | undefined;
+        if (height > 0) {
+            top = Math.min(
+                Math.max(top, VIEWPORT_MARGIN_PX),
+                Math.max(VIEWPORT_MARGIN_PX, window.innerHeight - VIEWPORT_MARGIN_PX - height),
+            );
+            maxHeight = flipped
+                ? Math.max(0, rect.top - PANEL_GAP_PX - VIEWPORT_MARGIN_PX)
+                : Math.max(0, window.innerHeight - VIEWPORT_MARGIN_PX - top);
+        }
+        const next: PanelPosition = {
+            top,
+            left,
+            transform,
+            placement: flipped ? 'above' : 'below',
+            maxHeight,
+        };
+        // No-op guard: runs on every scroll frame, and keeps the StrictMode
+        // effect/ref replay from causing a state churn loop.
+        setPos((prev) =>
+            prev &&
+            prev.top === next.top &&
+            prev.left === next.left &&
+            prev.transform === next.transform &&
+            prev.placement === next.placement &&
+            prev.maxHeight === next.maxHeight
+                ? prev
+                : next,
+        );
+    }, [popoverAlign]);
+
+    // The panel has to be mounted before `measure` can read its width, so refine
+    // the position once the node attaches.
+    const attachPanel = useCallback(
+        (node: HTMLDivElement | null) => {
+            panelRef.current = node;
+            if (node) measure();
+        },
+        [measure],
+    );
+
+    const toggleOpen = () => {
+        if (isOpen) {
+            setIsOpen(false);
+            return;
+        }
+        measure();
+        setIsOpen(true);
+    };
+
+    useEffect(() => {
+        if (!isOpen) return;
+        const reposition = () => measure();
+        // Capture phase: a scroll inside the MFP panel never reaches window by bubbling.
+        window.addEventListener('scroll', reposition, true);
+        window.addEventListener('resize', reposition);
+        return () => {
+            window.removeEventListener('scroll', reposition, true);
+            window.removeEventListener('resize', reposition);
+        };
+    }, [isOpen, measure]);
 
     // Compute a min width so the popover can fit all preset columns
     const popoverMinWidth = useMemo(() => {
@@ -104,9 +223,11 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
-            if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-                setIsOpen(false);
-            }
+            const target = event.target as Node;
+            // The panel is portalled out of `containerRef`, so it is checked separately.
+            if (containerRef.current?.contains(target)) return;
+            if (panelRef.current?.contains(target)) return;
+            setIsOpen(false);
         };
 
         if (isOpen) {
@@ -115,6 +236,19 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
         return () => {
             document.removeEventListener('mousedown', handleClickOutside);
         };
+    }, [isOpen]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+            // Dismiss the popover only, not the editor's window-level Escape
+            // (canvas cancel / clear selection) as well.
+            event.stopPropagation();
+            setIsOpen(false);
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
     }, [isOpen]);
 
     const handleConfirm = (newVal: number) => {
@@ -205,7 +339,7 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
         <div className={`relative inline-block ${className}`} ref={containerRef}>
             {/* Trigger Component */}
             <div
-                onClick={() => setIsOpen(!isOpen)}
+                onClick={toggleOpen}
                 className="cursor-pointer group flex items-center gap-1 hover:text-blue-400 transition-colors select-none"
             >
                 <div className="border-b-2 border-dashed border-gray-500/50 group-hover:border-blue-500/50 pb-0.5">
@@ -218,16 +352,20 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
                 {/* <ChevronDown size={14} className={`text-gray-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} /> */}
             </div>
 
-            {/* Popover */}
-            {isOpen && (
+            {/* Popover -- portalled to <body> so it escapes the MFP panel's
+                overflow-y-auto scroll clip and its right edge. */}
+            {isOpen && pos && createPortal(
                 <div
-                    className={`absolute z-50 top-full mt-2 p-4 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl animate-in fade-in zoom-in-95 duration-200 ${popoverClassName}`}
+                    ref={attachPanel}
+                    data-testid="popover-slider-panel"
+                    className={`fixed z-50 p-4 bg-gray-900 text-gray-100 border border-gray-700 rounded-xl shadow-2xl animate-in fade-in zoom-in-95 duration-200 ${popoverClassName}`}
                     style={{
-                        left: popoverAlign === 'center'
-                            ? (popoverAnchor !== null ? `${popoverAnchor}px` : '50%')
-                            : popoverAlign === 'start' ? '0' : 'auto',
-                        right: popoverAlign === 'end' ? '0' : 'auto',
-                        transform: popoverAlign === 'center' ? 'translateX(-50%)' : 'none',
+                        top: `${pos.top}px`,
+                        left: `${pos.left}px`,
+                        transform: pos.transform,
+                        ...(pos.maxHeight !== undefined
+                            ? { maxHeight: `${pos.maxHeight}px`, overflowY: 'auto' as const }
+                            : {}),
                         minWidth: `${popoverMinWidth}px`,
                         maxWidth: '90vw',
                         width: 'auto'
@@ -356,10 +494,15 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
 
                     {/* Arrow */}
                     <div
-                        className="absolute -top-1.5 w-3 h-3 bg-gray-900 border-l border-t border-gray-700 transform rotate-45"
+                        className={
+                            pos.placement === 'below'
+                                ? 'absolute -top-1.5 w-3 h-3 bg-gray-900 border-l border-t border-gray-700 transform rotate-45'
+                                : 'absolute -bottom-1.5 w-3 h-3 bg-gray-900 border-r border-b border-gray-700 transform rotate-45'
+                        }
                         style={arrowStyle}
                     />
-                </div>
+                </div>,
+                document.body,
             )}
         </div>
     );
