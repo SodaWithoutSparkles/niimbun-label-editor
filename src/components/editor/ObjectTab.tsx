@@ -212,6 +212,13 @@ const booleanValue = (node: Node, key: string): boolean => {
     return value === true;
 };
 
+/**
+ * Smallest storable node size (hm). A 0-size node is invisible and cannot be
+ * grabbed, so both the slider range and every committed W/H edit floor here
+ * (matching the shape-conversion floor in `shapeKindPatch`).
+ */
+export const MIN_SIZE_HM = 1;
+
 /** Clamp a user-entered size to integer hm ≥ 0 (never NaN / negative). */
 export const clampSizeHm = (value: number): hm => (Number.isFinite(value) ? Math.max(0, roundHm(value)) : 0);
 
@@ -226,7 +233,8 @@ export const sizePatch = (node: Node, key: 'sizeW' | 'sizeH', value: number): { 
 /**
  * Slider bounds for a `kind: 'number'` field. The transform geometry follows the
  * open label's backing size (hm): `x`/`y` may leave the label on either side
- * (`-backing … 2 * backing`), while W/H stay inside it (`0 … backing`).
+ * (`-backing … 2 * backing`), while W/H stay inside it (`MIN_SIZE_HM … backing`)
+ * and can never be 0 (a 0-size node is invisible and ungrabbable).
  * `scaleX`/`scaleY` are unitless factors, so they step by 0.05. Every other
  * field keeps its fixed range. A missing backing falls back to 0, so bounds are
  * never NaN.
@@ -243,9 +251,9 @@ export const numberRange = (
         case 'y':
             return { min: -h, max: 2 * h, step: 1 };
         case 'sizeW':
-            return { min: 0, max: w, step: 1 };
+            return { min: MIN_SIZE_HM, max: w, step: 1 };
         case 'sizeH':
-            return { min: 0, max: h, step: 1 };
+            return { min: MIN_SIZE_HM, max: h, step: 1 };
         case 'scaleX':
         case 'scaleY':
             return { min: 0.05, max: 10, step: 0.05 };
@@ -520,7 +528,14 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                     quantizerParams: Object.keys(params).length ? params : undefined,
                 });
             } else if (isTransformKey(key)) updateNodeTransient(node.id, transformPatch(node, key, value));
-            else if (key === 'sizeW' || key === 'sizeH') updateNodeTransient(node.id, sizePatch(node, key, value));
+            else if (key === 'sizeW' || key === 'sizeH') {
+                // The slider's `min` binds a drag, but a typed value arrives here
+                // raw (PopoverSlider forwards the input event), so floor the
+                // committed size too: 0 would leave an invisible, ungrabbable
+                // node. Same floor as `numberRange` (MIN_SIZE_HM), same gesture
+                // path (transient in, one undo entry on gesture end).
+                updateNodeTransient(node.id, sizePatch(node, key, Math.max(MIN_SIZE_HM, clampSizeHm(value))));
+            }
             else updateNodeTransient(node.id, { [key]: value } as never);
         }
     };

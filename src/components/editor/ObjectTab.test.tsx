@@ -182,11 +182,12 @@ describe('ObjectTab — selecting a node shows wired transform sliders', () => {
 describe('numberRange', () => {
     it('follows the backing label box and steps scale by 0.05', () => {
         const backing = { backingW: 100, backingH: 50 };
-        // A 100-wide label ⇒ x ∈ [-100, 200]; size stays inside the label.
+        // A 100-wide label ⇒ x ∈ [-100, 200]; size stays inside the label, with a
+        // positive floor so a node can never be sized to 0.
         expect(numberRange('x', backing)).toEqual({ min: -100, max: 200, step: 1 });
         expect(numberRange('y', backing)).toEqual({ min: -50, max: 100, step: 1 });
-        expect(numberRange('sizeW', backing)).toEqual({ min: 0, max: 100, step: 1 });
-        expect(numberRange('sizeH', backing)).toEqual({ min: 0, max: 50, step: 1 });
+        expect(numberRange('sizeW', backing)).toEqual({ min: 1, max: 100, step: 1 });
+        expect(numberRange('sizeH', backing)).toEqual({ min: 1, max: 50, step: 1 });
         expect(numberRange('scaleX', backing)).toEqual({ min: 0.05, max: 10, step: 0.05 });
         expect(numberRange('scaleY', backing)).toEqual({ min: 0.05, max: 10, step: 0.05 });
     });
@@ -233,8 +234,8 @@ describe('ObjectTab — transform slider bounds follow the label size', () => {
         const expected = [
             { label: 'X', min: '-3000', max: '6000' },
             { label: 'Y', min: '-2000', max: '4000' },
-            { label: 'Width', min: '0', max: '3000' },
-            { label: 'Height', min: '0', max: '2000' },
+            { label: 'Width', min: '1', max: '3000' },
+            { label: 'Height', min: '1', max: '2000' },
         ];
         for (const { label, min, max } of expected) {
             expect(openField(label).number, label).toEqual({ min, max, step: '1' });
@@ -253,6 +254,33 @@ describe('ObjectTab — transform slider bounds follow the label size', () => {
     it('leaves rotation on its unchanged fixed range', () => {
         renderImage();
         expect(openField('Rotation').number).toEqual({ min: '0', max: '100000', step: '1' });
+    });
+});
+
+describe('ObjectTab — W/H can never be sized to 0', () => {
+    /**
+     * Open the labelled field, type `next` into its number input (which commits
+     * straight through, bypassing the input's `min`), and return the size the
+     * edit actually wrote to the open document.
+     */
+    const typeSize = (label: string, next: string) => {
+        const selected = imageNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['a'] });
+        render(<ObjectTab selected={[selected]} />);
+        const row = screen.getByText(label).closest('.items-center.justify-between') as HTMLElement;
+        fireEvent.click(row.querySelector('.cursor-pointer') as HTMLElement);
+        fireEvent.change(document.querySelector('input[type="number"]') as HTMLInputElement, {
+            target: { value: next },
+        });
+        return useStore.getState().currentDoc!.nodes.find((n) => n.id === 'a')!.size;
+    };
+
+    it('floors a typed 0 on Width to 1 (not 0)', () => {
+        expect(typeSize('Width', '0')).toEqual({ w: 1, h: 300 });
+    });
+
+    it('floors a typed 0 on Height to 1 (not 0)', () => {
+        expect(typeSize('Height', '0')).toEqual({ w: 500, h: 1 });
     });
 });
 
