@@ -4,11 +4,14 @@ import { INSERT_ACTIONS, normalizeInsertAction } from '../store/slices/toolsSlic
 import { DEFAULT_CODE_FORMAT, DEFAULT_SYMBOL_FILL } from '../core/doc/objects';
 import {
     createImageNodeForRef,
+    createNodeForBox,
     createNodeForInsert,
     createPolygonNode,
     DEFAULT_BARCODE_PAYLOAD,
     DEFAULT_CODE_PAYLOAD,
     DEFAULT_QR_PAYLOAD,
+    DRAW_SHAPE_ACTIONS,
+    isDrawShapeAction,
     shapeKindForAction,
     SHAPE_ACTIONS,
 } from './insertActions';
@@ -133,6 +136,122 @@ describe('createImageNodeForRef', () => {
     it('falls back to a square for a degenerate source size', () => {
         const node = createImageNodeForRef(0, 0, { imageId: 'i', widthPx: 0, heightPx: 0 }, 500);
         expect(node.type === 'image' && node.size).toEqual({ w: 500, h: 500 });
+    });
+});
+
+/**
+ * P13/S1: the drag-draw geometry. Box semantics (the press point is a corner),
+ * min-corner normalization for negative drags, shift square/circle, and the 45°
+ * line snap. The click fallback (`createNodeForInsert`) must stay untouched.
+ */
+describe('createNodeForBox', () => {
+    it('draws a rectangle from the press corner to the release corner', () => {
+        const node = createNodeForBox('shape:rectangle', [1000, 800], [3000, 2000]);
+        expect(node).toMatchObject({
+            type: 'shape',
+            shape: 'rectangle',
+            transform: { x: 1000, y: 800 },
+            fill: 'transparent',
+            stroke: '#374151',
+            strokeWidth: 50,
+        });
+        expect(node?.type === 'shape' && node.size).toEqual({ w: 2000, h: 1200 });
+    });
+
+    it('normalizes an up-left (negative) drag to min corner + abs size', () => {
+        const node = createNodeForBox('shape:rectangle', [3000, 2000], [1000, 800]);
+        expect(node?.transform).toMatchObject({ x: 1000, y: 800 });
+        expect(node?.type === 'shape' && node.size).toEqual({ w: 2000, h: 1200 });
+    });
+
+    it('normalizes a mixed-direction drag on each axis independently', () => {
+        // Right-and-up: x grows, y shrinks.
+        const node = createNodeForBox('shape:rectangle', [1000, 2000], [3000, 800]);
+        expect(node?.transform).toMatchObject({ x: 1000, y: 800 });
+        expect(node?.type === 'shape' && node.size).toEqual({ w: 2000, h: 1200 });
+    });
+
+    it('gives an ellipse box semantics (corner-to-corner), not a radius drag', () => {
+        const node = createNodeForBox('shape:ellipse', [500, 500], [1500, 1000]);
+        expect(node).toMatchObject({ type: 'shape', shape: 'ellipse', transform: { x: 500, y: 500 } });
+        // The full box, not a doubled radius from a centre origin.
+        expect(node?.type === 'shape' && node.size).toEqual({ w: 1000, h: 500 });
+    });
+
+    it('constrains a shifted box to a square, keeping the drag direction', () => {
+        const node = createNodeForBox('shape:rectangle', [1000, 1000], [1200, 300], true);
+        // dx=+200, dy=-700 → side 700, direction kept, then normalized.
+        expect(node?.transform).toMatchObject({ x: 1000, y: 300 });
+        expect(node?.type === 'shape' && node.size).toEqual({ w: 700, h: 700 });
+    });
+
+    it('normalizes a shifted up-left drag to a square at the min corner', () => {
+        const node = createNodeForBox('shape:ellipse', [1000, 1000], [400, 300], true);
+        expect(node?.transform).toMatchObject({ x: 300, y: 300 });
+        expect(node?.type === 'shape' && node.size).toEqual({ w: 700, h: 700 });
+    });
+
+    it('rebases a drawn line to its bbox min (transform at the min corner)', () => {
+        const node = createNodeForBox('shape:line', [100, 200], [400, 500]);
+        expect(node).toMatchObject({
+            type: 'shape',
+            shape: 'line',
+            transform: { x: 100, y: 200 },
+            fill: 'transparent',
+            stroke: '#374151',
+            strokeWidth: 50,
+        });
+        expect(node?.type === 'shape' && node.points).toEqual([[0, 0], [300, 300]]);
+    });
+
+    it('rebases an up-left drawn line to the min corner (points relative to it)', () => {
+        const node = createNodeForBox('shape:line', [900, 700], [300, 200]);
+        // bbox min is (300, 200): the transform (rotation pivot) sits there and
+        // both endpoints are stored relative to it.
+        expect(node?.transform).toMatchObject({ x: 300, y: 200 });
+        expect(node?.type === 'shape' && node.points).toEqual([[600, 500], [0, 0]]);
+    });
+
+    it('snaps a shifted line to 45°, preserving its length', () => {
+        // 2000 across, 1000 down → nearest 45° ray, length hypot(2000, 1000).
+        const node = createNodeForBox('shape:line', [0, 0], [2000, 1000], true);
+        const points = node?.type === 'shape' ? node.points : [];
+        expect(points?.[0]).toEqual([0, 0]);
+        const [ex, ey] = points![1]!;
+        expect(ex).toBe(ey);
+        expect(ex).toBe(1581);
+    });
+
+    it('keeps a zero-length shifted line at the press point (no angle to snap)', () => {
+        const node = createNodeForBox('shape:line', [10, 20], [10, 20], true);
+        // Rebasing a degenerate segment puts the transform at the press point.
+        expect(node?.transform).toMatchObject({ x: 10, y: 20 });
+        expect(node?.type === 'shape' && node.points).toEqual([[0, 0], [0, 0]]);
+    });
+
+    it('covers exactly the three drawable actions', () => {
+        expect([...DRAW_SHAPE_ACTIONS]).toEqual(['shape:line', 'shape:rectangle', 'shape:ellipse']);
+        for (const action of ['shape:line', 'shape:rectangle', 'shape:ellipse'] as const) {
+            expect(isDrawShapeAction(action), action).toBe(true);
+            expect(createNodeForBox(action, [0, 0], [10, 10]), action).not.toBeNull();
+        }
+        for (const action of ['select', 'shape:polygon', 'text', 'image', 'qr', 'barcode', 'code'] as const) {
+            expect(isDrawShapeAction(action), action).toBe(false);
+            expect(createNodeForBox(action, [0, 0], [10, 10]), action).toBeNull();
+        }
+    });
+
+    it('leaves the click fallback (createNodeForInsert) on the default boxes', () => {
+        const rect = createNodeForInsert('shape:rectangle', 10, 20);
+        expect(rect?.transform).toMatchObject({ x: 10, y: 20 });
+        expect(rect?.type === 'shape' && rect.size).toEqual({ w: 1500, h: 1000 });
+
+        const ellipse = createNodeForInsert('shape:ellipse', 0, 0);
+        expect(ellipse?.type === 'shape' && ellipse.size).toEqual({ w: 1500, h: 1000 });
+
+        const line = createNodeForInsert('shape:line', 30, 40);
+        expect(line?.transform).toMatchObject({ x: 30, y: 40 });
+        expect(line?.type === 'shape' && line.points).toEqual([[0, 0], [1500, 0]]);
     });
 });
 

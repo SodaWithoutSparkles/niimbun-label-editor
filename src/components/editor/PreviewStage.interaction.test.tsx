@@ -9,6 +9,7 @@ import { createLabelDoc } from '../../core/doc/factory';
 import type { Node, TextNode } from '../../core/doc/types';
 import { PreviewStage } from './PreviewStage';
 import { centeredViewport, ZOOM_MAX } from '../../editor/viewportController';
+import type { InsertAction } from '../../store/slices/toolsSlice';
 
 /**
  * Interaction coverage for the polygon draw mode (#7). The stage is mounted for
@@ -1086,5 +1087,257 @@ describe('PreviewStage inline text editing (P5)', () => {
         // Closing reattaches to the re-mounted text node.
         expect(transformer.nodes()).toHaveLength(1);
         expect(transformer.nodes()[0]).toBe(contentLayer.find('Text')[0]);
+    });
+});
+
+/**
+ * P13/S1 press-drag shape drawing: `shape:rectangle` / `shape:ellipse` /
+ * `shape:line` are defined by a press-drag box (or, for a line, the two drag
+ * endpoints). A sub-threshold release still inserts the default box, Escape
+ * aborts the draft but keeps the tool armed, and a release outside the stage
+ * commits through the window finalizer — there is no `setPointerCapture` in the
+ * component, so that listener is what covers an off-canvas release.
+ *
+ * Every other insert (text / image / qr / barcode / code) stays click-to-place.
+ */
+describe('PreviewStage press-drag shape drawing (P13/S1)', () => {
+    const mountDraw = (
+        action: InsertAction,
+        opts: { snapEnabled?: boolean; gridSpacingHm?: number } = {},
+    ) => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: makeDoc(),
+            selectedNodeIds: [],
+            activeTool: action,
+            snapEnabled: opts.snapEnabled ?? false,
+            gridSpacingHm: opts.gridSpacingHm ?? 1000,
+        });
+        render(<PreviewStage />);
+        const stage = Konva.stages[Konva.stages.length - 1] as Konva.Stage;
+        if (!stage) throw new Error('PreviewStage did not mount a Konva stage');
+        return stage;
+    };
+
+    /** Rects on the content (last) layer — the live draft is one of them. */
+    const contentRects = (stage: Konva.Stage): number => stage.getLayers().at(-1)!.find('Rect').length;
+
+    const drag = (stage: Konva.Stage, from: [number, number], to: [number, number], shiftKey = false) => {
+        const a = toScreen(stage, from[0], from[1]);
+        const b = toScreen(stage, to[0], to[1]);
+        firePointer(stage, 'pointerdown', a.x, a.y);
+        firePointer(stage, 'pointermove', b.x, b.y, { shiftKey });
+        firePointer(stage, 'pointerup', b.x, b.y, { shiftKey });
+        return { a, b };
+    };
+
+    it('draws exactly one rectangle at the dragged geometry, with one undo entry', () => {
+        const stage = mountDraw('shape:rectangle');
+
+        drag(stage, [1200, 1000], [3000, 2000]);
+
+        const state = useStore.getState();
+        expect(state.currentDoc?.nodes).toHaveLength(1);
+        expect(state.docPast).toHaveLength(1);
+        const node = state.currentDoc!.nodes[0]!;
+        expect(node).toMatchObject({ type: 'shape', shape: 'rectangle', transform: { x: 1200, y: 1000 } });
+        expect(node.type === 'shape' && node.size).toEqual({ w: 1800, h: 1000 });
+        // The tool disarms after the insert, as it did for click-to-place.
+        expect(state.activeTool).toBe('select');
+    });
+
+    it('normalizes an up-left drag to the min corner (no negative box)', () => {
+        const stage = mountDraw('shape:rectangle');
+
+        drag(stage, [3000, 2000], [1200, 1000]);
+
+        const node = useStore.getState().currentDoc!.nodes[0]!;
+        expect(node).toMatchObject({ transform: { x: 1200, y: 1000 } });
+        expect(node.type === 'shape' && node.size).toEqual({ w: 1800, h: 1000 });
+    });
+
+    it('draws an ellipse with box semantics', () => {
+        const stage = mountDraw('shape:ellipse');
+
+        drag(stage, [500, 500], [2500, 1500]);
+
+        const node = useStore.getState().currentDoc!.nodes[0]!;
+        expect(node).toMatchObject({ type: 'shape', shape: 'ellipse', transform: { x: 500, y: 500 } });
+        expect(node.type === 'shape' && node.size).toEqual({ w: 2000, h: 1000 });
+    });
+
+    it('draws a line rebased to its bbox min', () => {
+        const stage = mountDraw('shape:line');
+
+        drag(stage, [500, 600], [2500, 2600]);
+
+        const node = useStore.getState().currentDoc!.nodes[0]!;
+        // bbox min is (500, 600): transform there, points relative to it.
+        expect(node).toMatchObject({ type: 'shape', shape: 'line', transform: { x: 500, y: 600 } });
+        expect(node.type === 'shape' && node.points).toEqual([[0, 0], [2000, 2000]]);
+    });
+
+    it('snaps a shifted line to 45°', () => {
+        const stage = mountDraw('shape:line');
+
+        // 2000 across, 1000 down → the 45° ray at distance hypot(2000, 1000).
+        drag(stage, [500, 500], [2500, 1500], true);
+
+        const node = useStore.getState().currentDoc!.nodes[0]!;
+        const points = node.type === 'shape' ? node.points : [];
+        // Snapped end (2081, 2081) rebased to the bbox min (500, 500).
+        expect(node.transform).toMatchObject({ x: 500, y: 500 });
+        expect(points?.[0]).toEqual([0, 0]);
+        expect(points?.[1]).toEqual([1581, 1581]);
+    });
+
+    it('constrains a shifted drag to a square', () => {
+        const stage = mountDraw('shape:rectangle');
+
+        drag(stage, [1000, 1000], [3000, 2000], true);
+
+        const node = useStore.getState().currentDoc!.nodes[0]!;
+        expect(node).toMatchObject({ transform: { x: 1000, y: 1000 } });
+        expect(node.type === 'shape' && node.size).toEqual({ w: 2000, h: 2000 });
+    });
+
+    it('falls back to the default box on a sub-threshold click (no dead gesture)', () => {
+        const stage = mountDraw('shape:rectangle');
+        const at = toScreen(stage, 1200, 1000);
+
+        firePointer(stage, 'pointerdown', at.x, at.y);
+        firePointer(stage, 'pointerup', at.x, at.y);
+
+        const state = useStore.getState();
+        expect(state.currentDoc?.nodes).toHaveLength(1);
+        expect(state.docPast).toHaveLength(1);
+        const node = state.currentDoc!.nodes[0]!;
+        expect(node).toMatchObject({ transform: { x: 1200, y: 1000 } });
+        expect(node.type === 'shape' && node.size).toEqual({ w: 1500, h: 1000 });
+        expect(state.activeTool).toBe('select');
+    });
+
+    it('treats jitter below the collapse threshold as a click', () => {
+        const stage = mountDraw('shape:rectangle');
+        const at = toScreen(stage, 1200, 1000);
+
+        firePointer(stage, 'pointerdown', at.x, at.y);
+        firePointer(stage, 'pointermove', at.x + 2, at.y + 1);
+        firePointer(stage, 'pointerup', at.x + 2, at.y + 1);
+
+        const node = useStore.getState().currentDoc!.nodes[0]!;
+        expect(node.type === 'shape' && node.size).toEqual({ w: 1500, h: 1000 });
+    });
+
+    it('aborts the draft on Escape and leaves the tool armed', () => {
+        const stage = mountDraw('shape:rectangle');
+        const baseline = contentRects(stage);
+        const at = toScreen(stage, 1200, 1000);
+        const far = toScreen(stage, 3000, 2000);
+
+        firePointer(stage, 'pointerdown', at.x, at.y);
+        firePointer(stage, 'pointermove', far.x, far.y);
+        // The dashed draft is on the content layer.
+        expect(contentRects(stage)).toBeGreaterThan(baseline);
+
+        act(() => {
+            window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        });
+
+        const state = useStore.getState();
+        expect(state.currentDoc?.nodes).toHaveLength(0);
+        expect(state.docPast).toHaveLength(0);
+        // The tool stays armed so the user can redraw immediately ...
+        expect(state.activeTool).toBe('shape:rectangle');
+        // ... and the draft is gone.
+        expect(contentRects(stage)).toBe(baseline);
+
+        // A later release must not resurrect the aborted draft.
+        firePointer(stage, 'pointerup', far.x, far.y);
+        expect(useStore.getState().currentDoc?.nodes).toHaveLength(0);
+    });
+
+    it('drops the draft when the tool changes mid-drag', () => {
+        const stage = mountDraw('shape:rectangle');
+        const baseline = contentRects(stage);
+        const at = toScreen(stage, 1200, 1000);
+        const far = toScreen(stage, 3000, 2000);
+
+        firePointer(stage, 'pointerdown', at.x, at.y);
+        firePointer(stage, 'pointermove', far.x, far.y);
+        expect(contentRects(stage)).toBeGreaterThan(baseline);
+
+        act(() => {
+            useStore.getState().setActiveTool('shape:ellipse');
+        });
+
+        expect(contentRects(stage)).toBe(baseline);
+        // The abandoned gesture commits nothing on the eventual release.
+        firePointer(stage, 'pointerup', far.x, far.y);
+        expect(useStore.getState().currentDoc?.nodes).toHaveLength(0);
+    });
+
+    it('commits a drag released outside the stage via the window finalizer', () => {
+        const stage = mountDraw('shape:rectangle');
+        const at = toScreen(stage, 1200, 1000);
+        const far = toScreen(stage, 3000, 2000);
+
+        firePointer(stage, 'pointerdown', at.x, at.y);
+        firePointer(stage, 'pointermove', far.x, far.y);
+        // No setPointerCapture: a release over the MFP/rail never reaches the
+        // Stage, so the window listener must commit the drawn box.
+        act(() => {
+            window.dispatchEvent(new Event('pointerup'));
+        });
+
+        const state = useStore.getState();
+        expect(state.currentDoc?.nodes).toHaveLength(1);
+        expect(state.docPast).toHaveLength(1);
+        const node = state.currentDoc!.nodes[0]!;
+        expect(node).toMatchObject({ transform: { x: 1200, y: 1000 } });
+        expect(node.type === 'shape' && node.size).toEqual({ w: 1800, h: 1000 });
+    });
+
+    it('snaps the drawn box to the grid while dragging', () => {
+        const stage = mountDraw('shape:rectangle', { snapEnabled: true, gridSpacingHm: 1000 });
+
+        // World corners 40 hm off the 1000 hm grid lines — within the 6 px snap
+        // threshold at the fit zoom — so both snap to the grid.
+        drag(stage, [1960, 1960], [2960, 2960]);
+
+        const node = useStore.getState().currentDoc!.nodes[0]!;
+        expect(node).toMatchObject({ transform: { x: 2000, y: 2000 } });
+        expect(node.type === 'shape' && node.size).toEqual({ w: 1000, h: 1000 });
+    });
+
+    it('keeps the tool armed after a cancel (pointercancel) without committing', () => {
+        const stage = mountDraw('shape:rectangle');
+        const at = toScreen(stage, 1200, 1000);
+        const far = toScreen(stage, 3000, 2000);
+
+        firePointer(stage, 'pointerdown', at.x, at.y);
+        firePointer(stage, 'pointermove', far.x, far.y);
+
+        act(() => {
+            window.dispatchEvent(new Event('pointercancel'));
+        });
+
+        const state = useStore.getState();
+        expect(state.currentDoc?.nodes).toHaveLength(0);
+        expect(state.activeTool).toBe('shape:rectangle');
+    });
+
+    it('keeps text click-to-place on pointerdown (unchanged)', () => {
+        const stage = mountDraw('text');
+        const at = toScreen(stage, 800, 600);
+
+        firePointer(stage, 'pointerdown', at.x, at.y);
+
+        const state = useStore.getState();
+        expect(state.currentDoc?.nodes).toHaveLength(1);
+        const node = state.currentDoc!.nodes[0]!;
+        expect(node).toMatchObject({ type: 'text', transform: { x: 800, y: 600 } });
+        expect(node.type === 'text' && node.size).toEqual({ w: 2000, h: 800 });
+        expect(state.activeTool).toBe('select');
     });
 });

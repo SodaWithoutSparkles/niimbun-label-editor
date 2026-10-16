@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Layer, Line, Stage, Transformer } from 'react-konva';
+import { Ellipse, Layer, Line, Rect, Stage, Transformer } from 'react-konva';
 import type Konva from 'konva';
 import { useStore } from '../../store/useStore';
+import type { InsertAction } from '../../store/slices/toolsSlice';
 import { cn } from '../../utils/cn';
 import { flattenResolved, resolve, DEFAULT_FONT_FAMILY } from '../../editor/render/resolve';
 import type { ResolvedContent, ResolvedNode } from '../../editor/render/resolve';
@@ -29,7 +30,7 @@ import {
 } from '../../core/viewport';
 import { resolveZoom, centeredViewport, zoomAt, ZOOM_MIN, ZOOM_MAX } from '../../editor/viewportController';
 import { classifyWheel } from '../../editor/wheelIntent';
-import { createNodeForInsert, createPolygonNode } from '../../editor/insertActions';
+import { createNodeForBox, createNodeForInsert, createPolygonNode, isDrawShapeAction } from '../../editor/insertActions';
 import { finishPolygonPoints, snapPolygonPointIfEnabled, type PolygonPoint } from '../../editor/polygonDrawing';
 import { pointerDownSelection, nodesInMarquee } from '../../editor/selectionModel';
 import { DEFAULT_SHAPE_STROKE, DEFAULT_SHAPE_STROKE_WIDTH } from '../../core/doc/objects';
@@ -129,6 +130,82 @@ interface DragState {
     /** Set once the pointer has travelled past the click/drag threshold. */
     moved: boolean;
 }
+
+/**
+ * A press-drag draw gesture for rectangle / ellipse / line (P13/S1). Armed on
+ * `pointerdown` and committed on `pointerup`; `moved` records whether the
+ * pointer ever travelled past `COLLAPSE_DRAG_THRESHOLD_PX`, which decides
+ * between the drawn box and the click-to-place default (owner decision 2 — a
+ * bare click is never discarded).
+ */
+interface InsertDrag {
+    action: InsertAction;
+    /** Screen-space press point; the click/drag threshold is measured from it. */
+    startScreen: Point;
+    /** Raw (unclamped) hm press point — the click fallback keeps today's placement. */
+    rawStart: Point;
+    /** Backing-clamped, snapped hm press point (the box's first corner). */
+    start: PolygonPoint;
+    /** Latest backing-clamped, snapped hm pointer point. */
+    end: PolygonPoint;
+    /** Shift on the last move: square/circle, or a 45° line snap. */
+    shift: boolean;
+    /** Set once the pointer travels past `COLLAPSE_DRAG_THRESHOLD_PX`. */
+    moved: boolean;
+}
+
+/** The live-draft render model (built into a node by `createNodeForBox`). */
+interface InsertDraft {
+    action: InsertAction;
+    start: PolygonPoint;
+    end: PolygonPoint;
+    shift: boolean;
+}
+
+/** Clamp a world-hm point to the label backing (the polygon gesture's keep-in). */
+const clampToBacking = (point: PolygonPoint, doc: LabelDoc): PolygonPoint => [
+    Math.min(Math.max(point[0], 0), doc.label.backingW),
+    Math.min(Math.max(point[1], 0), doc.label.backingH),
+];
+
+/**
+ * Dashed live preview of a press-drag draw, on the content layer exactly like
+ * the polygon draft. It is handed the node `createNodeForBox` would commit, so
+ * the draft ink is the committed ink; `listening={false}` keeps it out of the
+ * hit-test and the shared stroke defaults mark it as a draft.
+ */
+const InsertBoxDraft: React.FC<{ node: Node }> = ({ node }) => {
+    if (node.type !== 'shape') return null;
+    const common = {
+        stroke: DEFAULT_SHAPE_STROKE,
+        strokeWidth: DEFAULT_SHAPE_STROKE_WIDTH,
+        dash: [DEFAULT_SHAPE_STROKE_WIDTH * 2, DEFAULT_SHAPE_STROKE_WIDTH],
+        listening: false,
+    };
+    if (node.shape === 'line' || node.shape === 'polygon') {
+        return (
+            <Line
+                points={(node.points ?? []).flatMap(([x, y]) => [x, y])}
+                lineCap="round"
+                lineJoin="round"
+                {...common}
+            />
+        );
+    }
+    const { w, h } = node.size ?? { w: 0, h: 0 };
+    if (node.shape === 'ellipse') {
+        return (
+            <Ellipse
+                x={node.transform.x + w / 2}
+                y={node.transform.y + h / 2}
+                radiusX={w / 2}
+                radiusY={h / 2}
+                {...common}
+            />
+        );
+    }
+    return <Rect x={node.transform.x} y={node.transform.y} width={w} height={h} {...common} />;
+};
 
 const matrixForViewport = (viewport: Viewport): Mat2D => {
     if (viewport.rotation === 90) {
@@ -231,7 +308,10 @@ export const PreviewStage: React.FC = () => {
     const [snapLines, setSnapLines] = useState<SnapGuideLine[]>([]);
     const [polygonPoints, setPolygonPoints] = useState<PolygonPoint[]>([]);
     const [polygonCursor, setPolygonCursor] = useState<PolygonPoint | null>(null);
+    const [insertDraft, setInsertDraft] = useState<InsertDraft | null>(null);
     const dragRef = useRef<DragState | null>(null);
+    /** Authoritative press-drag draw state; read by the release finalizers. */
+    const insertDragRef = useRef<InsertDrag | null>(null);
     const panRef = useRef<{ startScreen: Point; startPan: Point } | null>(null);
     /** Last shift/alt state; `transformend` has no event modifiers of its own. */
     const modifierRef = useRef(false);
@@ -486,6 +566,18 @@ export const PreviewStage: React.FC = () => {
             snapEnabled,
         );
     }, [polygonCursor, snapEnabled, doc, nodeBoundsById, viewport.zoom, gridSpacingHm]);
+    /**
+     * The node the live press-drag draft previews. Built through the same
+     * `createNodeForBox` the release commits, so the dashed preview and the
+     * committed shape can never diverge.
+     */
+    const insertDraftNode = useMemo(
+        () =>
+            insertDraft
+                ? createNodeForBox(insertDraft.action, insertDraft.start, insertDraft.end, insertDraft.shift)
+                : null,
+        [insertDraft],
+    );
     // Keep the latest bounds reachable from `beginDrag` without a stale closure.
     nodeBoundsRef.current = nodeBoundsById;
 
@@ -566,19 +658,52 @@ export const PreviewStage: React.FC = () => {
         setPolygonCursor(null);
     }, []);
 
+    /** Drop a press-drag draw draft without committing it (keeps the tool armed). */
+    const resetInsertDraft = useCallback(() => {
+        insertDragRef.current = null;
+        setInsertDraft(null);
+    }, []);
+
+    /**
+     * Commit an armed press-drag draw. Past the click threshold the drawn box is
+     * used; below it the click-to-place default box is inserted instead (owner
+     * decision 2 — a bare click is never discarded). One `addNode` ⇒ one undo
+     * entry. Idempotent: the gesture is cleared before the store writes, so the
+     * Stage `pointerup` and the window finalizer can both call it.
+     */
+    const finalizeInsert = useCallback(() => {
+        const insert = insertDragRef.current;
+        if (!insert) return;
+        resetInsertDraft();
+        const node = insert.moved
+            ? createNodeForBox(insert.action, insert.start, insert.end, insert.shift)
+            : createNodeForInsert(insert.action, insert.rawStart.x, insert.rawStart.y);
+        if (node) {
+            const id = addNode(node);
+            if (id) selectNode(id);
+        }
+        clearActiveTool();
+    }, [addNode, selectNode, clearActiveTool, resetInsertDraft]);
+
     useEffect(() => {
         if (activeTool !== 'shape:polygon') {
             setPolygonPoints([]);
             setPolygonCursor(null);
         }
-    }, [activeTool]);
+        // A press-drag draft belongs to the tool that armed it; any tool switch
+        // (including to another drawable shape) drops it. Idempotent under
+        // StrictMode's double-invoke: the ref is already null on the second run.
+        const insert = insertDragRef.current;
+        if (insert && insert.action !== activeTool) resetInsertDraft();
+    }, [activeTool, resetInsertDraft]);
 
     // A draft armed on label A must never leak into label B. Keyed on the doc
     // id (not whole-doc identity): a transient drag repaints `currentDoc` but
     // keeps the same id, so this must not fire mid-gesture.
     useEffect(() => {
         resetPolygonDraft();
-    }, [doc?.meta.id, resetPolygonDraft]);
+        resetInsertDraft();
+    }, [doc?.meta.id, resetPolygonDraft, resetInsertDraft]);
 
     const beginDrag = useCallback(
         (world: Point, ids: readonly string[], collapseTo: string | null = null) => {
@@ -652,13 +777,42 @@ export const PreviewStage: React.FC = () => {
                 return;
             }
             if (activeTool !== 'select') {
-                const point = screenToHm(stage.getPointerPosition()!, viewport);
-                const node = createNodeForInsert(activeTool, point.x, point.y);
-                if (node) {
-                    const id = addNode(node);
-                    if (id) selectNode(id);
+                const pointer = stage.getPointerPosition()!;
+                if (!isDrawShapeAction(activeTool)) {
+                    // text/image/qr/barcode/code stay click-to-place with their
+                    // fixed default boxes (they are content boxes, not drawn).
+                    const point = screenToHm(pointer, viewport);
+                    const node = createNodeForInsert(activeTool, point.x, point.y);
+                    if (node) {
+                        const id = addNode(node);
+                        if (id) selectNode(id);
+                    }
+                    clearActiveTool();
+                    return;
                 }
-                clearActiveTool();
+                // rectangle/ellipse/line: press-drag defines the box. The press
+                // point is backing-clamped and snapped exactly like a polygon
+                // vertex; whether this was a click or a drag is decided on
+                // release (`finalizeInsert`), so a bare click still places the
+                // default box.
+                const raw = screenToHm(pointer, viewport);
+                const start = snapPolygonPointIfEnabled(
+                    clampToBacking([raw.x, raw.y], doc),
+                    doc,
+                    [...nodeBoundsById.values()],
+                    SNAP_THRESHOLD_PX / viewport.zoom,
+                    gridSpacingHm,
+                    snapEnabled,
+                );
+                insertDragRef.current = {
+                    action: activeTool,
+                    startScreen: pointer,
+                    rawStart: raw,
+                    start,
+                    end: start,
+                    shift: false,
+                    moved: false,
+                };
                 return;
             }
 
@@ -749,7 +903,7 @@ export const PreviewStage: React.FC = () => {
         });
     }, [activeTool, finishPolygon, pointerWorld, targets, doc, beginTextEdit, rulersVisible]);
 
-    const handlePointerMove = useCallback(() => {
+    const handlePointerMove = useCallback((event?: Konva.KonvaEventObject<PointerEvent>) => {
         const stage = stageRef.current;
         if (!stage) return;
         const pointer = stage.getPointerPosition();
@@ -791,6 +945,35 @@ export const PreviewStage: React.FC = () => {
                     snapEnabled,
                 ),
             );
+            return;
+        }
+
+        // Press-drag draw: update the live draft. Same snap path as the polygon
+        // cursor, so a drawn box lands on the grid/edges the same way.
+        const insert = insertDragRef.current;
+        if (insert && doc) {
+            if (
+                !insert.moved &&
+                Math.hypot(pointer.x - insert.startScreen.x, pointer.y - insert.startScreen.y) >
+                    COLLAPSE_DRAG_THRESHOLD_PX
+            ) {
+                insert.moved = true;
+            }
+            // Below the threshold this is still a click candidate: keep the
+            // draft off screen and place the default box on release.
+            if (!insert.moved) return;
+            const raw = screenToHm(pointer, viewport);
+            const end = snapPolygonPointIfEnabled(
+                clampToBacking([raw.x, raw.y], doc),
+                doc,
+                [...nodeBoundsById.values()],
+                SNAP_THRESHOLD_PX / viewport.zoom,
+                gridSpacingHm,
+                snapEnabled,
+            );
+            insert.end = end;
+            insert.shift = event?.evt?.shiftKey ?? false;
+            setInsertDraft({ action: insert.action, start: insert.start, end, shift: insert.shift });
             return;
         }
 
@@ -1015,7 +1198,22 @@ export const PreviewStage: React.FC = () => {
         abortTransform();
         finalizeGesture();
         resetPolygonDraft();
-    }, [abortTransform, finalizeGesture, resetPolygonDraft]);
+        // A press-drag draw in flight is abandoned, never committed, and the
+        // tool stays armed — same contract as the polygon draft.
+        resetInsertDraft();
+    }, [abortTransform, finalizeGesture, resetPolygonDraft, resetInsertDraft]);
+
+    /**
+     * Window-level `pointerup`: commit an armed press-drag draw (the Stage's own
+     * `pointerup` already tried, so this is a no-op there) and then finalize any
+     * other gesture. There is no `setPointerCapture` in this file; a release over
+     * the MFP/rail or off-canvas never reaches the Stage, so this listener is the
+     * path that commits a drawn box released outside the pane.
+     */
+    const handleWindowPointerUp = useCallback(() => {
+        finalizeInsert();
+        finalizeGesture();
+    }, [finalizeInsert, finalizeGesture]);
 
     // Window-level finalizer so a pointer released outside the stage content
     // (over the MFP/rail) still ends the gesture. An OS focus steal (window
@@ -1027,19 +1225,22 @@ export const PreviewStage: React.FC = () => {
         const onVisibilityChange = () => {
             if (document.hidden) cancelActiveGesture();
         };
-        window.addEventListener('pointerup', finalizeGesture);
+        window.addEventListener('pointerup', handleWindowPointerUp);
         window.addEventListener('pointercancel', cancelActiveGesture);
         window.addEventListener('blur', cancelActiveGesture);
         document.addEventListener('visibilitychange', onVisibilityChange);
         return () => {
-            window.removeEventListener('pointerup', finalizeGesture);
+            window.removeEventListener('pointerup', handleWindowPointerUp);
             window.removeEventListener('pointercancel', cancelActiveGesture);
             window.removeEventListener('blur', cancelActiveGesture);
             document.removeEventListener('visibilitychange', onVisibilityChange);
         };
-    }, [finalizeGesture, cancelActiveGesture]);
+    }, [handleWindowPointerUp, cancelActiveGesture]);
 
     const handlePointerUp = useCallback(() => {
+        // Commit an armed press-drag draw first (idempotent with the window
+        // finalizer below): the drawn box, or the default box for a bare click.
+        finalizeInsert();
         if (marquee) {
             if (doc) {
                 const minX = Math.min(marquee.start.x, marquee.current.x);
@@ -1059,7 +1260,7 @@ export const PreviewStage: React.FC = () => {
             setMarquee(null);
         }
         finalizeGesture();
-    }, [marquee, doc, viewport, selectNodes, finalizeGesture]);
+    }, [marquee, doc, viewport, selectNodes, finalizeGesture, finalizeInsert]);
 
     const handleWheel = useCallback(
         (event: Konva.KonvaEventObject<WheelEvent>) => {
@@ -1124,6 +1325,13 @@ export const PreviewStage: React.FC = () => {
                 return;
             }
             if (event.key !== 'Escape') return;
+            // A press-drag draw in flight: abort just the draft and KEEP the
+            // tool armed, so the user can immediately redraw. The polygon case
+            // below is unchanged (it disarms).
+            if (insertDragRef.current) {
+                resetInsertDraft();
+                return;
+            }
             setPolygonPoints([]);
             setPolygonCursor(null);
             clearActiveTool();
@@ -1131,7 +1339,7 @@ export const PreviewStage: React.FC = () => {
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [clearActiveTool, clearNodeSelection, activeTool, finishPolygon]);
+    }, [clearActiveTool, clearNodeSelection, activeTool, finishPolygon, resetInsertDraft]);
 
     /**
      * Live box-only text resize (item 6): the Konva "resize without scaling"
@@ -1410,6 +1618,7 @@ export const PreviewStage: React.FC = () => {
                             listening={false}
                         />
                     )}
+                    {insertDraftNode && <InsertBoxDraft node={insertDraftNode} />}
                     {resolved.map((node) =>
                         editing?.id === node.id ? null : (
                             <ResolvedShape

@@ -171,6 +171,101 @@ export const createNodeForInsert = (action: InsertAction, x: hm, y: hm): Node | 
     }
 };
 
+/** The three shape actions drawn by press-drag (P13/S1, owner decision 1). */
+export const DRAW_SHAPE_ACTIONS = [
+    'shape:line',
+    'shape:rectangle',
+    'shape:ellipse',
+] as const satisfies readonly InsertAction[];
+
+/**
+ * True for an armed action whose geometry is defined by a press-drag. Excludes
+ * `shape:polygon` (a multi-click gesture) and every content insert
+ * (text/image/qr/barcode/code), which stay click-to-place.
+ */
+export const isDrawShapeAction = (action: InsertAction): boolean =>
+    (DRAW_SHAPE_ACTIONS as readonly InsertAction[]).includes(action);
+
+/**
+ * Snap the segment `(ax, ay) → (bx, by)` to the nearest 45° ray, keeping its
+ * length — the shift constraint for a drawn line (owner decision 3). A
+ * zero-length segment has no angle to snap and is returned unchanged.
+ */
+const snapLineTo45 = (ax: hm, ay: hm, bx: hm, by: hm): [hm, hm] => {
+    const dx = bx - ax;
+    const dy = by - ay;
+    if (dx === 0 && dy === 0) return [bx, by];
+    const step = Math.PI / 4;
+    const angle = Math.round(Math.atan2(dy, dx) / step) * step;
+    const distance = Math.hypot(dx, dy);
+    return [Math.round(ax + Math.cos(angle) * distance), Math.round(ay + Math.sin(angle) * distance)];
+};
+
+/**
+ * Build the node for a shape drawn by press-drag, in world hm. The drag path's
+ * counterpart to {@link createNodeForInsert} (which stays the click fallback);
+ * returns `null` for every action that is not draw-by-drag.
+ *
+ * - **rectangle / ellipse** (box semantics — the press point is a corner): a
+ *   negative / up-left drag is normalized to the min corner plus `abs` size,
+ *   because the doc stores `transform.x/y` + `size {w,h}` (the reference's
+ *   signed w/h do not map).
+ * - **line**: the two drag endpoints are rebased relative to the bbox min
+ *   corner and the transform is placed there (mirroring {@link createPolygonNode});
+ *   the transform is the node's rotation pivot, so it must sit on the geometry
+ *   rather than at the label origin. `shift` snaps the segment to 45° first, and
+ *   the snapped endpoints are rebased.
+ * - **shift** on a box constrains it to a square/circle via `max(|dx|, |dy|)`,
+ *   preserving the drag direction, then normalizing.
+ */
+export const createNodeForBox = (
+    action: InsertAction,
+    start: readonly [hm, hm],
+    end: readonly [hm, hm],
+    shift = false,
+): Node | null => {
+    const [ax, ay] = start;
+    const [bx, by] = end;
+    switch (action) {
+        case 'shape:rectangle':
+        case 'shape:ellipse': {
+            let dx = bx - ax;
+            let dy = by - ay;
+            if (shift) {
+                // Square/circle: the longer axis wins, the drag direction kept.
+                const side = Math.max(Math.abs(dx), Math.abs(dy));
+                dx = dx >= 0 ? side : -side;
+                dy = dy >= 0 ? side : -side;
+            }
+            return {
+                ...base(Math.min(ax, ax + dx), Math.min(ay, ay + dy)),
+                type: 'shape',
+                shape: shapeKindForAction(action)!,
+                size: { w: Math.abs(dx), h: Math.abs(dy) },
+                fill: DEFAULT_SHAPE_FILL,
+                stroke: DEFAULT_SHAPE_STROKE,
+                strokeWidth: DEFAULT_SHAPE_STROKE_WIDTH,
+            };
+        }
+        case 'shape:line': {
+            const [ex, ey] = shift ? snapLineTo45(ax, ay, bx, by) : [bx, by];
+            const x = Math.min(ax, ex) as hm;
+            const y = Math.min(ay, ey) as hm;
+            return {
+                ...base(x, y),
+                type: 'shape',
+                shape: 'line',
+                points: [[ax - x, ay - y], [ex - x, ey - y]],
+                fill: DEFAULT_SHAPE_FILL,
+                stroke: DEFAULT_SHAPE_STROKE,
+                strokeWidth: DEFAULT_SHAPE_STROKE_WIDTH,
+            };
+        }
+        default:
+            return null;
+    }
+};
+
 /**
  * Build an `ImageNode` for an imported `ImageRef` at top-left `(x, y)`, sized to
  * the source aspect within a `maxSide` box (never distorted). Used by the image
