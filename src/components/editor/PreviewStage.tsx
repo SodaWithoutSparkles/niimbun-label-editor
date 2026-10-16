@@ -1595,6 +1595,22 @@ export const PreviewStage: React.FC = () => {
                     layerAttrs={sceneAttrs}
                 />
                 <Layer ref={layerRef} {...sceneAttrs}>
+                    {/* Objects first: the draw drafts and the Transformer must paint above them (D-37). */}
+                    {resolved.map((node) =>
+                        editing?.id === node.id ? null : (
+                            <ResolvedShape
+                                key={node.id}
+                                node={node}
+                                registerRef={registerRef}
+                                selected={selectedNodeIds.includes(node.id)}
+                                warn={keepOutIds.includes(node.id)}
+                                assets={assets}
+                                warnings={warnings}
+                                assetLabels={assetLabels}
+                                strokeScale={viewport.zoom}
+                            />
+                        ),
+                    )}
                     {polygonPoints.length > 0 && polygonDraftPoint && (
                         <Line
                             // Close the draft back to the first vertex so the
@@ -1619,21 +1635,6 @@ export const PreviewStage: React.FC = () => {
                         />
                     )}
                     {insertDraftNode && <InsertBoxDraft node={insertDraftNode} />}
-                    {resolved.map((node) =>
-                        editing?.id === node.id ? null : (
-                            <ResolvedShape
-                                key={node.id}
-                                node={node}
-                                registerRef={registerRef}
-                                selected={selectedNodeIds.includes(node.id)}
-                                warn={keepOutIds.includes(node.id)}
-                                assets={assets}
-                                warnings={warnings}
-                                assetLabels={assetLabels}
-                                strokeScale={viewport.zoom}
-                            />
-                        ),
-                    )}
                     <Transformer
                         ref={transformerRef}
                         rotateEnabled

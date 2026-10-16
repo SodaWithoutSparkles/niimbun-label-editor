@@ -1341,3 +1341,84 @@ describe('PreviewStage press-drag shape drawing (P13/S1)', () => {
         expect(state.activeTool).toBe('select');
     });
 });
+
+/**
+ * D-37 paint order: the polygon draw preview and the press-drag insert draft must
+ * paint ABOVE the committed objects, or the user cannot see what they are
+ * drawing. Konva paints a Layer's children in array order, so the draft nodes
+ * must sit after the `ResolvedShape` children (`listening={false}` is unrelated
+ * to paint order).
+ */
+describe('PreviewStage draft paint order (D-37)', () => {
+    const rectNode = (): Node => ({
+        id: 'r',
+        parentId: null,
+        type: 'shape',
+        shape: 'rectangle',
+        visible: true,
+        locked: false,
+        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        size: { w: 1000, h: 800 },
+    });
+
+    const mountDoc = (action: InsertAction) => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({
+                id: 'doc-1',
+                now: 1_700_000_000,
+                backingW: 4000,
+                backingH: 3000,
+                nodes: [rectNode()],
+            }),
+            selectedNodeIds: [],
+            activeTool: action,
+            snapEnabled: false,
+        });
+        render(<PreviewStage />);
+        const stage = Konva.stages[Konva.stages.length - 1] as Konva.Stage;
+        if (!stage) throw new Error('PreviewStage did not mount a Konva stage');
+        return stage;
+    };
+
+    const contentLayer = (stage: Konva.Stage): Konva.Layer => {
+        const layer = stage.getLayers().at(-1);
+        if (!layer) throw new Error('PreviewStage has no content layer');
+        return layer;
+    };
+
+    /**
+     * The committed rect is the only `Rect` directly on the layer (Transformer
+     * anchors are children of the Transformer), and both drafts are `Line`s, so
+     * the className indexes identify them unambiguously in these fixtures.
+     */
+    const assertDraftAboveObjects = (stage: Konva.Stage) => {
+        const children = contentLayer(stage).getChildren();
+        const draftIndex = children.findIndex((child) => child.getClassName() === 'Line');
+        const objectIndex = children.findIndex((child) => child.getClassName() === 'Rect');
+        expect(draftIndex).toBeGreaterThanOrEqual(0);
+        expect(objectIndex).toBeGreaterThanOrEqual(0);
+        expect(draftIndex).toBeGreaterThan(objectIndex);
+        expect(children.at(-1)!.getClassName()).toBe('Transformer');
+    };
+
+    it('paints the polygon draw preview above the committed objects', () => {
+        const stage = mountDoc('shape:polygon');
+
+        firePointer(stage, 'pointerdown', 100, 100);
+        firePointer(stage, 'pointerdown', 300, 120);
+
+        assertDraftAboveObjects(stage);
+    });
+
+    it('paints the drag-draw insert draft above the committed objects', () => {
+        const stage = mountDoc('shape:line');
+        const at = toScreen(stage, 1200, 1000);
+        const far = toScreen(stage, 3000, 2000);
+
+        firePointer(stage, 'pointerdown', at.x, at.y);
+        firePointer(stage, 'pointermove', far.x, far.y);
+
+        assertDraftAboveObjects(stage);
+    });
+});
