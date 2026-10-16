@@ -294,6 +294,7 @@
     "updatedTitle": "Last updated",
     "size": "{{w}} × {{h}} mm",
     "openLabel": "Open {{name}}",
+    "previewAlt": "Preview of {{name}}",
     "openFailed": "Could not open label — the saved data is invalid.",
     "readErrors": "{{count}} labels could not be read",
     "deleteFailed": "Could not delete the label."

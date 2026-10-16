@@ -80,7 +80,11 @@ export const LabelCard: React.FC<LabelCardProps> = ({ summary, onOpen }) => {
             >
                 <div className="flex h-40 items-center justify-center overflow-hidden bg-white p-2">
                     {summary.thumb ? (
-                        <img src={summary.thumb} alt={name} className="max-h-full max-w-full object-contain" />
+                        <img
+                            src={summary.thumb}
+                            alt={t('gallery.previewAlt', { name })}
+                            className="max-h-full max-w-full object-contain"
+                        />
                     ) : (
                         <PlaceholderArt backingW={summary.backingW} backingH={summary.backingH} />
                     )}
