@@ -2,7 +2,9 @@
 
 Recon 2026-10-16 (owner question: are Ostromoukhov / serpentine / Atkinson / dampening /
 S-curve + gamma-1.8 LUT applicable, and what label-file fields would they need?).
-Owner decision 2026-10-16: **record only, no code** — this is the design record.
+Owner decision 2026-10-16: **record only, no code** at the time — **partly superseded by P13 the
+same day, which landed the configurable per-strategy defaults, the per-node `serpentine` and the
+`policyKeyOf` fix. Read §7 first.**
 Companion file: [`screenstyle-quantization.md`](screenstyle-quantization.md) (procedural
 screentone design, K-level tone ramp). Read both before touching `src/core/render/quantize.ts`.
 
@@ -66,10 +68,15 @@ screentone design, K-level tone ramp). Read both before touching `src/core/rende
 - **8-slot mask palette** — `KEY_COLORS` (`renderLabelPage.ts:134`), cap check `:271`; overflow
   makes a node fall back to the global pass (`policyOverflowCount`). More distinct per-node
   parameter combos ⇒ more overflow. A **document-level** tone curve avoids that; per-node does not.
-- **`policyKeyOf`** = `` `${id}:${threshold}:${strength}` `` (`renderLabelPage.ts:210-211`).
-  It does **not** key `serpentine` (nor any future param). Two nodes differing only in a new knob
-  would share one mask entry, and the first node's params would silently win for both. **Any new
-  persisted param must extend this key** — highest-risk item in the whole extension.
+- **`policyKeyOf`** now lives in `core/render/policy.ts` and keys the **effective** `serpentine`
+  as well (`id:threshold:strength:serpentine`) — fixed in **P13** (§7). Before that it keyed only
+  `id:threshold:strength` (the D-57(b) trap): two nodes differing only in a new knob shared one mask
+  entry and the first node's params silently won for both. **Any further persisted param must extend
+  this key.**
+- **The global base options are merged *under* each policy's own options** — `applyPolicy` does
+  `{ ...opts, ...entry.options }`. So a knob a policy **omits** silently inherits the global value:
+  a node whose effective `serpentine` was `true` under a `false` global base scanned wrongly until
+  P13 set every pixel-changing knob explicitly. Any new per-policy knob must be set explicitly too.
 - **Diffusion is inherently sequential** (no parallel/GPU win); ordering matters, so the
   preview reruns (per doc change while the print dialog is open) are the real latency budget.
   The **editor Konva canvas is never quantized** — cost lands on `PrintPagePreview` + print only.
@@ -79,7 +86,8 @@ screentone design, K-level tone ramp). Read both before touching `src/core/rende
 ## 4. Label-file fields (if any of this is implemented)
 
 Stored today (`core/doc/types.ts`): `quantizerHint?: QuantizerId` (`:77`),
-`quantizerParams?: { threshold?: number; strength?: number }` (`:79`). Repaired-with-drop in
+`quantizerParams?: { threshold?: number; strength?: number; serpentine?: boolean }` (`:79`;
+`serpentine` added in P13). Repaired-with-drop in
 `validate.ts` (`toQuantizerHint` `:333-338`; params `:401-429`: threshold round+clamp `[0,255]`,
 strength round 2dp + clamp `[0,4]`, empty object deleted) and re-clamped in `factory.ts:98-118`.
 An unknown id already in a file is dropped → forward/backward compatible at v0 alpha.
@@ -87,15 +95,16 @@ An unknown id already in a file is dropped → forward/backward compatible at v0
 | new knob | field to add | notes |
 |---|---|---|
 | new ids (`ostromoukhov`, `bayer2/4/8`) | none | registry only; validate auto-accepts |
-| serpentine per node | `quantizerParams.serpentine?: boolean` | exists in `QuantizeOptions` but is **not persisted**; validate has **no boolean optional guard** → add `toOptionalBoolean` + factory pass-through |
+| serpentine per node | — | **implemented (P13)**: `quantizerParams.serpentine?: boolean` with a new `toOptionalBoolean` validate guard; the effective value is node → per-strategy setting → engine default `true`, so an unset value never means `true` |
 | damping / retention | **reuse `strength`** | 0.90–0.94 fits its `[0,4]` clamp; add a separate `retention` only if `strength > 1` must keep meaning *amplify* |
 | tone curve | `toneCurve?: 'none'\|'gamma'\|'sCurve'` + `gamma?: number` (clamp ≈0.1–4, 2dp) | enum → `toOptionalEnum`; a parametric S-curve would add `pivot`/`contrast` |
 
 UI cost per new param: `RESERVED_FIELDS` (`inspectorModel.ts:198-207`), `ObjectTab`'s
 `numberValue`/`numberRange`/`setNumber` (`:174-175`, `:262-265`, `:512-529` — note defaults are
 deleted rather than stored), `QUANTIZER_LABEL_KEYS`/`optionLabel` (`:116-122`, `:154-158`),
-`en.json` `editor.mfp.quantizerOptions.*` / field labels. Existing wart: `strength` renders for
-`threshold`, where it is a silent no-op (`ObjectTab.tsx:608-613`).
+`en.json` `editor.mfp.quantizerOptions.*` / field labels. The old wart — `strength` rendered for
+`threshold`, where it is a silent no-op — is **fixed (P13)**: inspector visibility is per strategy
+(`threshold` shows Threshold only; diffusers show "Error diffusion" + "Serpentine scan").
 
 ## 5. Unverified — must be measured on hardware, not assumed
 
@@ -114,3 +123,34 @@ deleted rather than stored), `QUANTIZER_LABEL_KEYS`/`optionLabel` (`:116-122`, `
 **composable**: serpentine ✅ ships, dampening = `strength` ✅ ships, the tone curve is ~60 lines,
 Ostromoukhov is a bounded new diffuser **pending the paper's table**. Every *number* in the recipe
 is unverified — that part is a hardware-tuning exercise, not a port.
+
+## 7. Landed in P13 (2026-10-16) — what is now configurable
+
+Owner request: "quantizer defaults are not changeable" + "use the correct terminology per strategy".
+
+- **Two persisted settings** (both default `{}` = behaviour unchanged until set; `ui_settings`):
+  - `quantizerDefaults: Partial<Record<QuantizerId, { threshold?; strength?; serpentine? }>>` —
+    per **strategy**.
+  - `defaultQuantizerByType: Partial<Record<NodeType, QuantizerId>>` — per **object type**, layered
+    above the module constant `DEFAULT_POLICY_BY_TYPE` (`core/render/policy.ts`), which stays the
+    fallback. Keys offered: text / image / qr / barcode / code. **Shapes deliberately have no entry**
+    (a solid fill cannot be dithered meaningfully, and granting shapes policies would let them consume
+    the 8 mask-palette slots → silent global-pass fallback).
+- **Precedence contract:** node `quantizerParams` → per-strategy setting → engine default. The
+  inspector's `''` = "auto" resolves to the *setting*, never to the literal `true`.
+- **Pure helpers live in `core/render/policy.ts`** (core stays store-free): `resolveQuantizer(node,
+  byType)`, `resolveQuantizerParams(...)`, `policyKeyOf` (keys effective serpentine),
+  `quantizerSettingsKey(defaults, byType)` — an **order-independent** serialization used by the two
+  preview/thumbnail cache keys (`PrintPagePreview.previewOptionsKey`,
+  `usePrintThumbnails.overridesContentKey`); `JSON.stringify` alone was key-order sensitive and
+  rebuilt the thumbnail cache needlessly.
+- **Settings are threaded, never imported**: `RenderLabelPageOptions` carries both maps and the
+  store-aware callers (`PrintDialog`, `PrintPagePreview`, `usePrintThumbnails`, `printLabel`) supply
+  them. `core/` and `print/` must not import `store/`.
+- **UI:** a new **Rendering** settings section (per strategy: Threshold, or "Error diffusion" +
+  "Serpentine scan"; plus the per-type default selects) and a **per-strategy inspector** — `threshold`
+  shows Threshold only, diffusers show Error diffusion + Serpentine.
+- **D-57 is closed**: (a) serpentine is persisted + settable, (b) `policyKeyOf` keys it, (c) the
+  generic "Dither strength" label and the `threshold`-shows-`strength` wart are gone.
+- **Still NOT implemented** from §4: `toneCurve`/`gamma` (the S-curve/gamma-1.8 LUT) and any new
+  algorithm (Ostromoukhov, Bayer/ordered). The §1 algorithm list is otherwise unchanged.
