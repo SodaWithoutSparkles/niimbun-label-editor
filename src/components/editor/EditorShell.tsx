@@ -11,6 +11,7 @@ import { LayersPanel } from './LayersPanel';
 import { EditorStatusBar } from './EditorStatusBar';
 import { EditorKeyboardShortcuts } from './EditorKeyboardShortcuts';
 import { SampleRowProvider } from './sampleRowContext';
+import { installPasteHandler, storePasteHandlers } from '../../editor/clipboardPaste';
 
 /**
  * Editor shell (ui-spec.md §2). Grid:
@@ -56,6 +57,13 @@ export const EditorShell: React.FC = () => {
     useEffect(() => {
         if (!currentDoc && isPrintOpen) closePrint();
     }, [currentDoc, isPrintOpen, closePrint]);
+
+    // System paste (editor only): an image becomes a new image node, plain text
+    // a new text node. The seams read the store at paste time, so the effect
+    // stays `[]` (no stale closure) and the install/cleanup pair is
+    // StrictMode-safe. The listener itself bails behind a modal or while an
+    // editable control has focus.
+    useEffect(() => installPasteHandler(storePasteHandlers(useStore)), []);
 
     return (
         <SampleRowProvider>
