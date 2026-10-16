@@ -1,7 +1,8 @@
 import { toCanvas } from 'bwip-js/browser';
-import { DEFAULT_SYMBOL_FILL, barcodeQuietModules, hasFill } from '../../core/doc/objects';
+import { DEFAULT_SYMBOL_FILL, barcodeQuietModules } from '../../core/doc/objects';
 import type { BarcodeSymbology } from '../../core/doc/objects';
 import { quietModulesOf, type GeneratedSymbol, type SymbolRenderOptions } from './assets';
+import { barcodeBwipOptions, drawnPitchBelowMinModule, integerPx, padSymbol } from './symbolEngine';
 
 /**
  * Barcode engine (P5 W3) — bwip-js, one generic path over every `bcid` in
@@ -27,11 +28,6 @@ import { quietModulesOf, type GeneratedSymbol, type SymbolRenderOptions } from '
  * renders a placeholder — the pipeline never crashes.
  */
 
-type BwipOptions = Parameters<typeof toCanvas>[1] & Record<string, unknown>;
-
-const integerPx = (value: number): number =>
-    Number.isFinite(value) ? Math.max(1, Math.round(value)) : 1;
-
 /**
  * Render `text` in `symbology` at the given target pixel box.
  *
@@ -54,23 +50,11 @@ export const renderBarcode = (
     const quietModules = quietModulesOf(options.quietModules, barcodeQuietModules(symbology));
     const fill = options.fill ?? DEFAULT_SYMBOL_FILL;
     try {
-        // A fresh options object per render: `toCanvas` mutates its options
-        // (adding resolved padding/scale), so reusing one object would pin later
-        // renders to the first values.
-        const makeOpts = (sx: number, sy: number): BwipOptions => ({
-            bcid: symbology,
-            text,
-            includetext: false,
-            paddingwidth: 0,
-            scaleX: sx,
-            scaleY: sy,
-        });
-
         // Measure at 1× to derive integer scales that fit the target. At scale 1
         // the narrow module is 1 px, so `baseW` is the total narrow-module count
         // and `scaleX` is the module pitch. The quiet zone is horizontal only.
         const measure = document.createElement('canvas');
-        toCanvas(measure, makeOpts(1, 1));
+        toCanvas(measure, barcodeBwipOptions(text, symbology, 1, 1));
         const baseW = measure.width;
         const baseH = measure.height;
         if (!baseW || !baseH) return null;
@@ -80,32 +64,29 @@ export const renderBarcode = (
         const scaleY = Math.max(1, Math.floor(targetH / baseH));
 
         const symbolCanvas = document.createElement('canvas');
-        toCanvas(symbolCanvas, makeOpts(scaleX, scaleY));
+        toCanvas(symbolCanvas, barcodeBwipOptions(text, symbology, scaleX, scaleY));
         if (!symbolCanvas.width || !symbolCanvas.height) return null;
 
         const quietPx = quietModules * scaleX;
-        const canvas = document.createElement('canvas');
-        canvas.width = symbolCanvas.width + 2 * quietPx;
-        canvas.height = symbolCanvas.height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return null;
-        if (hasFill(fill)) {
-            ctx.fillStyle = fill;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-        ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(symbolCanvas, quietPx, 0);
+        const canvas = padSymbol(symbolCanvas, quietPx, 0, fill);
+        if (!canvas) return null;
 
         // `scaleX` was chosen against the padded width, so it is the integer
         // narrow-module scale of the raster we return. The node draws the whole
         // canvas with `fit: 'contain'`, so the **printed** X-module pitch is
         // `scaleX` shrunk by the contain scale (see `fitImageAttrs`): when the
         // box is shorter than the raster the uniform fit shrinks the bars too.
-        const drawScale =
-            canvas.width > 0 && canvas.height > 0
-                ? Math.min(targetW / canvas.width, targetH / canvas.height)
-                : 1;
-        return { canvas, belowMinModule: scaleX * drawScale < minModulePx };
+        return {
+            canvas,
+            belowMinModule: drawnPitchBelowMinModule(
+                scaleX,
+                targetW,
+                targetH,
+                canvas.width,
+                canvas.height,
+                minModulePx,
+            ),
+        };
     } catch {
         return null;
     }

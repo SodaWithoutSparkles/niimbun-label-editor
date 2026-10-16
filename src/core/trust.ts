@@ -160,7 +160,7 @@ export const docHasTemplateSources = (doc: LabelDoc): boolean => {
             // be executable, so gate it.
             return kind !== 'static' && kind !== 'csv';
         }
-        if (type === 'qr' || type === 'barcode') {
+        if (type === 'qr' || type === 'barcode' || type === 'code') {
             if (isTemplateSource((node as { data?: unknown }).data)) return true;
             const kind = sourceKind((node as { data?: unknown }).data);
             return kind !== 'static' && kind !== 'csv';

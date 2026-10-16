@@ -49,6 +49,7 @@ export const clampFontSize = (value: number): hm => {
 /** Types that preserve aspect by default. */
 export const preservesAspectByDefault = (node: Node): boolean =>
     node.type === 'qr' ||
+    node.type === 'code' ||
     node.type === 'image' ||
     (node.type === 'shape' && node.shape === 'ellipse');
 

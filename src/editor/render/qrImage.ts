@@ -1,7 +1,8 @@
 import { toCanvas } from 'bwip-js/browser';
-import { DEFAULT_QR_QUIET_MODULES, DEFAULT_SYMBOL_FILL, hasFill } from '../../core/doc/objects';
+import { DEFAULT_QR_QUIET_MODULES, DEFAULT_SYMBOL_FILL } from '../../core/doc/objects';
 import type { QrErrorCorrection } from '../../core/doc/objects';
 import { quietModulesOf, type GeneratedSymbol, type SymbolRenderOptions } from './assets';
+import { integerPx, padSymbol, qrBwipOptions } from './symbolEngine';
 
 /**
  * QR engine (P5 W2) — bwip-js `bcid:'qrcode'`.
@@ -26,11 +27,6 @@ import { quietModulesOf, type GeneratedSymbol, type SymbolRenderOptions } from '
  * and the caller renders nothing rather than crashing the pipeline.
  */
 
-type BwipOptions = Parameters<typeof toCanvas>[1] & Record<string, unknown>;
-
-const integerPx = (value: number): number =>
-    Number.isFinite(value) ? Math.max(1, Math.round(value)) : 1;
-
 /**
  * Render `text` as a QR at the given target pixel box.
  *
@@ -53,22 +49,11 @@ export const renderQr = (
     const quietModules = quietModulesOf(options.quietModules, DEFAULT_QR_QUIET_MODULES);
     const fill = options.fill ?? DEFAULT_SYMBOL_FILL;
     try {
-        // A fresh options object per render: `toCanvas` mutates its options
-        // (adding resolved scaleX/scaleY), so reusing one object would pin later
-        // renders to the first scale.
-        const makeOpts = (scale: number): BwipOptions => ({
-            bcid: 'qrcode',
-            text,
-            eclevel: errorCorrection,
-            scale,
-            paddingwidth: 0,
-            paddingheight: 0,
-        });
         // Measure the symbol at scale 1 to derive a largest integer scale that
         // fits the **padded** canvas. One scale for both axes keeps the module
         // grid square.
         const measure = document.createElement('canvas');
-        toCanvas(measure, makeOpts(1));
+        toCanvas(measure, qrBwipOptions(text, errorCorrection, 1));
         const baseW = measure.width;
         const baseH = measure.height;
         if (!baseW || !baseH) return null;
@@ -80,24 +65,14 @@ export const renderQr = (
         const scale = Math.max(1, Math.floor(Math.min(targetW / paddedBaseW, targetH / paddedBaseW)));
 
         const symbolCanvas = document.createElement('canvas');
-        toCanvas(symbolCanvas, makeOpts(scale));
+        toCanvas(symbolCanvas, qrBwipOptions(text, errorCorrection, scale));
         if (!symbolCanvas.width || !symbolCanvas.height) return null;
 
         const modulePx = symbolCanvas.width / moduleCount; // = 2 * scale
         const quietPx = Math.round(quietModules * modulePx);
 
-        const canvas = document.createElement('canvas');
-        canvas.width = symbolCanvas.width + 2 * quietPx;
-        canvas.height = symbolCanvas.height + 2 * quietPx;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return null;
-        if (hasFill(fill)) {
-            ctx.fillStyle = fill;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-        // Never resample the module matrix: integer-scaled symbol, drawn 1:1.
-        ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(symbolCanvas, quietPx, quietPx);
+        const canvas = padSymbol(symbolCanvas, quietPx, quietPx, fill);
+        if (!canvas) return null;
 
         // The verdict is on the **printed module**, not the integer raster scale.
         // The padded symbol fills the authored box (owner decision D), so the

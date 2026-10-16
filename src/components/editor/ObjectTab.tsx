@@ -10,6 +10,7 @@ import { roundHm, type hm } from '../../core/hm';
 import { nodeSize, pointsExtent } from '../../core/doc/geometry';
 import {
     DEFAULT_BARCODE_SYMBOLOGY,
+    DEFAULT_CODE_FORMAT,
     DEFAULT_IMAGE_FIT,
     DEFAULT_QR_ERROR_CORRECTION,
     DEFAULT_QR_QUIET_MODULES,
@@ -20,6 +21,8 @@ import {
     DEFAULT_TEXT_WRAP,
     MAX_QUIET_ZONE,
     barcodeQuietModules,
+    codeQuietModules,
+    type CodeFormat,
     type TextWrap,
 } from '../../core/doc/objects';
 import { fontBadges, type FontBadge } from '../../editor/render/fontAssets';
@@ -86,6 +89,7 @@ const FIELD_LABEL_KEYS = {
     data: 'editor.mfp.field.data',
     errorCorrection: 'editor.mfp.field.errorCorrection',
     symbology: 'editor.mfp.field.symbology',
+    format: 'editor.mfp.field.format',
     quietZone: 'editor.mfp.field.quietZone',
     contentSource: 'editor.mfp.field.contentSource',
     quantizerHint: 'editor.mfp.field.quantizerHint',
@@ -126,6 +130,23 @@ type QuantizerOption = keyof typeof QUANTIZER_LABEL_KEYS;
 const isQuantizerOption = (option: string): option is QuantizerOption =>
     option in QUANTIZER_LABEL_KEYS;
 
+/**
+ * i18n keys for the `format` select (2D code bcid → nice label). Literal map so
+ * the dynamic key keeps i18next's typed-key union (a computed `t('…' + x)`
+ * collapses to `string`).
+ */
+const CODE_FORMAT_LABEL_KEYS = {
+    datamatrix: 'editor.mfp.codeFormat.datamatrix',
+    azteccode: 'editor.mfp.codeFormat.azteccode',
+    pdf417: 'editor.mfp.codeFormat.pdf417',
+    microqrcode: 'editor.mfp.codeFormat.microqrcode',
+    codeone: 'editor.mfp.codeFormat.codeone',
+    hanxin: 'editor.mfp.codeFormat.hanxin',
+    ultracode: 'editor.mfp.codeFormat.ultracode',
+} as const satisfies Record<CodeFormat, string>;
+
+const isCodeFormat = (option: string): option is CodeFormat => option in CODE_FORMAT_LABEL_KEYS;
+
 /** i18n keys for the `contentSource` kind switcher (literal map, typed keys). */
 const CONTENT_KIND_LABEL_KEYS = {
     static: 'editor.mfp.contentStatic',
@@ -154,6 +175,7 @@ const isWrapOption = (option: string): option is TextWrap => option in WRAP_LABE
 const optionLabel = (fieldKey: string, option: string, t: TFunction): string => {
     if (fieldKey === 'quantizerHint' && isQuantizerOption(option)) return t(QUANTIZER_LABEL_KEYS[option]);
     if (fieldKey === 'wrap' && isWrapOption(option)) return t(WRAP_LABEL_KEYS[option]);
+    if (fieldKey === 'format' && isCodeFormat(option)) return t(CODE_FORMAT_LABEL_KEYS[option]);
     return option;
 };
 
@@ -178,6 +200,7 @@ const numberValue = (node: Node, key: string): number => {
     if (key === 'quietZone') {
         if (node.type === 'qr') return node.quietZone ?? DEFAULT_QR_QUIET_MODULES;
         if (node.type === 'barcode') return node.quietZone ?? barcodeQuietModules(node.symbology ?? DEFAULT_BARCODE_SYMBOLOGY);
+        if (node.type === 'code') return node.quietZone ?? codeQuietModules(node.format);
     }
     const value = (node as unknown as Record<string, unknown>)[key];
     return typeof value === 'number' ? value : 0;
@@ -199,7 +222,9 @@ const stringValue = (node: Node, key: string): string => {
  */
 export const colorDefault = (node: Node, key: string): string => {
     if (key === 'fill') {
-        return node.type === 'qr' || node.type === 'barcode' ? DEFAULT_SYMBOL_FILL : DEFAULT_SHAPE_FILL;
+        return node.type === 'qr' || node.type === 'barcode' || node.type === 'code'
+            ? DEFAULT_SYMBOL_FILL
+            : DEFAULT_SHAPE_FILL;
     }
     if (key === 'stroke') return DEFAULT_SHAPE_STROKE;
     throw new Error(`colorDefault: no default colour for field "${key}" on ${node.type}`);
@@ -276,7 +301,9 @@ const transformPatch = (node: Node, key: string, value: number) => ({
 
 /** The static payload of a qr/barcode node, or `''` for a non-static source. */
 export const dataContentValue = (node: Node): string =>
-    (node.type === 'qr' || node.type === 'barcode') && node.data.kind === 'static' ? node.data.value : '';
+    (node.type === 'qr' || node.type === 'barcode' || node.type === 'code') && node.data.kind === 'static'
+        ? node.data.value
+        : '';
 
 /** Patch a qr/barcode node's static payload (CSV/template execution is P6). */
 export const dataContentPatch = (value: string): NodePatch => ({
@@ -330,6 +357,7 @@ export const fontFamilyPatch = (
 const FIELD_DEFAULTS: Record<string, string> = {
     errorCorrection: DEFAULT_QR_ERROR_CORRECTION,
     symbology: DEFAULT_BARCODE_SYMBOLOGY,
+    format: DEFAULT_CODE_FORMAT,
     fit: DEFAULT_IMAGE_FIT,
     wrap: DEFAULT_TEXT_WRAP,
     fontFamily: 'sans-serif',
@@ -553,8 +581,11 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
             if (key === 'shape') {
                 if (node.type === 'shape') updateNodeTransient(node.id, shapeKindPatch(node, value as ShapeKind));
             } else if (key === 'data') {
-                // qr / barcode static payload (CSV/template execution is P6).
-                if ((node.type === 'qr' || node.type === 'barcode') && node.data.kind === 'static') {
+                // qr / barcode / code static payload (CSV/template execution is P6).
+                if (
+                    (node.type === 'qr' || node.type === 'barcode' || node.type === 'code') &&
+                    node.data.kind === 'static'
+                ) {
                     updateNodeTransient(node.id, dataContentPatch(value));
                 }
             } else if (key === 'fontFamily') {

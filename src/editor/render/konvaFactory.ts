@@ -344,7 +344,8 @@ export const createKonvaNode = (
         }
         case 'image':
         case 'qr':
-        case 'barcode': {
+        case 'barcode':
+        case 'code': {
             const asset = assets?.get(node.id);
             if (!asset) {
                 // Missing/unprepared asset draws nothing (the editor overlays a

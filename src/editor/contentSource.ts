@@ -8,14 +8,14 @@ import type { ContentSource, Node } from '../core/doc/types';
  */
 export const contentSourceOf = (node: Node): ContentSource | undefined => {
     if (node.type === 'text') return node.text;
-    if (node.type === 'qr' || node.type === 'barcode') return node.data;
+    if (node.type === 'qr' || node.type === 'barcode' || node.type === 'code') return node.data;
     return undefined;
 };
 
 /** The node prop key that carries the source for a text / qr / barcode node. */
 export const contentFieldKey = (node: Node): 'text' | 'data' | undefined => {
     if (node.type === 'text') return 'text';
-    if (node.type === 'qr' || node.type === 'barcode') return 'data';
+    if (node.type === 'qr' || node.type === 'barcode' || node.type === 'code') return 'data';
     return undefined;
 };
 

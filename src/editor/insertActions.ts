@@ -1,6 +1,7 @@
 import type { hm } from '../core/hm';
 import type { InsertAction } from '../store/slices/toolsSlice';
 import {
+    DEFAULT_CODE_FORMAT,
     DEFAULT_SHAPE_FILL,
     DEFAULT_SHAPE_STROKE,
     DEFAULT_SHAPE_STROKE_WIDTH,
@@ -35,10 +36,13 @@ const DEFAULT_BOX = { w: 1500 as hm, h: 1000 as hm };
 const DEFAULT_IMAGE_BOX = { w: 1500 as hm, h: 1500 as hm };
 const DEFAULT_QR_BOX = { w: 1500 as hm, h: 1500 as hm };
 const DEFAULT_BARCODE_BOX = { w: 2000 as hm, h: 800 as hm };
+/** 2D codes are matrix/square by default (`codeone`/`ultracode` resize freely). */
+const DEFAULT_CODE_BOX = { w: 1500 as hm, h: 1500 as hm };
 
-/** Default static payloads for the armed qr / barcode inserts (P5). */
+/** Default static payloads for the armed qr / barcode / code inserts (P5/P11). */
 export const DEFAULT_QR_PAYLOAD = 'https://example.com';
 export const DEFAULT_BARCODE_PAYLOAD = '123456789012';
+export const DEFAULT_CODE_PAYLOAD = DEFAULT_QR_PAYLOAD;
 
 export const createPolygonNode = (worldPoints: [hm, hm][]): Node | null => {
     // A polygon needs three distinct vertices; on fewer the min/max below yield
@@ -123,6 +127,17 @@ export const createNodeForInsert = (action: InsertAction, x: hm, y: hm): Node | 
                 // `quietZone` absent ⇒ derived from the symbology.
                 fill: DEFAULT_SYMBOL_FILL,
                 size: { ...DEFAULT_BARCODE_BOX },
+            };
+        case 'code':
+            return {
+                ...common,
+                type: 'code',
+                format: DEFAULT_CODE_FORMAT,
+                data: { kind: 'static', value: DEFAULT_CODE_PAYLOAD },
+                // `quietZone` is deliberately NOT seeded: absent ⇒ the derived
+                // per-format default (`codeQuietModules(format)`).
+                fill: DEFAULT_SYMBOL_FILL,
+                size: { ...DEFAULT_CODE_BOX },
             };
         case 'shape:line':
             // Open shape: no fill (`'transparent'`). The stroke/width defaults

@@ -15,7 +15,8 @@ export type InsertAction =
     | 'shape:ellipse'
     | 'shape:polygon'
     | 'qr'
-    | 'barcode';
+    | 'barcode'
+    | 'code';
 
 /** Every valid `InsertAction`, for runtime validation of untrusted input. */
 export const INSERT_ACTIONS: readonly InsertAction[] = [
@@ -28,6 +29,7 @@ export const INSERT_ACTIONS: readonly InsertAction[] = [
     'shape:polygon',
     'qr',
     'barcode',
+    'code',
 ];
 
 /**

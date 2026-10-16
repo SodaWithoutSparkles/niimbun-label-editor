@@ -1,6 +1,6 @@
 import type { hm } from '../hm';
 import type { QuantizerId } from '../render/quantize';
-import type { BarcodeSymbology, ImageFit, QrErrorCorrection, TextWrap } from './objects';
+import type { BarcodeSymbology, CodeFormat, ImageFit, QrErrorCorrection, TextWrap } from './objects';
 
 /**
  * LabelDoc v1 — the document contract.
@@ -42,7 +42,7 @@ export interface Guide {
     label?: string;
 }
 
-export type NodeType = 'group' | 'text' | 'image' | 'shape' | 'qr' | 'barcode';
+export type NodeType = 'group' | 'text' | 'image' | 'shape' | 'qr' | 'barcode' | 'code';
 
 /** Local bounding box in hm (integer hundredths of a mm). */
 export interface NodeSize {
@@ -152,6 +152,22 @@ export interface QrNode extends BaseNode {
     /** Quiet-zone width per side in modules. Absent ⇒ the symbology default (4). */
     quietZone?: number;
 }
+/**
+ * 2D code (P11). Same shape as {@link QrNode} but the symbology is a per-format
+ * bcid (`datamatrix`, `pdf417`, …) rather than QR's error-correction level. The
+ * `format` is required — an absent/invalid one validates to
+ * `DEFAULT_CODE_FORMAT` (where QR's optional `errorCorrection` would fall back to
+ * its own default at render time).
+ */
+export interface CodeNode extends BaseNode {
+    type: 'code';
+    data: ContentSource;
+    format: CodeFormat;
+    /** Symbol background colour; see {@link QrNode.fill}. */
+    fill?: string;
+    /** Quiet-zone width per side in modules. Absent ⇒ the per-format default. */
+    quietZone?: number;
+}
 export interface BarcodeNode extends BaseNode {
     type: 'barcode';
     data: ContentSource;
@@ -162,7 +178,7 @@ export interface BarcodeNode extends BaseNode {
     quietZone?: number;
 }
 
-export type Node = GroupNode | TextNode | ImageNode | ShapeNode | QrNode | BarcodeNode;
+export type Node = GroupNode | TextNode | ImageNode | ShapeNode | QrNode | BarcodeNode | CodeNode;
 
 export type ContentSource =
     | { kind: 'static'; value: string }

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Type, Image as ImageIcon, Square, QrCode, Barcode, ChevronDown, Minus, Circle, Pentagon } from 'lucide-react';
+import { Type, Image as ImageIcon, Square, QrCode, Barcode, ScanLine, ChevronDown, Minus, Circle, Pentagon } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { cn } from '../../utils/cn';
 import type { hm } from '../../core/hm';
@@ -25,6 +25,7 @@ const INSERT_LABEL_KEYS = {
     image: 'editor.insert.image',
     qr: 'editor.insert.qr',
     barcode: 'editor.insert.barcode',
+    code: 'editor.insert.code',
 } as const;
 
 const SHAPE_LABEL_KEYS = {
@@ -182,6 +183,10 @@ export const InsertRail: React.FC = () => {
                 onArm={arm}
             >
                 <Barcode size={20} />
+            </RailButton>
+
+            <RailButton action="code" label={t(INSERT_LABEL_KEYS.code)} active={activeTool === 'code'} onArm={arm}>
+                <ScanLine size={20} />
             </RailButton>
 
             <ImageImportDialog

@@ -38,7 +38,8 @@ const FIELD_LABEL_KEYS = {
     text: 'editor.mfp.field.text',
     qr: 'editor.mfp.field.data',
     barcode: 'editor.mfp.field.data',
-} as const satisfies Record<'text' | 'qr' | 'barcode', string>;
+    code: 'editor.mfp.field.data',
+} as const satisfies Record<'text' | 'qr' | 'barcode' | 'code', string>;
 
 /** Trust-state label key (literal map keeps typed keys). */
 const TRUST_LABEL_KEYS = {
@@ -209,11 +210,11 @@ export const JsTab: React.FC<JsTabProps> = ({ selected }) => {
             </div>
 
             {currentKind === 'static' && (
-                <TabField label={t(FIELD_LABEL_KEYS[first.type as 'text' | 'qr' | 'barcode'])}>
+                <TabField label={t(FIELD_LABEL_KEYS[first.type as 'text' | 'qr' | 'barcode' | 'code'])}>
                     <Input
                         value={source?.kind === 'static' ? source.value : ''}
                         onChange={(value) => write({ [fieldKey]: { kind: 'static', value } } as NodePatch)}
-                        aria-label={t(FIELD_LABEL_KEYS[first.type as 'text' | 'qr' | 'barcode'])}
+                        aria-label={t(FIELD_LABEL_KEYS[first.type as 'text' | 'qr' | 'barcode' | 'code'])}
                     />
                 </TabField>
             )}

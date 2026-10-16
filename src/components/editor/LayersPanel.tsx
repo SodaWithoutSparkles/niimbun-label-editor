@@ -11,6 +11,7 @@ import {
     Boxes,
     QrCode,
     Barcode,
+    ScanLine,
     ChevronDown,
     ChevronRight,
 } from 'lucide-react';
@@ -38,6 +39,7 @@ const TYPE_ICONS = {
     shape: Square,
     qr: QrCode,
     barcode: Barcode,
+    code: ScanLine,
 } as const satisfies Record<NodeType, typeof Type>;
 
 export const LayersPanel: React.FC = () => {
@@ -225,6 +227,7 @@ export const TYPE_LABEL_KEYS = {
     shape: 'editor.insert.shape',
     qr: 'editor.insert.qr',
     barcode: 'editor.insert.barcode',
+    code: 'editor.insert.code',
 } as const satisfies Record<NodeType, string>;
 
 const typeLabelKey = (type: NodeType) => TYPE_LABEL_KEYS[type];

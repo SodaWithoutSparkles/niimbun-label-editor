@@ -251,7 +251,10 @@ export const buildPolicyMask = async (
         // not claim any mask coverage either: a missing topmost asset would
         // otherwise override a visible lower node's quantizer policy.
         if (
-            (node.type === 'image' || node.type === 'qr' || node.type === 'barcode') &&
+            (node.type === 'image' ||
+                node.type === 'qr' ||
+                node.type === 'barcode' ||
+                node.type === 'code') &&
             !assets?.get(node.id)
         ) {
             continue;
@@ -309,7 +312,12 @@ export const buildPolicyMask = async (
             // actually lands, not at its group-local position.
             const attrs = matrixToKonvaAttrs(carrier.node.transform);
             const leaf = carrier.node;
-            if (leaf.type === 'image' || leaf.type === 'qr' || leaf.type === 'barcode') {
+            if (
+                leaf.type === 'image' ||
+                leaf.type === 'qr' ||
+                leaf.type === 'barcode' ||
+                leaf.type === 'code'
+            ) {
                 // Fix A (P2): claim only the asset's **visible ink**, not its whole
                 // drawn rect. Transparent pixels (a `fill: 'transparent'` symbol's
                 // light modules + quiet zone, or a transparent-PNG photo) draw

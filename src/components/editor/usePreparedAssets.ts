@@ -7,6 +7,7 @@ import { createFontProvider } from '../../editor/render/fontAssets';
 import { prepareResolvedAssets } from '../../editor/render/prepareAssets';
 import type {
     ResolvedBarcode,
+    ResolvedCode,
     ResolvedImage,
     ResolvedNode,
     ResolvedQr,
@@ -137,7 +138,7 @@ const sourceKey = (source: object): string => {
 
 /** One asset-bearing leaf's signature; mirrors what `prepareResolvedAssets` reads. */
 const leafSignature = (
-    node: ResolvedImage | ResolvedQr | ResolvedBarcode,
+    node: ResolvedImage | ResolvedQr | ResolvedBarcode | ResolvedCode,
     imageRefs: ReadonlyMap<string, ImageRef>,
 ): unknown[] => {
     switch (node.type) {
@@ -182,6 +183,19 @@ const leafSignature = (
                 node.quietModules,
                 node.fill,
             ];
+        case 'code':
+            // `prepareAssets.code` reads exactly these.
+            return [
+                'code',
+                node.id,
+                node.w,
+                node.h,
+                node.placeholder,
+                node.text,
+                node.format,
+                node.quietModules,
+                node.fill,
+            ];
     }
 };
 
@@ -212,7 +226,7 @@ export const assetSignatureOf = (
     const collect = (list: readonly ResolvedNode[]): void => {
         for (const node of list) {
             if (node.type === 'group') collect(node.children);
-            else if (node.type === 'image' || node.type === 'qr' || node.type === 'barcode') {
+            else if (node.type === 'image' || node.type === 'qr' || node.type === 'barcode' || node.type === 'code') {
                 leaves.push(leafSignature(node, imageRefs));
             }
         }

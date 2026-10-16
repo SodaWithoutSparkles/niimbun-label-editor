@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { createAppStore } from '../store/useStore';
 import { INSERT_ACTIONS, normalizeInsertAction } from '../store/slices/toolsSlice';
+import { DEFAULT_CODE_FORMAT, DEFAULT_SYMBOL_FILL } from '../core/doc/objects';
 import {
     createImageNodeForRef,
     createNodeForInsert,
     createPolygonNode,
     DEFAULT_BARCODE_PAYLOAD,
+    DEFAULT_CODE_PAYLOAD,
     DEFAULT_QR_PAYLOAD,
     shapeKindForAction,
     SHAPE_ACTIONS,
@@ -98,6 +100,21 @@ describe('createNodeForInsert', () => {
         expect(barcode?.type === 'barcode' && barcode.fill).toBe('#ffffff');
         expect(barcode?.type === 'barcode' && barcode.quietZone).toBeUndefined();
         expect(barcode?.type === 'barcode' && barcode.size).toEqual({ w: 2000, h: 800 });
+    });
+
+    it('seeds the P11 code defaults', () => {
+        const code = createNodeForInsert('code', 0, 0);
+        expect(code?.type === 'code' && code.format).toBe(DEFAULT_CODE_FORMAT);
+        expect(code?.type === 'code' && code.format).toBe('datamatrix');
+        expect(code?.type === 'code' && code.data).toEqual({
+            kind: 'static',
+            value: DEFAULT_CODE_PAYLOAD,
+        });
+        expect(code?.type === 'code' && code.fill).toBe(DEFAULT_SYMBOL_FILL);
+        // `quietZone` is deliberately absent (⇒ the per-format derived default),
+        // not seeded — mirroring qr/barcode.
+        expect(code?.type === 'code' && code.quietZone).toBeUndefined();
+        expect(code?.type === 'code' && code.size).toEqual({ w: 1500, h: 1500 });
     });
 });
 

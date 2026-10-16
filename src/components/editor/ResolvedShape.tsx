@@ -238,7 +238,8 @@ export const ResolvedShape = React.memo(function ResolvedShape({
         }
         case 'image':
         case 'qr':
-        case 'barcode': {
+        case 'barcode':
+        case 'code': {
             const asset = assets?.get(node.id);
             const assetWarning = warnings?.has(node.id) ?? false;
             if (asset) {

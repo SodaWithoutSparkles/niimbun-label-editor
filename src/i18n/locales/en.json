@@ -485,6 +485,7 @@
       "polygonHint_other": "{{count}} points — click to add points; double-click or Enter to finish; Esc to cancel.",
       "qr": "QR",
       "barcode": "Barcode",
+      "code": "2D code",
       "disabledEngine": "Not available yet",
       "cancelHint": "Press Esc to cancel",
       "imageImportTitle": "Import image",
@@ -627,6 +628,15 @@
         "clip": "Clip overflow",
         "shrink": "Shrink to fit"
       },
+      "codeFormat": {
+        "datamatrix": "Data Matrix",
+        "azteccode": "Aztec",
+        "pdf417": "PDF417",
+        "microqrcode": "Micro QR",
+        "codeone": "Code One",
+        "hanxin": "Han Xin",
+        "ultracode": "Ultracode"
+      },
       "trustDisabled": "Templates are disabled for this document.",
       "imageDisabled": "Image options arrive with the image engine in a later phase.",
       "qrDisabled": "QR options arrive with the QR engine in a later phase.",
@@ -671,6 +681,7 @@
         "data": "Data",
         "errorCorrection": "Error correction",
         "symbology": "Symbology",
+        "format": "Format",
         "quietZone": "Quiet zone",
         "contentSource": "Content source",
         "quantizerHint": "Quantizer",

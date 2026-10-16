@@ -4,6 +4,7 @@ import type { AssetDeps, AssetWarning, PreparedAsset } from './assets';
 import { capImageAsset, loadImageRef } from './imageAssets';
 import { renderQr } from './qrImage';
 import { renderBarcode } from './barcodeImage';
+import { renderCode } from './codeImage';
 import type { ResolvedNode } from './resolve';
 
 /**
@@ -243,6 +244,25 @@ export const prepareResolvedAssets = async (
                 if (node.placeholder) return;
                 const { w, h } = requiredPx(node.w, node.h, symbolScale);
                 const generated = renderBarcode(node.text, node.symbology, w, h, minModulePx, {
+                    quietModules: node.quietModules,
+                    fill: node.fill,
+                });
+                if (!generated) {
+                    warnings.set(node.id, 'invalid');
+                    return;
+                }
+                assets.set(node.id, {
+                    image: generated.canvas,
+                    widthPx: generated.canvas.width,
+                    heightPx: generated.canvas.height,
+                });
+                if (generated.belowMinModule) warnings.set(node.id, 'too-small');
+                return;
+            }
+            case 'code': {
+                if (node.placeholder) return;
+                const { w, h } = requiredPx(node.w, node.h, symbolScale);
+                const generated = renderCode(node.text, node.format, w, h, minModulePx, {
                     quietModules: node.quietModules,
                     fill: node.fill,
                 });

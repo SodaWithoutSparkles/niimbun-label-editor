@@ -18,6 +18,7 @@ export const DEFAULT_POLICY_BY_TYPE: Readonly<Partial<Record<string, QuantizerId
     text: 'threshold',
     qr: 'threshold',
     barcode: 'threshold',
+    code: 'threshold',
     image: 'floydSteinberg',
 };
 

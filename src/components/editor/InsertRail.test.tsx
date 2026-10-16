@@ -7,6 +7,7 @@ import { createLabelDoc } from '../../core/doc/factory';
 import {
     createNodeForInsert,
     DEFAULT_BARCODE_PAYLOAD,
+    DEFAULT_CODE_PAYLOAD,
     DEFAULT_QR_PAYLOAD,
 } from '../../editor/insertActions';
 import { importImageUrl } from '../../editor/assetImport';
@@ -120,6 +121,28 @@ describe('InsertRail placement (P5)', () => {
         });
         expect(useStore.getState().activeTool).toBe('select');
         expect(barcode.getAttribute('aria-pressed')).toBe('false');
+    });
+
+    it('arms and places a code node with the default payload (P11)', () => {
+        useStore.setState({ currentDoc: emptyDoc(), selectedNodeIds: [] });
+        render(<InsertRail />);
+        const code = screen.getByRole('button', { name: '2D code' });
+        expect((code as HTMLButtonElement).disabled).toBe(false);
+        fireEvent.click(code);
+        expect(useStore.getState().activeTool).toBe('code');
+        expect(code.getAttribute('aria-pressed')).toBe('true');
+
+        const id = placeArmed();
+        const placed = useStore.getState().currentDoc!.nodes.find((n) => n.id === id)!;
+        expect(placed.type).toBe('code');
+        expect((placed as { format: string }).format).toBe('datamatrix');
+        expect((placed as { data: unknown }).data).toEqual({
+            kind: 'static',
+            value: DEFAULT_CODE_PAYLOAD,
+        });
+        expect(useStore.getState().selectedNodeIds).toEqual([id]);
+        expect(useStore.getState().activeTool).toBe('select');
+        expect(code.getAttribute('aria-pressed')).toBe('false');
     });
 
     it('imports an image, registers its ImageRef, and places an image node', async () => {

@@ -37,6 +37,8 @@ const base = (id: string, parentId: string | null, type: Node['type'] = 'text'):
             return { ...shared, type: 'qr', data: { kind: 'static', value: id } };
         case 'barcode':
             return { ...shared, type: 'barcode', data: { kind: 'static', value: id } };
+        case 'code':
+            return { ...shared, type: 'code', format: 'datamatrix', data: { kind: 'static', value: id } };
     }
 };
 

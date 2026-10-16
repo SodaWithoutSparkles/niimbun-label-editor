@@ -1,6 +1,6 @@
 import type { Node, NodeType } from '../core/doc/types';
 import { QUANTIZERS, resolveQuantizer } from '../core/render';
-import { BARCODE_SYMBOLOGIES, IMAGE_FITS, QR_ERROR_CORRECTIONS } from '../core/doc/objects';
+import { BARCODE_SYMBOLOGIES, CODE_FORMATS, IMAGE_FITS, QR_ERROR_CORRECTIONS } from '../core/doc/objects';
 
 /**
  * Typed field model for the MFP **Object** tab. Data only — no store, no React,
@@ -31,6 +31,7 @@ export type FieldScope =
     | 'image'
     | 'qr'
     | 'barcode'
+    | 'code'
     | 'reserved';
 
 export type FieldKind =
@@ -173,6 +174,15 @@ export const BARCODE_FIELDS: readonly FieldDescriptor[] = [
     { key: 'quietZone', scope: 'barcode', kind: 'number', wired: true },
 ];
 
+/** 2D-code fields (P11). `data` is the static payload; `format` the 2D bcid. */
+export const CODE_FIELDS: readonly FieldDescriptor[] = [
+    { key: 'data', scope: 'code', kind: 'dataContent', wired: true },
+    { key: 'format', scope: 'code', kind: 'select', wired: true, options: CODE_FORMATS },
+    // Symbol background + quiet zone: resolved by the render path, so wired.
+    { key: 'fill', scope: 'code', kind: 'color', wired: true },
+    { key: 'quietZone', scope: 'code', kind: 'number', wired: true },
+];
+
 /**
  * Per-object dither policies offered by `quantizerHint`. The empty value is the
  * explicit "default" (absent) choice; the node's `type` then picks the policy.
@@ -214,6 +224,7 @@ export const TYPE_FIELDS: Record<NodeType, readonly FieldDescriptor[]> = {
     shape: SHAPE_FIELDS,
     qr: QR_FIELDS,
     barcode: BARCODE_FIELDS,
+    code: CODE_FIELDS,
 };
 
 /** Keep the first descriptor for each `key`, preserving order. */

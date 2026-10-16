@@ -2,6 +2,8 @@ import type { hm } from '../hm';
 import { QUANTIZERS, type QuantizerId } from '../render/quantize';
 import {
     BARCODE_SYMBOLOGIES,
+    CODE_FORMATS,
+    DEFAULT_CODE_FORMAT,
     IMAGE_FITS,
     MAX_QUIET_ZONE,
     QR_ERROR_CORRECTIONS,
@@ -22,6 +24,7 @@ import type {
     NodeType,
     QrNode,
     BarcodeNode,
+    CodeNode,
     Region,
     ShapeKind,
     TextNode,
@@ -66,7 +69,7 @@ const HEX_COLOR = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 export const isColorString = (value: unknown): value is string =>
     isString(value) && (value === 'transparent' || HEX_COLOR.test(value));
 
-const NODE_TYPES: readonly NodeType[] = ['group', 'text', 'image', 'shape', 'qr', 'barcode'];
+const NODE_TYPES: readonly NodeType[] = ['group', 'text', 'image', 'shape', 'qr', 'barcode', 'code'];
 const SHAPE_KINDS: readonly ShapeKind[] = ['line', 'rectangle', 'ellipse', 'polygon'];
 // Derived from the registry so a newly added quantizer is accepted automatically.
 const QUANTIZER_IDS = Object.keys(QUANTIZERS) as QuantizerId[];
@@ -568,6 +571,28 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
                 'node.barcode.symbology: unknown symbology dropped',
             );
             if (symbology !== undefined) node.symbology = symbology;
+            const fill = toOptionalColor(value.fill, repairs, 'node.fill: invalid colour dropped');
+            if (fill !== undefined) node.fill = fill;
+            const quietZone = toQuietZone(value.quietZone, repairs);
+            if (quietZone !== undefined) node.quietZone = quietZone;
+            return node;
+        }
+        case 'code': {
+            const node: CodeNode = {
+                ...base,
+                type: 'code',
+                data: toContentSource(value.data) ?? { kind: 'static', value: '' },
+                // `format` is required on `CodeNode`, so — unlike QR's optional
+                // `errorCorrection` — an absent/invalid value falls back to the
+                // default here rather than resolving later at render time.
+                format:
+                    toOptionalEnum(
+                        value.format,
+                        CODE_FORMATS,
+                        repairs,
+                        'node.code.format: unknown format dropped',
+                    ) ?? DEFAULT_CODE_FORMAT,
+            };
             const fill = toOptionalColor(value.fill, repairs, 'node.fill: invalid colour dropped');
             if (fill !== undefined) node.fill = fill;
             const quietZone = toQuietZone(value.quietZone, repairs);

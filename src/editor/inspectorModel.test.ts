@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Node, NodeType } from '../core/doc/types';
-import { BARCODE_SYMBOLOGIES, IMAGE_FITS, QR_ERROR_CORRECTIONS } from '../core/doc/objects';
+import { BARCODE_SYMBOLOGIES, CODE_FORMATS, IMAGE_FITS, QR_ERROR_CORRECTIONS } from '../core/doc/objects';
 import {
     BARCODE_FIELDS,
+    CODE_FIELDS,
     IMAGE_FIELDS,
     QR_FIELDS,
     QUANTIZER_HINT_OPTIONS,
@@ -38,6 +39,13 @@ const node = (id: string, type: NodeType): Node => {
             return { ...shared, type: 'qr', data: { kind: 'static', value: id } } as Node;
         case 'barcode':
             return { ...shared, type: 'barcode', data: { kind: 'static', value: id } } as Node;
+        case 'code':
+            return {
+                ...shared,
+                type: 'code',
+                format: 'datamatrix',
+                data: { kind: 'static', value: id },
+            } as Node;
     }
 };
 
@@ -146,6 +154,7 @@ describe('inspectorModel — field descriptors', () => {
         expect(typeFields('image')).toEqual(IMAGE_FIELDS);
         expect(typeFields('qr')).toEqual(QR_FIELDS);
         expect(typeFields('barcode')).toEqual(BARCODE_FIELDS);
+        expect(typeFields('code')).toEqual(CODE_FIELDS);
         expect(typeFields('group')).toEqual([]);
     });
 
@@ -178,6 +187,23 @@ describe('inspectorModel — field descriptors', () => {
         expect(barcode.quietZone?.wired).toBe(true);
         expect(barcode.quietZone?.kind).toBe('number');
         expect(barcode.size).toBeUndefined();
+    });
+
+    it('wires the P11 code options (format select over CODE_FORMATS)', () => {
+        const code = Object.fromEntries(CODE_FIELDS.map((f) => [f.key, f]));
+        expect(code.data?.wired).toBe(true);
+        expect(code.data?.kind).toBe('dataContent');
+        expect(code.format?.wired).toBe(true);
+        expect(code.format?.kind).toBe('select');
+        expect(code.format?.options).toEqual(CODE_FORMATS);
+        expect(code.fill?.wired).toBe(true);
+        expect(code.fill?.kind).toBe('color');
+        expect(code.quietZone?.wired).toBe(true);
+        expect(code.quietZone?.kind).toBe('number');
+        // The useless `size` stub is gone (size is edited via sizeW/sizeH).
+        expect(code.size).toBeUndefined();
+        // The Object tab resolves the `format` label lazily; it must be present.
+        expect(keys(fieldsForNodeType('code'))).toContain('format');
     });
 
     it('offers a font-resource select and a curated system-font picker', () => {

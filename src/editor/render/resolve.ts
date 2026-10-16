@@ -20,8 +20,10 @@ import {
     DEFAULT_SYMBOL_FILL,
     DEFAULT_TEXT_WRAP,
     barcodeQuietModules,
+    codeQuietModules,
     isClosedShape,
     type BarcodeSymbology,
+    type CodeFormat,
     type ImageFit,
     type QrErrorCorrection,
     type TextWrap,
@@ -54,7 +56,8 @@ export type ResolvedNodeType =
     | 'polygon'
     | 'image'
     | 'qr'
-    | 'barcode';
+    | 'barcode'
+    | 'code';
 export type TextAlign = TextNode['align'] & ('left' | 'center' | 'right');
 
 export { DEFAULT_CONTENT_SIZE, DEFAULT_FONT_SIZE } from '../../core/doc/geometry';
@@ -207,6 +210,25 @@ export interface ResolvedBarcode extends ResolvedBase {
     quietModules: number;
 }
 
+/**
+ * 2D code leaf (P11). Same shape as {@link ResolvedQr} but carries the per-format
+ * bcid (`format`) rather than an error-correction level. Unlike QR the raster is
+ * not necessarily square (`codeone`, `ultracode`), so it is drawn with a contain
+ * fit rather than QR's square-fill.
+ */
+export interface ResolvedCode extends ResolvedBase {
+    type: 'code';
+    text: string;
+    placeholder: boolean;
+    w: hm;
+    h: hm;
+    format: CodeFormat;
+    /** Symbol background colour; see {@link ResolvedQr.fill}. */
+    fill: string;
+    /** Quiet-zone width per side, in modules (already defaulted). */
+    quietModules: number;
+}
+
 export type ResolvedNode =
     | ResolvedGroup
     | ResolvedText
@@ -216,7 +238,8 @@ export type ResolvedNode =
     | ResolvedPolygon
     | ResolvedImage
     | ResolvedQr
-    | ResolvedBarcode;
+    | ResolvedBarcode
+    | ResolvedCode;
 
 /**
  * Resolved content for one leaf: the final text plus whether it is the
@@ -310,7 +333,7 @@ export const nodeLocalPoints = (node: Node): [number, number][] => {
  * - `group`/`shape`/`text` (and anything else) → {@link nodeLocalPoints} unchanged;
  * - `image` with `fit: 'stretch'` or `'cover'` → the raster fills the whole box
  *   (`fitImageAttrs`), so the raw box is returned (no letterbox to allow for);
- * - `image` with `fit: 'contain'` (or absent = default) / `barcode` → when
+ * - `image` with `fit: 'contain'` (or absent = default) / `barcode` / `code` → when
  *   `assetSize` is present with positive dimensions, contain-fit using the aspect
  *   `widthPx/heightPx`; otherwise fall back to the raw box;
  * - `qr` → the symbol canvas is always square, so it contain-fits a square into
@@ -326,7 +349,12 @@ export const nodeDrawnLocalPoints = (
     node: Node,
     assetSize?: { widthPx: number; heightPx: number },
 ): [number, number][] => {
-    if (node.type !== 'image' && node.type !== 'qr' && node.type !== 'barcode') {
+    if (
+        node.type !== 'image' &&
+        node.type !== 'qr' &&
+        node.type !== 'barcode' &&
+        node.type !== 'code'
+    ) {
         return nodeLocalPoints(node);
     }
 
@@ -540,6 +568,22 @@ export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[]
                     symbology,
                     fill: node.fill ?? DEFAULT_SYMBOL_FILL,
                     quietModules: node.quietZone ?? barcodeQuietModules(symbology),
+                    bounds: transformedBounds(rectCorners(0, 0, w, h), base.transform),
+                };
+            }
+            case 'code': {
+                const { w, h } = nodeSize(node);
+                const content = resolveContent(node.data, emptyText, overrides?.get(node.id));
+                return {
+                    ...base,
+                    type: 'code',
+                    text: content.text,
+                    placeholder: content.placeholder,
+                    w,
+                    h,
+                    format: node.format,
+                    fill: node.fill ?? DEFAULT_SYMBOL_FILL,
+                    quietModules: node.quietZone ?? codeQuietModules(node.format),
                     bounds: transformedBounds(rectCorners(0, 0, w, h), base.transform),
                 };
             }

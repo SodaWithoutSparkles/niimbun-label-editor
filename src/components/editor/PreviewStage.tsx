@@ -364,7 +364,7 @@ export const PreviewStage: React.FC = () => {
         const imageNames = new Map(doc.resources.images.map((ref) => [ref.imageId, ref.name] as const));
         for (const node of flatResolved) {
             if (node.type === 'image') map.set(node.id, imageNames.get(node.imageId) || node.name || node.imageId || node.id);
-            else if (node.type === 'qr' || node.type === 'barcode') map.set(node.id, node.name ?? node.id);
+            else if (node.type === 'qr' || node.type === 'barcode' || node.type === 'code') map.set(node.id, node.name ?? node.id);
         }
         return map;
     }, [doc, flatResolved]);

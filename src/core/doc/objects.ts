@@ -105,6 +105,58 @@ const BARCODE_QUIET_MODULES: Readonly<Partial<Record<BarcodeSymbology, number>>>
 export const barcodeQuietModules = (symbology: BarcodeSymbology): number =>
     BARCODE_QUIET_MODULES[symbology] ?? DEFAULT_BARCODE_QUIET_MODULES;
 
+export const CODE_FORMATS = [
+    'datamatrix',
+    'azteccode',
+    'pdf417',
+    'microqrcode',
+    'codeone',
+    'hanxin',
+    'ultracode',
+] as const;
+export type CodeFormat = (typeof CODE_FORMATS)[number];
+export const DEFAULT_CODE_FORMAT: CodeFormat = 'datamatrix';
+
+/**
+ * Device px drawn per module by bwip-js at scale 1, per 2D format. The matrix
+ * codes render at `/modunit 2` (so the measured symbol width is **twice** the
+ * module count — the QR `baseW / 2 = moduleCount` rule), but `pdf417` draws at
+ * `/modunit 1`. That exception is why the `/2` rule does **not** generalize to
+ * every 2D format and must be looked up here rather than hard-coded.
+ */
+export const CODE_FORMAT_PX_PER_MODULE: Record<CodeFormat, 1 | 2> = {
+    datamatrix: 2,
+    azteccode: 2,
+    pdf417: 1,
+    microqrcode: 2,
+    codeone: 2,
+    hanxin: 2,
+    ultracode: 2,
+};
+
+/**
+ * Per-format 2D quiet-zone requirement, in modules/side. The app paints its own
+ * quiet zone: bwip draws none by default (its `paddingwidth`/`paddingheight`
+ * default to 0 and must stay 0), and `backgroundcolor` must never be set or bwip
+ * adds its own border and double-counts. Owner decision: `azteccode` = 0.
+ */
+export const CODE_FORMAT_QUIET_MODULES: Record<CodeFormat, number> = {
+    datamatrix: 1,
+    azteccode: 0,
+    pdf417: 2,
+    microqrcode: 2,
+    codeone: 1,
+    hanxin: 3,
+    ultracode: 1,
+};
+
+/**
+ * Quiet-zone width (modules/side) for a 2D format. All seven formats are in the
+ * table, so — unlike the partial 28-entry 1D `BARCODE_QUIET_MODULES` — there is
+ * no fallback.
+ */
+export const codeQuietModules = (format: CodeFormat): number => CODE_FORMAT_QUIET_MODULES[format];
+
 export const QR_ERROR_CORRECTIONS = ['L', 'M', 'Q', 'H'] as const;
 export type QrErrorCorrection = (typeof QR_ERROR_CORRECTIONS)[number];
 export const DEFAULT_QR_ERROR_CORRECTION: QrErrorCorrection = 'M';
