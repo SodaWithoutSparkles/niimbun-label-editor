@@ -32,7 +32,7 @@ import { resolveZoom, centeredViewport, zoomAt, ZOOM_MIN, ZOOM_MAX } from '../..
 import { classifyWheel } from '../../editor/wheelIntent';
 import { createNodeForBox, createNodeForInsert, createPolygonNode, isDrawShapeAction } from '../../editor/insertActions';
 import { finishPolygonPoints, snapPolygonPointIfEnabled, type PolygonPoint } from '../../editor/polygonDrawing';
-import { pointerDownSelection, nodesInMarquee } from '../../editor/selectionModel';
+import { pointerDownSelection, nodesInMarquee, pickNodeAt } from '../../editor/selectionModel';
 import { DEFAULT_SHAPE_STROKE, DEFAULT_SHAPE_STROKE_WIDTH } from '../../core/doc/objects';
 import { isTypingTarget } from '../../utils/keyboardTarget';
 import { ResolvedShape } from './ResolvedShape';
@@ -817,7 +817,14 @@ export const PreviewStage: React.FC = () => {
             }
 
             const additive = event.evt.shiftKey || event.evt.ctrlKey || event.evt.metaKey;
-            const hitId = hitTestWorld(world, targets);
+            // Overlapping objects (round-2): a plain press inside the *current*
+            // selection's own box targets that node even when something is
+            // stacked above it, so a layer-list selection is what gets dragged
+            // (`pickNodeAt`, `editor/selectionModel.ts`). An additive press is a
+            // membership toggle, not a drag, so it keeps the plain topmost hit —
+            // priority there would make a node above the selection untogglable
+            // wherever the two overlap.
+            const hitId = additive ? hitTestWorld(world, targets) : pickNodeAt(world, targets, selectedNodeIds);
             const { selection, collapseTo } = pointerDownSelection(selectedNodeIds, hitId, additive);
 
             if (hitId !== null) {

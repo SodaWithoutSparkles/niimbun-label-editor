@@ -1422,3 +1422,119 @@ describe('PreviewStage draft paint order (D-37)', () => {
         assertDraftAboveObjects(stage);
     });
 });
+
+/**
+ * The pure pick rule behind the pointer-down hit test lives in
+ * `editor/selectionModel.ts` and is unit-tested in its own test file; these are
+ * the mounted-stage consequences of it.
+ *
+ * Round-2 backlog: overlapping-object select priority. A selection made from
+ * the layer list (or by marquee) owns its own box: a press inside that box
+ * targets the selected node even when another node is stacked above it — which
+ * is also what makes the *selected* node the one a drag moves. Outside the
+ * selected box the plain topmost hit stands, and an additive press stays a
+ * membership toggle on the topmost node.
+ */
+describe('PreviewStage overlapping-object select priority (round-2 backlog)', () => {
+    const rectNode = (id: string, x: number, y: number): Node => ({
+        id,
+        parentId: null,
+        type: 'shape',
+        shape: 'rectangle',
+        visible: true,
+        locked: false,
+        transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        size: { w: 1000, h: 1000 },
+    });
+
+    // Paint order (front last): `upper` is drawn on top of `lower`, so it is the
+    // node today's plain `hitTestWorld` picks inside the overlap [1500,2000]².
+    const OVERLAP: [number, number] = [1750, 1750];
+    const UPPER_ONLY: [number, number] = [2300, 2300];
+
+    const mountOverlap = (selected: string[]) => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({
+                id: 'doc-1',
+                now: 1_700_000_000,
+                backingW: 4000,
+                backingH: 3000,
+                nodes: [rectNode('lower', 1000, 1000), rectNode('upper', 1500, 1500), rectNode('other', 3000, 0)],
+            }),
+            selectedNodeIds: selected,
+            activeTool: 'select',
+            snapEnabled: false,
+        });
+        render(<PreviewStage />);
+        const stage = Konva.stages[Konva.stages.length - 1] as Konva.Stage;
+        if (!stage) throw new Error('PreviewStage did not mount a Konva stage');
+        return stage;
+    };
+
+    const at = (id: string) => {
+        const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === id)!;
+        return node.transform;
+    };
+
+    it('keeps the selected lower node on a press inside the overlap', () => {
+        const stage = mountOverlap(['lower']);
+        const p = toScreen(stage, ...OVERLAP);
+
+        firePointer(stage, 'pointerdown', p.x, p.y);
+
+        // Without the priority rule the hit test returns `upper` (the topmost
+        // node) and this selection would be rewritten to ['upper'].
+        expect(useStore.getState().selectedNodeIds).toEqual(['lower']);
+    });
+
+    it('selects the topmost node when the press misses the selected node box', () => {
+        const stage = mountOverlap(['lower']);
+        const p = toScreen(stage, ...UPPER_ONLY);
+
+        firePointer(stage, 'pointerdown', p.x, p.y);
+
+        expect(useStore.getState().selectedNodeIds).toEqual(['upper']);
+    });
+
+    it('keeps a multi-selection on the press and collapses to the priority node on release', () => {
+        const stage = mountOverlap(['lower', 'other']);
+        const p = toScreen(stage, ...OVERLAP);
+
+        firePointer(stage, 'pointerdown', p.x, p.y);
+        // The whole selection is preserved so a drag would move all of it ...
+        expect(useStore.getState().selectedNodeIds).toEqual(['lower', 'other']);
+
+        // ... and a no-move release is a click, so it focuses the node the press
+        // actually hit (`lower`, not the `upper` node stacked above it).
+        firePointer(stage, 'pointerup', p.x, p.y);
+        expect(useStore.getState().selectedNodeIds).toEqual(['lower']);
+    });
+
+    it('drags the selected lower node, leaving the node stacked above it alone', () => {
+        const stage = mountOverlap(['lower']);
+        const p = toScreen(stage, ...OVERLAP);
+
+        firePointer(stage, 'pointerdown', p.x, p.y);
+        firePointer(stage, 'pointermove', p.x + 40, p.y + 30);
+        firePointer(stage, 'pointerup', p.x + 40, p.y + 30);
+
+        // Without the priority rule the press retargets the drag to `upper`, so
+        // the lower node would never move off its origin.
+        expect(at('lower').x).toBeGreaterThan(1000);
+        expect(at('lower').y).toBeGreaterThan(1000);
+        expect(at('upper')).toMatchObject({ x: 1500, y: 1500 });
+        expect(useStore.getState().docPast).toHaveLength(1);
+    });
+
+    it('still toggles the topmost node on an additive press inside the overlap', () => {
+        const stage = mountOverlap(['lower']);
+        const p = toScreen(stage, ...OVERLAP);
+
+        // Additive presses are membership toggles, not drags: they keep the
+        // plain topmost hit so a node above the selection stays reachable.
+        firePointer(stage, 'pointerdown', p.x, p.y, { shiftKey: true });
+
+        expect(useStore.getState().selectedNodeIds).toEqual(['lower', 'upper']);
+    });
+});

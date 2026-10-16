@@ -1,5 +1,5 @@
 import type { LabelDoc } from '../core/doc/types';
-import type { Rect } from '../core/viewport';
+import { hitTestWorld, type HitTestable, type Point, type Rect } from '../core/viewport';
 import { flattenResolved, resolve } from './render/resolve';
 
 /**
@@ -74,6 +74,48 @@ export const selectionAfterClick = (
 /** Do two axis-aligned rects overlap (touching edges count)? */
 export const rectsIntersect = (a: Rect, b: Rect): boolean =>
     a.x <= b.x + b.w && a.x + a.w >= b.x && a.y <= b.y + b.h && a.y + a.h >= b.y;
+
+/**
+ * The node a press should target, with round-2 overlapping-object priority: the
+ * `hitTestWorld` topmost node at the point, **unless** the point falls inside
+ * the world AABB of a node that is currently selected. A selection made from
+ * the layer list (or by marquee) is therefore still the node under the pointer
+ * — and so the node the ensuing drag moves — even when another node is stacked
+ * above it. A press outside the selection's own box keeps the plain topmost
+ * result.
+ *
+ * The AABB is the deliberate box: for an unrotated node it *is* the
+ * Transformer's control box (the Transformer wraps the node's client rect); for
+ * a rotated node it is a superset of that box, so it can never miss a press
+ * inside the control box — it only adds the corners. The Transformer's own
+ * anchors/border never reach here: `isTransformerTarget` returns first and
+ * leaves those to Konva.
+ *
+ * The priority scan mirrors `hitTestWorld` exactly: the same `visible`/`locked`
+ * filter (a locked or hidden node is never selectable, selected or not) and the
+ * same last-match-wins order, so the *topmost* selected box wins when several
+ * selected boxes contain the point. `hitTestWorld` stays the baseline rather
+ * than being re-implemented here, so the topmost/filter semantics have one
+ * source of truth.
+ */
+export const pickNodeAt = (
+    point: Point,
+    targets: readonly HitTestable[],
+    selectedIds: readonly string[],
+): string | null => {
+    const hit = hitTestWorld(point, targets);
+    // Nothing selectable under the point, an empty selection, or the topmost
+    // node is itself selected: the baseline already is the priority result.
+    if (hit === null || selectedIds.length === 0 || selectedIds.includes(hit)) return hit;
+    const selected = new Set(selectedIds);
+    let priority: string | null = null;
+    for (const target of targets) {
+        if (!selected.has(target.id) || !target.visible || target.locked) continue;
+        const b = target.bounds;
+        if (point.x >= b.x && point.x <= b.x + b.w && point.y >= b.y && point.y <= b.y + b.h) priority = target.id;
+    }
+    return priority ?? hit;
+};
 
 /**
  * Ids whose world bounds fall inside a marquee rect (ui-spec.md §10). Locked or
