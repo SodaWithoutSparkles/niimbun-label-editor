@@ -72,7 +72,9 @@ are all **shared** — they wire for free once `code` reaches `prepareAssets`.
 
 ## Waves
 
-**Status 2026-10-16:** W0 ✅ · W1 ✅ · W2a ✅ · W2b + W3 running · W4/W5 + review gate pending.
+**Status 2026-10-16: DONE.** W0 ✅ · W1 ✅ · W2a ✅ · W2b ✅ · W3 ✅ · W4 ✅ · W5 ✅ · `review` gate
+**APPROVED** (+ 1 test-only fix round, `review-fast` re-review approved). Commits **`45d5daa`**
+(feature) + **`4135c54`** (docs/memory). Tests **153 files / 1880** green; `tsc` clean.
 
 - **W0 — pin the measurements** (`small-coder`). **DONE** — `CODE_FORMATS`/`CodeFormat`/`DEFAULT_CODE_FORMAT`/
   `CODE_FORMAT_PX_PER_MODULE`/`CODE_FORMAT_QUIET_MODULES`/`codeQuietModules` in `core/doc/objects.ts` +
