@@ -24,6 +24,18 @@ components/  React + Konva + DOM
 `print/`, `templates/`, `utils/` are siblings that may import from `core/` and
 `data/`; `components/` may import from all of them.
 
+**Not every folder is a layer (2026-10-17).** The list above is the contract; inventing a new
+top-level folder for React + store wiring silently breaks it. Both review rounds in P13b enforced this:
+`src/navigation/` was rejected and split into `utils/urlHash.ts` (pure grammar) +
+`components/layout/useUrlSync.ts` (the hook), and a proposed `src/gallery/thumbnails.ts` was rejected in
+favour of `editor/render/docThumbnail.ts` (render logic) + `components/editor/useDocThumbnail.ts` (the
+hook) so that `store/` never imported a renderer.
+
+**Documented exception:** `src/utils/urlHash.ts` imports `type { GallerySection }` from
+`store/slices/viewSlice` — **type-only**, compile-erased, so there is no runtime edge. It is deliberate:
+duplicating the union would let the URL vocabulary drift from the sidebar. If that import ever needs to
+be a runtime one, move the union into `core/` instead.
+
 ### Why `src/editor/` is `.ts`-only
 
 `editor/` is where editor *logic* lives (gesture math, viewport control, node
