@@ -160,6 +160,75 @@ This section contains debts/issues that are discovered during the fixes.
 - Handle paste properly. Paste images -> imported as a new image object. Paste text -> imported as a new text object. 
 - Recent view in gallery doesnt show a preview of the document. It only shows the label's preview image. Add a small preview of the document in the recent view.
 
+### P14 — Quantization round 2 (tone curve, Ostromoukhov, live preview)
+State: **Planned 2026-10-17 (owner items); NOT STARTED.** Deferred out of the P13b session, which closed
+the P13 backlog — this is its own phase with its own action plan when it runs (`phase14_action-plan.md`).
+Owner item list (2026-10-17), in the owner's order:
+
+1. **Tone curve / gamma LUT, per strategy, with a sensible default.**
+   A pre-dither tone mapping applied before the quantizer, configurable **per strategy** (`threshold` /
+   each diffuser) alongside the existing per-strategy defaults. Insertion point is the engine in
+   `src/core/render/quantize.ts` (before the threshold/diffusion pass, i.e. on the projected 8-bit value).
+   Params must ride the existing plumbing end-to-end: `QuantizerDefaultParams`/`QuantizerDefaults`
+   (`quantize.ts:42-50`) → `quantizerDefaults` in the settings store → `resolveQuantizerParams` /
+   `policyKeyOf` / `quantizerSettingsKey` (`src/core/render/policy.ts`) → `preferenceValidation.ts`
+   → the **Rendering** settings section (`src/components/settings/RenderingSection.tsx`).
+   **⚠ Any pixel-changing param MUST be keyed in `policyKeyOf`** (`id:threshold:strength:serpentine` today)
+   or two nodes differing only in the tone curve silently share one mask slot and the first wins — that is
+   exactly the D-57(b) trap; and it must be in `quantizerSettingsKey` or previews/thumbnails go stale
+   (R13-c). The 8-slot mask palette (**R13-a**) gets one more way to overflow.
+   - **Open decision (settle before coding):** "sensible default" = **neutral identity** (gamma 1.0 /
+     amount 0 — every existing doc renders byte-identically until the user sets it) **or** a **non-neutral
+     recommended default** (e.g. gamma ≈1.8, per the ScreenStyle demo's `index.html:88-89`, which visibly
+     changes every existing document — acceptable at v0 alpha but a deliberate output change).
+2. **Drop Bayer / screentone / ScreenStyle / ScreenVAE — for now** (owner decision 2026-10-17).
+   No ordered/Bayer dithering, no screentone, no ScreenVAE/ScreenStyle integration. This is a
+   **documentation/register** item: make the "what is missing" lines say **dropped by owner**, not
+   "pending" (`memory/dithering.md` §4/§7 — including the head-locked-pitch precondition for screentone —
+   and `memory/screenstyle-quantization.md`), and update the debt register accordingly. Keep the analysis
+   for a future revisit; do not delete it.
+3. **Implement Ostromoukhov** (variable-coefficient error diffusion, SIGGRAPH 2001).
+   - **BLOCKER, resolve first:** `memory/dithering.md:35` records the coefficient table as
+     **unobtained** — *"Table size / range / values are unverified — do not invent them."* The phase must
+     **obtain a citable table** (paper appendix or a reputable implementation) *before* writing engine
+     code. If it cannot be sourced, stop and take it back to the owner — do not invent coefficients.
+   - Implementation shape: a new table-driven diffuser path beside `createDiffuser`
+     (`quantize.ts:66-139`) — coefficients selected by the current pixel's intensity (the paper's table is
+     indexed by level, with the alternating/perturbation details to be taken from the source), then the
+     usual plumbing: `QuantizerId` + `QUANTIZERS`, per-strategy params, the inspector
+     (`inspectorModel.ts RESERVED_FIELDS` + `quantizerParamVisibility`), persistence validation, and the
+     Rendering section. Leave `DEFAULT_POLICY_BY_TYPE` alone unless the owner wants it selectable as a
+     per-type default.
+   - Interacts with **D-05**: the error must stay contained per policy region, and it must respect the
+     mask/policy pass and the 8-slot palette budget (**R13-a**).
+4. **Live quantization preview while tuning.**
+   While a quantization value changes — the per-node inspector knobs and/or the per-strategy defaults —
+   the canvas should show the **quantized** result, then revert to the normal colour view after a short
+   timeout with no further change. Rationale: the editor canvas draws colour Konva shapes, so today
+   nothing on screen shows what the printer will actually produce, which makes tuning blind.
+   - **Recommended: preview the whole canvas**, rendered through the same pipeline as print
+     (`renderLabelPage`) and overlaid on the label area (the existing DOM-overlay precedent —
+     `Overlays.tsx` / `TextEditorOverlay`) with `pointer-events: none`; debounce the render (target
+     <100 ms), cap the dpi, and auto-revert after ~1.5 s idle. An **object-only** preview is *not*
+     recommended: quantization is a **global** pass with per-object policies (policy fallback and the
+     shared mask palette are decided across the whole label), so a per-object view would show something
+     the printer will not produce.
+   - Reuses the P13 cache-key work (`quantizerSettingsKey`, `previewOptionsKey`, `overridesContentKey`) so
+     a stale result cannot be shown.
+   - **Open decision (settle before coding):** the per-strategy/per-type defaults live in the **Rendering
+     settings modal** (`SettingsModal` → a modal `<dialog>`), where the canvas is hidden behind the
+     dialog — so a canvas preview is pointless there. Choose one: **(a)** trigger from the **inspector**
+     knobs only (canvas visible; the main tuning surface), **(b)** give the settings surface its own
+     inline preview (like the print dialog's page preview, `PrintPagePreview` from P10/W5), or **(c)** make
+     that section non-modal. The owner left the choice open ("depending on what's more convenient").
+   - Risks: per-keystroke/drift render cost (debounce + dpi cap), and the preview must never mutate the
+     doc or push an undo entry.
+
+Sequencing suggestion: items **1 ∥ 3-research** first (both are engine work gated by the two open
+decisions above and, for 3, by the table), then **4** (UI-heavy, depends on the tone curve/Ostromoukhov
+params existing), then **2** (docs-only cleanup, any time). One semantic commit per item, after its review
+pass — the run's standing convention.
+
 ## Risks & checkpoints
 
 - **R1 — resolved by the D decision (2026-10-09).** D keeps the symbol filling the authored box, so the owner-decided target-based verdict formula is correct verbatim: no drawn/target divergence, no 6–8.4 mm shrinkage band, no checkpoint table needed. Residual, owner-accepted: N/N+1 device-px module pitch where the factor is fractional (≤ 1 px at 203 dpi = 0.125 mm, within scanner noise).
