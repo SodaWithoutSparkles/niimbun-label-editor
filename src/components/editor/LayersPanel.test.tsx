@@ -235,4 +235,84 @@ describe('LayersPanel', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Expand group' }));
         expect(screen.getAllByRole('listitem')).toHaveLength(2);
     });
+
+    it('hides the group button unless two sibling nodes are selected', () => {
+        useStore.setState({ currentDoc: doc() });
+        const { rerender } = render(<LayersPanel />);
+        expect(screen.queryByRole('button', { name: 'Group' })).toBeNull();
+        useStore.setState({ selectedNodeIds: ['a'] });
+        rerender(<LayersPanel />);
+        expect(screen.queryByRole('button', { name: 'Group' })).toBeNull();
+        useStore.setState({ selectedNodeIds: ['a', 'b'] });
+        rerender(<LayersPanel />);
+        expect(screen.getByRole('button', { name: 'Group' })).toBeTruthy();
+    });
+
+    it('groups the selected siblings when the group button is clicked', () => {
+        useStore.setState({ currentDoc: doc(), selectedNodeIds: ['a', 'b'] });
+        render(<LayersPanel />);
+        fireEvent.click(screen.getByRole('button', { name: 'Group' }));
+        const nodes = useStore.getState().currentDoc!.nodes;
+        const group = nodes.find((entry) => entry.type === 'group');
+        expect(group).toBeTruthy();
+        // The group stays at the shared parent level...
+        expect(group!.parentId).toBeNull();
+        // ...and takes the topmost selected node's z-slot: a, b, then the group.
+        expect(nodes.map((entry) => entry.id)).toEqual(['a', 'b', group!.id]);
+        const childIds = nodes
+            .filter((entry) => entry.parentId === group!.id)
+            .map((entry) => entry.id)
+            .sort();
+        expect(childIds).toEqual(['a', 'b']);
+    });
+
+    it('hides the group button when the selected nodes have different parents', () => {
+        useStore.setState({
+            currentDoc: createLabelDoc({
+                id: 'doc-mixed-parents',
+                now: 1_700_000_000,
+                backingW: 3000,
+                backingH: 2000,
+                nodes: [
+                    node({
+                        id: 'g',
+                        parentId: null,
+                        type: 'group',
+                        visible: true,
+                        locked: false,
+                        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    }),
+                    node({
+                        id: 'k',
+                        parentId: 'g',
+                        type: 'shape',
+                        shape: 'rectangle',
+                        visible: true,
+                        locked: false,
+                        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                        size: { w: 500, h: 500 },
+                    }),
+                    node({
+                        id: 's',
+                        parentId: null,
+                        type: 'shape',
+                        shape: 'rectangle',
+                        visible: true,
+                        locked: false,
+                        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                        size: { w: 500, h: 500 },
+                    }),
+                ],
+            }),
+            selectedNodeIds: ['k', 's'],
+        });
+        render(<LayersPanel />);
+        expect(screen.queryByRole('button', { name: 'Group' })).toBeNull();
+    });
+
+    it('hides the group button when the selection contains an unknown (phantom) id', () => {
+        useStore.setState({ currentDoc: doc(), selectedNodeIds: ['a', 'does-not-exist'] });
+        render(<LayersPanel />);
+        expect(screen.queryByRole('button', { name: 'Group' })).toBeNull();
+    });
 });

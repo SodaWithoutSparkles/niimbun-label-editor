@@ -14,6 +14,7 @@ import {
     ScanLine,
     ChevronDown,
     ChevronRight,
+    FolderPlus,
 } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { cn } from '../../utils/cn';
@@ -50,6 +51,7 @@ export const LayersPanel: React.FC = () => {
     const toggleSelectNode = useStore((state) => state.toggleSelectNode);
     const updateNode = useStore((state) => state.updateNode);
     const reparentNode = useStore((state) => state.reparentNode);
+    const groupNodes = useStore((state) => state.groupNodes);
     const [dropTarget, setDropTarget] = useState<string | null>(null);
     const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
     const dragId = useRef<string | null>(null);
@@ -71,6 +73,14 @@ export const LayersPanel: React.FC = () => {
     }, [doc, collapsedGroups]);
 
     if (!doc) return null;
+
+    // `groupNodes` only succeeds for ≥2 existing nodes under one shared parent
+    // (and, since siblings cannot be ancestors of each other, that covers its
+    // ancestor guard too). Render the button only when it can actually do
+    // something rather than showing an enabled no-op.
+    const groupableNodes = doc.nodes.filter((node) => selectedNodeIds.includes(node.id));
+    const canGroup =
+        groupableNodes.length >= 2 && groupableNodes.every((node) => node.parentId === groupableNodes[0]!.parentId);
 
     const toggleCollapsed = (id: string) => {
         setCollapsedGroups((current) => {
@@ -110,8 +120,21 @@ export const LayersPanel: React.FC = () => {
 
     return (
         <div className="flex min-h-0 flex-1 flex-col bg-gray-800">
-            <div className="bg-gray-900 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-gray-300">
-                {t('editor.layers.title')}
+            <div className="flex items-center justify-between bg-gray-900 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-gray-300">
+                <span>{t('editor.layers.title')}</span>
+                {canGroup && (
+                    <button
+                        type="button"
+                        aria-label={t('editMenu.group')}
+                        title={t('editMenu.group')}
+                        onClick={() => {
+                            groupNodes([...selectedNodeIds]);
+                        }}
+                        className="shrink-0 text-gray-400 hover:text-white"
+                    >
+                        <FolderPlus size={13} />
+                    </button>
+                )}
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-1">
                 {rows.length === 0 && (
