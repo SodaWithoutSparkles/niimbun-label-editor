@@ -6,6 +6,19 @@
   plumbing; settings surface). Facts below are verified.
 - Two independent tracks → one review gate, **one commit per track**.
 
+## Outcome (2026-10-17) — DONE
+
+- **Track R shipped:** `8bbc59b` · **Track S shipped:** `1e5d2e7` · docs/memory: `c543c29`,
+  `4e8ca0a`. Review gate 1 = request-changes (0 blockers / 3 majors / 1 risk / 1 nit) → fix round 1
+  → narrow re-review **approve** (0 findings). The two real majors were one root cause:
+  `applyPolicy` merges the global base **under** each policy's options, so an omitted `serpentine`
+  silently inherited the base value — every pixel-changing knob is now explicit per policy, and the
+  global pass reads its own strategy's default.
+- `tsc` clean; **154 files / 1945 tests** green (+1 file / +65 tests this phase). **D-57 closed.**
+- One reviewer finding was **declined**: a `shape` entry in the per-type quantizer select (a solid
+  fill cannot be dithered meaningfully, and it would spend one of the 8 mask-palette slots).
+- **Remaining work of the P13 bucket = §Deferred below** — this is the next session's queue.
+
 ## Owner decisions (2026-10-16 — all accepted)
 
 1. **Drag scope:** `shape:rectangle`, `shape:ellipse`, `shape:line`. text/image/qr/barcode/code keep
@@ -112,7 +125,8 @@ R1 ∥ S1 (disjoint files) → R2 ∥ S2 → `review` gate → fix round(s) → 
 - **R13-e** `serpentine` semantics: default `true`; the inspector's `''` = auto must resolve to the
   settings default, not to `true`, or the setting becomes unreachable for nodes with a hint.
 
-## Deferred (still open, not in this phase)
+## Deferred (still open — **this is the next session's queue**)
 D-36 (touchpad cardinal lock), D-37 (polygon preview layer), overlapping-object select priority,
-navigation paths, groups, pan tool, paste handling, gallery recent-preview — plus the D-57(a/c)
-residue not covered above and the debt register generally.
+navigation paths (`/editor`, `?tag=`, `#settings`/`#gallery`), groups (create + folder-plus icon),
+pan tool, paste handling (image → image node, text → text node), gallery "recent" preview — plus the
+D-57(a/c) residue not covered above and the debt register generally.
