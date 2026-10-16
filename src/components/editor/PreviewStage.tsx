@@ -355,6 +355,15 @@ export const PreviewStage: React.FC = () => {
         [doc],
     );
 
+    /**
+     * The `<Stage>` below is rendered only when `doc`/`backing` exist (the
+     * loading branch returns first), so this tracks exactly the lifespan of the
+     * Konva stage element that owns the wheel listener. It is a plain boolean:
+     * `backing` is re-memoed from `doc` on every drag frame, and a dependency
+     * that changes per render would re-attach the listener per render.
+     */
+    const stageReady = Boolean(doc && backing);
+
     // Measure the available preview area.
     useLayoutEffect(() => {
         const el = containerRef.current;
@@ -1269,13 +1278,22 @@ export const PreviewStage: React.FC = () => {
         finalizeGesture();
     }, [marquee, doc, viewport, selectNodes, finalizeGesture, finalizeInsert]);
 
+    /**
+     * The editor's wheel gesture: ctrl/pinch zooms (pointer-anchored), shift
+     * pans horizontally, a plain wheel pans. A **plain DOM `WheelEvent`** — it is
+     * invoked by a native non-passive listener installed below (D-36), not by a
+     * React/react-konva prop, because a passive `wheel` listener makes
+     * `preventDefault()` a no-op and lets the browser's own scroll gesture (page
+     * scroll chaining / scroll-axis railing on an ancestor) run alongside the pan.
+     * Its closure must therefore stay fresh without re-attaching: see
+     * `wheelHandlerRef` / the listener effect right after it.
+     */
     const handleWheel = useCallback(
-        (event: Konva.KonvaEventObject<WheelEvent>) => {
+        (e: WheelEvent) => {
             if (!backing) return;
-            event.evt.preventDefault();
+            e.preventDefault();
             const stage = stageRef.current;
             if (!stage) return;
-            const e = event.evt;
             const intent = classifyWheel(e);
 
             if (intent !== 'zoom') {
@@ -1299,7 +1317,24 @@ export const PreviewStage: React.FC = () => {
                 return;
             }
 
-            const pointer = stage.getPointerPosition() ?? { x: innerSize.w / 2, y: innerSize.h / 2 };
+            // Anchor the zoom on the pointer **from the event itself**: reading
+            // the stage's stored pointer position depends on Konva's own
+            // `wheel` listener having run first, while the event cannot be
+            // stale. Measured against the Konva content element, with the same
+            // page-scale compensation Konva uses, so the anchor is numerically
+            // identical to the previous `getPointerPosition()` source.
+            const content = stage.content;
+            const rect = content.getBoundingClientRect();
+            const rectScaleX = rect.width / content.clientWidth || 1;
+            const rectScaleY = rect.height / content.clientHeight || 1;
+            const eventPointer = {
+                x: (e.clientX - rect.left) / rectScaleX,
+                y: (e.clientY - rect.top) / rectScaleY,
+            };
+            const pointer =
+                Number.isFinite(eventPointer.x) && Number.isFinite(eventPointer.y)
+                    ? eventPointer
+                    : stage.getPointerPosition() ?? { x: innerSize.w / 2, y: innerSize.h / 2 };
             const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
             const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, viewport.zoom * factor));
             setViewport(zoomAt(viewport, pointer, next, backing, innerSize));
@@ -1317,6 +1352,41 @@ export const PreviewStage: React.FC = () => {
         },
         [backing, innerSize, viewport, zoom, setManualZoom],
     );
+
+    /**
+     * The live `handleWheel`, read by the native listener. The listener is
+     * installed once per stage (never per render), so it must reach the newest
+     * closure through this ref instead of capturing a render's deps.
+     */
+    const wheelHandlerRef = useRef(handleWheel);
+    useLayoutEffect(() => {
+        wheelHandlerRef.current = handleWheel;
+    });
+
+    /**
+     * D-36: the pane has to own its wheel gesture. A passive `wheel` listener
+     * cannot `preventDefault()`, so the browser still runs its own scroll (page
+     * scroll chaining / scroll-axis railing) on top of the editor's pan. React
+     * and react-konva both bind events their own way, so the listener is
+     * registered natively on the Konva stage's own container element with
+     * `{ passive: false }` — the element the stage builds its canvas in, so a
+     * wheel anywhere over the canvas bubbles into it.
+     *
+     * Attached exactly once per mounted stage and removed by the cleanup, which
+     * runs before any re-run: under StrictMode's double mount the second pass
+     * therefore leaves one live listener, never two (a duplicate would apply
+     * every pan twice). Deps are the "stage exists" boolean only — the stage is
+     * not recreated by render, rotation or a backing change (`<Stage>` has no
+     * `key`; those update attrs), only when the loading branch below is taken,
+     * which is exactly what this flag tracks.
+     */
+    useEffect(() => {
+        const container = stageRef.current?.container();
+        if (!container) return;
+        const onWheel = (event: WheelEvent) => wheelHandlerRef.current(event);
+        container.addEventListener('wheel', onWheel, { passive: false });
+        return () => container.removeEventListener('wheel', onWheel);
+    }, [stageReady]);
 
     // Enter finishes a half-drawn polygon; Esc cancels the draft and clears the
     // selection. Both bail while a modal is open or the user is typing in a text
@@ -1587,7 +1657,6 @@ export const PreviewStage: React.FC = () => {
                 onPointerUp={handlePointerUp}
                 onPointerLeave={resetPolygonDraft}
                 onDblClick={handleDblClick}
-                onWheel={handleWheel}
             >
                 {/* Background overlays (silhouette, grid, guides, keep-out) first,
                     so label content and the Transformer paint on top of them. */}

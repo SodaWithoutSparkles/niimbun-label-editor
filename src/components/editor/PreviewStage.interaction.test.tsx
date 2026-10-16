@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { StrictMode } from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import Konva from 'konva';
@@ -71,6 +72,41 @@ const firePointer = (stage: Konva.Stage, type: string, x: number, y: number, opt
     act(() => {
         stage.fire(type, { evt: evt as unknown as PointerEvent, target: stage });
     });
+};
+
+/**
+ * Fire one wheel notch down the **DOM** path the editor listens on (D-36: a
+ * native, non-passive `wheel` listener on the Konva stage's container element).
+ * The event originates on the stage's content element, exactly as a real one
+ * does, so it also bubbles through the container listener under test. Konva's
+ * own content listener runs first on that path, so the stage's pointer state is
+ * set as usual.
+ *
+ * `happy-dom`'s `WheelEvent` extends `UIEvent` (it has no pointer/modifier
+ * fields), so the fields its constructor drops are assigned onto the instance —
+ * same shape the browser produces.
+ */
+const dispatchWheel = (
+    stage: Konva.Stage,
+    init: { x: number; y: number; deltaX?: number; deltaY?: number; ctrlKey?: boolean; shiftKey?: boolean },
+): WheelEvent => {
+    const evt = new WheelEvent('wheel', {
+        deltaX: init.deltaX ?? 0,
+        deltaY: init.deltaY ?? 0,
+        deltaMode: 0,
+        bubbles: true,
+        cancelable: true,
+    });
+    Object.assign(evt, {
+        clientX: init.x,
+        clientY: init.y,
+        ctrlKey: init.ctrlKey ?? false,
+        shiftKey: init.shiftKey ?? false,
+    });
+    act(() => {
+        stage.content.dispatchEvent(evt);
+    });
+    return evt;
 };
 
 /** World (hm) → pane screen coordinates, via the mounted content layer. */
@@ -754,26 +790,12 @@ describe('PreviewStage P4 viewport recenter (one-shot wheel token)', () => {
     };
 
     /**
-     * Fire a wheel notch (deltaMode 0). The classifier is modifier-driven, so
-     * the default is ctrl+wheel — the mouse-wheel zoom (or touchpad pinch) the
-     * recenter tests below exercise.
+     * Fire a wheel notch (deltaMode 0) on the `ctrl` modifier — the mouse-wheel
+     * zoom (or touchpad pinch) the recenter tests below exercise. The classifier
+     * is modifier-driven, so this is the zoom path by construction.
      */
     const fireWheel = (stage: Konva.Stage, x: number, y: number, deltaY: number) => {
-        const evt = {
-            clientX: x,
-            clientY: y,
-            deltaX: 0,
-            deltaY,
-            deltaMode: 0,
-            ctrlKey: true,
-            shiftKey: false,
-            preventDefault: () => undefined,
-            stopPropagation: () => undefined,
-        };
-        stage.setPointersPositions(evt as unknown as WheelEvent);
-        act(() => {
-            stage.fire('wheel', { evt: evt as unknown as WheelEvent, target: stage });
-        });
+        dispatchWheel(stage, { x, y, deltaY, ctrlKey: true });
     };
 
     const doc = (id: string, backingW: number, backingH: number) =>
@@ -886,20 +908,12 @@ describe('PreviewStage P4 wheel pan gestures', () => {
     };
 
     const fireWheel = (stage: Konva.Stage, delta: { x?: number; y?: number; shiftKey?: boolean }) => {
-        const evt = {
-            clientX: PANE.w / 2,
-            clientY: PANE.h / 2,
+        dispatchWheel(stage, {
+            x: PANE.w / 2,
+            y: PANE.h / 2,
             deltaX: delta.x ?? 0,
             deltaY: delta.y ?? 0,
-            deltaMode: 0,
-            ctrlKey: false,
             shiftKey: delta.shiftKey ?? false,
-            preventDefault: () => undefined,
-            stopPropagation: () => undefined,
-        };
-        stage.setPointersPositions(evt as unknown as WheelEvent);
-        act(() => {
-            stage.fire('wheel', { evt: evt as unknown as WheelEvent, target: stage });
         });
     };
 
@@ -943,6 +957,195 @@ describe('PreviewStage P4 wheel pan gestures', () => {
 
         // deltaX wins over the (mouse-style) deltaY of 90.
         expect(layer.x()).toBeCloseTo(xBefore - 40, 4);
+    });
+});
+
+/**
+ * D-36: the pane's wheel listener must be a **native, non-passive** DOM listener
+ * on the Konva stage's container element. In a passive listener `preventDefault()`
+ * is a no-op — Blink returns before setting `default_prevented_` and logs
+ * "Unable to preventDefault inside passive event listener invocation" — which
+ * leaves the browser's own scroll gesture (page scroll chaining, scroll-axis
+ * railing on a scrollable ancestor) running alongside the editor's pan/zoom.
+ *
+ * `happy-dom` models that: `EventTarget` marks the event while a passive listener
+ * runs, and `Event.preventDefault()` then refuses to set `defaultPrevented`. So
+ * the assertions below are real behaviour, not a re-read of the source.
+ */
+describe('PreviewStage D-36 non-passive wheel listener', () => {
+    const mount = () => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({ id: 'doc-d36', now: 1_700_000_000, backingW: 4000, backingH: 1000 }),
+            selectedNodeIds: [],
+            activeTool: 'select',
+            snapEnabled: false,
+            rulersVisible: true,
+            viewRotation: 0,
+            viewRotationUserSet: false,
+            zoomMode: 'fit',
+            recenterToken: 0,
+        });
+        render(<PreviewStage />);
+        const stage = Konva.stages[Konva.stages.length - 1] as Konva.Stage;
+        if (!stage) throw new Error('PreviewStage did not mount a Konva stage');
+        return stage;
+    };
+
+    interface Registration {
+        target: EventTarget;
+        type: string;
+        listener: EventListenerOrEventListenerObject;
+        options?: boolean | AddEventListenerOptions;
+    }
+
+    /** The `addEventListener`/`removeEventListener`-owning prototype object. */
+    interface ListenerHost {
+        addEventListener: (
+            this: EventTarget,
+            type: string,
+            listener: EventListenerOrEventListenerObject,
+            options?: boolean | AddEventListenerOptions,
+        ) => void;
+        removeEventListener: (
+            this: EventTarget,
+            type: string,
+            listener: EventListenerOrEventListenerObject,
+        ) => void;
+    }
+
+    /**
+     * Record the listener registrations the page performs and the set that is
+     * still live (add/remove paired by target, type and identity), so a test can
+     * read what was actually registered. Restore before the test returns.
+     *
+     * The patched object is found by walking a probe element's prototype chain:
+     * happy-dom's element classes do not expose the same prototype *object* as the
+     * environment's global `EventTarget`, so assuming the global would observe
+     * nothing.
+     */
+    const trackListeners = () => {
+        let host: object | null = null;
+        for (let proto: object | null = Object.getPrototypeOf(document.createElement('div')); proto; proto = Object.getPrototypeOf(proto)) {
+            if (Object.prototype.hasOwnProperty.call(proto, 'addEventListener')) {
+                host = proto;
+                break;
+            }
+        }
+        if (!host) throw new Error('no EventTarget prototype to observe');
+        const target = host as unknown as ListenerHost;
+        const originalAdd = target.addEventListener;
+        const originalRemove = target.removeEventListener;
+        const added: Registration[] = [];
+        const live: Registration[] = [];
+        target.addEventListener = function (this: EventTarget, type, listener, options) {
+            added.push({ target: this, listener, type, options });
+            live.push({ target: this, listener, type, options });
+            originalAdd.call(this, type, listener, options);
+        };
+        target.removeEventListener = function (this: EventTarget, type, listener) {
+            const index = live.findIndex((entry) => entry.target === this && entry.type === type && entry.listener === listener);
+            if (index !== -1) live.splice(index, 1);
+            originalRemove.call(this, type, listener);
+        };
+        return {
+            added,
+            liveWheelListeners: (el: EventTarget) => live.filter((entry) => entry.target === el && entry.type === 'wheel'),
+            restore: () => {
+                target.addEventListener = originalAdd;
+                target.removeEventListener = originalRemove;
+            },
+        };
+    };
+
+    it('attaches exactly one non-passive wheel listener on the stage container', () => {
+        const tracker = trackListeners();
+        try {
+            const stage = mount();
+
+            // Mount alone already re-renders (the pane measurement writes
+            // `size`), so a listener re-attached per render would show up here as
+            // more than one registration.
+            const onContainer = tracker.added.filter(
+                (entry) => entry.target === stage.container() && entry.type === 'wheel',
+            );
+            expect(onContainer).toHaveLength(1);
+            expect(onContainer[0]!.options).toEqual({ passive: false });
+            expect(tracker.liveWheelListeners(stage.container())).toHaveLength(1);
+        } finally {
+            tracker.restore();
+        }
+    });
+
+    it('keeps one live listener across re-renders and a StrictMode double mount', () => {
+        const tracker = trackListeners();
+        try {
+            const stage = mount();
+
+            // An unrelated store change re-renders the stage and re-creates every
+            // handler closure: the listener must neither be dropped nor
+            // re-attached (only the one registration from mount exists).
+            act(() => {
+                useStore.getState().toggleGrid();
+            });
+            expect(tracker.liveWheelListeners(stage.container())).toHaveLength(1);
+            expect(
+                tracker.added.filter((entry) => entry.target === stage.container() && entry.type === 'wheel'),
+            ).toHaveLength(1);
+        } finally {
+            tracker.restore();
+        }
+
+        // StrictMode mounts, cleans up and mounts again: the cleanup must remove
+        // exactly what its own run added, leaving one listener (two would apply
+        // every pan twice).
+        const strictTracker = trackListeners();
+        try {
+            cleanup();
+            useStore.setState({
+                view: 'editor',
+                currentDoc: createLabelDoc({ id: 'doc-d36-strict', now: 1_700_000_000, backingW: 4000, backingH: 1000 }),
+                activeTool: 'select',
+                rulersVisible: true,
+                zoomMode: 'fit',
+            });
+            render(
+                <StrictMode>
+                    <PreviewStage />
+                </StrictMode>,
+            );
+            const stage = Konva.stages[Konva.stages.length - 1] as Konva.Stage;
+            if (!stage) throw new Error('PreviewStage did not mount a Konva stage');
+            expect(strictTracker.liveWheelListeners(stage.container())).toHaveLength(1);
+        } finally {
+            strictTracker.restore();
+        }
+    });
+
+    it('cancels the browser default, which a passive listener cannot do', () => {
+        const stage = mount();
+
+        const evt = dispatchWheel(stage, { x: 300, y: 200, deltaY: 60 });
+
+        expect(evt.defaultPrevented).toBe(true);
+    });
+
+    it('still pans exactly once after the handler closures were re-created', () => {
+        const stage = mount();
+        // Wide backing: fit fills the width, so only y has slack to pan into, and
+        // the 60px total stays inside `clampPan`'s [0, 232] range (two notches, so
+        // a listener left attached twice would ask for 120 and clamp at 116).
+        const layer = stage.getLayers().at(-1)!;
+        const yBefore = layer.y();
+
+        // The first notch writes the store, re-rendering the component (and its
+        // handler closures) before the second notch arrives.
+        dispatchWheel(stage, { x: 300, y: 200, deltaY: 30 });
+        const yAfterFirst = layer.y();
+        expect(yAfterFirst).toBeCloseTo(yBefore - 30, 4);
+        dispatchWheel(stage, { x: 300, y: 200, deltaY: 30 });
+
+        expect(layer.y()).toBeCloseTo(yBefore - 60, 4);
     });
 });
 
