@@ -117,9 +117,10 @@ export const EditorKeyboardShortcuts = () => {
 
             const arrow = ARROW_DELTAS[event.key];
             if (arrow && !mod && !event.altKey && !event.shiftKey) {
-                // While an insert tool is armed the arrows belong to the
-                // in-progress placement, not the pre-existing selection.
-                if (state.activeTool !== 'select') return;
+                // While an insert/draw tool is armed the arrows belong to the
+                // in-progress placement, not the pre-existing selection. `pan`
+                // is view-only — the selection stays live — so it still nudges.
+                if (state.activeTool !== 'select' && state.activeTool !== 'pan') return;
                 event.preventDefault();
                 if (state.selectedNodeIds.length === 0) return;
                 const ref = arrowRepeatRef.current;

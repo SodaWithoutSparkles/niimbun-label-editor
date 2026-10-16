@@ -313,6 +313,15 @@ export const PreviewStage: React.FC = () => {
     /** Authoritative press-drag draw state; read by the release finalizers. */
     const insertDragRef = useRef<InsertDrag | null>(null);
     const panRef = useRef<{ startScreen: Point; startPan: Point } | null>(null);
+    /**
+     * Space+drag pan (round-2 addendum): a transient, LOCAL override that never
+     * touches the store's `activeTool`, so releasing Space restores whatever
+     * tool/state the user had. `spaceHeldRef` is the synchronous source of truth
+     * (read by `handlePointerDown`, so a press is never missed before the render
+     * lands); `spacePanning` mirrors it for the cursor.
+     */
+    const spaceHeldRef = useRef(false);
+    const [spacePanning, setSpacePanning] = useState(false);
     /** Last shift/alt state; `transformend` has no event modifiers of its own. */
     const modifierRef = useRef(false);
     /** A Transformer gesture is live (armed at transformstart, cleared at end). */
@@ -753,6 +762,19 @@ export const PreviewStage: React.FC = () => {
                 return;
             }
             if (event.evt.button !== 0) return;
+
+            // Pan tool (view block, round 2): a plain left press arms the SAME
+            // pan gesture as the middle button above — `panRef` is applied by
+            // `handlePointerMove` on both axes and released by `finalizeGesture`.
+            // Space+drag (round-2 addendum) temporarily arms the same pan without
+            // touching `activeTool`; the ref is read synchronously. It must
+            // precede every selection/draw branch so a pan press never selects,
+            // marquees, draws a draft or inserts.
+            if (activeTool === 'pan' || spaceHeldRef.current) {
+                const pointer = stage.getPointerPosition();
+                if (pointer) panRef.current = { startScreen: pointer, startPan: { x: viewport.x, y: viewport.y } };
+                return;
+            }
 
             // Polygon is a multi-click drawing gesture; all other inserts remain one-shot.
             if (activeTool === 'shape:polygon') {
@@ -1402,6 +1424,13 @@ export const PreviewStage: React.FC = () => {
                 return;
             }
             if (event.key !== 'Escape') return;
+            // Pan is a view-only mode: Escape returns to the resting select
+            // tool. It does not touch a selection (pan never changed one), so
+            // this exits the mode without the generic path's `clearNodeSelection`.
+            if (activeTool === 'pan') {
+                clearActiveTool();
+                return;
+            }
             // A press-drag draw in flight: abort just the draft and KEEP the
             // tool armed, so the user can immediately redraw. The polygon case
             // below is unchanged (it disarms).
@@ -1417,6 +1446,66 @@ export const PreviewStage: React.FC = () => {
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
     }, [clearActiveTool, clearNodeSelection, activeTool, finishPolygon, resetInsertDraft]);
+
+    /**
+     * Space+drag pan (round-2 addendum) — the familiar Figma/Photoshop gesture.
+     * Holding Space arms the same pan gesture as the pan tool, but as a LOCAL
+     * transient override: the store's `activeTool` is never written, so
+     * releasing Space restores whatever tool/state the user had. The mouse
+     * release ends the pan (via `finalizeGesture`); Space still held keeps the
+     * mode, so the next press pans again.
+     *
+     * Arming is gated by a positive ALLOW-LIST, not a list of exclusions: only
+     * an event that lands on the canvas host (or the document body/root) arms.
+     * A click on the canvas leaves focus on `body`/the host, so the common case
+     * still works, while a focused control — a `<select>` (Space opens its
+     * options), a `<button>`, a panel row, a scrollable panel (Space scrolls) —
+     * and any control we have not thought of never arms. Enumerating exclusions
+     * instead would keep missing controls and silently break them; the dialog,
+     * `repeat` and no-open-doc guards are kept as separate early-outs.
+     * `blur` always disarms (a focus steal leaves no `keyup`, and a stuck pan
+     * mode is worse than a missed gesture); matched add/remove keeps
+     * StrictMode's double-invoke to a single live pair.
+     */
+    useEffect(() => {
+        const isSpace = (event: KeyboardEvent) => event.code === 'Space' || event.key === ' ';
+        /** True only when the key event targets the bare canvas (no control focused). */
+        const onCanvas = (event: KeyboardEvent): boolean => {
+            const node = event.target;
+            if (node === document.body || node === document.documentElement) return true;
+            const host = stageRef.current?.container();
+            if (!host || !(node instanceof Node)) return false;
+            return node === host || host.contains(node);
+        };
+        const arm = (held: boolean) => {
+            spaceHeldRef.current = held;
+            setSpacePanning(held);
+        };
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (!isSpace(event)) return;
+            if (event.repeat) return; // a held key must not re-arm
+            if (document.querySelector('dialog[open]')) return;
+            if (!onCanvas(event)) return;
+            if (!useStore.getState().currentDoc) return; // no open document
+            // Only once the gesture will really arm: stop the page scroll and
+            // the native activation a bare Space would otherwise trigger.
+            event.preventDefault();
+            arm(true);
+        };
+        const onKeyUp = (event: KeyboardEvent) => {
+            if (!isSpace(event)) return;
+            arm(false);
+        };
+        const onBlur = () => arm(false);
+        window.addEventListener('keydown', onKeyDown);
+        window.addEventListener('keyup', onKeyUp);
+        window.addEventListener('blur', onBlur);
+        return () => {
+            window.removeEventListener('keydown', onKeyDown);
+            window.removeEventListener('keyup', onKeyUp);
+            window.removeEventListener('blur', onBlur);
+        };
+    }, []);
 
     /**
      * Live box-only text resize (item 6): the Konva "resize without scaling"
@@ -1629,6 +1718,9 @@ export const PreviewStage: React.FC = () => {
 
     const viewportMatrix = matrixForViewport(viewport);
     const sceneAttrs = matrixForViewportAttrs(viewportMatrix);
+    // Pan mode is the pan tool OR a held Space (round-2 addendum): both show the
+    // grab cursor and make a left press pan instead of select/draw.
+    const panMode = activeTool === 'pan' || spacePanning;
     // The overlay mirrors the edited node's wrap mode; read it from the live
     // doc (a non-text session, if any ever reached the overlay, defaults to word).
     const editingNode = editing ? doc.nodes.find((entry) => entry.id === editing.id) : undefined;
@@ -1645,7 +1737,12 @@ export const PreviewStage: React.FC = () => {
     return (
         <div
             ref={containerRef}
-            className={cn('relative flex-1 overflow-hidden bg-gray-200', activeTool !== 'select' && 'cursor-crosshair')}
+            className={cn(
+                'relative flex-1 overflow-hidden bg-gray-200',
+                panMode
+                    ? 'cursor-grab active:cursor-grabbing'
+                    : activeTool !== 'select' && 'cursor-crosshair',
+            )}
             style={rulersVisible ? { paddingLeft: RULER_GUTTER, paddingTop: RULER_GUTTER } : undefined}
         >
             <Stage

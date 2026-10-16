@@ -532,7 +532,8 @@
       "fit": "Fit",
       "real": "Real size",
       "rotate": "Rotate view",
-      "rulers": "Rulers"
+      "rulers": "Rulers",
+      "pan": "Pan"
     },
     "layers": {
       "title": "Objects",

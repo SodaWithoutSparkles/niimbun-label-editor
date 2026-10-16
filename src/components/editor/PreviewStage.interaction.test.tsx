@@ -124,6 +124,73 @@ afterEach(() => {
     useStore.setState({ currentDoc: null, activeTool: 'select', selectedNodeIds: [] });
 });
 
+interface Registration {
+    target: EventTarget;
+    type: string;
+    listener: EventListenerOrEventListenerObject;
+    options?: boolean | AddEventListenerOptions;
+}
+
+/** The `addEventListener`/`removeEventListener`-owning prototype object. */
+interface ListenerHost {
+    addEventListener: (
+        this: EventTarget,
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: boolean | AddEventListenerOptions,
+    ) => void;
+    removeEventListener: (
+        this: EventTarget,
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+    ) => void;
+}
+
+/**
+ * Record the listener registrations the page performs and the set that is
+ * still live (add/remove paired by target, type and identity), so a test can
+ * read what was actually registered. Restore before the test returns.
+ *
+ * The patched object is found by walking a probe element's prototype chain:
+ * happy-dom's element classes do not expose the same prototype *object* as the
+ * environment's global `EventTarget`, so assuming the global would observe
+ * nothing.
+ */
+const trackListeners = () => {
+    let host: object | null = null;
+    for (let proto: object | null = Object.getPrototypeOf(document.createElement('div')); proto; proto = Object.getPrototypeOf(proto)) {
+        if (Object.prototype.hasOwnProperty.call(proto, 'addEventListener')) {
+            host = proto;
+            break;
+        }
+    }
+    if (!host) throw new Error('no EventTarget prototype to observe');
+    const target = host as unknown as ListenerHost;
+    const originalAdd = target.addEventListener;
+    const originalRemove = target.removeEventListener;
+    const added: Registration[] = [];
+    const live: Registration[] = [];
+    target.addEventListener = function (this: EventTarget, type, listener, options) {
+        added.push({ target: this, listener, type, options });
+        live.push({ target: this, listener, type, options });
+        originalAdd.call(this, type, listener, options);
+    };
+    target.removeEventListener = function (this: EventTarget, type, listener) {
+        const index = live.findIndex((entry) => entry.target === this && entry.type === type && entry.listener === listener);
+        if (index !== -1) live.splice(index, 1);
+        originalRemove.call(this, type, listener);
+    };
+    return {
+        added,
+        live,
+        liveWheelListeners: (el: EventTarget) => live.filter((entry) => entry.target === el && entry.type === 'wheel'),
+        restore: () => {
+            target.addEventListener = originalAdd;
+            target.removeEventListener = originalRemove;
+        },
+    };
+};
+
 describe('PreviewStage polygon draw mode (#7)', () => {
     it('accumulates vertices without creating a node until the draft finishes', () => {
         const stage = mount();
@@ -992,72 +1059,6 @@ describe('PreviewStage D-36 non-passive wheel listener', () => {
         return stage;
     };
 
-    interface Registration {
-        target: EventTarget;
-        type: string;
-        listener: EventListenerOrEventListenerObject;
-        options?: boolean | AddEventListenerOptions;
-    }
-
-    /** The `addEventListener`/`removeEventListener`-owning prototype object. */
-    interface ListenerHost {
-        addEventListener: (
-            this: EventTarget,
-            type: string,
-            listener: EventListenerOrEventListenerObject,
-            options?: boolean | AddEventListenerOptions,
-        ) => void;
-        removeEventListener: (
-            this: EventTarget,
-            type: string,
-            listener: EventListenerOrEventListenerObject,
-        ) => void;
-    }
-
-    /**
-     * Record the listener registrations the page performs and the set that is
-     * still live (add/remove paired by target, type and identity), so a test can
-     * read what was actually registered. Restore before the test returns.
-     *
-     * The patched object is found by walking a probe element's prototype chain:
-     * happy-dom's element classes do not expose the same prototype *object* as the
-     * environment's global `EventTarget`, so assuming the global would observe
-     * nothing.
-     */
-    const trackListeners = () => {
-        let host: object | null = null;
-        for (let proto: object | null = Object.getPrototypeOf(document.createElement('div')); proto; proto = Object.getPrototypeOf(proto)) {
-            if (Object.prototype.hasOwnProperty.call(proto, 'addEventListener')) {
-                host = proto;
-                break;
-            }
-        }
-        if (!host) throw new Error('no EventTarget prototype to observe');
-        const target = host as unknown as ListenerHost;
-        const originalAdd = target.addEventListener;
-        const originalRemove = target.removeEventListener;
-        const added: Registration[] = [];
-        const live: Registration[] = [];
-        target.addEventListener = function (this: EventTarget, type, listener, options) {
-            added.push({ target: this, listener, type, options });
-            live.push({ target: this, listener, type, options });
-            originalAdd.call(this, type, listener, options);
-        };
-        target.removeEventListener = function (this: EventTarget, type, listener) {
-            const index = live.findIndex((entry) => entry.target === this && entry.type === type && entry.listener === listener);
-            if (index !== -1) live.splice(index, 1);
-            originalRemove.call(this, type, listener);
-        };
-        return {
-            added,
-            liveWheelListeners: (el: EventTarget) => live.filter((entry) => entry.target === el && entry.type === 'wheel'),
-            restore: () => {
-                target.addEventListener = originalAdd;
-                target.removeEventListener = originalRemove;
-            },
-        };
-    };
-
     it('attaches exactly one non-passive wheel listener on the stage container', () => {
         const tracker = trackListeners();
         try {
@@ -1739,5 +1740,489 @@ describe('PreviewStage overlapping-object select priority (round-2 backlog)', ()
         firePointer(stage, 'pointerdown', p.x, p.y, { shiftKey: true });
 
         expect(useStore.getState().selectedNodeIds).toEqual(['lower', 'upper']);
+    });
+});
+
+/**
+ * Round-2 pan tool. The VIEW block's hand icon arms `activeTool: 'pan'`, which
+ * makes a plain left press reuse the middle-button pan gesture (`panRef`): the
+ * move applies the viewport pan on both axes (no axis lock) and the press is
+ * inert otherwise — no selection, marquee, draft, insert or undo entry — and
+ * the tool stays armed (a mode, not a one-shot insert).
+ */
+describe('PreviewStage pan tool (view section)', () => {
+    const rectNode = (id: string, x = 0, y = 0): Node => ({
+        id,
+        parentId: null,
+        type: 'shape',
+        shape: 'rectangle',
+        visible: true,
+        locked: false,
+        transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        size: { w: 1000, h: 800 },
+    });
+
+    /**
+     * Mount at a manual zoom well below fit: at fit zoom `clampPan` pins one
+     * axis exactly (the label fills the pane on that axis), so proving a
+     * two-axis pan needs slack on both sides. `tool` defaults to the pan tool;
+     * the Space tests pass another tool to prove the override restores it.
+     */
+    const mountPanStage = (nodes: Node[] = [], tool: InsertAction = 'pan') => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({
+                id: 'doc-pan',
+                now: 1_700_000_000,
+                backingW: 4000,
+                backingH: 3000,
+                nodes,
+            }),
+            selectedNodeIds: [],
+            activeTool: tool,
+            snapEnabled: false,
+            rulersVisible: true,
+            viewRotation: 0,
+            viewRotationUserSet: false,
+            zoomMode: 'manual',
+            manualZoom: 0.05,
+            recenterToken: 0,
+        });
+        render(<PreviewStage />);
+        const stage = Konva.stages[Konva.stages.length - 1] as Konva.Stage;
+        if (!stage) throw new Error('PreviewStage did not mount a Konva stage');
+        return stage;
+    };
+
+    const contentLayer = (stage: Konva.Stage): Konva.Layer => {
+        const layer = stage.getLayers().at(-1);
+        if (!layer) throw new Error('PreviewStage has no content layer');
+        return layer;
+    };
+
+    /**
+     * Dispatch a Space keydown/keyup. Defaults to `document.body` — a real
+     * keydown targets the focused element, which is `body` when the canvas has
+     * no control focused (never `window`); pass `target` for a specific control.
+     */
+    const fireSpace = (
+        phase: 'keydown' | 'keyup',
+        opts: { repeat?: boolean; target?: EventTarget } = {},
+    ): KeyboardEvent => {
+        const evt = new KeyboardEvent(phase, {
+            key: ' ',
+            code: 'Space',
+            bubbles: true,
+            cancelable: true,
+        });
+        if (opts.repeat) Object.assign(evt, { repeat: true });
+        act(() => {
+            (opts.target ?? document.body).dispatchEvent(evt);
+        });
+        return evt;
+    };
+
+    /** The pane div that owns the cursor classes (the Konva container's host). */
+    const cursorHost = (stage: Konva.Stage): HTMLElement => {
+        const host = stage.container().closest('[class*="bg-gray-200"]');
+        if (!(host instanceof HTMLElement)) throw new Error('no pane container element');
+        return host;
+    };
+
+    /**
+     * Window-scoped listener tracker. The module-level `trackListeners` patches
+     * the element prototype chain, which does NOT observe `window` in happy-dom
+     * (window inherits from a different `EventTarget` object), so this patches
+     * `window` directly.
+     */
+    const trackWindowListeners = () => {
+        const originalAdd = window.addEventListener;
+        const originalRemove = window.removeEventListener;
+        const live: { type: string; listener: EventListenerOrEventListenerObject }[] = [];
+        window.addEventListener = (function (
+            type: string,
+            listener: EventListenerOrEventListenerObject,
+            options?: boolean | AddEventListenerOptions,
+        ) {
+            live.push({ type, listener });
+            return originalAdd.call(window, type, listener, options);
+        }) as typeof window.addEventListener;
+        window.removeEventListener = (function (
+            type: string,
+            listener: EventListenerOrEventListenerObject,
+        ) {
+            const index = live.findIndex((entry) => entry.type === type && entry.listener === listener);
+            if (index !== -1) live.splice(index, 1);
+            return originalRemove.call(window, type, listener);
+        }) as typeof window.removeEventListener;
+        return {
+            count: (type: string) => live.filter((entry) => entry.type === type).length,
+            restore: () => {
+                window.addEventListener = originalAdd;
+                window.removeEventListener = originalRemove;
+            },
+        };
+    };
+
+    it('pans both axes on a press-drag and changes nothing else', () => {
+        const stage = mountPanStage();
+        const layer = contentLayer(stage);
+        const before = { x: layer.x(), y: layer.y() };
+
+        firePointer(stage, 'pointerdown', 300, 200);
+        firePointer(stage, 'pointermove', 360, 240);
+        firePointer(stage, 'pointerup', 360, 240);
+
+        // Without the pan branch this press falls into the insert branch: the
+        // layer never moves and the tool disarms.
+        expect(layer.x() - before.x).toBeCloseTo(60, 4);
+        expect(layer.y() - before.y).toBeCloseTo(40, 4);
+
+        const state = useStore.getState();
+        // Inert: no selection, no insert, no draft, no undo entry.
+        expect(state.selectedNodeIds).toEqual([]);
+        expect(state.currentDoc?.nodes).toHaveLength(0);
+        expect(contentLayer(stage).find('Line').length).toBe(0);
+        expect(state.docPast).toHaveLength(0);
+        // A mode, not a one-shot insert: still armed after the drag.
+        expect(state.activeTool).toBe('pan');
+    });
+
+    it('does not select the node a pan press lands on', () => {
+        const stage = mountPanStage([rectNode('r')]);
+        const layer = contentLayer(stage);
+        const before = layer.x();
+
+        // Press inside the node's world bounds (0..1000 × 0..800).
+        const inside = toScreen(stage, 500, 400);
+        firePointer(stage, 'pointerdown', inside.x, inside.y);
+        firePointer(stage, 'pointermove', inside.x + 50, inside.y);
+        firePointer(stage, 'pointerup', inside.x + 50, inside.y);
+
+        const state = useStore.getState();
+        // The press panned instead of selecting (fails without the branch: the
+        // layer is unmoved and the tool resets to select).
+        expect(layer.x()).toBeGreaterThan(before);
+        expect(state.activeTool).toBe('pan');
+        expect(state.selectedNodeIds).toEqual([]);
+        expect(state.currentDoc?.nodes).toHaveLength(1);
+        expect(state.docPast).toHaveLength(0);
+    });
+
+    it('exits pan mode on Escape without disturbing the selection', () => {
+        const stage = mountPanStage([rectNode('r')]);
+        useStore.setState({ selectedNodeIds: ['r'] });
+
+        firePointer(stage, 'pointerdown', 300, 200);
+        firePointer(stage, 'pointerup', 300, 200);
+
+        act(() => {
+            window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        });
+
+        // Pan is a view-only mode: Escape returns to select and leaves the
+        // (untouched) selection alone — the generic path would also clear it.
+        expect(useStore.getState().activeTool).toBe('select');
+        expect(useStore.getState().selectedNodeIds).toEqual(['r']);
+    });
+
+    /**
+     * Space + drag (round-2 addendum). Space is a LOCAL transient override: the
+     * store's `activeTool` is never written, so releasing it restores the armed
+     * tool. These tests cover the gesture, the guard matrix (dialog / editable /
+     * button), the leak paths (`repeat`, `blur`) and the StrictMode listener pair.
+     */
+    it('Space + press-drag pans both axes and restores the previous tool on release', () => {
+        // A non-select tool so the restore is observable.
+        const stage = mountPanStage([], 'shape:rectangle');
+        const layer = contentLayer(stage);
+        const before = { x: layer.x(), y: layer.y() };
+
+        fireSpace('keydown');
+        // The override never touches the store's armed tool.
+        expect(useStore.getState().activeTool).toBe('shape:rectangle');
+        // Held Space puts the pane in pan mode: the grab cursor.
+        expect(cursorHost(stage).className).toContain('cursor-grab');
+
+        firePointer(stage, 'pointerdown', 300, 200);
+        firePointer(stage, 'pointermove', 360, 240);
+        firePointer(stage, 'pointerup', 360, 240);
+
+        // Both axes followed the drag (fails without the space branch: the
+        // rectangle tool would start a draw draft instead of panning).
+        expect(layer.x() - before.x).toBeCloseTo(60, 4);
+        expect(layer.y() - before.y).toBeCloseTo(40, 4);
+
+        // Space still held: the mouse release ended the pan, but the mode
+        // persists — a second drag pans again.
+        const mid = layer.x();
+        firePointer(stage, 'pointerdown', 300, 200);
+        firePointer(stage, 'pointermove', 320, 200);
+        firePointer(stage, 'pointerup', 320, 200);
+        expect(layer.x() - mid).toBeCloseTo(20, 4);
+
+        fireSpace('keyup');
+        // Released: the previous tool is restored and the cursor is crosshair.
+        expect(useStore.getState().activeTool).toBe('shape:rectangle');
+        expect(cursorHost(stage).className).toContain('cursor-crosshair');
+        expect(cursorHost(stage).className).not.toContain('cursor-grab');
+
+        const state = useStore.getState();
+        // Inert throughout: no selection, marquee, node, draft or undo entry.
+        expect(state.selectedNodeIds).toEqual([]);
+        expect(state.currentDoc?.nodes).toHaveLength(0);
+        expect(layer.find('Line').length).toBe(0);
+        expect(state.docPast).toHaveLength(0);
+    });
+
+    it('Space + press cannot trigger the click-without-drag selection collapse', () => {
+        const stage = mountPanStage([rectNode('r', 0, 0), rectNode('s', 1500, 0)], 'select');
+        // A multi-selection: without the space branch a no-move press on `r`
+        // would `beginDrag` and collapse the selection to `['r']` on release.
+        useStore.setState({ selectedNodeIds: ['r', 's'] });
+
+        fireSpace('keydown');
+        const inside = toScreen(stage, 500, 400); // inside `r` only
+        firePointer(stage, 'pointerdown', inside.x, inside.y);
+        firePointer(stage, 'pointerup', inside.x, inside.y);
+        fireSpace('keyup');
+
+        // No move drag was ever started, so the deferred collapse cannot run.
+        expect(useStore.getState().selectedNodeIds).toEqual(['r', 's']);
+        expect(useStore.getState().docPast).toHaveLength(0);
+    });
+
+    it('does not arm Space while a modal dialog is open', () => {
+        const stage = mountPanStage([], 'select');
+        const layer = contentLayer(stage);
+        const dialog = document.createElement('dialog');
+        dialog.setAttribute('open', '');
+        document.body.appendChild(dialog);
+        try {
+            const evt = fireSpace('keydown');
+            expect(evt.defaultPrevented).toBe(false);
+
+            const before = layer.x();
+            firePointer(stage, 'pointerdown', 300, 200);
+            firePointer(stage, 'pointermove', 360, 200);
+            firePointer(stage, 'pointerup', 360, 200);
+            // Without the dialog guard, Space would arm and this press would pan.
+            expect(layer.x()).toBe(before);
+        } finally {
+            dialog.remove();
+        }
+    });
+
+    it('does not arm Space over an input/textarea (typing is never hijacked)', () => {
+        const stage = mountPanStage([], 'select');
+        const layer = contentLayer(stage);
+        const input = document.createElement('input');
+        const textarea = document.createElement('textarea');
+        document.body.append(input, textarea);
+        try {
+            const inputEvt = fireSpace('keydown', { target: input });
+            expect(inputEvt.defaultPrevented).toBe(false);
+            const textareaEvt = fireSpace('keydown', { target: textarea });
+            expect(textareaEvt.defaultPrevented).toBe(false);
+
+            const before = layer.x();
+            firePointer(stage, 'pointerdown', 300, 200);
+            firePointer(stage, 'pointermove', 360, 200);
+            firePointer(stage, 'pointerup', 360, 200);
+            expect(layer.x()).toBe(before);
+        } finally {
+            input.remove();
+            textarea.remove();
+        }
+    });
+
+    it('does not hijack Space over a button (native activation preserved)', () => {
+        const stage = mountPanStage([], 'select');
+        const layer = contentLayer(stage);
+        const button = document.createElement('button');
+        document.body.appendChild(button);
+        try {
+            const evt = fireSpace('keydown', { target: button });
+            // A focused button's Space activation must retain its default.
+            expect(evt.defaultPrevented).toBe(false);
+
+            const before = layer.x();
+            firePointer(stage, 'pointerdown', 300, 200);
+            firePointer(stage, 'pointermove', 360, 200);
+            firePointer(stage, 'pointerup', 360, 200);
+            expect(layer.x()).toBe(before);
+        } finally {
+            button.remove();
+        }
+    });
+
+    /**
+     * A target that must never arm Space: the keydown is not `preventDefault`ed
+     * and a following press does not pan. Under the old exclusion list (no
+     * `<select>`/`[role="button"]`/`[contenteditable]`/plain-div entry) the
+     * `<select>` and scrollable-panel cases armed and panned, blocking the
+     * control's native Space behaviour.
+     */
+    const expectNoArm = (stage: Konva.Stage, el: EventTarget) => {
+        const layer = contentLayer(stage);
+        const evt = fireSpace('keydown', { target: el });
+        expect(evt.defaultPrevented).toBe(false);
+
+        const before = layer.x();
+        firePointer(stage, 'pointerdown', 300, 200);
+        firePointer(stage, 'pointermove', 360, 200);
+        firePointer(stage, 'pointerup', 360, 200);
+        expect(layer.x()).toBe(before);
+    };
+
+    it('does not arm Space over a contenteditable element', () => {
+        const stage = mountPanStage([], 'select');
+        const editable = document.createElement('div');
+        editable.setAttribute('contenteditable', 'true');
+        document.body.appendChild(editable);
+        try {
+            expectNoArm(stage, editable);
+        } finally {
+            editable.remove();
+        }
+    });
+
+    it('does not arm Space over a [role="button"] control', () => {
+        const stage = mountPanStage([], 'select');
+        const roleButton = document.createElement('div');
+        roleButton.setAttribute('role', 'button');
+        document.body.appendChild(roleButton);
+        try {
+            expectNoArm(stage, roleButton);
+        } finally {
+            roleButton.remove();
+        }
+    });
+
+    it('does not arm Space over a native <select> (its option list is preserved)', () => {
+        const stage = mountPanStage([], 'select');
+        const select = document.createElement('select');
+        document.body.appendChild(select);
+        try {
+            expectNoArm(stage, select);
+        } finally {
+            select.remove();
+        }
+    });
+
+    it('does not arm Space over a plain scrollable panel (page scroll is not blocked)', () => {
+        const stage = mountPanStage([], 'select');
+        const panel = document.createElement('div');
+        panel.style.overflow = 'auto';
+        // Focusable, so a real browser could actually focus this panel (a
+        // non-focusable div would leave focus on `body`, which Space arms for).
+        panel.tabIndex = 0;
+        document.body.appendChild(panel);
+        try {
+            expectNoArm(stage, panel);
+        } finally {
+            panel.remove();
+        }
+    });
+
+    it('does not arm Space when no document is open', () => {
+        mountPanStage([], 'select');
+        useStore.setState({ currentDoc: null });
+        // `body` is in the allow-list, so only the no-open-doc guard stops this.
+        const evt = fireSpace('keydown');
+        expect(evt.defaultPrevented).toBe(false);
+    });
+
+    it('arms Space when the target is the canvas host itself', () => {
+        const stage = mountPanStage([], 'select');
+        const layer = contentLayer(stage);
+
+        const evt = fireSpace('keydown', { target: stage.container() });
+        expect(evt.defaultPrevented).toBe(true);
+
+        const before = layer.x();
+        firePointer(stage, 'pointerdown', 300, 200);
+        firePointer(stage, 'pointermove', 360, 200);
+        firePointer(stage, 'pointerup', 360, 200);
+        expect(layer.x() - before).toBeCloseTo(60, 4);
+        fireSpace('keyup');
+    });
+
+    it('disarms Space on window blur (never strands pan mode)', () => {
+        const stage = mountPanStage([], 'select');
+        const layer = contentLayer(stage);
+
+        fireSpace('keydown');
+        expect(cursorHost(stage).className).toContain('cursor-grab');
+
+        // A focus steal leaves no keyup; the gesture must still end.
+        act(() => {
+            window.dispatchEvent(new Event('blur'));
+        });
+        expect(cursorHost(stage).className).not.toContain('cursor-grab');
+
+        const before = layer.x();
+        firePointer(stage, 'pointerdown', 300, 200);
+        firePointer(stage, 'pointermove', 360, 200);
+        firePointer(stage, 'pointerup', 360, 200);
+        expect(layer.x()).toBe(before);
+    });
+
+    it('ignores a repeated Space keydown (no re-arm)', () => {
+        const stage = mountPanStage([], 'select');
+        const layer = contentLayer(stage);
+
+        // A repeat with no prior real keydown is the discriminating case: it
+        // must be inert (a held key already armed would not need re-arming, but
+        // one that never armed must not arm off a repeat).
+        const evt = fireSpace('keydown', { repeat: true });
+        expect(evt.defaultPrevented).toBe(false);
+        expect(cursorHost(stage).className).not.toContain('cursor-grab');
+
+        const before = layer.x();
+        firePointer(stage, 'pointerdown', 300, 200);
+        firePointer(stage, 'pointermove', 360, 200);
+        firePointer(stage, 'pointerup', 360, 200);
+        expect(layer.x()).toBe(before);
+    });
+
+    it('leaves exactly one live Space listener pair after a StrictMode double mount', () => {
+        const tracker = trackWindowListeners();
+        try {
+            // A plain mount registers the pair; a cleanup that does not run would
+            // show up as extra listeners after the StrictMode mount below.
+            mountPanStage([], 'select');
+            const singleDown = tracker.count('keydown');
+            const singleUp = tracker.count('keyup');
+            expect(singleDown).toBeGreaterThanOrEqual(1);
+            expect(singleUp).toBeGreaterThanOrEqual(1);
+            cleanup();
+
+            useStore.setState({
+                view: 'editor',
+                currentDoc: createLabelDoc({ id: 'doc-pan-strict', now: 1_700_000_000, backingW: 4000, backingH: 3000 }),
+                selectedNodeIds: [],
+                activeTool: 'select',
+                snapEnabled: false,
+                rulersVisible: true,
+                viewRotation: 0,
+                viewRotationUserSet: false,
+                zoomMode: 'manual',
+                manualZoom: 0.05,
+                recenterToken: 0,
+            });
+            render(
+                <StrictMode>
+                    <PreviewStage />
+                </StrictMode>,
+            );
+
+            // StrictMode mounts, cleans up and mounts again: the live counts must
+            // match the single mount (two would arm/disarm every press twice).
+            expect(tracker.count('keydown')).toBe(singleDown);
+            expect(tracker.count('keyup')).toBe(singleUp);
+        } finally {
+            tracker.restore();
+        }
     });
 });

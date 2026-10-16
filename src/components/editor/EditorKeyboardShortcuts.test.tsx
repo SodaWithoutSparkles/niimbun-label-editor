@@ -340,4 +340,18 @@ describe('EditorKeyboardShortcuts — arrow nudge (P4 W4)', () => {
         expect(x()).toBe(0);
         expect(useStore.getState().docPast).toHaveLength(before);
     });
+
+    it('nudges the selection while the pan tool is armed (pan is view-only)', () => {
+        withSelectedNode();
+        useStore.setState({ activeTool: 'pan' });
+        render(<EditorKeyboardShortcuts />);
+        const before = useStore.getState().docPast.length;
+
+        press('ArrowRight');
+
+        // Without treating `pan` as view-only the guard `!== 'select'` would
+        // swallow the nudge (x stays 0 and no undo entry is pushed).
+        expect(x()).toBe(10);
+        expect(useStore.getState().docPast).toHaveLength(before + 1);
+    });
 });

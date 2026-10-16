@@ -17,6 +17,7 @@ import {
     Bold,
     Columns3,
     Grid3x3,
+    Hand,
     Italic,
     Magnet,
     Maximize,
@@ -37,8 +38,8 @@ import type { Node, TextAlign } from '../../core/doc/types';
 
 /**
  * View controls (ui-spec.md §6) — right column, row A. Grid, snap, zoom
- * −/+/fit/real, rotate-view and rulers. All view-only; nothing here mutates the
- * document.
+ * −/+/fit/real, rotate-view, pan mode and rulers. All view-only; nothing here
+ * mutates the document.
  *
  * Below the general VIEW block sits the **object-specific** icon block
  * (action-plan D2), shown only with a selection and laid out as explicit rows
@@ -168,6 +169,10 @@ export const ViewControls: React.FC = () => {
     const effectiveZoom = useStore((state) => state.effectiveZoom);
     const setZoomMode = useStore((state) => state.setZoomMode);
     const setManualZoom = useStore((state) => state.setManualZoom);
+    // Pan is a view-only canvas mode (round 2): armed here, never on the rail.
+    const activeTool = useStore((state) => state.activeTool);
+    const setActiveTool = useStore((state) => state.setActiveTool);
+    const clearActiveTool = useStore((state) => state.clearActiveTool);
 
     // Selection drives the object-specific block. `selectedNodeIds` is the only
     // selection model (selectionSlice); the nodes come from the open document.
@@ -206,6 +211,13 @@ export const ViewControls: React.FC = () => {
                     onClick={toggleViewRotation}
                 >
                     <RotateCw size={16} />
+                </IconButton>
+                <IconButton
+                    label={t('editor.view.pan')}
+                    active={activeTool === 'pan'}
+                    onClick={() => (activeTool === 'pan' ? clearActiveTool() : setActiveTool('pan'))}
+                >
+                    <Hand size={16} />
                 </IconButton>
             </div>
             <div className="flex flex-wrap items-center gap-1">

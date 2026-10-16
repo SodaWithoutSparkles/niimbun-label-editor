@@ -1,10 +1,12 @@
 import type { StoreSlice } from '../storeTypes';
 
 /**
- * Insert-rail actions (ui-spec.md §4). `select` is the resting state; every
- * other entry is a **one-shot** armed action that clears back to `select` after
- * placing an object or on `Esc`. Shape variants are distinct actions so the
- * rail can arm a specific default shape.
+ * Tool actions. `select` is the resting state; the insert-rail entries are
+ * **one-shot** armed actions that clear back to `select` after placing an
+ * object or on `Esc` (shape variants are distinct actions so the rail can arm a
+ * specific default shape). `pan` is the one **view-only** member: it is not a
+ * rail button (see `VIEW_TOOL_ACTIONS`) but a canvas mode armed from the VIEW
+ * block — it stays armed across gestures and never inserts anything.
  */
 export type InsertAction =
     | 'select'
@@ -16,9 +18,11 @@ export type InsertAction =
     | 'shape:polygon'
     | 'qr'
     | 'barcode'
-    | 'code';
+    | 'code'
+    | 'pan';
 
-/** Every valid `InsertAction`, for runtime validation of untrusted input. */
+/** The insert-rail vocabulary. NOT the whole `InsertAction` union — `pan` is a
+ * view-only tool (see `VIEW_TOOL_ACTIONS`) and is deliberately absent here. */
 export const INSERT_ACTIONS: readonly InsertAction[] = [
     'select',
     'text',
@@ -33,12 +37,26 @@ export const INSERT_ACTIONS: readonly InsertAction[] = [
 ];
 
 /**
+ * Valid `InsertAction`s that are NOT insert-rail buttons. `pan` is armed from
+ * the VIEW icon block (`ViewControls`), so it must never appear in
+ * `INSERT_ACTIONS` (which is exactly the rail's vocabulary).
+ */
+export const VIEW_TOOL_ACTIONS: readonly InsertAction[] = ['pan'];
+
+/**
+ * Every id {@link normalizeInsertAction} accepts: the insert-rail vocabulary
+ * plus the view-only tools. Kept separate from `INSERT_ACTIONS` so the rail
+ * list stays exactly the rail's buttons.
+ */
+const VALID_TOOL_ACTIONS: readonly string[] = [...INSERT_ACTIONS, ...VIEW_TOOL_ACTIONS];
+
+/**
  * Coerce an untrusted/legacy tool id (from an old save file) to a valid
  * `InsertAction`. Anything unrecognised — including removed legacy tools
  * (`arrow`, `callout`, …) — falls back to the resting `select` state.
  */
 export const normalizeInsertAction = (value: unknown): InsertAction =>
-    typeof value === 'string' && (INSERT_ACTIONS as readonly string[]).includes(value)
+    typeof value === 'string' && VALID_TOOL_ACTIONS.includes(value)
         ? (value as InsertAction)
         : 'select';
 

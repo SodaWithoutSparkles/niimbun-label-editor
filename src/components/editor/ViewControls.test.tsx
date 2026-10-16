@@ -66,7 +66,7 @@ afterEach(() => {
 });
 
 describe('ViewControls — general VIEW block', () => {
-    it('keeps the 8 general icons, 4 per row', () => {
+    it('keeps the 9 general icons (grid, snap, rulers, rotate, pan, zoom −/+/fit/real)', () => {
         useStore.setState({ currentDoc: doc([]), selectedNodeIds: [] });
         render(<ViewControls />);
         for (const name of [
@@ -74,6 +74,7 @@ describe('ViewControls — general VIEW block', () => {
             'Snap',
             'Rulers',
             'Rotate view',
+            'Pan',
             'Zoom out',
             'Zoom in',
             'Fit',
@@ -88,6 +89,24 @@ describe('ViewControls — general VIEW block', () => {
         render(<ViewControls />);
         expect(screen.queryByTestId('object-align-icons')).toBeNull();
         expect(screen.queryByRole('button', { name: 'Align left' })).toBeNull();
+    });
+
+    it('arms the pan tool from the hand icon and disarms back to select', () => {
+        useStore.setState({ currentDoc: doc([]), selectedNodeIds: [], activeTool: 'select' });
+        render(<ViewControls />);
+
+        const pan = screen.getByRole('button', { name: 'Pan' });
+        // Not armed yet: the toggle reflects the resting select tool.
+        expect(pan.getAttribute('aria-pressed')).toBe('false');
+
+        fireEvent.click(pan);
+        expect(useStore.getState().activeTool).toBe('pan');
+        expect(screen.getByRole('button', { name: 'Pan' }).getAttribute('aria-pressed')).toBe('true');
+
+        // Clicking the active toggle returns to select (no insert is armed).
+        fireEvent.click(screen.getByRole('button', { name: 'Pan' }));
+        expect(useStore.getState().activeTool).toBe('select');
+        expect(screen.getByRole('button', { name: 'Pan' }).getAttribute('aria-pressed')).toBe('false');
     });
 });
 
