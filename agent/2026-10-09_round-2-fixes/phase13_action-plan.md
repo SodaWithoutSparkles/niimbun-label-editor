@@ -125,8 +125,24 @@ R1 ∥ S1 (disjoint files) → R2 ∥ S2 → `review` gate → fix round(s) → 
 - **R13-e** `serpentine` semantics: default `true`; the inspector's `''` = auto must resolve to the
   settings default, not to `true`, or the setting becomes unreachable for nodes with a hint.
 
-## Deferred (still open — **this is the next session's queue**)
-D-36 (touchpad cardinal lock), D-37 (polygon preview layer), overlapping-object select priority,
-navigation paths (`/editor`, `?tag=`, `#settings`/`#gallery`), groups (create + folder-plus icon),
-pan tool, paste handling (image → image node, text → text node), gallery "recent" preview — plus the
-D-57(a/c) residue not covered above and the debt register generally.
+## Deferred — **ALL DONE 2026-10-17 (P13b)**
+
+Every item in this queue shipped, one commit each, each reviewed before its commit:
+
+| Item | Commit |
+| --- | --- |
+| D-37 polygon preview layer | `f157cbb` |
+| navigation (hash scheme, not paths — owner decision) | `cac5005` |
+| overlapping-object select priority | `4096e0b` |
+| paste handling (image → image node, text → text node) | `9888b01` |
+| groups (the folder-plus icon; `groupNodes` + `Ctrl+G` already existed) | `7bea704` |
+| gallery "recent" preview (D-50 producer) | `e75c596` |
+| D-36 → **closed as upstream touchpad rail behaviour**; mitigation = pan tool + space+drag | `7a3a953`, `fa8f541` |
+
+The phrase "plus the **D-57(a/c) residue**" was **stale** — D-57 is closed (a/b/c) as of this phase
+(`8bbc59b`). Full outcome + per-item review verdicts: the Outcome section of
+[`phase13b_action-plan.md`](phase13b_action-plan.md).
+
+**Remaining quantization work is a different list** — see `agent/memory/dithering.md` §4/§7 and
+`agent/memory/screenstyle-quantization.md`, plus debt **D-05** (error diffusion across policy boundaries
++ the per-label multi-pass cost) and **R13-a** (8-slot mask palette overflow).
