@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LabelDoc } from '../../core/doc/types';
+import { quantizerSettingsKey, type QuantizerByType, type QuantizerDefaults } from '../../core/render';
 import type { CsvRecord } from '../../data/csvRepo';
 import {
     renderLabelPage,
@@ -48,6 +49,13 @@ export interface PrintThumbnailOverrides {
     invert?: boolean;
     mirror?: boolean;
     offset?: { x: number; y: number; type: 'inner' | 'outer' };
+    /**
+     * Dither settings that change pixels. Part of the cache rebuild key and
+     * forwarded to the shared render path, so a settings change cannot serve a
+     * stale thumbnail.
+     */
+    quantizerDefaults?: QuantizerDefaults;
+    defaultQuantizerByType?: QuantizerByType;
 }
 
 export interface UsePrintThumbnailsOptions {
@@ -132,7 +140,16 @@ const overridesContentKey = (overrides: PrintThumbnailOverrides | undefined): st
         overrides.offset === undefined
             ? '-'
             : `${overrides.offset.x},${overrides.offset.y},${overrides.offset.type}`;
-    return `${invert}|${mirror}|${offset}`;
+    // Serialize the dither settings by **value** with the shared,
+    // order-independent key: a settings change (or a fresh but equal object)
+    // must rebuild only when the values actually changed, so a settings edit can
+    // never leave a stale thumbnail, and key-order churn cannot force a needless
+    // rebuild.
+    const quantizer = quantizerSettingsKey(
+        overrides.quantizerDefaults,
+        overrides.defaultQuantizerByType,
+    );
+    return `${invert}|${mirror}|${offset}|${quantizer}`;
 };
 
 export const usePrintThumbnails = (
@@ -219,6 +236,12 @@ export const usePrintThumbnails = (
                 ...(currentOverrides?.invert ? { invert: true } : {}),
                 ...(currentOverrides?.mirror ? { mirror: true } : {}),
                 ...(currentOverrides?.offset ? { offset: currentOverrides.offset } : {}),
+                ...(currentOverrides?.quantizerDefaults !== undefined
+                    ? { quantizerDefaults: currentOverrides.quantizerDefaults }
+                    : {}),
+                ...(currentOverrides?.defaultQuantizerByType !== undefined
+                    ? { defaultQuantizerByType: currentOverrides.defaultQuantizerByType }
+                    : {}),
             });
 
             if (rendered.policyOverflowCount && generation === generationRef.current && mountedRef.current) {

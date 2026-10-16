@@ -5,7 +5,7 @@ import { useStore } from '../../store/useStore';
 import { PopoverSlider } from '../common/PopoverSlider';
 import { ColorPicker } from '../common/ColorPicker';
 import { Input, Select, SettingRow, Toggle } from '../common/forms';
-import { bulkFieldModel, quantizerParamsApply, type FieldDescriptor, type FieldReason } from '../../editor/inspectorModel';
+import { bulkFieldModel, quantizerParamVisibility, type FieldDescriptor, type FieldReason, type QuantizerParamVisibility } from '../../editor/inspectorModel';
 import { roundHm, type hm } from '../../core/hm';
 import { nodeSize, pointsExtent } from '../../core/doc/geometry';
 import {
@@ -95,6 +95,7 @@ const FIELD_LABEL_KEYS = {
     quantizerHint: 'editor.mfp.field.quantizerHint',
     quantizerThreshold: 'editor.mfp.field.quantizerThreshold',
     quantizerStrength: 'editor.mfp.field.quantizerStrength',
+    quantizerSerpentine: 'editor.mfp.field.quantizerSerpentine',
     templateTrust: 'editor.mfp.field.templateTrust',
 } as const;
 
@@ -129,6 +130,34 @@ type QuantizerOption = keyof typeof QUANTIZER_LABEL_KEYS;
 
 const isQuantizerOption = (option: string): option is QuantizerOption =>
     option in QUANTIZER_LABEL_KEYS;
+
+/**
+ * i18n keys for the `quantizerSerpentine` select. `''` is the explicit
+ * "use the strategy's settings default" choice (absent ⇒ no per-node value),
+ * mirroring `quantizerHint`'s empty-means-auto convention.
+ */
+const SERPENTINE_LABEL_KEYS = {
+    '': 'editor.mfp.serpentineOptions.settingsDefault',
+    on: 'editor.mfp.serpentineOptions.on',
+    off: 'editor.mfp.serpentineOptions.off',
+} as const;
+
+type SerpentineOption = keyof typeof SERPENTINE_LABEL_KEYS;
+
+const isSerpentineOption = (option: string): option is SerpentineOption =>
+    option in SERPENTINE_LABEL_KEYS;
+
+/**
+ * Which effective strategy each per-node quantizer param belongs to. Used to
+ * gate the params per strategy: a threshold node shows only Threshold, a
+ * diffuser shows Error diffusion + Serpentine scan, and a node with no
+ * effective quantizer shows none (D-57(c)).
+ */
+const QUANTIZER_PARAM_VISIBILITY: Partial<Record<string, QuantizerParamVisibility>> = {
+    quantizerThreshold: 'threshold',
+    quantizerStrength: 'diffusion',
+    quantizerSerpentine: 'diffusion',
+};
 
 /**
  * i18n keys for the `format` select (2D code bcid → nice label). Literal map so
@@ -174,6 +203,7 @@ const isWrapOption = (option: string): option is TextWrap => option in WRAP_LABE
 /** Human label for one select option. Non-labeled selects show the raw value. */
 const optionLabel = (fieldKey: string, option: string, t: TFunction): string => {
     if (fieldKey === 'quantizerHint' && isQuantizerOption(option)) return t(QUANTIZER_LABEL_KEYS[option]);
+    if (fieldKey === 'quantizerSerpentine' && isSerpentineOption(option)) return t(SERPENTINE_LABEL_KEYS[option]);
     if (fieldKey === 'wrap' && isWrapOption(option)) return t(WRAP_LABEL_KEYS[option]);
     if (fieldKey === 'format' && isCodeFormat(option)) return t(CODE_FORMAT_LABEL_KEYS[option]);
     return option;
@@ -207,6 +237,12 @@ const numberValue = (node: Node, key: string): number => {
 };
 
 const stringValue = (node: Node, key: string): string => {
+    // Per-node serpentine is stored inside `quantizerParams`, not as a top-level
+    // prop; map it to the select's `''`/`on`/`off` convention.
+    if (key === 'quantizerSerpentine') {
+        const serpentine = node.quantizerParams?.serpentine;
+        return serpentine === undefined ? '' : serpentine ? 'on' : 'off';
+    }
     const value = (node as unknown as Record<string, unknown>)[key];
     return typeof value === 'string' ? value : '';
 };
@@ -416,6 +452,9 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     const commitDoc = useStore((state) => state.commitDoc);
     const doc = useStore((state) => state.currentDoc);
     const resourceRepo = useStore((state) => state.resourceRepo);
+    // Per-object-type default quantizers: the visibility gate below must mirror
+    // the effective strategy the render path resolves (hint → type default).
+    const defaultQuantizerByType = useStore((state) => state.defaultQuantizerByType);
     const addImageRef = useStore((state) => state.addImageRef);
     const addFontRef = useStore((state) => state.addFontRef);
     const updateImageRef = useStore((state) => state.updateImageRef);
@@ -599,6 +638,18 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                 updateNodeTransient(node.id, {
                     quantizerHint: value === '' ? undefined : (value as QuantizerId),
                 });
+            } else if (key === 'quantizerSerpentine') {
+                // `''` clears the per-node value so the strategy's settings
+                // default applies (never a pinned `true` — R13-e); `on`/`off`
+                // pin an explicit boolean. Merge into `quantizerParams` so the
+                // threshold/strength knobs survive.
+                const current = useStore.getState().currentDoc?.nodes.find((entry) => entry.id === node.id) ?? node;
+                const params = { ...current.quantizerParams };
+                if (value === '') delete params.serpentine;
+                else params.serpentine = value === 'on';
+                updateNodeTransient(node.id, {
+                    quantizerParams: Object.keys(params).length ? params : undefined,
+                });
             } else {
                 updateNodeTransient(node.id, { [key]: value } as never);
             }
@@ -622,8 +673,20 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     const disabledReason = (field: FieldDescriptor): string =>
         t(REASON_KEYS[field.reason ?? 'content'] as never);
 
+    // The selected node's effective quantizer strategy drives which per-node
+    // quantizer params are shown (see `QUANTIZER_PARAM_VISIBILITY`).
+    const quantizerVisibility = quantizerParamVisibility(first, defaultQuantizerByType);
+
     const renderField = (field: FieldDescriptor) => {
         const label = labelFor(field.key, t);
+        // Per-node quantizer params follow the node's effective strategy, not
+        // just "any quantizer resolves": a threshold node hides the diffusion
+        // knobs (they do nothing), a diffuser hides the threshold. A node with
+        // no effective quantizer hides all three (fix #3 / D-57(c)).
+        const requiredVisibility = QUANTIZER_PARAM_VISIBILITY[field.key];
+        if (requiredVisibility !== undefined && requiredVisibility !== quantizerVisibility) {
+            return null;
+        }
         if (!field.wired) {
             return (
                 <SettingRow key={field.key} label={label} description={disabledReason(field)}>
@@ -633,15 +696,6 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
         }
         switch (field.kind) {
             case 'number':
-                // Per-node quantizer params are inert unless the node resolves a
-                // quantizer (no hint + no per-type default, e.g. a shape). Hide
-                // the two fields rather than offer a silent no-op (fix #3).
-                if (
-                    (field.key === 'quantizerThreshold' || field.key === 'quantizerStrength') &&
-                    !quantizerParamsApply(first)
-                ) {
-                    return null;
-                }
                 {
                     const range = numberRange(field.key, doc?.label);
                     return (

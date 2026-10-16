@@ -1,5 +1,11 @@
 import type { RgbaBuffer } from './colorspace';
-import type { Quantizer, QuantizerId, QuantizeOptions } from './quantize';
+import type {
+    Quantizer,
+    QuantizerDefaultParams,
+    QuantizerDefaults,
+    QuantizerId,
+    QuantizeOptions,
+} from './quantize';
 
 /**
  * Per-object quantizer policy. Pure and headless — no React, Konva or DOM.
@@ -23,6 +29,15 @@ export const DEFAULT_POLICY_BY_TYPE: Readonly<Partial<Record<string, QuantizerId
 };
 
 /**
+ * A per-object-type default-quantizer override map (the user setting). Kept
+ * structural (`string` keys) so this module does not depend on the document
+ * types module; the store's `NodeType`-keyed map is assignable to this shape.
+ * Types absent here fall back to `DEFAULT_POLICY_BY_TYPE` (see
+ * `resolveQuantizer`).
+ */
+export type QuantizerByType = Readonly<Partial<Record<string, QuantizerId>>>;
+
+/**
  * The slice of a node the policy needs. Kept structural so this module does not
  * depend on the document types module (the `quantizerHint` field lands in a
  * parallel workstream); a full `BaseNode` satisfies it once typed.
@@ -33,14 +48,116 @@ export interface PolicyNode {
     quantizerParams?: QuantizeOptions;
 }
 
-/** Explicit hint wins; else the per-type default; else the global pass. */
-export const resolveQuantizer = (node: PolicyNode): QuantizerId | undefined => {
+/**
+ * Explicit hint wins; else the supplied per-type override map; else the module
+ * constant; else the global pass. The override map only *replaces* the types it
+ * names — a type it omits still resolves through `DEFAULT_POLICY_BY_TYPE`, so an
+ * empty (default) map is behaviourally identical to before the setting existed.
+ */
+export const resolveQuantizer = (
+    node: PolicyNode,
+    defaultByType: QuantizerByType = DEFAULT_POLICY_BY_TYPE,
+): QuantizerId | undefined => {
     if (node.quantizerHint !== undefined) return node.quantizerHint;
     const { type } = node;
+    if (type === undefined) return undefined;
     // `hasOwn` (not a bare index) so a hostile `type` like 'toString' cannot
     // return an inherited `Object.prototype` member.
-    if (type === undefined || !Object.hasOwn(DEFAULT_POLICY_BY_TYPE, type)) return undefined;
-    return DEFAULT_POLICY_BY_TYPE[type];
+    if (Object.hasOwn(defaultByType, type)) return defaultByType[type];
+    if (Object.hasOwn(DEFAULT_POLICY_BY_TYPE, type)) return DEFAULT_POLICY_BY_TYPE[type];
+    return undefined;
+};
+
+/** Engine defaults for the per-strategy knobs, matching `quantize.ts`. */
+const DEFAULT_THRESHOLD = 128;
+const DEFAULT_STRENGTH = 1;
+const DEFAULT_SERPENTINE = true;
+
+/** A node's explicit quantizer params (structural, mirrors `Node['quantizerParams']`). */
+export interface PolicyParams {
+    threshold?: number;
+    strength?: number;
+    serpentine?: boolean;
+}
+
+/** A policy's fully-resolved params: every knob has a value. */
+export interface ResolvedPolicyParams {
+    threshold: number;
+    strength: number;
+    serpentine: boolean;
+}
+
+/**
+ * Resolve a policy's effective params. Most specific wins:
+ *
+ *   node param → per-strategy settings default → render-level fallback → engine default
+ *
+ * An absent per-node value must **not** override the setting (R13-e), so the
+ * settings default is consulted before the render-level fallback. `serpentine`
+ * resolves through the same chain: a node with no `serpentine` inherits the
+ * strategy's settings default rather than pinning `true`.
+ */
+export const resolveQuantizerParams = (
+    nodeParams: PolicyParams | undefined,
+    id: QuantizerId,
+    defaults?: QuantizerDefaults,
+    fallback?: PolicyParams,
+): ResolvedPolicyParams => {
+    const strategy = defaults?.[id];
+    return {
+        threshold:
+            nodeParams?.threshold ?? strategy?.threshold ?? fallback?.threshold ?? DEFAULT_THRESHOLD,
+        strength:
+            nodeParams?.strength ?? strategy?.strength ?? fallback?.strength ?? DEFAULT_STRENGTH,
+        serpentine:
+            nodeParams?.serpentine ?? strategy?.serpentine ?? fallback?.serpentine ?? DEFAULT_SERPENTINE,
+    };
+};
+
+/**
+ * Stable key for a per-node quantizer policy slot. It names **every** knob that
+ * changes pixels — notably `serpentine` (D-57(b)): two nodes differing only in
+ * their *effective* serpentine must not share one mask slot, or the first node's
+ * params would silently win for both.
+ */
+export const policyKeyOf = (id: QuantizerId, params: ResolvedPolicyParams): string =>
+    `${id}:${params.threshold}:${params.strength}:${params.serpentine}`;
+
+/**
+ * Deterministic content key for the dither settings maps. Pure and headless,
+ * like the rest of this module.
+ *
+ * The print page preview (`previewOptionsKey`) and the thumbnail cache
+ * (`overridesContentKey`) both key pixels on these maps, but a plain
+ * `JSON.stringify` preserves **insertion order**: two equal maps written with
+ * different key order would produce different keys and needlessly rebuild the
+ * thumbnail cache / re-render the preview. Serializing with **sorted** strategy
+ * ids and sorted param keys removes that order dependence, so only a real value
+ * change moves the key. Absent/empty inputs both serialize to the same empty
+ * form, matching the previous `?? null` behaviour.
+ */
+export const quantizerSettingsKey = (
+    defaults?: QuantizerDefaults,
+    byType?: QuantizerByType,
+): string => {
+    const defaultsById: QuantizerDefaults = defaults ?? {};
+    const defaultsPart = Object.keys(defaultsById)
+        .sort()
+        .map((id) => {
+            const params = defaultsById[id as QuantizerId] ?? {};
+            const paramsPart = Object.keys(params)
+                .sort()
+                .map((key) => `${key}=${String(params[key as keyof QuantizerDefaultParams])}`)
+                .join(',');
+            return `${id}:${paramsPart}`;
+        })
+        .join(';');
+    const byTypeMap: QuantizerByType = byType ?? {};
+    const byTypePart = Object.keys(byTypeMap)
+        .sort()
+        .map((type) => `${type}=${String(byTypeMap[type])}`)
+        .join(';');
+    return `d[${defaultsPart}]t[${byTypePart}]`;
 };
 
 /** Per-pixel policy index. `0` is reserved for the global/default quantizer. */

@@ -3,9 +3,11 @@ import {
     normalizeBoolean,
     normalizeConnectMethod,
     normalizeDefaultPaperTypeId,
+    normalizeDefaultQuantizerByType,
     normalizeGridSpacingHm,
     normalizeKeyboardShortcuts,
     normalizeLanguage,
+    normalizeQuantizerDefaults,
     normalizeToolSettings,
     pickPersistedKeys,
     validatePersistedSettings,
@@ -14,6 +16,8 @@ import {
 import {
     DEFAULT_CONNECT_METHOD,
     DEFAULT_GRID_SPACING_HM,
+    DEFAULT_QUANTIZER_BY_TYPE,
+    DEFAULT_QUANTIZER_DEFAULTS,
     DEFAULT_SCREEN_DPI,
     GRID_SPACING_MAX_HM,
     GRID_SPACING_MIN_HM,
@@ -65,6 +69,67 @@ describe('normalizeDefaultPaperTypeId', () => {
         expect(normalizeDefaultPaperTypeId(42)).toBeUndefined();
         expect(normalizeDefaultPaperTypeId(null)).toBeUndefined();
         expect(normalizeDefaultPaperTypeId(undefined)).toBeUndefined();
+    });
+});
+
+describe('normalizeQuantizerDefaults', () => {
+    it('keeps valid per-strategy params and clamps threshold/strength', () => {
+        expect(
+            normalizeQuantizerDefaults({
+                floydSteinberg: { threshold: 200.7, strength: 1.23456, serpentine: false },
+            }),
+        ).toEqual({ floydSteinberg: { threshold: 201, strength: 1.23, serpentine: false } });
+        // Out-of-range values clamp rather than reject.
+        expect(
+            normalizeQuantizerDefaults({ threshold: { threshold: 999, strength: -2 } }),
+        ).toEqual({ threshold: { threshold: 255, strength: 0 } });
+    });
+
+    it('drops unknown strategy keys and empty per-strategy objects', () => {
+        expect(
+            normalizeQuantizerDefaults({
+                ostromoukhov: { threshold: 100 },
+                floydSteinberg: {},
+                stucki: { nonsense: true },
+            }),
+        ).toEqual({});
+    });
+
+    it('drops wrong-typed params but keeps the valid ones', () => {
+        expect(
+            normalizeQuantizerDefaults({ stucky: { threshold: 100 }, atkinson: { threshold: 'bad', serpentine: 'yes' } }),
+        ).toEqual({});
+        expect(
+            normalizeQuantizerDefaults({ atkinson: { threshold: 'bad', serpentine: true } }),
+        ).toEqual({ atkinson: { serpentine: true } });
+    });
+
+    it('returns undefined only for a non-object value', () => {
+        expect(normalizeQuantizerDefaults('nope')).toBeUndefined();
+        expect(normalizeQuantizerDefaults(null)).toBeUndefined();
+        expect(normalizeQuantizerDefaults(undefined)).toBeUndefined();
+        expect(normalizeQuantizerDefaults([])).toBeUndefined();
+    });
+});
+
+describe('normalizeDefaultQuantizerByType', () => {
+    it('keeps known types with known quantizer ids', () => {
+        expect(normalizeDefaultQuantizerByType({ image: 'stucki', text: 'threshold' })).toEqual({
+            image: 'stucki',
+            text: 'threshold',
+        });
+    });
+
+    it('drops unknown types and unknown quantizer ids', () => {
+        expect(
+            normalizeDefaultQuantizerByType({ bogus: 'stucki', text: 'ostromoukhov', image: 42 }),
+        ).toEqual({});
+    });
+
+    it('returns undefined only for a non-object value', () => {
+        expect(normalizeDefaultQuantizerByType('text')).toBeUndefined();
+        expect(normalizeDefaultQuantizerByType(null)).toBeUndefined();
+        expect(normalizeDefaultQuantizerByType(undefined)).toBeUndefined();
     });
 });
 
@@ -151,6 +216,8 @@ const defaults: PersistedSettings = {
     screenDpi: DEFAULT_SCREEN_DPI,
     gridSpacingHm: DEFAULT_GRID_SPACING_HM,
     connectMethod: DEFAULT_CONNECT_METHOD,
+    quantizerDefaults: DEFAULT_QUANTIZER_DEFAULTS,
+    defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
 };
 
 describe('validatePersistedSettings', () => {
@@ -210,6 +277,31 @@ describe('validatePersistedSettings', () => {
         // Absent => the (undefined) default.
         expect(validatePersistedSettings({}, defaults).defaultPaperTypeId).toBeUndefined();
     });
+
+    it('normalizes quantizerDefaults, falling back to the empty default', () => {
+        expect(
+            validatePersistedSettings(
+                { quantizerDefaults: { stucki: { strength: 2.5076 }, bogus: { threshold: 1 } } },
+                defaults,
+            ).quantizerDefaults,
+        ).toEqual({ stucki: { strength: 2.51 } });
+        // Non-object / absent => the empty default (engine defaults).
+        expect(validatePersistedSettings({ quantizerDefaults: 'x' }, defaults).quantizerDefaults).toEqual({});
+        expect(validatePersistedSettings({}, defaults).quantizerDefaults).toEqual({});
+    });
+
+    it('normalizes defaultQuantizerByType, falling back to the empty default', () => {
+        expect(
+            validatePersistedSettings(
+                { defaultQuantizerByType: { image: 'atkinson', bogus: 'stucki', text: 'nope' } },
+                defaults,
+            ).defaultQuantizerByType,
+        ).toEqual({ image: 'atkinson' });
+        expect(
+            validatePersistedSettings({ defaultQuantizerByType: 5 }, defaults).defaultQuantizerByType,
+        ).toEqual({});
+        expect(validatePersistedSettings({}, defaults).defaultQuantizerByType).toEqual({});
+    });
 });
 
 describe('pickPersistedKeys', () => {
@@ -250,5 +342,23 @@ describe('pickPersistedKeys', () => {
         const picked = pickPersistedKeys({ defaultPaperTypeId: '' }, defaults);
         expect('defaultPaperTypeId' in picked).toBe(true);
         expect(picked.defaultPaperTypeId).toBeUndefined();
+    });
+
+    it('picks the two dither settings only when present, and repairs bad entries', () => {
+        expect(
+            pickPersistedKeys(
+                { quantizerDefaults: { floydSteinberg: { threshold: 200 } }, defaultQuantizerByType: { image: 'stucki' } },
+                defaults,
+            ),
+        ).toEqual({
+            quantizerDefaults: { floydSteinberg: { threshold: 200 } },
+            defaultQuantizerByType: { image: 'stucki' },
+        });
+        // A present-but-garbage value repairs to the empty default and still
+        // overrides the seed (`in` guard, not truthiness).
+        const picked = pickPersistedKeys({ quantizerDefaults: 7 }, defaults);
+        expect('quantizerDefaults' in picked).toBe(true);
+        expect(picked.quantizerDefaults).toEqual({});
+        expect('defaultQuantizerByType' in pickPersistedKeys({}, defaults)).toBe(false);
     });
 });

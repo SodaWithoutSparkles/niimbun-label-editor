@@ -124,7 +124,8 @@ describe('inspectorModel — field descriptors', () => {
 
     it('wires per-node quantizer params as numeric fields', () => {
         expect(keys(RESERVED_FIELDS)).toEqual([
-            'contentSource', 'quantizerHint', 'quantizerThreshold', 'quantizerStrength', 'templateTrust',
+            'contentSource', 'quantizerHint', 'quantizerThreshold', 'quantizerStrength',
+            'quantizerSerpentine', 'templateTrust',
         ]);
         expect(RESERVED_FIELDS.find((field) => field.key === 'quantizerThreshold')).toMatchObject({
             kind: 'number',
@@ -134,6 +135,13 @@ describe('inspectorModel — field descriptors', () => {
             kind: 'number',
             wired: true,
         });
+    });
+
+    it('wires per-node serpentine as a select over the auto/on/off sentinels', () => {
+        const field = RESERVED_FIELDS.find((f) => f.key === 'quantizerSerpentine');
+        expect(field).toMatchObject({ kind: 'select', wired: true });
+        // `''` (auto) + on/off, never a plain boolean field.
+        expect(field?.options).toEqual(['', 'on', 'off']);
     });
 
     it('wires quantizerHint as a select over the quantizer registry', () => {
@@ -226,7 +234,7 @@ describe('inspectorModel — field descriptors', () => {
     });
 
     it('wires contentSource and templateTrust (P6)', () => {
-        expect(keys(RESERVED_FIELDS)).toEqual(['contentSource', 'quantizerHint', 'quantizerThreshold', 'quantizerStrength', 'templateTrust']);
+        expect(keys(RESERVED_FIELDS)).toEqual(['contentSource', 'quantizerHint', 'quantizerThreshold', 'quantizerStrength', 'quantizerSerpentine', 'templateTrust']);
         const contentSource = RESERVED_FIELDS.find((f) => f.key === 'contentSource');
         expect(contentSource?.wired).toBe(true);
         expect(contentSource?.kind).toBe('contentSource');

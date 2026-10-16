@@ -1,4 +1,7 @@
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n/languages';
+import { QUANTIZERS, type QuantizerId } from '../core/render/quantize';
+import type { QuantizerDefaultParams, QuantizerDefaults } from '../core/render/quantize';
+import type { NodeType } from '../core/doc/types';
 import {
     CONNECT_METHODS,
     GRID_SPACING_MAX_HM,
@@ -9,6 +12,7 @@ import {
 import type {
     AppState,
     ConnectMethod,
+    DefaultQuantizerByType,
     KeyboardShortcutConfig,
     ModifierKey,
     TextSaveModifier,
@@ -24,6 +28,8 @@ export type PersistedSettings = Pick<
     | 'screenDpi'
     | 'gridSpacingHm'
     | 'connectMethod'
+    | 'quantizerDefaults'
+    | 'defaultQuantizerByType'
     | 'defaultPaperTypeId'
 >;
 
@@ -59,6 +65,20 @@ const TEXT_SAVE_MODIFIERS: readonly TextSaveModifier[] = ['ctrl', 'alt', 'shift'
 const FONT_WEIGHTS = ['normal', 'bold'] as const;
 const FONT_STYLES = ['normal', 'italic'] as const;
 const TEXT_ALIGNS = ['left', 'center', 'right'] as const;
+
+/**
+ * Dithering allow-lists. `QUANTIZER_IDS` is derived from the registry (so a new
+ * algorithm is accepted without a validator edit); `NODE_TYPES` mirrors the
+ * document type union (there is no runtime registry to derive it from).
+ */
+const QUANTIZER_IDS = Object.keys(QUANTIZERS) as QuantizerId[];
+const NODE_TYPES: readonly NodeType[] = ['group', 'text', 'image', 'shape', 'qr', 'barcode', 'code'];
+
+/** Per-strategy param clamps, matched to `core/doc/validate` and `quantize.ts`. */
+const QUANTIZER_THRESHOLD_MIN = 0;
+const QUANTIZER_THRESHOLD_MAX = 255;
+const QUANTIZER_STRENGTH_MIN = 0;
+const QUANTIZER_STRENGTH_MAX = 4;
 
 const isOneOf = <T extends string>(value: unknown, allowed: readonly T[]): value is T =>
     isString(value) && (allowed as readonly string[]).includes(value);
@@ -176,6 +196,64 @@ export const normalizeDefaultPaperTypeId = (value: unknown): string | undefined 
     isString(value) && value.length > 0 ? value : undefined;
 
 /**
+ * Returns one strategy's repaired params, or `undefined` when nothing usable
+ * remains (so an empty per-strategy object is dropped). `threshold` is clamped
+ * to `[0,255]` as an integer; `strength` to `[0,4]` rounded to 2 dp (matching
+ * `core/doc/validate`); `serpentine` must be a boolean.
+ */
+const normalizeQuantizerDefaultParams = (value: unknown): QuantizerDefaultParams | undefined => {
+    if (!isRecord(value)) return undefined;
+    const params: QuantizerDefaultParams = {};
+    if (isFiniteNumber(value.threshold)) {
+        params.threshold = Math.min(
+            QUANTIZER_THRESHOLD_MAX,
+            Math.max(QUANTIZER_THRESHOLD_MIN, Math.round(value.threshold)),
+        );
+    }
+    if (isFiniteNumber(value.strength)) {
+        params.strength =
+            Math.round(
+                Math.min(QUANTIZER_STRENGTH_MAX, Math.max(QUANTIZER_STRENGTH_MIN, value.strength)) * 100,
+            ) / 100;
+    }
+    if (typeof value.serpentine === 'boolean') params.serpentine = value.serpentine;
+    return Object.keys(params).length > 0 ? params : undefined;
+};
+
+/**
+ * Returns per-strategy dither defaults with unknown strategy keys dropped
+ * (allow-listed against the `QUANTIZERS` registry) and each param clamped.
+ * `undefined` only when the whole value is not an object; an object that cleans
+ * to nothing repairs to `{}`.
+ */
+export const normalizeQuantizerDefaults = (value: unknown): QuantizerDefaults | undefined => {
+    if (!isRecord(value)) return undefined;
+    const out: QuantizerDefaults = {};
+    for (const id of QUANTIZER_IDS) {
+        const params = normalizeQuantizerDefaultParams(value[id]);
+        if (params !== undefined) out[id] = params;
+    }
+    return out;
+};
+
+/**
+ * Returns the per-object-type default-quantizer map with unknown types and
+ * unknown quantizer ids dropped. `undefined` only when the whole value is not an
+ * object; an object that cleans to nothing repairs to `{}`.
+ */
+export const normalizeDefaultQuantizerByType = (
+    value: unknown,
+): DefaultQuantizerByType | undefined => {
+    if (!isRecord(value)) return undefined;
+    const out: DefaultQuantizerByType = {};
+    for (const type of NODE_TYPES) {
+        const candidate = value[type];
+        if (isOneOf(candidate, QUANTIZER_IDS)) out[type] = candidate;
+    }
+    return out;
+};
+
+/**
  * Validates the `ui_settings` payload and returns a complete
  * `PersistedSettings`, filling anything absent or malformed from `defaults`.
  */
@@ -201,6 +279,14 @@ export const validatePersistedSettings = (
             normalizeGridSpacingHm(persisted.gridSpacingHm, GRID_SPACING_MIN_HM, GRID_SPACING_MAX_HM) ??
             defaults.gridSpacingHm,
         connectMethod: normalizeConnectMethod(persisted.connectMethod) ?? defaults.connectMethod,
+        // Absent (or a non-object) => the (empty) default. An object that cleans
+        // to nothing also lands on the empty default: dropping bad keys can only
+        // ever reset a preference, never inject a bogus one.
+        quantizerDefaults:
+            normalizeQuantizerDefaults(persisted.quantizerDefaults) ?? defaults.quantizerDefaults,
+        defaultQuantizerByType:
+            normalizeDefaultQuantizerByType(persisted.defaultQuantizerByType) ??
+            defaults.defaultQuantizerByType,
         // Absent (or unusable) => the caller's default, which is `undefined`:
         // "no preference". Never coerced to an empty string.
         defaultPaperTypeId:
@@ -230,6 +316,10 @@ export const pickPersistedKeys = (
     if ('screenDpi' in persisted) picked.screenDpi = repaired.screenDpi;
     if ('gridSpacingHm' in persisted) picked.gridSpacingHm = repaired.gridSpacingHm;
     if ('connectMethod' in persisted) picked.connectMethod = repaired.connectMethod;
+    if ('quantizerDefaults' in persisted) picked.quantizerDefaults = repaired.quantizerDefaults;
+    if ('defaultQuantizerByType' in persisted) {
+        picked.defaultQuantizerByType = repaired.defaultQuantizerByType;
+    }
     // The `in` guard (not a truthiness check) keeps a present-but-empty value
     // distinguishable from an absent key: the former repairs to `undefined`
     // and is allowed to override the seed, the latter falls through to it.

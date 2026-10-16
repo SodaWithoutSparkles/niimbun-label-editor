@@ -6,11 +6,15 @@ import {
     HM_PER_INCH,
     MonoColorSpace,
     QUANTIZERS,
+    policyKeyOf,
     quantizeRgba,
     rasterDimensions,
     resolveQuantizer,
+    resolveQuantizerParams,
     type ColorSpace,
     type PolicyMask,
+    type QuantizerByType,
+    type QuantizerDefaults,
     type QuantizerId,
     type QuantizerPolicy,
     type QuantizerPolicies,
@@ -57,7 +61,24 @@ import { flattenResolved, resolve, type ResolvedNode, type ResolveContext } from
 export interface RenderLabelPageOptions {
     /** Global quantizer. Defaults to `'threshold'`. */
     quantizer?: QuantizerId;
-    /** Binary threshold forwarded to every quantizer. Default 128. */
+    /**
+     * Per-strategy settings defaults (threshold/strength/serpentine), keyed by
+     * quantizer id. A node param overrides these; they override the render-level
+     * `threshold`/`strength`/`serpentine` fallbacks below. Absent/empty = the
+     * engine defaults, byte-identical to before this option existed.
+     */
+    quantizerDefaults?: QuantizerDefaults;
+    /**
+     * Per-object-type default-quantizer overrides (the user setting). A type
+     * absent here still resolves through `DEFAULT_POLICY_BY_TYPE`, so an
+     * absent/empty map is behaviourally identical to before. `core/` never
+     * imports the store — the map is threaded in by store-aware callers.
+     */
+    defaultQuantizerByType?: QuantizerByType;
+    /**
+     * Binary threshold forwarded to every quantizer, **underneath** the
+     * per-strategy and per-node values. Default 128.
+     */
     threshold?: number;
     /** Diffusion strength forwarded to the error-diffusion quantizers. Default 1. */
     strength?: number;
@@ -207,8 +228,19 @@ export interface PolicyMaskResult {
     overflowCount: number;
 }
 
-const policyKeyOf = (id: QuantizerId, params: { threshold: number; strength: number }): string =>
-    `${id}:${params.threshold}:${params.strength}`;
+/**
+ * Render-level fallbacks for a policy's params, applied under the per-strategy
+ * settings defaults and under any per-node value.
+ */
+export interface PolicyParamDefaults {
+    threshold?: number;
+    strength?: number;
+    serpentine?: boolean;
+    /** Per-strategy settings defaults (see `RenderLabelPageOptions`). */
+    quantizerDefaults?: QuantizerDefaults;
+    /** Per-object-type default-quantizer override map (see `RenderLabelPageOptions`). */
+    defaultQuantizerByType?: QuantizerByType;
+}
 
 export const buildPolicyMask = async (
     nodes: readonly ResolvedNode[],
@@ -216,7 +248,7 @@ export const buildPolicyMask = async (
     dims: { widthPx: number; heightPx: number },
     dpi: number,
     assets?: ReadonlyMap<string, PreparedAsset>,
-    defaults?: { threshold?: number; strength?: number },
+    defaults?: PolicyParamDefaults,
 ): Promise<PolicyMaskResult | undefined> => {
     // This is re-exported public surface; fail clearly before touching Konva.
     if (!Number.isFinite(dpi) || dpi <= 0) {
@@ -235,7 +267,10 @@ export const buildPolicyMask = async (
         );
     }
 
-    const policiesByKey = new Map<string, { id: QuantizerId; options: { threshold: number; strength: number }; index: number }>();
+    const policiesByKey = new Map<
+        string,
+        { id: QuantizerId; options: { threshold: number; strength: number; serpentine?: boolean }; index: number }
+    >();
     const carriers: { node: ResolvedNode; value: number }[] = [];
     let overflowCount = 0;
 
@@ -259,16 +294,28 @@ export const buildPolicyMask = async (
         ) {
             continue;
         }
-        const policy = resolveQuantizer({ type: source.type, quantizerHint: source.quantizerHint });
+        const policy = resolveQuantizer(
+            { type: source.type, quantizerHint: source.quantizerHint },
+            defaults?.defaultQuantizerByType,
+        );
         if (!policy) {
             carriers.push({ node, value: 0 });
             continue;
         }
-        const params = {
-            threshold: source.quantizerParams?.threshold ?? defaults?.threshold ?? 128,
-            strength: source.quantizerParams?.strength ?? defaults?.strength ?? 1,
-        };
-        const key = policyKeyOf(policy, params);
+        // Resolve the **effective** params before keying: node → strategy settings
+        // default → render fallback → engine default. `serpentine` is included so
+        // two nodes differing only in serpentine get distinct slots (D-57(b)).
+        const resolved = resolveQuantizerParams(
+            source.quantizerParams,
+            policy,
+            defaults?.quantizerDefaults,
+            {
+                threshold: defaults?.threshold,
+                strength: defaults?.strength,
+                serpentine: defaults?.serpentine,
+            },
+        );
+        const key = policyKeyOf(policy, resolved);
         let entry = policiesByKey.get(key);
         if (entry === undefined) {
             if (policiesByKey.size >= KEY_COLORS.length) {
@@ -276,7 +323,20 @@ export const buildPolicyMask = async (
                 carriers.push({ node, value: 0 });
                 continue;
             }
-            entry = { id: policy, options: params, index: policiesByKey.size + 1 };
+            entry = {
+                id: policy,
+                options: {
+                    // Every pixel-changing knob is explicit, both `true` and
+                    // `false`, so no masked policy can inherit the base pass's
+                    // value by omitting the key (the base is merged *under* each
+                    // policy's own options). Dedup is by `policyKeyOf`, not by
+                    // `options`, so param-less nodes still share one slot.
+                    threshold: resolved.threshold,
+                    strength: resolved.strength,
+                    serpentine: resolved.serpentine,
+                },
+                index: policiesByKey.size + 1,
+            };
             policiesByKey.set(key, entry);
         }
         carriers.push({ node, value: entry.index });
@@ -401,12 +461,27 @@ export const buildPolicyMask = async (
     }
 };
 
+/**
+ * Build the **global** pass options: the base `QuantizeOptions` for the whole
+ * frame (policy index `0`) and the fallback merged *under* every masked policy's
+ * own options. The global quantizer's per-strategy settings default applies
+ * here, then the render-level fallback. `serpentine` resolves like the others,
+ * so a per-strategy serpentine default reaches a global diffuser.
+ *
+ * This base still sits **under** every masked policy, but nothing leaks: with
+ * every policy carrying its own explicit knobs, a policy can never inherit the
+ * base's value by omission.
+ */
 const buildQuantizeOptions = (opts: RenderLabelPageOptions): Parameters<typeof quantizeRgba>[2] => {
     const colorSpace = opts.colorSpace ?? MonoColorSpace;
+    const strategyDefaults = opts.quantizerDefaults?.[opts.quantizer ?? 'threshold'];
     const out: NonNullable<Parameters<typeof quantizeRgba>[2]> = { colorSpace };
-    if (opts.threshold !== undefined) out.threshold = opts.threshold;
-    if (opts.strength !== undefined) out.strength = opts.strength;
-    if (opts.serpentine !== undefined) out.serpentine = opts.serpentine;
+    const threshold = strategyDefaults?.threshold ?? opts.threshold;
+    const strength = strategyDefaults?.strength ?? opts.strength;
+    const serpentine = strategyDefaults?.serpentine ?? opts.serpentine;
+    if (threshold !== undefined) out.threshold = threshold;
+    if (strength !== undefined) out.strength = strength;
+    if (serpentine !== undefined) out.serpentine = serpentine;
     return out;
 };
 
@@ -512,8 +587,11 @@ export const renderLabelPage = async (
 
     const byId = nodeLookup(doc.nodes);
     const policy = await buildPolicyMask(nodes, byId, { widthPx, heightPx }, dpi, assets, {
-        threshold: opts.threshold ?? 128,
-        strength: opts.strength ?? 1,
+        threshold: opts.threshold,
+        strength: opts.strength,
+        serpentine: opts.serpentine,
+        quantizerDefaults: opts.quantizerDefaults,
+        defaultQuantizerByType: opts.defaultQuantizerByType,
     });
 
     const hmPerPx = HM_PER_INCH / dpi;

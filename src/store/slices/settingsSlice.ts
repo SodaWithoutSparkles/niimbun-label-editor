@@ -2,6 +2,8 @@ import type { StoreSlice } from '../storeTypes';
 import {
     DEFAULT_CONNECT_METHOD,
     DEFAULT_GRID_SPACING_HM,
+    DEFAULT_QUANTIZER_BY_TYPE,
+    DEFAULT_QUANTIZER_DEFAULTS,
     DEFAULT_SCREEN_DPI,
     GRID_SPACING_MAX_HM,
     GRID_SPACING_MIN_HM,
@@ -81,6 +83,16 @@ export const createSettingsSlice: StoreSlice = (set) => ({
     connectMethod: DEFAULT_CONNECT_METHOD,
     setConnectMethod: (connectMethod) => set({ connectMethod }),
 
+    // Per-strategy dithering defaults (§P13 Track R). Persisted with the other
+    // global settings; empty means the engine defaults. Never document data.
+    quantizerDefaults: DEFAULT_QUANTIZER_DEFAULTS,
+    setQuantizerDefaults: (quantizerDefaults) => set({ quantizerDefaults }),
+
+    // Per-object-type default quantizer (§P13 Track R). Persisted; empty means
+    // `DEFAULT_POLICY_BY_TYPE` remains the fallback. Never document data.
+    defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
+    setDefaultQuantizerByType: (defaultQuantizerByType) => set({ defaultQuantizerByType }),
+
     // Preferred paper type for a new label (§11, P8). Optional on purpose: an
     // unset preference means "no default", so the create-label dialog falls
     // back to the first seed / `custom`. Persisted with the other global
@@ -102,6 +114,8 @@ export const createSettingsSlice: StoreSlice = (set) => ({
         screenDpi: DEFAULT_SCREEN_DPI,
         gridSpacingHm: DEFAULT_GRID_SPACING_HM,
         connectMethod: DEFAULT_CONNECT_METHOD,
+        quantizerDefaults: DEFAULT_QUANTIZER_DEFAULTS,
+        defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
         defaultPaperTypeId: undefined,
     }),
 });

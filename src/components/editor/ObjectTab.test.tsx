@@ -52,7 +52,14 @@ const doc = (nodes: Node[]) =>
 afterEach(() => {
     cleanup();
     vi.mocked(importImageFile).mockReset();
-    useStore.setState({ currentDoc: null, selectedNodeIds: [], docPast: [], resourceRepo: null });
+    useStore.setState({
+        currentDoc: null,
+        selectedNodeIds: [],
+        docPast: [],
+        resourceRepo: null,
+        quantizerDefaults: {},
+        defaultQuantizerByType: {},
+    });
 });
 
 describe('size mapping (must-fix #1)', () => {
@@ -341,37 +348,118 @@ describe('shape style defaults shown by the inspector (#8)', () => {
 });
 
 describe('per-node quantizer params', () => {
-    it('edits bounded threshold and strength values through the Object tab', () => {
+    const paramsOf = (id: string) =>
+        useStore.getState().currentDoc!.nodes.find((n) => n.id === id)!.quantizerParams;
+
+    const serpentineSelect = (): HTMLSelectElement =>
+        screen.getAllByRole('combobox').find((el) =>
+            Array.from((el as HTMLSelectElement).options).some((option) => option.value === 'off'),
+        ) as HTMLSelectElement;
+
+    /** Open the PopoverSlider row labelled `label` and return its number input. */
+    const openQuantizerField = (label: string): HTMLInputElement => {
+        const row = screen.getByText(label).closest('.items-center.justify-between') as HTMLElement;
+        fireEvent.click(row.querySelector('.cursor-pointer') as HTMLElement);
+        return document.querySelector('input[type="number"]') as HTMLInputElement;
+    };
+
+    it('edits a bounded threshold value on a threshold-strategy node', () => {
         const selected = textNode();
         useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
         render(<ObjectTab selected={[selected]} />);
 
+        // A threshold node exposes Threshold only — the diffusion knobs do
+        // nothing for a point threshold (D-57(c)).
+        expect(screen.getByText('128')).toBeTruthy();
+        expect(screen.queryByText('Error diffusion')).toBeNull();
+        expect(screen.queryByText('Serpentine scan')).toBeNull();
+
         fireEvent.click(screen.getByText('128'));
-        fireEvent.change(screen.getAllByRole('spinbutton')[0]!, { target: { value: '200' } });
-        fireEvent.click(screen.getAllByText('1').at(-1)!);
-        fireEvent.change(screen.getAllByRole('spinbutton')[1]!, { target: { value: '2.5' } });
+        fireEvent.change(document.querySelector('input[type="number"]') as HTMLInputElement, {
+            target: { value: '200' },
+        });
         fireEvent.pointerUp(document);
 
-        expect(useStore.getState().currentDoc!.nodes[0]?.quantizerParams).toEqual({ threshold: 200, strength: 2.5 });
+        expect(paramsOf('t')).toEqual({ threshold: 200 });
     });
 
-    it('hides threshold/strength for a node that resolves no quantizer (shape without a hint)', () => {
+    it('hides every quantizer param for a node that resolves no quantizer (shape without a hint)', () => {
         const selected = shapeNode();
         useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['s'] });
         render(<ObjectTab selected={[selected]} />);
 
         // The quantizer select is still offered, but the inert params are hidden.
-        expect(screen.queryByText('Dither strength')).toBeNull();
+        expect(screen.queryByText('Error diffusion')).toBeNull();
+        expect(screen.queryByText('Serpentine scan')).toBeNull();
         expect(screen.queryByText('128')).toBeNull();
     });
 
-    it('shows threshold/strength once the node resolves a quantizer (shape with a hint)', () => {
+    it('shows Threshold only for a shape that resolves the threshold strategy', () => {
         const selected = shapeNode({ quantizerHint: 'threshold' });
         useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['s'] });
         render(<ObjectTab selected={[selected]} />);
 
-        expect(screen.getByText('Dither strength')).toBeTruthy();
         expect(screen.getByText('128')).toBeTruthy();
+        expect(screen.queryByText('Error diffusion')).toBeNull();
+        expect(screen.queryByText('Serpentine scan')).toBeNull();
+    });
+
+    it('shows Error diffusion + Serpentine scan for a diffuser strategy', () => {
+        const selected = shapeNode({ quantizerHint: 'floydSteinberg' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['s'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        expect(screen.getByText('Error diffusion')).toBeTruthy();
+        expect(screen.getByText('Serpentine scan')).toBeTruthy();
+        // A diffuser hides the threshold knob.
+        expect(screen.queryByText('128')).toBeNull();
+    });
+
+    it('edits error diffusion through the Object tab', () => {
+        const selected = shapeNode({ quantizerHint: 'floydSteinberg' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['s'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        const input = openQuantizerField('Error diffusion');
+        fireEvent.change(input, { target: { value: '2.5' } });
+        fireEvent.pointerUp(document);
+
+        expect(paramsOf('s')).toEqual({ strength: 2.5 });
+    });
+
+    it('writes on/off/auto to the node serpentine param', () => {
+        const selected = shapeNode({ quantizerHint: 'floydSteinberg' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['s'] });
+        render(<ObjectTab selected={[selected]} />);
+        const select = serpentineSelect();
+        // Absent ⇒ the strategy's settings default, never a pinned `true` (R13-e).
+        expect(select.value).toBe('');
+
+        fireEvent.change(select, { target: { value: 'off' } });
+        fireEvent.pointerUp(document);
+        expect(paramsOf('s')?.serpentine).toBe(false);
+
+        fireEvent.change(select, { target: { value: 'on' } });
+        fireEvent.pointerUp(document);
+        expect(paramsOf('s')?.serpentine).toBe(true);
+
+        fireEvent.change(select, { target: { value: '' } });
+        fireEvent.pointerUp(document);
+        expect(paramsOf('s')).toBeUndefined();
+    });
+
+    it('reveals the diffusion knobs when a per-type default makes the node a diffuser', () => {
+        const selected = textNode();
+        useStore.setState({
+            currentDoc: doc([selected]),
+            selectedNodeIds: ['t'],
+            // A `text` node defaults to `threshold`; the setting overrides it.
+            defaultQuantizerByType: { text: 'atkinson' },
+        });
+        render(<ObjectTab selected={[selected]} />);
+
+        expect(screen.getByText('Error diffusion')).toBeTruthy();
+        expect(screen.queryByText('128')).toBeNull();
     });
 });
 

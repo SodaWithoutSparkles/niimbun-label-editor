@@ -75,8 +75,12 @@ export interface BaseNode {
      * `ContentSource` — it is node data, not content.
      */
     quantizerHint?: QuantizerId;
-    /** Per-node quantizer controls. Missing options inherit render-level defaults. */
-    quantizerParams?: { threshold?: number; strength?: number };
+    /**
+     * Per-node quantizer controls. Missing options inherit the strategy's
+     * settings default, then the render-level default. `serpentine` is meaningful
+     * only for the error-diffusion quantizers (threshold ignores it).
+     */
+    quantizerParams?: { threshold?: number; strength?: number; serpentine?: boolean };
 } // + type-specific fields (text props, shape kind, image resource ref, qr payload…)
 
 /** The composed transform shape. Derived type; never stored on a node. */

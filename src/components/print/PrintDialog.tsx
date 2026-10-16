@@ -100,6 +100,11 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     const { t } = useTranslation();
     const setEditorWarnings = useStore((state) => state.setEditorWarnings);
     const clearEditorWarnings = useStore((state) => state.clearEditorWarnings);
+    // Dither settings (the store's global preference). `src/print/` must stay
+    // store-free, so these ride the options object into the shared render path
+    // (preview, thumbnails and the print job) from here.
+    const quantizerDefaults = useStore((state) => state.quantizerDefaults);
+    const defaultQuantizerByType = useStore((state) => state.defaultQuantizerByType);
     const capabilities = printerStatus.capabilities;
 
     const [order, setOrder] = useState<PrintOrder>('grouped');
@@ -210,8 +215,10 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             ...(invert ? { invert: true } : {}),
             ...(mirror ? { mirror: true } : {}),
             ...(parsedOffset ? { offset: parsedOffset } : {}),
+            quantizerDefaults,
+            defaultQuantizerByType,
         }),
-        [invert, mirror, parsedOffset],
+        [invert, mirror, parsedOffset, quantizerDefaults, defaultQuantizerByType],
     );
 
     // The `Page` view renders **one** record at the **document** dpi through the
@@ -284,6 +291,8 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             ...(invert ? { invert: true } : {}),
             ...(mirror ? { mirror: true } : {}),
             ...(parsedOffset ? { offset: parsedOffset } : {}),
+            quantizerDefaults,
+            defaultQuantizerByType,
         }),
         [
             densityEnabled,
@@ -295,6 +304,8 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             invert,
             mirror,
             parsedOffset,
+            quantizerDefaults,
+            defaultQuantizerByType,
         ],
     );
 

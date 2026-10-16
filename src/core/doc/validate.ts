@@ -341,6 +341,23 @@ const toQuantizerHint = (value: unknown, repairs?: string[]): QuantizerId | unde
 };
 
 /**
+ * Optional boolean. A missing (`undefined`) optional returns `undefined`
+ * silently; a present-but-non-boolean value is dropped (absent) and recorded as
+ * a repair rather than failing the document — an absent optional always means
+ * "use the render default", which is a safe fallback.
+ */
+const toOptionalBoolean = (
+    value: unknown,
+    repairs: string[] | undefined,
+    message: string,
+): boolean | undefined => {
+    if (value === undefined) return undefined;
+    if (typeof value === 'boolean') return value;
+    repairs?.push(message);
+    return undefined;
+};
+
+/**
  * Optional string-enum value. A missing (`undefined`) optional returns
  * `undefined` silently; a present-but-invalid value is dropped (absent) and
  * recorded as a repair rather than failing the document — an absent optional
@@ -404,7 +421,7 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
     if (value.quantizerParams !== undefined) {
         if (isRecord(value.quantizerParams)) {
             const raw = value.quantizerParams;
-            const params: { threshold?: number; strength?: number } = {};
+            const params: { threshold?: number; strength?: number; serpentine?: boolean } = {};
             if (raw.threshold !== undefined) {
                 if (isFiniteNumber(raw.threshold)) {
                     // Compare against the pre-clamp rounded value so a pure round
@@ -427,6 +444,12 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
                     }
                 } else repairs?.push('node.quantizerParams.strength: invalid value dropped');
             }
+            const serpentine = toOptionalBoolean(
+                raw.serpentine,
+                repairs,
+                'node.quantizerParams.serpentine: invalid value dropped',
+            );
+            if (serpentine !== undefined) params.serpentine = serpentine;
             if (Object.keys(params).length) base.quantizerParams = params;
         } else repairs?.push('node.quantizerParams: invalid value dropped');
     }

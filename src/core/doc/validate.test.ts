@@ -410,6 +410,35 @@ describe('isNode — quantizerParams', () => {
         expect(invalidRepairs).toContain('node.quantizerParams.strength: invalid value dropped');
     });
 
+    it('round-trips serpentine, and drops a non-boolean with a repair', () => {
+        expect(
+            isNode(baseNode({ quantizerParams: { threshold: 33, serpentine: false } }))?.quantizerParams,
+        ).toEqual({ threshold: 33, serpentine: false });
+        expect(isNode(baseNode({ quantizerParams: { serpentine: true } }))?.quantizerParams).toEqual({
+            serpentine: true,
+        });
+
+        const repairs: string[] = [];
+        expect(
+            isNode(baseNode({ quantizerParams: { serpentine: 'yes' } }), repairs)?.quantizerParams,
+        ).toBeUndefined();
+        expect(repairs).toContain('node.quantizerParams.serpentine: invalid value dropped');
+    });
+
+    it('still does not store a params object that resolves to nothing', () => {
+        // Every field dropped/invalid => an empty object => the key is absent.
+        expect(
+            isNode(baseNode({ quantizerParams: { threshold: 'x', strength: Number.NaN, serpentine: 1 } }))
+                ?.quantizerParams,
+        ).toBeUndefined();
+        expect(isNode(baseNode({ quantizerParams: {} }))?.quantizerParams).toBeUndefined();
+        // `serpentine` must round-trip through factory.roundNode identically.
+        expect(
+            roundNode(baseNode({ quantizerParams: { serpentine: false } }) as unknown as Node)
+                .quantizerParams,
+        ).toEqual({ serpentine: false });
+    });
+
     it('rounds strength to 2 dp and does not log a false clamp for a pure round', () => {
         const repairs: string[] = [];
         const node = isNode(

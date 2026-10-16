@@ -34,6 +34,21 @@ export type Quantizer = (rgba: RgbaBuffer, opts?: QuantizeOptions) => RgbaBuffer
 /** Registry keys. Extend here (and `QUANTIZERS`) when adding policies. */
 export type QuantizerId = 'threshold' | 'floydSteinberg' | 'stucki' | 'atkinson';
 
+/**
+ * Per-strategy default parameters — the knobs a quantizer uses when neither a
+ * node nor the render call supplies a value. `colorSpace` is deliberately
+ * excluded: it is a per-render projection choice, not a per-strategy default.
+ */
+export type QuantizerDefaultParams = Pick<QuantizeOptions, 'threshold' | 'strength' | 'serpentine'>;
+
+/**
+ * Per-strategy defaults keyed by registry id (see `QUANTIZERS`). A missing id,
+ * or a missing param, falls back to the engine defaults (128 / 1 / true). This
+ * is user preference data (the store's `quantizerDefaults`), never document
+ * data; `core/` never imports the store.
+ */
+export type QuantizerDefaults = Partial<Record<QuantizerId, QuantizerDefaultParams>>;
+
 /** Write a black/white value to RGB at `offset`, preserving alpha. */
 const writePixel = (data: Uint8ClampedArray, offset: number, value: number): void => {
     data[offset] = value;

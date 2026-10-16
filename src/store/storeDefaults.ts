@@ -1,5 +1,6 @@
 import type { SupportedLanguage } from '../i18n/languages';
-import type { AppState, ConnectMethod, KeyboardShortcutConfig } from './storeTypes';
+import type { QuantizerDefaults } from '../core/render';
+import type { AppState, ConnectMethod, DefaultQuantizerByType, KeyboardShortcutConfig } from './storeTypes';
 
 export const defaultAutoSave = true;
 
@@ -36,6 +37,19 @@ export const CONNECT_METHODS: readonly ConnectMethod[] = ['bluetooth', 'serial']
  * (`PrinterConnector.svelte`), which falls back to Bluetooth.
  */
 export const DEFAULT_CONNECT_METHOD: ConnectMethod = 'bluetooth';
+
+/**
+ * Per-strategy dithering defaults. Empty on purpose: the engine's built-in
+ * defaults (128 / 1 / true) apply, so an untouched install renders exactly as
+ * before this setting existed.
+ */
+export const DEFAULT_QUANTIZER_DEFAULTS: QuantizerDefaults = {};
+
+/**
+ * Per-object-type default quantizer. Empty on purpose: `DEFAULT_POLICY_BY_TYPE`
+ * (`core/render/policy`) remains the fallback for every type.
+ */
+export const DEFAULT_QUANTIZER_BY_TYPE: DefaultQuantizerByType = {};
 
 export const defaultKeyboardShortcuts: KeyboardShortcutConfig = {
     modifyKey: 'ctrl',

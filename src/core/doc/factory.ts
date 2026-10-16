@@ -109,6 +109,11 @@ export const roundNode = (node: Node): Node => {
             ...(node.quantizerParams.strength !== undefined && Number.isFinite(node.quantizerParams.strength)
                 ? { strength: Math.round(Math.max(0, Math.min(4, node.quantizerParams.strength)) * 100) / 100 }
                 : {}),
+            // A boolean needs no rounding; drop only a non-boolean (a caller that
+            // bypassed validation), so a valid `serpentine` round-trips verbatim.
+            ...(typeof node.quantizerParams.serpentine === 'boolean'
+                ? { serpentine: node.quantizerParams.serpentine }
+                : {}),
         };
     }
     // Drop a params object that rounded down to nothing (e.g. `{}` or all-invalid)

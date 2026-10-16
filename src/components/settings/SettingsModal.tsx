@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { Keyboard, Settings, ShieldCheck, Wrench } from 'lucide-react';
+import { Keyboard, Palette, Settings, ShieldCheck, Wrench } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import { confirm, Modal } from '../common/dialogs';
 import { GeneralSection } from './GeneralSection';
+import { RenderingSection } from './RenderingSection';
 import { ShortcutsSection } from './ShortcutsSection';
 import { ToolsSection } from './ToolsSection';
 import { TrustSection } from './TrustSection';
@@ -34,6 +35,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) =
                 label: t('settings.general.label'),
                 icon: <Settings size={18} />,
                 content: <GeneralSection />
+            },
+            {
+                id: 'rendering',
+                label: t('settings.rendering.label'),
+                icon: <Palette size={18} />,
+                content: <RenderingSection />
             },
             {
                 id: 'shortcuts',

@@ -28,6 +28,8 @@ export {
     stucki,
     threshold,
     type Quantizer,
+    type QuantizerDefaultParams,
+    type QuantizerDefaults,
     type QuantizerId,
     type QuantizeOptions,
 } from './quantize';
@@ -35,11 +37,17 @@ export {
 export {
     applyPolicy,
     DEFAULT_POLICY_BY_TYPE,
+    policyKeyOf,
+    quantizerSettingsKey,
     resolveQuantizer,
+    resolveQuantizerParams,
     type PolicyMask,
     type PolicyNode,
+    type PolicyParams,
+    type QuantizerByType,
     type QuantizerPolicies,
     type QuantizerPolicy,
+    type ResolvedPolicyParams,
 } from './policy';
 
 export { quantizeRgba, type QuantizeRequest } from './pipeline';

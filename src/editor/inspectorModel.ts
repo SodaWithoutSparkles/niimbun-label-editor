@@ -1,5 +1,5 @@
 import type { Node, NodeType } from '../core/doc/types';
-import { QUANTIZERS, resolveQuantizer } from '../core/render';
+import { QUANTIZERS, resolveQuantizer, type QuantizerByType } from '../core/render';
 import { BARCODE_SYMBOLOGIES, CODE_FORMATS, IMAGE_FITS, QR_ERROR_CORRECTIONS } from '../core/doc/objects';
 
 /**
@@ -191,12 +191,24 @@ export const CODE_FIELDS: readonly FieldDescriptor[] = [
 export const QUANTIZER_HINT_OPTIONS: readonly string[] = ['', ...Object.keys(QUANTIZERS)];
 
 /**
- * Whether a node's `quantizerParams` (`quantizerThreshold`/`quantizerStrength`)
- * can affect the render. A node with no `quantizerHint` and no per-type default
- * policy (e.g. a shape) resolves no quantizer, so the params are inert; the
- * Object tab hides the two fields rather than presenting a silent no-op.
+ * Which per-node quantizer controls a node's **effective** strategy exposes:
+ *   - `'threshold'` — only the threshold knob (strength/serpentine do nothing
+ *     for a point threshold — D-57(c));
+ *   - `'diffusion'` — the diffusion knobs (Error diffusion + Serpentine scan);
+ *   - `'hidden'` — no effective quantizer, so every knob is inert.
+ * Resolution is hint → per-type default (`byType`) → module constant, matching
+ * the render path, so a per-type setting can reveal or hide the knobs.
  */
-export const quantizerParamsApply = (node: Node): boolean => resolveQuantizer(node) !== undefined;
+export type QuantizerParamVisibility = 'threshold' | 'diffusion' | 'hidden';
+
+export const quantizerParamVisibility = (
+    node: Node,
+    byType?: QuantizerByType,
+): QuantizerParamVisibility => {
+    const id = resolveQuantizer(node, byType);
+    if (id === undefined) return 'hidden';
+    return id === 'threshold' ? 'threshold' : 'diffusion';
+};
 
 /**
  * Extra fields whose owning engine ships later, plus the wired per-object
@@ -212,6 +224,10 @@ export const RESERVED_FIELDS: readonly FieldDescriptor[] = [
     { key: 'quantizerHint', scope: 'reserved', kind: 'select', wired: true, options: QUANTIZER_HINT_OPTIONS },
     { key: 'quantizerThreshold', scope: 'reserved', kind: 'number', wired: true },
     { key: 'quantizerStrength', scope: 'reserved', kind: 'number', wired: true },
+    // Per-node serpentine scan. A `select` (not a boolean) reuses the `''`-means-
+    // auto convention: `''` ⇒ no per-node value (the strategy's settings default
+    // applies — never a pinned `true`), `on`/`off` ⇒ an explicit boolean.
+    { key: 'quantizerSerpentine', scope: 'reserved', kind: 'select', wired: true, options: ['', 'on', 'off'] },
     // Read-only template trust state for the open document.
     { key: 'templateTrust', scope: 'reserved', kind: 'templateTrust', wired: true },
 ];

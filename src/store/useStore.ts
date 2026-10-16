@@ -13,6 +13,8 @@ import { createViewSlice } from './slices/viewSlice';
 import {
     DEFAULT_CONNECT_METHOD,
     DEFAULT_GRID_SPACING_HM,
+    DEFAULT_QUANTIZER_BY_TYPE,
+    DEFAULT_QUANTIZER_DEFAULTS,
     DEFAULT_SCREEN_DPI,
     defaultAutoSave,
     defaultKeyboardShortcuts,
@@ -34,6 +36,8 @@ const persistedDefaults: PersistedSettings = {
     screenDpi: DEFAULT_SCREEN_DPI,
     gridSpacingHm: DEFAULT_GRID_SPACING_HM,
     connectMethod: DEFAULT_CONNECT_METHOD,
+    quantizerDefaults: DEFAULT_QUANTIZER_DEFAULTS,
+    defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
     // Optional: `undefined` is the "no preference" default (see `storeTypes`).
     defaultPaperTypeId: undefined,
 };
@@ -151,6 +155,8 @@ export const createAppStore = (storage?: Storage) => {
                     screenDpi: s.screenDpi,
                     gridSpacingHm: s.gridSpacingHm,
                     connectMethod: s.connectMethod,
+                    quantizerDefaults: s.quantizerDefaults,
+                    defaultQuantizerByType: s.defaultQuantizerByType,
                     defaultPaperTypeId: s.defaultPaperTypeId,
                 }),
                 migrate: (persisted) => persisted as PersistedSettings,

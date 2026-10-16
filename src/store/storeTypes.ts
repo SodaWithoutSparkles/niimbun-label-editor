@@ -3,7 +3,17 @@ import type { SupportedLanguage } from '../i18n/languages';
 import type { InsertAction } from './slices/toolsSlice';
 import type { GallerySection, ZoomMode } from './slices/viewSlice';
 import type { hm } from '../core/hm';
-import type { FontRef, Guide, ImageRef, LabelDoc, Node, Region, GlobalSpec } from '../core/doc/types';
+import type {
+    FontRef,
+    Guide,
+    ImageRef,
+    LabelDoc,
+    Node,
+    NodeType,
+    Region,
+    GlobalSpec,
+} from '../core/doc/types';
+import type { QuantizerDefaults, QuantizerId } from '../core/render';
 import type { ResizeOptions, Size } from '../core/doc/geometry';
 import type { CsvRepo } from '../data/csvRepo';
 import type { LabelRepo, LabelSummary } from '../data/labelRepo';
@@ -61,6 +71,13 @@ export type TextSaveModifier = ModifierKey | 'none';
  * browser transports are ever persisted.
  */
 export type ConnectMethod = 'bluetooth' | 'serial';
+
+/**
+ * Per-object-type default quantizer (`NodeType` → registry id). Persisted with
+ * the other global settings; a type absent here falls back to
+ * `DEFAULT_POLICY_BY_TYPE` (`core/render/policy`). Never document data.
+ */
+export type DefaultQuantizerByType = Partial<Record<NodeType, QuantizerId>>;
 
 export type NotificationType = 'info' | 'success' | 'warning' | 'error';
 
@@ -137,6 +154,21 @@ export interface AppState {
      */
     connectMethod: ConnectMethod;
     setConnectMethod: (method: ConnectMethod) => void;
+    /**
+     * Per-strategy dithering defaults (threshold/strength/serpentine), keyed by
+     * quantizer id. Empty = the engine defaults, so an untouched install renders
+     * byte-identically. Persisted with the other global settings; never document
+     * data.
+     */
+    quantizerDefaults: QuantizerDefaults;
+    setQuantizerDefaults: (defaults: QuantizerDefaults) => void;
+    /**
+     * Per-object-type default quantizer. Empty = `DEFAULT_POLICY_BY_TYPE` remains
+     * the fallback for every type. Persisted with the other global settings;
+     * never document data.
+     */
+    defaultQuantizerByType: DefaultQuantizerByType;
+    setDefaultQuantizerByType: (defaults: DefaultQuantizerByType) => void;
     /**
      * Preferred paper type for a new label, persisted across sessions. Optional
      * on purpose: unset (`undefined`) is valid and means "no preference", so the

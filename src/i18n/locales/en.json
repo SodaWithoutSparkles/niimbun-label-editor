@@ -113,6 +113,29 @@
       "calibrationDecrease": "Decrease DPI",
       "calibrationIncrease": "Increase DPI"
     },
+    "rendering": {
+      "label": "Rendering",
+      "strategyDefaults": "Strategy defaults",
+      "strategyDefaultsDescription": "Default dithering parameters for each strategy. A per-object override always wins. These affect printing and print preview, never the editor canvas.",
+      "defaultByType": "Default by object type",
+      "defaultByTypeDescription": "Quantizer used for objects of each type that carry no explicit quantizer.",
+      "threshold": "Threshold",
+      "thresholdDescription": "Binary cutoff, 0 to 255. Default 128.",
+      "errorDiffusion": "Error diffusion",
+      "errorDiffusionDescription": "Diffusion strength, 0 to 4. 1 is standard; above 1 amplifies. Default 1.",
+      "errorDiffusionAria": "{{strategy}} error diffusion",
+      "serpentine": "Serpentine scan",
+      "serpentineDescription": "Alternate the scan direction on every row. Default on.",
+      "serpentineAria": "{{strategy}} serpentine scan",
+      "typeDefault": "Type default",
+      "typeLabels": {
+        "text": "Text",
+        "image": "Image",
+        "qr": "QR",
+        "barcode": "Barcode",
+        "code": "2D code"
+      }
+    },
     "shortcuts": {
       "label": "Keyboard Shortcuts",
       "drawingModifiers": "Drawing Modifiers",
@@ -622,6 +645,11 @@
         "stucki": "Stucki",
         "atkinson": "Atkinson"
       },
+      "serpentineOptions": {
+        "settingsDefault": "Settings default",
+        "on": "On",
+        "off": "Off"
+      },
       "wrap": {
         "word": "Wrap at word",
         "char": "Wrap at character",
@@ -686,7 +714,8 @@
         "contentSource": "Content source",
         "quantizerHint": "Quantizer",
         "quantizerThreshold": "Threshold",
-        "quantizerStrength": "Dither strength",
+        "quantizerStrength": "Error diffusion",
+        "quantizerSerpentine": "Serpentine scan",
         "templateTrust": "Template trust"
       }
     },

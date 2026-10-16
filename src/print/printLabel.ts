@@ -1,5 +1,6 @@
 import { ImageEncoder, PageColorType, type LabelType } from '@mmote/niimbluelib';
 import type { LabelDoc } from '../core/doc/types';
+import type { QuantizerByType, QuantizerDefaults } from '../core/render';
 import type { CsvRecord } from '../data/csvRepo';
 import {
     renderLabelPage,
@@ -53,6 +54,14 @@ export interface PrintOverrides {
     mirror?: boolean;
     /** Applied last, on a fresh canvas: shift by device px at the effective dpi. */
     offset?: { x: number; y: number; type: 'inner' | 'outer' };
+    /**
+     * Per-strategy dither settings defaults. `src/print/` must not import the
+     * store, so these arrive through the options object from a store-aware
+     * caller (the dialog); absent = the engine defaults.
+     */
+    quantizerDefaults?: QuantizerDefaults;
+    /** Per-object-type default-quantizer overrides; absent = `DEFAULT_POLICY_BY_TYPE`. */
+    defaultQuantizerByType?: QuantizerByType;
 }
 
 export interface CsvPrintJobOptions {
@@ -119,6 +128,12 @@ export const renderOptionsOf = (
     ...(overrides?.invert !== undefined ? { invert: overrides.invert } : {}),
     ...(overrides?.mirror !== undefined ? { mirror: overrides.mirror } : {}),
     ...(overrides?.offset !== undefined ? { offset: overrides.offset } : {}),
+    ...(overrides?.quantizerDefaults !== undefined
+        ? { quantizerDefaults: overrides.quantizerDefaults }
+        : {}),
+    ...(overrides?.defaultQuantizerByType !== undefined
+        ? { defaultQuantizerByType: overrides.defaultQuantizerByType }
+        : {}),
 });
 
 /**

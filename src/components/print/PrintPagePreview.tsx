@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import type { LabelDoc } from '../../core/doc/types';
+import { quantizerSettingsKey } from '../../core/render';
 import {
     renderLabelPage,
     type RenderedLabelPage,
@@ -75,11 +76,21 @@ export interface PrintPreviewReport {
  */
 export const previewOptionsKey = (options: RenderLabelPageOptions): string => {
     const offset = options.offset;
+    // The dither settings change pixels, so they must participate in the key —
+    // otherwise a settings edit would show a stale doc-dpi preview. The shared,
+    // order-independent `quantizerSettingsKey` serializes them **by value**
+    // (content, not object identity or insertion order), so an equal-but-fresh
+    // options object does not restart the render.
+    const quantizer = quantizerSettingsKey(
+        options.quantizerDefaults,
+        options.defaultQuantizerByType,
+    );
     return [
         options.dpi ?? '-',
         options.invert === true ? 1 : 0,
         options.mirror === true ? 1 : 0,
         offset === undefined ? '-' : `${offset.x},${offset.y},${offset.type}`,
+        quantizer,
     ].join('|');
 };
 

@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { monoLuminance, type ColorSpace, type RgbaBuffer } from './colorspace';
-import { floydSteinberg, threshold, type QuantizeOptions, type Quantizer } from './quantize';
-import { applyPolicy, DEFAULT_POLICY_BY_TYPE, resolveQuantizer, type PolicyMask } from './policy';
+import { floydSteinberg, threshold, type QuantizeOptions, type Quantizer, type QuantizerDefaults } from './quantize';
+import {
+    applyPolicy,
+    DEFAULT_POLICY_BY_TYPE,
+    policyKeyOf,
+    quantizerSettingsKey,
+    resolveQuantizer,
+    resolveQuantizerParams,
+    type PolicyMask,
+} from './policy';
 import { quantizeRgba } from './pipeline';
 
 const fromGrays = (width: number, height: number, values: readonly number[]): RgbaBuffer => {
@@ -76,6 +84,99 @@ describe('resolveQuantizer', () => {
             image: 'floydSteinberg',
         });
         expect(DEFAULT_POLICY_BY_TYPE['shape']).toBeUndefined();
+    });
+
+    it('lets a supplied per-type map win over the module constant, per type', () => {
+        // The map replaces only the types it names ...
+        expect(resolveQuantizer({ type: 'text' }, { text: 'atkinson' })).toBe('atkinson');
+        // ... while types it omits still resolve through DEFAULT_POLICY_BY_TYPE.
+        expect(resolveQuantizer({ type: 'image' }, { text: 'atkinson' })).toBe('floydSteinberg');
+        // An explicit hint still beats the map.
+        expect(resolveQuantizer({ type: 'text', quantizerHint: 'stucki' }, { text: 'atkinson' })).toBe(
+            'stucki',
+        );
+        // An empty (default) map is behaviourally identical to before the setting.
+        expect(resolveQuantizer({ type: 'text' }, {})).toBe('threshold');
+        expect(resolveQuantizer({ type: 'shape' }, {})).toBeUndefined();
+    });
+
+    it('does not read inherited members from a supplied map', () => {
+        expect(resolveQuantizer({ type: 'toString' }, {})).toBeUndefined();
+    });
+});
+
+describe('policyKeyOf (D-57(b))', () => {
+    it('includes serpentine so two nodes differing only in effective serpentine differ', () => {
+        const params = { threshold: 128, strength: 1 };
+        const on = resolveQuantizerParams(params, 'floydSteinberg');
+        const off = resolveQuantizerParams({ ...params, serpentine: false }, 'floydSteinberg');
+        expect(on.serpentine).toBe(true);
+        expect(off.serpentine).toBe(false);
+        expect(policyKeyOf('floydSteinberg', on)).not.toBe(policyKeyOf('floydSteinberg', off));
+    });
+
+    it('resolves the effective serpentine from the strategy settings default (node → setting → true)', () => {
+        // No node param, no setting => engine default true.
+        expect(resolveQuantizerParams(undefined, 'stucki').serpentine).toBe(true);
+        // No node param, setting says false => the setting wins (never pinned true).
+        expect(
+            resolveQuantizerParams(undefined, 'stucki', { stucki: { serpentine: false } }).serpentine,
+        ).toBe(false);
+        // A node param overrides the setting.
+        expect(
+            resolveQuantizerParams({ serpentine: true }, 'stucki', { stucki: { serpentine: false } })
+                .serpentine,
+        ).toBe(true);
+        expect(policyKeyOf('stucki', resolveQuantizerParams(undefined, 'stucki'))).not.toBe(
+            policyKeyOf(
+                'stucki',
+                resolveQuantizerParams(undefined, 'stucki', { stucki: { serpentine: false } }),
+            ),
+        );
+    });
+
+    it('lets a per-strategy settings default fill an absent threshold/strength', () => {
+        const resolved = resolveQuantizerParams(undefined, 'floydSteinberg', {
+            floydSteinberg: { threshold: 200, strength: 2 },
+        });
+        expect(resolved).toEqual({ threshold: 200, strength: 2, serpentine: true });
+        // A node param overrides the setting; the render fallback only fills gaps.
+        expect(
+            resolveQuantizerParams({ threshold: 50 }, 'floydSteinberg', {
+                floydSteinberg: { threshold: 200 },
+            }, { strength: 3 }),
+        ).toEqual({ threshold: 50, strength: 3, serpentine: true });
+    });
+});
+
+describe('quantizerSettingsKey', () => {
+    it('is order-independent: equal content in a different insertion order has one key', () => {
+        const a: QuantizerDefaults = {
+            floydSteinberg: { threshold: 200, strength: 2, serpentine: false },
+            stucki: { strength: 0.5 },
+        };
+        const b: QuantizerDefaults = {
+            stucki: { strength: 0.5 },
+            floydSteinberg: { serpentine: false, strength: 2, threshold: 200 },
+        };
+        expect(quantizerSettingsKey(a)).toBe(quantizerSettingsKey(b));
+        expect(
+            quantizerSettingsKey(a, { image: 'stucki', text: 'threshold' }),
+        ).toBe(quantizerSettingsKey(b, { text: 'threshold', image: 'stucki' }));
+    });
+
+    it('a changed value produces a different key', () => {
+        const base: QuantizerDefaults = { floydSteinberg: { serpentine: false } };
+        expect(quantizerSettingsKey(base)).not.toBe(
+            quantizerSettingsKey({ floydSteinberg: { serpentine: true } }),
+        );
+        expect(quantizerSettingsKey(base, { image: 'stucki' })).not.toBe(
+            quantizerSettingsKey(base, { image: 'atkinson' }),
+        );
+    });
+
+    it('treats absent and empty maps alike', () => {
+        expect(quantizerSettingsKey()).toBe(quantizerSettingsKey({}, {}));
     });
 });
 

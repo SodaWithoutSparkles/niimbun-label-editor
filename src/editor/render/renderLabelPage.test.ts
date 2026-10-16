@@ -259,7 +259,114 @@ describe('renderLabelPage — shared preview/print path', () => {
         const entry = built.policies.get(1);
         expect(entry).toBeDefined();
         if (!entry || typeof entry === 'function') return;
-        expect(entry.options).toEqual({ threshold: 200, strength: 2 });
+        // `serpentine` is now always explicit (fix 1), so the diffuser's actual
+        // options carry the resolved `true` rather than inheriting the base's.
+        expect(entry.options).toEqual({ threshold: 200, strength: 2, serpentine: true });
+    });
+
+    it('gives two nodes differing only in serpentine distinct policy slots (D-57(b))', async () => {
+        const mk = (id: string, x: number, params?: { serpentine: boolean }): Node =>
+            node({
+                id, parentId: null, type: 'text', visible: true, locked: false,
+                transform: { x, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                text: { kind: 'static', value: 'X' }, size: { w: 500, h: 500 }, fontSize: 400,
+                quantizerHint: 'floydSteinberg',
+                ...(params ? { quantizerParams: params } : {}),
+            });
+        const doc = smallDoc(fullRegions, [mk('a', 0), mk('b', 600, { serpentine: false })]);
+        const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+        const built = await buildPolicyMask(resolve(doc), nodeLookup(doc.nodes), dims, doc.label.dpi);
+        expect(built).toBeDefined();
+        if (!built) return;
+        // Two distinct slots: the diffuser sees `serpentine: false` for the one
+        // node, and the two do not silently share a mask entry.
+        expect(built.policies.size).toBe(2);
+        const slots = new Set<number>();
+        for (const value of built.mask.data) if (value !== 0) slots.add(value);
+        expect(slots.size).toBe(2);
+        // Assert the **actual options**, not just distinct slots (the nit): the
+        // param-less node's policy carries `true`, the explicit node's `false`.
+        const optionsAt = (index: number) => {
+            const entry = built.policies.get(index);
+            return entry && typeof entry !== 'function' ? entry.options : undefined;
+        };
+        expect(optionsAt(1)?.serpentine).toBe(true);
+        expect(optionsAt(2)?.serpentine).toBe(false);
+    });
+
+    it('a node whose effective serpentine is true ignores a false global base (fix 1)', async () => {
+        const doc = createLabelDoc({
+            backingW: 4000,
+            backingH: 2000,
+            dpi: 254,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 4000, h: 2000 }],
+            nodes: [
+                node({
+                    id: 't',
+                    parentId: null,
+                    type: 'text',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    text: { kind: 'static', value: 'Wg' },
+                    size: { w: 3000, h: 1500 },
+                    fontSize: 600,
+                    quantizerHint: 'floydSteinberg',
+                    // Node explicitly wants serpentine on; the base resolves off.
+                    quantizerParams: { serpentine: true },
+                }),
+            ],
+        });
+        const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+        const built = await buildPolicyMask(
+            resolve(doc),
+            nodeLookup(doc.nodes),
+            dims,
+            doc.label.dpi,
+            undefined,
+            { serpentine: false },
+        );
+        expect(built).toBeDefined();
+        // The policy carries its own explicit `true`, so a `false` base cannot
+        // leak into the diffuser by omission (the pre-fix bug).
+        const entry = built?.policies.get(1);
+        expect(entry && typeof entry !== 'function' ? entry.options?.serpentine : undefined).toBe(true);
+
+        // End to end: the output is identical whether the base is false or true.
+        const baseFalse = await renderLabelPage(doc, {}, { serpentine: false });
+        const baseTrue = await renderLabelPage(doc, {}, { serpentine: true });
+        expect(baseFalse.rgba.data).toEqual(baseTrue.rgba.data);
+    });
+
+    it('a per-strategy serpentine default reaches the global diffuser (fix 2)', async () => {
+        // An unhinted gray shape resolves **no** policy, so the whole frame runs
+        // through the global pass. Uniform gray emits diffusion error, so
+        // serpentine actually changes the pattern.
+        const doc = imageDoc([
+            node({
+                id: 'g',
+                parentId: null,
+                type: 'shape',
+                shape: 'rectangle',
+                visible: true,
+                locked: false,
+                transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                size: { w: 3000, h: 1500 },
+                fill: '#808080',
+            }),
+        ]);
+        const off = await renderLabelPage(doc, {}, {
+            quantizer: 'floydSteinberg',
+            quantizerDefaults: { floydSteinberg: { serpentine: false } },
+        });
+        const on = await renderLabelPage(doc, {}, {
+            quantizer: 'floydSteinberg',
+            quantizerDefaults: { floydSteinberg: { serpentine: true } },
+        });
+        const unset = await renderLabelPage(doc, {}, { quantizer: 'floydSteinberg' });
+
+        expect(off.rgba.data, 'the strategy default changes the global raster').not.toEqual(on.rgba.data);
+        expect(unset.rgba.data, 'unset falls back to the engine default (true)').toEqual(on.rgba.data);
     });
 
     it('collapses absent, empty, and explicit-default params into one shared policy', async () => {
