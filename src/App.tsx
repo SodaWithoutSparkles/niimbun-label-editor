@@ -5,8 +5,11 @@ import { MainLayout } from './components/layout/MainLayout';
 import { HardwareSmoke } from './components/dev/HardwareSmoke';
 import { PrintSmoke } from './components/dev/PrintSmoke';
 import { PrintCsvSmoke } from './components/dev/PrintCsvSmoke';
+import { useUrlSync } from './components/layout/useUrlSync';
 
 function App() {
+    // Hash routing lives for the app's lifetime (see `components/layout/useUrlSync`).
+    useUrlSync();
     const params = new URLSearchParams(window.location.search);
     const showHardwareSmoke = params.has('hardware');
     const showPrintSmoke = params.has('print');
