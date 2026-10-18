@@ -161,8 +161,10 @@ This section contains debts/issues that are discovered during the fixes.
 - Recent view in gallery doesnt show a preview of the document. It only shows the label's preview image. Add a small preview of the document in the recent view.
 
 ### P14 — Quantization round 2 (tone curve, Ostromoukhov, live preview)
-State: **Planned 2026-10-17 (owner items); NOT STARTED.** Deferred out of the P13b session, which closed
-the P13 backlog — this is its own phase with its own action plan when it runs (`phase14_action-plan.md`).
+State: **DONE 2026-10-17/19.** Commits `2b0f70a` (per-strategy gamma tone-curve LUT) · `f2d3bc9`
+(`ostromoukhov` variable-coefficient dither) · `8468b54` (live quantized preview) · docs/register commit.
+Action plan: [`phase14_action-plan.md`](phase14_action-plan.md) — carries the recon, the settled owner
+decisions and the residual ids.
 Owner item list (2026-10-17), in the owner's order:
 
 1. **Tone curve / gamma LUT, per strategy, with a sensible default.**
@@ -177,21 +179,23 @@ Owner item list (2026-10-17), in the owner's order:
    or two nodes differing only in the tone curve silently share one mask slot and the first wins — that is
    exactly the D-57(b) trap; and it must be in `quantizerSettingsKey` or previews/thumbnails go stale
    (R13-c). The 8-slot mask palette (**R13-a**) gets one more way to overflow.
-   - **Open decision (settle before coding):** "sensible default" = **neutral identity** (gamma 1.0 /
-     amount 0 — every existing doc renders byte-identically until the user sets it) **or** a **non-neutral
-     recommended default** (e.g. gamma ≈1.8, per the ScreenStyle demo's `index.html:88-89`, which visibly
-     changes every existing document — acceptable at v0 alpha but a deliberate output change).
+   - **SETTLED (owner, 2026-10-17): non-neutral 1.3 for the diffusers, neutral 1.0 for `threshold`** —
+     scoped that way because a gamma LUT before a point threshold only moves the binarisation cutoff
+     (128 → ~104) and qr / barcode / code / text are all `threshold` by default. Written as **gamma only,
+     per strategy, in settings** — no per-node, no per-paper, no doc field. Shipped in `2b0f70a`.
 2. **Drop Bayer / screentone / ScreenStyle / ScreenVAE — for now** (owner decision 2026-10-17).
+   **[DONE — recorded as *dropped by the owner* in `memory/dithering.md` §2.3/§8 and the
+   `screenstyle-quantization.md` banner; analysis kept, no debt id.]**
    No ordered/Bayer dithering, no screentone, no ScreenVAE/ScreenStyle integration. This is a
    **documentation/register** item: make the "what is missing" lines say **dropped by owner**, not
    "pending" (`memory/dithering.md` §4/§7 — including the head-locked-pitch precondition for screentone —
    and `memory/screenstyle-quantization.md`), and update the debt register accordingly. Keep the analysis
    for a future revisit; do not delete it.
 3. **Implement Ostromoukhov** (variable-coefficient error diffusion, SIGGRAPH 2001).
-   - **BLOCKER, resolve first:** `memory/dithering.md:35` records the coefficient table as
-     **unobtained** — *"Table size / range / values are unverified — do not invent them."* The phase must
-     **obtain a citable table** (paper appendix or a reputable implementation) *before* writing engine
-     code. If it cannot be sourced, stop and take it back to the owner — do not invent coefficients.
+   - **RESOLVED (2026-10-17): the table was obtained** from the author's own reference implementation
+     (`varcoeffED.c` v1, Aug 2001 — `var_coefs_tab[256]`, fully expanded, so no key-level interpolation is
+     needed), cross-checked byte-identical against an independent implementation and machine-transcribed
+     with a 0/1024 diff. The paper PDF itself stayed unobtainable and was not needed. Shipped in `f2d3bc9`.
    - Implementation shape: a new table-driven diffuser path beside `createDiffuser`
      (`quantize.ts:66-139`) — coefficients selected by the current pixel's intensity (the paper's table is
      indexed by level, with the alternating/perturbation details to be taken from the source), then the
@@ -215,12 +219,9 @@ Owner item list (2026-10-17), in the owner's order:
      the printer will not produce.
    - Reuses the P13 cache-key work (`quantizerSettingsKey`, `previewOptionsKey`, `overridesContentKey`) so
      a stale result cannot be shown.
-   - **Open decision (settle before coding):** the per-strategy/per-type defaults live in the **Rendering
-     settings modal** (`SettingsModal` → a modal `<dialog>`), where the canvas is hidden behind the
-     dialog — so a canvas preview is pointless there. Choose one: **(a)** trigger from the **inspector**
-     knobs only (canvas visible; the main tuning surface), **(b)** give the settings surface its own
-     inline preview (like the print dialog's page preview, `PrintPagePreview` from P10/W5), or **(c)** make
-     that section non-modal. The owner left the choice open ("depending on what's more convenient").
+   - **SETTLED (owner, 2026-10-17): (a) — the inspector knobs only.** The canvas overlay shows the
+     quantized result while a per-node knob changes; the per-strategy/per-type defaults in the Rendering
+     settings modal stay unpreviewed, since the canvas is behind the dialog there. Shipped in `8468b54`.
    - Risks: per-keystroke/drift render cost (debounce + dpi cap), and the preview must never mutate the
      doc or push an undo entry.
 
@@ -228,6 +229,17 @@ Sequencing suggestion: items **1 ∥ 3-research** first (both are engine work ga
 decisions above and, for 3, by the table), then **4** (UI-heavy, depends on the tone curve/Ostromoukhov
 params existing), then **2** (docs-only cleanup, any time). One semantic commit per item, after its review
 pass — the run's standing convention.
+
+**Outcome (2026-10-17/19).** Ran as W1 → W2 → W3 → W4 because items 1 and 3 share `quantize.ts` /
+`policy.ts` / `en.json` (sequential, not parallel). Commits: `2b0f70a` (gamma LUT) · `f2d3bc9`
+(Ostromoukhov) · `8468b54` (live preview) · docs/register commit. Baseline 161 files / 2083 tests →
+**165 files / 2194 tests**, `tsc` clean. Each wave went through `review` (W4 via `review-fast`);
+W1 and W2 needed one fix round, W3 two. **Owner to verify in the browser** (manual, per the run's
+standing policy): the new gamma fields in the Rendering settings, the `Ostromoukhov` strategy, and the
+live preview while dragging the inspector's quantization knobs. **Hardware check owed:** the default
+gamma of 1.3 changes every existing error-diffusion document's output — worth a step-wedge comparison
+before v1 (D-63). New residual ids **D-58…D-67** in [`memory/tech-debt.md`](../memory/tech-debt.md);
+D-05 stays open and now also covers `ostromoukhov`.
 
 ## Risks & checkpoints
 

@@ -1,5 +1,9 @@
 # ScreenStyle (`references/ScreenStyle/`) — can it be a quantizer?
 
+> **DROPPED by the owner (2026-10-17).** The ScreenStyle/ScreenVAE integration is not planned; this
+> file is kept as **design rationale only** (the screentone direction was dropped with it). Nothing
+> below is a work item. See [`dithering.md`](dithering.md) §2.3 and §8.
+
 **Verdict: the model cannot be ported as a quantizer (3 hard blockers). The *idea* can —
 ship classical screentone as a procedural quantizer instead. ScreenStyle is the design
 rationale for that, not the implementation.**
@@ -64,7 +68,8 @@ GFLOPs per page**.
 
 ### Blocker 2 — it cannot honour print physics
 
-Our raster dpi is the printer's (`types.ts:275`, clamped 100–1200 in `validate.ts:80-94`).
+Our raster dpi is the printer's (`core/doc/types.ts:295`, clamped 100–1200 by `normalizeDpi`,
+`validate.ts:94`).
 The same learned dot pitch is the wrong physical lpi on a 30 mm sticker and on a 300 mm
 label. Fixing that means retraining per dpi/pitch — and the repo has no training code.
 Even *with* checkpoints in hand, this blocker stands.
@@ -125,12 +130,12 @@ k vs rank[(u,v) mod P]     --> ink
   re-threshold. ~20 lines, biggest visual win.
 - **Extend `QuantizeOptions`** with `levels`, `pitch`, `angle`, `toneGamma`; extend
   `QuantizerId` + `QUANTIZERS`; extend `policyKeyOf`
-  (`renderLabelPage.ts:210-211`, currently `${id}:${threshold}:${strength}` — it will
-  collide two distinct screentone policies that share threshold/strength); add
+  (`core/render/policy.ts:151`, now `id:threshold:strength:serpentine:gamma` — it will
+  collide two distinct screentone policies that share those params); add
   `quantizerParams` fields in the Object tab; add `en.json` keys; golden-pixel tests per
   variant in `quantize.test.ts`.
 - **Never the default for `qr` / `barcode` / `text`.** A screentoned QR does not scan.
-  Keep `DEFAULT_POLICY_BY_TYPE` (`policy.ts:17-22`) as-is; screentone is opt-in per node,
+  Keep `DEFAULT_POLICY_BY_TYPE` (`policy.ts:24-30`) as-is; screentone is opt-in per node,
   or a global choice for `image` content.
 - **Dither `strength` is meaningless** for this quantizer — ignore it, and consider
   reusing the field or documenting it as N/A in the inspector.

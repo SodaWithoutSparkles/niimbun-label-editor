@@ -29,7 +29,12 @@ top-level folder for React + store wiring silently breaks it. Both review rounds
 `src/navigation/` was rejected and split into `utils/urlHash.ts` (pure grammar) +
 `components/layout/useUrlSync.ts` (the hook), and a proposed `src/gallery/thumbnails.ts` was rejected in
 favour of `editor/render/docThumbnail.ts` (render logic) + `components/editor/useDocThumbnail.ts` (the
-hook) so that `store/` never imported a renderer.
+hook) so that `store/` never imported a renderer. **P14** followed the same rule without a new folder:
+the live quantized preview is `editor/quantizedPreview.ts` (pure trigger/dpi/budget policy) +
+`components/editor/useQuantizedPreview.ts` (the debounce/idle/token lifecycle) +
+`components/editor/QuantizedPreviewLayer.tsx` (the react-konva layer), and the shared preview content
+key is `editor/render/previewKeys.ts` — a pure render-layer module that two *different* component areas
+import, so it could not live in either one.
 
 **Documented exception:** `src/utils/urlHash.ts` imports `type { GallerySection }` from
 `store/slices/viewSlice` — **type-only**, compile-erased, so there is no runtime edge. It is deliberate:
