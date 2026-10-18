@@ -648,7 +648,8 @@
         "threshold": "Threshold",
         "floydSteinberg": "Floyd–Steinberg",
         "stucki": "Stucki",
-        "atkinson": "Atkinson"
+        "atkinson": "Atkinson",
+        "ostromoukhov": "Ostromoukhov"
       },
       "serpentineOptions": {
         "settingsDefault": "Settings default",

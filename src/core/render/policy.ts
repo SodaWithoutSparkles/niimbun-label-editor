@@ -87,6 +87,7 @@ export const DEFAULT_GAMMA_BY_STRATEGY: Record<QuantizerId, number> = {
     floydSteinberg: 1.3,
     stucki: 1.3,
     atkinson: 1.3,
+    ostromoukhov: 1.3,
 };
 
 /** A node's explicit quantizer params (structural, mirrors `Node['quantizerParams']`). */

@@ -124,6 +124,7 @@ const QUANTIZER_LABEL_KEYS = {
     floydSteinberg: 'editor.mfp.quantizerOptions.floydSteinberg',
     stucki: 'editor.mfp.quantizerOptions.stucki',
     atkinson: 'editor.mfp.quantizerOptions.atkinson',
+    ostromoukhov: 'editor.mfp.quantizerOptions.ostromoukhov',
 } as const satisfies Record<QuantizerId | '', string>;
 
 type QuantizerOption = keyof typeof QUANTIZER_LABEL_KEYS;

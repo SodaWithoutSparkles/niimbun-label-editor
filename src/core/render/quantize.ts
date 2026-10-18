@@ -1,4 +1,5 @@
 import { MonoColorSpace, type ColorSpace, type RgbaBuffer } from './colorspace';
+import { OSTROMOUKHOV_COEFFICIENTS } from './ostromoukhovTable';
 
 /**
  * Quantizers: RGBA(A) → exact black/white 1-bit pixels. Pure and headless — no
@@ -15,6 +16,10 @@ import { MonoColorSpace, type ColorSpace, type RgbaBuffer } from './colorspace';
  * optional `normalize` (default `true`) and `serpentine` scanning (default
  * `true`). `atkinson` opts out of normalization so 2/8 of the error is
  * discarded — that is the characteristic look, not a bug.
+ *
+ * `ostromoukhov` (`createVariableDiffuser`) is a different animal: the diffusion
+ * weights vary per pixel, selected by that pixel's own source level, so it is
+ * not expressible as a weight grid. See its own doc comment below.
  */
 
 export interface QuantizeOptions {
@@ -43,7 +48,7 @@ export interface QuantizeOptions {
 export type Quantizer = (rgba: RgbaBuffer, opts?: QuantizeOptions) => RgbaBuffer;
 
 /** Registry keys. Extend here (and `QUANTIZERS`) when adding policies. */
-export type QuantizerId = 'threshold' | 'floydSteinberg' | 'stucki' | 'atkinson';
+export type QuantizerId = 'threshold' | 'floydSteinberg' | 'stucki' | 'atkinson' | 'ostromoukhov';
 
 /**
  * Per-strategy default parameters — the knobs a quantizer uses when neither a
@@ -199,6 +204,133 @@ export const createDiffuser = (
     };
 };
 
+/**
+ * Ostromoukhov's variable-coefficient error diffusion.
+ *
+ * Reference: Ostromoukhov, V. "A Simple and Efficient Error-Diffusion
+ * Algorithm." Proc. SIGGRAPH 2001, pp. 567-572. DOI 10.1145/383259.383326.
+ * Ported from the author's `varcoeffED.c` (`make_output:502-530`,
+ * `distribute_error:443-455`); the coefficient table lives in
+ * `ostromoukhovTable.ts`.
+ *
+ * What makes it different from `createDiffuser`: the diffusion weights are not
+ * a fixed kernel — they vary per pixel, chosen from a 256-entry table by that
+ * pixel's **uncorrected** source level (`var_coefs_tab[input]`, *not* the
+ * error-corrected value). That is why this path keeps two planes: a byte
+ * `source` plane that survives the scan untouched, and the float working plane
+ * that accumulates error.
+ *
+ * Kernel — three taps, always: `term_r = i_r*diff/i_sum` → `(x+dir, y)`,
+ * `term_dl = i_dl*diff/i_sum` → `(x-dir, y+1)`, `term_d = diff - (term_r +
+ * term_dl)` → `(x, y+1)`. `term_d` is the **remainder**, which is what makes the
+ * error exactly conserved (`i_sum === i_r + i_dl + i_d` in every row makes the
+ * paper's `i_d*diff/i_sum` mathematically identical; the remainder only avoids
+ * float drift).
+ *
+ * Differences from the reference, both deliberate and behaviourally documented:
+ *   - the classification is `corrected < threshold` with the engine's default
+ *     `128`, where the C uses `corrected_level <= 127.5` with a fixed `127.5`.
+ *     The two reproduce each other exactly for every integral corrected value
+ *     and differ only in the half-open band `(127.5, 128)` at the default
+ *     cutoff; the deviation is deliberate and pinned by a test — see the
+ *     classification site.
+ *   - `serpentine` is exposed and defaults to `true`. The reference is *always*
+ *     serpentine (`dir` flips with the scan direction); `false` scans
+ *     left-to-right on every row, which is a deviation from the paper kept for
+ *     consistency with the other strategies.
+ */
+export const createVariableDiffuser = (): Quantizer => {
+    return (rgba: RgbaBuffer, options: QuantizeOptions = {}): RgbaBuffer => {
+        const { threshold: cutoff = 128, strength = 1, serpentine = true, gamma = 1 } = options;
+        const colorSpace = options.colorSpace ?? MonoColorSpace;
+        const { data, width, height } = rgba;
+
+        // The tone curve maps the **source**, so it is baked into both planes
+        // once here — never applied to the error-adjusted value in the scan loop.
+        // `source` is the rounded byte the coefficient row is indexed by (the C
+        // reads a raw source byte); `buffer` keeps the unrounded projection so
+        // the neutral `gamma` path stays byte-identical to `createDiffuser`.
+        const source = new Uint8Array(width * height);
+        const buffer = new Float32Array(width * height);
+        const toneLut = toneLutFor(gamma);
+        for (let p = 0, i = 0; i < data.length; p++, i += 4) {
+            const gray = colorSpace.toGray(data[i], data[i + 1], data[i + 2]);
+            const projected = toneLut === undefined ? gray : toneLut[toByte(gray)];
+            source[p] = toByte(projected);
+            buffer[p] = projected;
+        }
+
+        const diffusionStrength = Math.max(0, strength);
+
+        for (let y = 0; y < height; y++) {
+            const reverse = serpentine && (y & 1) !== 0;
+            const start = reverse ? width - 1 : 0;
+            const end = reverse ? -1 : width;
+            const step = reverse ? -1 : 1;
+            // Only the tap *positions* flip with the scan direction; the
+            // coefficient row never does (`dir` in the reference's make_output).
+            const dir = reverse ? -1 : 1;
+
+            for (let x = start; x !== end; x += step) {
+                const index = y * width + x;
+                const level = source[index];
+                const old = buffer[index];
+                // Cutoff, deliberately not the reference's: the C declares
+                // `threshold = 127.5` as a `double` (`varcoeffED.c:32`) and
+                // classifies with `corrected_level <= threshold` (`:516`),
+                // whereas this is the engine-wide `corrected < cutoff` with a
+                // default `cutoff` of 128. The two reproduce each other exactly
+                // for every integral corrected value and differ only in the
+                // half-open band `(127.5, 128)` at the default cutoff, where this
+                // engine emits BLACK and the reference emits WHITE. The deviation
+                // is deliberate — one cutoff semantic shared by every strategy,
+                // which keeps `strength: 0` identical to the `threshold`
+                // quantizer — and is pinned by a test.
+                const intensity = old < cutoff ? 0 : 255;
+                // Scale *before* the split, so the remainder tap conserves the
+                // scaled error too; `strength: 0` therefore degenerates to a
+                // pure point threshold for any positive cutoff. At a non-positive
+                // cutoff the output quirk below still forces a source-0 pixel
+                // black where that quantizer emits white (pinned by a test).
+                const diff = (old - intensity) * diffusionStrength;
+
+                if (diff !== 0) {
+                    const coef = level * 4;
+                    const i_r = OSTROMOUKHOV_COEFFICIENTS[coef];
+                    const i_dl = OSTROMOUKHOV_COEFFICIENTS[coef + 1];
+                    // `i_sum` is >= 2 for every level (pinned by a test), so this
+                    // can never divide by zero.
+                    const i_sum = OSTROMOUKHOV_COEFFICIENTS[coef + 3];
+                    const term_r = (i_r * diff) / i_sum;
+                    const term_dl = (i_dl * diff) / i_sum;
+                    const term_d = diff - (term_r + term_dl);
+
+                    // Bound-check each tap exactly like the static path: what
+                    // falls outside the raster is silently dropped.
+                    const nx = x + dir;
+                    if (nx >= 0 && nx < width) buffer[y * width + nx] += term_r;
+                    const ny = y + 1;
+                    if (ny < height) {
+                        const nxl = x - dir;
+                        if (nxl >= 0 && nxl < width) buffer[ny * width + nxl] += term_dl;
+                        buffer[ny * width + x] += term_d;
+                    }
+                }
+
+                // Output stage quirk, replicated from the reference
+                // (`make_output:522-524`): the written pixel is BLACK when the
+                // **source** level is 0 *or* the quantized level is BLACK, while
+                // `diff` above is still computed from the un-forced `intensity`.
+                // It keeps solid black solid. `level === 0` is the *tone-mapped*
+                // level, matching the C's raw input byte.
+                writePixel(data, index * 4, level === 0 || intensity === 0 ? 0 : 255);
+            }
+        }
+
+        return rgba;
+    };
+};
+
 /** Simple projection threshold, no diffusion. `projected < threshold ? 0 : 255`. */
 export const threshold: Quantizer = (rgba: RgbaBuffer, options: QuantizeOptions = {}): RgbaBuffer => {
     const { threshold: cutoff = 128, gamma = 1 } = options;
@@ -242,10 +374,17 @@ export const atkinson: Quantizer = createDiffuser(
     { normalize: false },
 );
 
+/**
+ * Ostromoukhov variable-coefficient diffusion. Its weights vary per pixel, so it
+ * is a standalone path rather than a `createDiffuser` grid.
+ */
+export const ostromoukhov: Quantizer = createVariableDiffuser();
+
 /** Extensible registry keyed by `QuantizerId`. */
 export const QUANTIZERS: Record<QuantizerId, Quantizer> = {
     threshold,
     floydSteinberg,
     stucki,
     atkinson,
+    ostromoukhov,
 };

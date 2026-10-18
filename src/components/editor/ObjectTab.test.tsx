@@ -149,6 +149,7 @@ describe('ObjectTab — quantizer policy (P4)', () => {
             'Floyd–Steinberg',
             'Stucki',
             'Atkinson',
+            'Ostromoukhov',
         ]);
     });
 

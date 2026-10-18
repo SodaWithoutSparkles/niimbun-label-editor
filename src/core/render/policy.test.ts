@@ -156,12 +156,44 @@ describe('gamma — tone curve per strategy (P14 W1)', () => {
         expect(resolveQuantizerParams(undefined, 'floydSteinberg').gamma).toBe(1.3);
         expect(resolveQuantizerParams(undefined, 'stucki').gamma).toBe(1.3);
         expect(resolveQuantizerParams(undefined, 'atkinson').gamma).toBe(1.3);
+        expect(resolveQuantizerParams(undefined, 'ostromoukhov').gamma).toBe(1.3);
         expect(DEFAULT_GAMMA_BY_STRATEGY).toEqual({
             threshold: 1,
             floydSteinberg: 1.3,
             stucki: 1.3,
             atkinson: 1.3,
+            ostromoukhov: 1.3,
         });
+        // Every diffuser shares the dot-gain default; only `threshold` is neutral.
+        for (const [id, gamma] of Object.entries(DEFAULT_GAMMA_BY_STRATEGY)) {
+            expect(gamma, id).toBe(id === 'threshold' ? 1 : 1.3);
+        }
+    });
+
+    it('gives ostromoukhov its own policy slot, distinct from the other strategies', () => {
+        const resolved = resolveQuantizerParams(undefined, 'ostromoukhov');
+        expect(resolved).toEqual({ threshold: 128, strength: 1, serpentine: true, gamma: 1.3 });
+        expect(policyKeyOf('ostromoukhov', resolved)).not.toBe(
+            policyKeyOf('floydSteinberg', resolveQuantizerParams(undefined, 'floydSteinberg')),
+        );
+        // Same id, different gamma: still two slots (D-57(b) applies here too).
+        expect(policyKeyOf('ostromoukhov', resolved)).not.toBe(
+            policyKeyOf('ostromoukhov', { ...resolved, gamma: 1 }),
+        );
+        // A node param overrides the strategy default through the usual chain.
+        expect(resolveQuantizerParams({ gamma: 1 }, 'ostromoukhov').gamma).toBe(1);
+        expect(
+            resolveQuantizerParams(undefined, 'ostromoukhov', { ostromoukhov: { gamma: 1.6 } }).gamma,
+        ).toBe(1.6);
+    });
+
+    it('quantizerSettingsKey carries ostromoukhov settings (preview/thumbnail cache key)', () => {
+        expect(quantizerSettingsKey({ ostromoukhov: { gamma: 1.3 } })).toContain(
+            'ostromoukhov:gamma=1.3',
+        );
+        expect(quantizerSettingsKey({ ostromoukhov: { gamma: 1.3 } })).not.toBe(
+            quantizerSettingsKey({ ostromoukhov: { gamma: 1.4 } }),
+        );
     });
 
     it('resolves node → settings → render fallback → per-strategy default', () => {

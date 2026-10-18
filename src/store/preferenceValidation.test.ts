@@ -88,7 +88,7 @@ describe('normalizeQuantizerDefaults', () => {
     it('drops unknown strategy keys and empty per-strategy objects', () => {
         expect(
             normalizeQuantizerDefaults({
-                ostromoukhov: { threshold: 100 },
+                bayer: { threshold: 100 },
                 floydSteinberg: {},
                 stucki: { nonsense: true },
             }),
@@ -146,7 +146,7 @@ describe('normalizeDefaultQuantizerByType', () => {
 
     it('drops unknown types and unknown quantizer ids', () => {
         expect(
-            normalizeDefaultQuantizerByType({ bogus: 'stucki', text: 'ostromoukhov', image: 42 }),
+            normalizeDefaultQuantizerByType({ bogus: 'stucki', text: 'bayer', image: 42 }),
         ).toEqual({});
     });
 
