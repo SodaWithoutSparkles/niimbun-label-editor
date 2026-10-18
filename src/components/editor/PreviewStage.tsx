@@ -6,7 +6,7 @@ import { useStore } from '../../store/useStore';
 import type { InsertAction } from '../../store/slices/toolsSlice';
 import { cn } from '../../utils/cn';
 import { flattenResolved, resolve, DEFAULT_FONT_FAMILY } from '../../editor/render/resolve';
-import type { ResolvedContent, ResolvedNode } from '../../editor/render/resolve';
+import type { ResolvedContent, ResolvedNode, ResolveContext } from '../../editor/render/resolve';
 import type { GlobalWarning } from '../../templates/globals';
 import type { EditorWarning } from '../../editor/warnings';
 import { buildFontWarnings, buildPreviewWarnings } from '../../editor/previewWarnings';
@@ -37,7 +37,9 @@ import { DEFAULT_SHAPE_STROKE, DEFAULT_SHAPE_STROKE_WIDTH } from '../../core/doc
 import { isTypingTarget } from '../../utils/keyboardTarget';
 import { ResolvedShape } from './ResolvedShape';
 import { TextEditorOverlay, useTextEditor, computeScreenPlacement, localPointOf } from './TextEditorOverlay';
-import { bytesProviderFor, usePreparedAssets } from './usePreparedAssets';
+import { bytesProviderFor, createResourceAssetDeps, usePreparedAssets } from './usePreparedAssets';
+import { QuantizedPreviewLayer } from './QuantizedPreviewLayer';
+import { useQuantizedPreview } from './useQuantizedPreview';
 import { fontBadges } from '../../editor/render/fontAssets';
 import { useSampleRowState } from './sampleRowContext';
 import { Overlays, type SnapGuideLine } from './Overlays';
@@ -466,6 +468,36 @@ export const PreviewStage: React.FC = () => {
         }
         return map;
     }, [doc, flatResolved]);
+
+    // Live quantized preview (P14 W3): while the user tunes the selected node's
+    // dithering in the inspector, the preview paints the *printed* raster over
+    // the label and reverts to the normal colour view after a short idle.
+    //
+    // The repo-backed providers are built the same way `usePreparedAssets` builds
+    // them, but memoized separately: the render seam takes providers
+    // (`AssetDeps`), not the prepared map, and `renderLabelPage` threads its own
+    // effective (capped) dpi into them, so this instance's decode cap lands at the
+    // preview dpi. The extra decode cache is bounded (`prepareAssets`) and lives
+    // exactly as long as the repo identity.
+    const quantizerDefaults = useStore((state) => state.quantizerDefaults);
+    const defaultQuantizerByType = useStore((state) => state.defaultQuantizerByType);
+    const previewAssets = useMemo(() => createResourceAssetDeps(resourceRepo), [resourceRepo]);
+    // The **same** resolve context the canvas resolves with (above): the overlay
+    // must show the row the editor is showing, not the static/fallback path.
+    const previewContext = useMemo<ResolveContext>(
+        () => (overrides ? { overrides } : {}),
+        [overrides],
+    );
+    const quantizedPreview = useQuantizedPreview({
+        doc,
+        selectedNodeIds,
+        assets: previewAssets,
+        quantizerDefaults,
+        defaultQuantizerByType,
+        resolveContext: previewContext,
+        // A tool change leaves the tuning context: dismiss the overlay.
+        revertOn: activeTool,
+    });
 
     const targets = useMemo<HitTestable[]>(
         () => flatResolved.map((node) => ({ id: node.id, bounds: node.bounds, visible: node.visible, locked: node.locked })),
@@ -1834,6 +1866,18 @@ export const PreviewStage: React.FC = () => {
                         anchorSize={10}
                     />
                 </Layer>
+                {/* Live quantized preview (P14 W3) — on top of the content so the
+                    raster is unobstructed; `listening={false}`, so selection and
+                    gestures keep working underneath. Transient: it reverts ~1.5 s
+                    after the last dithering change. */}
+                {quantizedPreview.image !== undefined && (
+                    <QuantizedPreviewLayer
+                        image={quantizedPreview.image}
+                        width={backing.backingW}
+                        height={backing.backingH}
+                        layerAttrs={sceneAttrs}
+                    />
+                )}
             </Stage>
 
             {rulersVisible && <Rulers viewport={viewport} backingW={backing.backingW} backingH={backing.backingH} />}
@@ -1846,6 +1890,16 @@ export const PreviewStage: React.FC = () => {
                     onCommit={commitTextEdit}
                     onCancel={cancelTextEdit}
                 />
+            )}
+
+            {quantizedPreview.active && (
+                <div
+                    role="status"
+                    data-testid="quantized-preview-chip"
+                    className="pointer-events-none absolute top-2 right-2 z-30 rounded border border-gray-500 bg-gray-900/80 px-2 py-1 text-xs text-gray-100"
+                >
+                    {t('editor.quantizedPreview.chip')}
+                </div>
             )}
 
             {blocked && (

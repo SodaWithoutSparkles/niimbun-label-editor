@@ -30,7 +30,8 @@ import {
     type PrintThumbnailOverrides,
 } from './usePrintThumbnails';
 import { PrintPageList } from './PrintPageList';
-import { PrintPagePreview, previewOptionsKey, type PrintPreviewReport } from './PrintPagePreview';
+import { PrintPagePreview, type PrintPreviewReport } from './PrintPagePreview';
+import { previewOptionsKey } from '../../editor/render/previewKeys';
 import {
     activeRecords,
     rollDpiMismatch,

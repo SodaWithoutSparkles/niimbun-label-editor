@@ -526,6 +526,9 @@
       "imageImportNeedsStorage": "File imports need local storage, which is unavailable.",
       "imageImportFailed": "Import failed. Check the file or URL and try again. ({{detail}})"
     },
+    "quantizedPreview": {
+      "chip": "Quantized preview — printed result, approximate resolution"
+    },
     "view": {
       "title": "View",
       "grid": "Grid",

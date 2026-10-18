@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import type { LabelDoc } from '../../core/doc/types';
-import { quantizerSettingsKey } from '../../core/render';
+import { previewOptionsKey } from '../../editor/render/previewKeys';
 import {
     renderLabelPage,
     type RenderedLabelPage,
@@ -68,32 +68,10 @@ export interface PrintPreviewReport {
 }
 
 /**
- * Content key for the render inputs, mirroring `usePrintThumbnails`'s cache
- * key: only the **values** that change pixels. `assets` is deliberately absent
- * (it is read through a ref), so a fresh-but-equal options object does not
- * restart the doc-dpi render — and therefore cannot make a report loop back
- * into another render.
+ * Content key for the render inputs is the shared {@link previewOptionsKey}
+ * (`editor/render/previewKeys`) — the same key the editor's live quantized
+ * preview uses, so both agree on what makes a raster stale.
  */
-export const previewOptionsKey = (options: RenderLabelPageOptions): string => {
-    const offset = options.offset;
-    // The dither settings change pixels, so they must participate in the key —
-    // otherwise a settings edit would show a stale doc-dpi preview. The shared,
-    // order-independent `quantizerSettingsKey` serializes them **by value**
-    // (content, not object identity or insertion order), so an equal-but-fresh
-    // options object does not restart the render.
-    const quantizer = quantizerSettingsKey(
-        options.quantizerDefaults,
-        options.defaultQuantizerByType,
-    );
-    return [
-        options.dpi ?? '-',
-        options.invert === true ? 1 : 0,
-        options.mirror === true ? 1 : 0,
-        offset === undefined ? '-' : `${offset.x},${offset.y},${offset.type}`,
-        quantizer,
-    ].join('|');
-};
-
 export interface PrintPagePreviewProps {
     doc: LabelDoc;
     /** The record to render — the selected active row, never the whole queue. */

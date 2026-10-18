@@ -141,9 +141,9 @@ Owner request: "quantizer defaults are not changeable" + "use the correct termin
 - **Pure helpers live in `core/render/policy.ts`** (core stays store-free): `resolveQuantizer(node,
   byType)`, `resolveQuantizerParams(...)`, `policyKeyOf` (keys effective serpentine),
   `quantizerSettingsKey(defaults, byType)` — an **order-independent** serialization used by the two
-  preview/thumbnail cache keys (`PrintPagePreview.previewOptionsKey`,
-  `usePrintThumbnails.overridesContentKey`); `JSON.stringify` alone was key-order sensitive and
-  rebuilt the thumbnail cache needlessly.
+  preview/thumbnail cache keys (`editor/render/previewKeys.ts`'s `previewOptionsKey`, used by the
+  print page preview and the editor's live quantized preview; `usePrintThumbnails.overridesContentKey`);
+  `JSON.stringify` alone was key-order sensitive and rebuilt the thumbnail cache needlessly.
 - **Settings are threaded, never imported**: `RenderLabelPageOptions` carries both maps and the
   store-aware callers (`PrintDialog`, `PrintPagePreview`, `usePrintThumbnails`, `printLabel`) supply
   them. `core/` and `print/` must not import `store/`.
