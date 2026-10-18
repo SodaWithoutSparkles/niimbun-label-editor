@@ -15,41 +15,50 @@ const ASSET_WARNING_KEYS = {
     'too-small': 'editor.mfp.warningAssetTooSmall',
 } as const;
 
-const warningText = (warning: EditorWarning, t: ReturnType<typeof useTranslation>['t']): string => {
-    switch (warning.kind) {
-        case 'asset':
-            return t(ASSET_WARNING_KEYS[warning.assetWarning], { node: warning.label });
-        case 'keep-out':
-            return t('editor.mfp.warningKeepOut', { node: warning.label });
-        case 'font-missing':
-            return t('editor.mfp.warningFontMissing', { font: warning.label });
-        case 'global':
-            return t('editor.mfp.globalWarning', { name: warning.name, kind: warning.warningKind });
-        case 'template-error':
-            return t('editor.mfp.warningTemplateError', { message: warning.message, node: warning.label });
-        case 'template-blocked':
-            return t('editor.mfp.templateBlocked');
-        case 'template-approval':
-            return t('editor.mfp.templateNeedsApproval');
-        case 'sample-row-error':
-            return t('editor.mfp.sampleRowError', { message: warning.message ?? '' });
-        case 'csv-empty':
-            return t('editor.mfp.csvEmpty');
-        case 'csv-parse-error':
-            return t('editor.mfp.csvParseError');
-        case 'csv-rows-capped':
-            return t('editor.mfp.csvRowsCapped', { cap: warning.cap, total: warning.total });
-        case 'print-overflow':
-            return t('print.warnings.overflow', { width: warning.width, head: warning.head });
-        case 'print-interleaved':
-            return t('print.warnings.interleaved', { pages: warning.pages, cap: warning.cap });
-        case 'print-mismatch':
-            return t('print.warnings.mismatch', { labelW: warning.labelW, labelH: warning.labelH, labelDpi: warning.labelDpi });
-        case 'print-policy-overflow':
-            return t('print.warnings.policyOverflow', { count: warning.count });
-        case 'print-mirror-clipped':
-            return t('print.warnings.mirrorClipped', { pixels: warning.pixels });
-    }
+/**
+ * i18n memory: never annotate a parameter with the whole generic `t` type
+ * (`ReturnType<typeof useTranslation>['t']`) — materialising it is
+ * instantiation-depth-sensitive (TS2589). Close over `t` in a hook instead,
+ * which keeps keys typed without naming the generic type in a signature.
+ */
+const useWarningText = (): ((warning: EditorWarning) => string) => {
+    const { t } = useTranslation();
+    return useMemo(() => (warning: EditorWarning): string => {
+        switch (warning.kind) {
+            case 'asset':
+                return t(ASSET_WARNING_KEYS[warning.assetWarning], { node: warning.label });
+            case 'keep-out':
+                return t('editor.mfp.warningKeepOut', { node: warning.label });
+            case 'font-missing':
+                return t('editor.mfp.warningFontMissing', { font: warning.label });
+            case 'global':
+                return t('editor.mfp.globalWarning', { name: warning.name, kind: warning.warningKind });
+            case 'template-error':
+                return t('editor.mfp.warningTemplateError', { message: warning.message, node: warning.label });
+            case 'template-blocked':
+                return t('editor.mfp.templateBlocked');
+            case 'template-approval':
+                return t('editor.mfp.templateNeedsApproval');
+            case 'sample-row-error':
+                return t('editor.mfp.sampleRowError', { message: warning.message ?? '' });
+            case 'csv-empty':
+                return t('editor.mfp.csvEmpty');
+            case 'csv-parse-error':
+                return t('editor.mfp.csvParseError');
+            case 'csv-rows-capped':
+                return t('editor.mfp.csvRowsCapped', { cap: warning.cap, total: warning.total });
+            case 'print-overflow':
+                return t('print.warnings.overflow', { width: warning.width, head: warning.head });
+            case 'print-interleaved':
+                return t('print.warnings.interleaved', { pages: warning.pages, cap: warning.cap });
+            case 'print-mismatch':
+                return t('print.warnings.mismatch', { labelW: warning.labelW, labelH: warning.labelH, labelDpi: warning.labelDpi });
+            case 'print-policy-overflow':
+                return t('print.warnings.policyOverflow', { count: warning.count });
+            case 'print-mirror-clipped':
+                return t('print.warnings.mirrorClipped', { pixels: warning.pixels });
+        }
+    }, [t]);
 };
 
 /**
@@ -61,6 +70,7 @@ const warningText = (warning: EditorWarning, t: ReturnType<typeof useTranslation
  */
 export const WarningsTab: React.FC = () => {
     const { t } = useTranslation();
+    const warningText = useWarningText();
     const doc = useStore((state) => state.currentDoc);
     const groups = useStore((state) => state.editorWarnings);
     const selectNode = useStore((state) => state.selectNode);
@@ -84,9 +94,9 @@ export const WarningsTab: React.FC = () => {
                     <div key={warning.id} className="rounded border border-amber-700 bg-amber-900/30 px-2 py-1.5 text-amber-100">
                         {nodeId ? (
                             <button type="button" onClick={() => selectNode(nodeId)} className="w-full text-left hover:underline" data-testid={`warning-${warning.id}`}>
-                                {warningText(warning, t)}
+                                {warningText(warning)}
                             </button>
-                        ) : <p data-testid={`warning-${warning.id}`}>{warningText(warning, t)}</p>}
+                        ) : <p data-testid={`warning-${warning.id}`}>{warningText(warning)}</p>}
                     </div>
                 );
             })}
