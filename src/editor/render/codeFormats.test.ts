@@ -119,6 +119,23 @@ describe('2D-code module grid (pins the bwip device-px-per-module assumption)', 
         expect(new Set(CODE_FORMATS).size).toBe(7);
         expect(CODE_FORMATS).toContain(DEFAULT_CODE_FORMAT);
     });
+
+    it('defaults azteccode to a 1-module quiet zone; every other format holds its default', () => {
+        // Owner decision (2026-10-19): `azteccode`'s derived default is 1 module —
+        // the standard's figure — not 0. A deliberate 0 is still reachable through
+        // the per-node `quietZone` field. Pinning the whole map in one assertion
+        // keeps every other format's shipped default honest too.
+        expect(CODE_FORMAT_QUIET_MODULES).toEqual({
+            datamatrix: 1,
+            azteccode: 1,
+            pdf417: 2,
+            microqrcode: 2,
+            codeone: 1,
+            hanxin: 3,
+            ultracode: 1,
+        });
+        expect(codeQuietModules('azteccode')).toBe(1);
+    });
 });
 
 /**

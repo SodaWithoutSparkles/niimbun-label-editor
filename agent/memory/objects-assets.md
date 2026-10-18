@@ -111,7 +111,9 @@ a fitted leaf), a per-type case in `prepareResolvedAssets` (`prepareAssets.ts`),
   `paddingwidth`/`paddingheight` stay 0 and **`backgroundcolor` must never be
   set** (it makes bwip draw its own border → the quiet zone double-counts).
   Per-format modules/side (`CODE_FORMAT_QUIET_MODULES`): datamatrix 1 · azteccode
-  **0** (owner decision) · pdf417 2 · microqrcode 2 · codeone 1 · hanxin 3 ·
+  **1** (the standard says 1; owner decision **2026-10-19** switched the default
+  from 0 to 1 — a deliberate 0 stays reachable via the per-node `quietZone`
+  field) · pdf417 2 · microqrcode 2 · codeone 1 · hanxin 3 ·
   ultracode 1. (QR default 4; 1D via `barcodeQuietModules`.)
 - `azteccode` accepts arbitrary text; only `aztecrune` is numeric-only (not
   shipped).

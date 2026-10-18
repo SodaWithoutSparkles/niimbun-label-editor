@@ -138,11 +138,13 @@ export const CODE_FORMAT_PX_PER_MODULE: Record<CodeFormat, 1 | 2> = {
  * Per-format 2D quiet-zone requirement, in modules/side. The app paints its own
  * quiet zone: bwip draws none by default (its `paddingwidth`/`paddingheight`
  * default to 0 and must stay 0), and `backgroundcolor` must never be set or bwip
- * adds its own border and double-counts. Owner decision: `azteccode` = 0.
+ * adds its own border and double-counts. Owner decision (2026-10-19): `azteccode`
+ * defaults to 1 — the standard's figure — so a deliberate 0 is reachable only
+ * through the per-node `quietZone` field.
  */
 export const CODE_FORMAT_QUIET_MODULES: Record<CodeFormat, number> = {
     datamatrix: 1,
-    azteccode: 0,
+    azteccode: 1,
     pdf417: 2,
     microqrcode: 2,
     codeone: 1,
