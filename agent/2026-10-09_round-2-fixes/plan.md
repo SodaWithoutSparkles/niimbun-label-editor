@@ -243,8 +243,11 @@ D-05 stays open and now also covers `ostromoukhov`.
 
 ## P15 — Two-phase print progress (send / print)
 
-State: **IN PROGRESS (2026-10-19, owner request).** Action plan:
-[`phase15_action-plan.md`](phase15_action-plan.md) — carries the recon and the two settled decisions.
+State: **DONE 2026-10-19.** Commits `cee172e` (the typed-i18n blocker this work exposed) +
+`cbf1534` (the feature). Action plan: [`phase15_action-plan.md`](phase15_action-plan.md) — carries the
+recon and the two settled decisions. Suite 165 files / 2198 → **2206 tests**, `tsc` clean. Review:
+`review` → 1 finding (grouped rows weighted as a single copy) → fixed → `review-fast` APPROVE.
+Owner to verify on hardware (the bar should move during upload, then hand over to the print bar).
 
 Owner request: *"progress bar currently doesnt match the niim.blue reference. The reference correctly
 displays the sending progress and the printing progress. This seems to just show the print progress.
