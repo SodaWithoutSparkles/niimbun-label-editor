@@ -1,4 +1,5 @@
 import type { RgbaBuffer } from './colorspace';
+import { normalizeGamma } from './quantize';
 import type {
     Quantizer,
     QuantizerDefaultParams,
@@ -73,11 +74,27 @@ const DEFAULT_THRESHOLD = 128;
 const DEFAULT_STRENGTH = 1;
 const DEFAULT_SERPENTINE = true;
 
+/**
+ * Per-strategy tone-curve gamma default — the **policy-layer** engine default
+ * (`quantize.ts` itself stays neutral). Diffusers default to a mild dot-gain
+ * compensation (1.3); `threshold` stays neutral (1) because a curve before a
+ * point threshold only moves the binarisation cutoff, silently changing how
+ * symbols and text binarise. A new `QuantizerId` must be added here: the
+ * `Record` type makes that a compile error.
+ */
+export const DEFAULT_GAMMA_BY_STRATEGY: Record<QuantizerId, number> = {
+    threshold: 1,
+    floydSteinberg: 1.3,
+    stucki: 1.3,
+    atkinson: 1.3,
+};
+
 /** A node's explicit quantizer params (structural, mirrors `Node['quantizerParams']`). */
 export interface PolicyParams {
     threshold?: number;
     strength?: number;
     serpentine?: boolean;
+    gamma?: number;
 }
 
 /** A policy's fully-resolved params: every knob has a value. */
@@ -85,6 +102,7 @@ export interface ResolvedPolicyParams {
     threshold: number;
     strength: number;
     serpentine: boolean;
+    gamma: number;
 }
 
 /**
@@ -95,7 +113,8 @@ export interface ResolvedPolicyParams {
  * An absent per-node value must **not** override the setting (R13-e), so the
  * settings default is consulted before the render-level fallback. `serpentine`
  * resolves through the same chain: a node with no `serpentine` inherits the
- * strategy's settings default rather than pinning `true`.
+ * strategy's settings default rather than pinning `true`. `gamma`'s engine
+ * default is per strategy (`DEFAULT_GAMMA_BY_STRATEGY`).
  */
 export const resolveQuantizerParams = (
     nodeParams: PolicyParams | undefined,
@@ -111,17 +130,25 @@ export const resolveQuantizerParams = (
             nodeParams?.strength ?? strategy?.strength ?? fallback?.strength ?? DEFAULT_STRENGTH,
         serpentine:
             nodeParams?.serpentine ?? strategy?.serpentine ?? fallback?.serpentine ?? DEFAULT_SERPENTINE,
+        gamma:
+            nodeParams?.gamma ??
+            strategy?.gamma ??
+            fallback?.gamma ??
+            DEFAULT_GAMMA_BY_STRATEGY[id],
     };
 };
 
 /**
  * Stable key for a per-node quantizer policy slot. It names **every** knob that
- * changes pixels — notably `serpentine` (D-57(b)): two nodes differing only in
- * their *effective* serpentine must not share one mask slot, or the first node's
- * params would silently win for both.
+ * changes pixels — notably `serpentine` (D-57(b)) and `gamma`: two nodes
+ * differing only in their *effective* gamma must not share one mask slot, or the
+ * first node's params would silently win for both. `gamma` is keyed by its
+ * `normalizeGamma`d value, so raw inputs that render identically (e.g.
+ * `Infinity` vs `1`, or an out-of-range `10` vs the clamped `4`) share one slot
+ * instead of over-splitting the 8-entry palette.
  */
 export const policyKeyOf = (id: QuantizerId, params: ResolvedPolicyParams): string =>
-    `${id}:${params.threshold}:${params.strength}:${params.serpentine}`;
+    `${id}:${params.threshold}:${params.strength}:${params.serpentine}:${normalizeGamma(params.gamma)}`;
 
 /**
  * Deterministic content key for the dither settings maps. Pure and headless,

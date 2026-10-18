@@ -15,6 +15,13 @@ afterEach(() => {
 const spinbutton = (name: RegExp) => screen.getByRole('spinbutton', { name }) as HTMLInputElement;
 const toggle = (name: RegExp) => screen.getByRole('switch', { name }) as HTMLButtonElement;
 
+/**
+ * One strategy's number field, matched against its aria label — the strategy
+ * name is a display name ("Floyd–Steinberg error diffusion"), not the id.
+ */
+const strategyField = (strategy: RegExp, knob: RegExp) =>
+    spinbutton(new RegExp(`${strategy.source}.*${knob.source}`, 'i'));
+
 describe('RenderingSection — per-strategy defaults', () => {
     it('shows the engine default threshold and does not write while typing', () => {
         useStore.setState({ quantizerDefaults: {} });
@@ -64,7 +71,7 @@ describe('RenderingSection — per-strategy defaults', () => {
     it('commits an Error diffusion value on Enter, clamped to [0,4]', () => {
         useStore.setState({ quantizerDefaults: {} });
         render(<RenderingSection />);
-        const input = spinbutton(/floyd/i);
+        const input = strategyField(/floyd/i, /error diffusion/);
         expect(input.value).toBe('1');
 
         fireEvent.change(input, { target: { value: '2.5' } });
@@ -74,6 +81,36 @@ describe('RenderingSection — per-strategy defaults', () => {
         fireEvent.change(input, { target: { value: '9' } });
         fireEvent.blur(input);
         expect(useStore.getState().quantizerDefaults.floydSteinberg).toEqual({ strength: 4 });
+    });
+
+    it('shows the per-strategy gamma default and commits a clamped value', () => {
+        useStore.setState({ quantizerDefaults: {} });
+        render(<RenderingSection />);
+        // Engine policy defaults: diffusers 1.3, threshold neutral 1.
+        const input = strategyField(/floyd/i, /tone curve gamma/);
+        expect(input.value).toBe('1.3');
+        expect(spinbutton(/^threshold tone curve gamma$/i).value).toBe('1');
+
+        fireEvent.change(input, { target: { value: '0' } });
+        fireEvent.blur(input);
+        expect(useStore.getState().quantizerDefaults.floydSteinberg).toEqual({ gamma: 0.1 });
+
+        fireEvent.change(input, { target: { value: '9' } });
+        fireEvent.keyDown(input, { key: 'Enter' });
+        expect(useStore.getState().quantizerDefaults.floydSteinberg).toEqual({ gamma: 4 });
+    });
+
+    it('reflects a stored gamma and does not write while typing', () => {
+        useStore.setState({ quantizerDefaults: { threshold: { gamma: 1.5 } } });
+        render(<RenderingSection />);
+        const input = spinbutton(/^threshold tone curve gamma$/i);
+        expect(input.value).toBe('1.5');
+
+        fireEvent.change(input, { target: { value: '2' } });
+        expect(useStore.getState().quantizerDefaults).toEqual({ threshold: { gamma: 1.5 } });
+
+        fireEvent.blur(input);
+        expect(useStore.getState().quantizerDefaults).toEqual({ threshold: { gamma: 2 } });
     });
 
     it('toggles serpentine, defaulting to on and storing an explicit boolean', () => {
@@ -97,13 +134,17 @@ describe('RenderingSection — per-strategy defaults', () => {
         expect(toggle(/stucki/i).getAttribute('aria-checked')).toBe('false');
     });
 
-    it('offers the Error diffusion + serpentine controls for every diffuser only', () => {
+    it('offers the Error diffusion + tone curve + serpentine controls for every diffuser only', () => {
         render(<RenderingSection />);
-        for (const name of [/floyd/i, /stucki/i, /atkinson/i]) {
-            expect(spinbutton(name)).toBeTruthy();
-            expect(toggle(name)).toBeTruthy();
+        for (const strategy of [/floyd/i, /stucki/i, /atkinson/i]) {
+            expect(strategyField(strategy, /error diffusion/)).toBeTruthy();
+            expect(strategyField(strategy, /tone curve gamma/)).toBeTruthy();
+            expect(toggle(strategy)).toBeTruthy();
         }
-        // `threshold` uses the single Threshold knob, never a diffusion control.
+        // `threshold` uses the single Threshold knob plus its own neutral tone
+        // curve, never a diffusion control.
+        expect(spinbutton(/^threshold$/i)).toBeTruthy();
+        expect(spinbutton(/^threshold tone curve gamma$/i)).toBeTruthy();
         expect(screen.queryByRole('spinbutton', { name: /threshold error diffusion/i })).toBeNull();
     });
 });

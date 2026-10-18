@@ -22,8 +22,12 @@ export {
 
 export {
     atkinson,
+    buildToneLut,
     createDiffuser,
     floydSteinberg,
+    GAMMA_MAX,
+    GAMMA_MIN,
+    normalizeGamma,
     QUANTIZERS,
     stucki,
     threshold,
@@ -36,6 +40,7 @@ export {
 
 export {
     applyPolicy,
+    DEFAULT_GAMMA_BY_STRATEGY,
     DEFAULT_POLICY_BY_TYPE,
     policyKeyOf,
     quantizerSettingsKey,

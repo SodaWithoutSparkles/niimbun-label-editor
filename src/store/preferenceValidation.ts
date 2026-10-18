@@ -1,5 +1,5 @@
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n/languages';
-import { QUANTIZERS, type QuantizerId } from '../core/render/quantize';
+import { GAMMA_MAX, GAMMA_MIN, QUANTIZERS, type QuantizerId } from '../core/render/quantize';
 import type { QuantizerDefaultParams, QuantizerDefaults } from '../core/render/quantize';
 import type { NodeType } from '../core/doc/types';
 import {
@@ -199,7 +199,8 @@ export const normalizeDefaultPaperTypeId = (value: unknown): string | undefined 
  * Returns one strategy's repaired params, or `undefined` when nothing usable
  * remains (so an empty per-strategy object is dropped). `threshold` is clamped
  * to `[0,255]` as an integer; `strength` to `[0,4]` rounded to 2 dp (matching
- * `core/doc/validate`); `serpentine` must be a boolean.
+ * `core/doc/validate`); `gamma` to `[0.1,4]` rounded to 2 dp (the `quantize.ts`
+ * clamp); `serpentine` must be a boolean.
  */
 const normalizeQuantizerDefaultParams = (value: unknown): QuantizerDefaultParams | undefined => {
     if (!isRecord(value)) return undefined;
@@ -215,6 +216,10 @@ const normalizeQuantizerDefaultParams = (value: unknown): QuantizerDefaultParams
             Math.round(
                 Math.min(QUANTIZER_STRENGTH_MAX, Math.max(QUANTIZER_STRENGTH_MIN, value.strength)) * 100,
             ) / 100;
+    }
+    if (isFiniteNumber(value.gamma)) {
+        params.gamma =
+            Math.round(Math.min(GAMMA_MAX, Math.max(GAMMA_MIN, value.gamma)) * 100) / 100;
     }
     if (typeof value.serpentine === 'boolean') params.serpentine = value.serpentine;
     return Object.keys(params).length > 0 ? params : undefined;

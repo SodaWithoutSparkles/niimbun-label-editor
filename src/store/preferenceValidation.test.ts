@@ -104,6 +104,30 @@ describe('normalizeQuantizerDefaults', () => {
         ).toEqual({ atkinson: { serpentine: true } });
     });
 
+    it('clamps gamma to [0.1,4] and rounds it to 2 dp', () => {
+        expect(normalizeQuantizerDefaults({ floydSteinberg: { gamma: 1.2345 } })).toEqual({
+            floydSteinberg: { gamma: 1.23 },
+        });
+        expect(normalizeQuantizerDefaults({ floydSteinberg: { gamma: 9 } })).toEqual({
+            floydSteinberg: { gamma: 4 },
+        });
+        expect(normalizeQuantizerDefaults({ threshold: { gamma: 0 } })).toEqual({
+            threshold: { gamma: 0.1 },
+        });
+        // The default 1.3 round-trips unchanged.
+        expect(normalizeQuantizerDefaults({ stucki: { gamma: 1.3 } })).toEqual({
+            stucki: { gamma: 1.3 },
+        });
+    });
+
+    it('drops a non-finite or wrong-typed gamma but keeps the valid params', () => {
+        expect(normalizeQuantizerDefaults({ atkinson: { gamma: 'high' } })).toEqual({});
+        expect(normalizeQuantizerDefaults({ atkinson: { gamma: Infinity } })).toEqual({});
+        expect(normalizeQuantizerDefaults({ atkinson: { gamma: Number.NaN, strength: 2 } })).toEqual({
+            atkinson: { strength: 2 },
+        });
+    });
+
     it('returns undefined only for a non-object value', () => {
         expect(normalizeQuantizerDefaults('nope')).toBeUndefined();
         expect(normalizeQuantizerDefaults(null)).toBeUndefined();

@@ -3,6 +3,7 @@ import { monoLuminance, type ColorSpace, type RgbaBuffer } from './colorspace';
 import { floydSteinberg, threshold, type QuantizeOptions, type Quantizer, type QuantizerDefaults } from './quantize';
 import {
     applyPolicy,
+    DEFAULT_GAMMA_BY_STRATEGY,
     DEFAULT_POLICY_BY_TYPE,
     policyKeyOf,
     quantizerSettingsKey,
@@ -139,13 +140,90 @@ describe('policyKeyOf (D-57(b))', () => {
         const resolved = resolveQuantizerParams(undefined, 'floydSteinberg', {
             floydSteinberg: { threshold: 200, strength: 2 },
         });
-        expect(resolved).toEqual({ threshold: 200, strength: 2, serpentine: true });
+        expect(resolved).toEqual({ threshold: 200, strength: 2, serpentine: true, gamma: 1.3 });
         // A node param overrides the setting; the render fallback only fills gaps.
         expect(
             resolveQuantizerParams({ threshold: 50 }, 'floydSteinberg', {
                 floydSteinberg: { threshold: 200 },
             }, { strength: 3 }),
-        ).toEqual({ threshold: 50, strength: 3, serpentine: true });
+        ).toEqual({ threshold: 50, strength: 3, serpentine: true, gamma: 1.3 });
+    });
+});
+
+describe('gamma — tone curve per strategy (P14 W1)', () => {
+    it('defaults per strategy: threshold neutral, the diffusers 1.3', () => {
+        expect(resolveQuantizerParams(undefined, 'threshold').gamma).toBe(1);
+        expect(resolveQuantizerParams(undefined, 'floydSteinberg').gamma).toBe(1.3);
+        expect(resolveQuantizerParams(undefined, 'stucki').gamma).toBe(1.3);
+        expect(resolveQuantizerParams(undefined, 'atkinson').gamma).toBe(1.3);
+        expect(DEFAULT_GAMMA_BY_STRATEGY).toEqual({
+            threshold: 1,
+            floydSteinberg: 1.3,
+            stucki: 1.3,
+            atkinson: 1.3,
+        });
+    });
+
+    it('resolves node → settings → render fallback → per-strategy default', () => {
+        // The render fallback beats the per-strategy default.
+        expect(
+            resolveQuantizerParams(undefined, 'threshold', undefined, { gamma: 2 }).gamma,
+        ).toBe(2);
+        // The settings default beats the render fallback.
+        expect(
+            resolveQuantizerParams(undefined, 'floydSteinberg', { floydSteinberg: { gamma: 1.6 } }, {
+                gamma: 2,
+            }).gamma,
+        ).toBe(1.6);
+        // The node param beats everything.
+        expect(
+            resolveQuantizerParams({ gamma: 0.8 }, 'floydSteinberg', { floydSteinberg: { gamma: 1.6 } }, {
+                gamma: 2,
+            }).gamma,
+        ).toBe(0.8);
+        // An explicit node 1 is a value, not an omission.
+        expect(resolveQuantizerParams({ gamma: 1 }, 'floydSteinberg').gamma).toBe(1);
+        // Another strategy's default never leaks: `threshold` stays neutral.
+        expect(resolveQuantizerParams(undefined, 'threshold').gamma).toBe(1);
+    });
+
+    it('policyKeyOf differs when only gamma differs', () => {
+        const a = resolveQuantizerParams(undefined, 'floydSteinberg');
+        const b = resolveQuantizerParams({ gamma: 1.4 }, 'floydSteinberg');
+        expect(a.gamma).toBe(1.3);
+        expect(b.gamma).toBe(1.4);
+        // Two nodes differing only in effective gamma must not share a slot.
+        expect(policyKeyOf('floydSteinberg', a)).not.toBe(policyKeyOf('floydSteinberg', b));
+        // The per-strategy defaults differ across strategies, so their keys differ too.
+        expect(policyKeyOf('threshold', resolveQuantizerParams(undefined, 'threshold'))).not.toBe(
+            policyKeyOf('floydSteinberg', resolveQuantizerParams(undefined, 'floydSteinberg')),
+        );
+    });
+
+    it('keys the normalized gamma, so raw values that render identically share a slot', () => {
+        const base = resolveQuantizerParams(undefined, 'floydSteinberg');
+        const keyFor = (gamma: number): string => policyKeyOf('floydSteinberg', { ...base, gamma });
+        // Non-finite collapses to the neutral 1 ...
+        expect(keyFor(Infinity)).toBe(keyFor(1));
+        expect(keyFor(-Infinity)).toBe(keyFor(1));
+        expect(keyFor(NaN)).toBe(keyFor(1));
+        // ... and an out-of-range value clamps, matching the clamped value.
+        expect(keyFor(10)).toBe(keyFor(4));
+        // A genuinely different in-range gamma still gets its own slot.
+        expect(keyFor(1)).not.toBe(keyFor(1.3));
+    });
+
+    it('quantizerSettingsKey moves when gamma moves (preview/thumbnail cache key)', () => {
+        // `quantizerSettingsKey` enumerates each strategy's param keys, so gamma
+        // is included without a code change — assert it, since a stale key would
+        // show a stale preview/thumbnail (R13-c).
+        expect(quantizerSettingsKey({ floydSteinberg: { gamma: 1.3 } })).toContain('gamma=1.3');
+        expect(quantizerSettingsKey({ floydSteinberg: { gamma: 1.3 } })).not.toBe(
+            quantizerSettingsKey({ floydSteinberg: { gamma: 1.4 } }),
+        );
+        expect(quantizerSettingsKey({ threshold: { gamma: 1 } })).not.toBe(
+            quantizerSettingsKey({ threshold: { gamma: 1.2 } }),
+        );
     });
 });
 

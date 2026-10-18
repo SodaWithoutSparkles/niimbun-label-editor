@@ -3,6 +3,7 @@ import { nodeLookup } from '../../core/doc/derive';
 import { hasFill, hasStroke } from '../../core/doc/objects';
 import type { LabelDoc, Node } from '../../core/doc/types';
 import {
+    DEFAULT_GAMMA_BY_STRATEGY,
     HM_PER_INCH,
     MonoColorSpace,
     QUANTIZERS,
@@ -84,6 +85,13 @@ export interface RenderLabelPageOptions {
     strength?: number;
     /** Serpentine scanning forwarded to the diffusers. Default true. */
     serpentine?: boolean;
+    /**
+     * Tone-curve gamma forwarded to every quantizer, **underneath** the
+     * per-strategy and per-node values. Absent, it resolves to the per-strategy
+     * default (`DEFAULT_GAMMA_BY_STRATEGY`: 1 for `threshold`, 1.3 for the
+     * diffusers) — never to the engine's neutral 1.
+     */
+    gamma?: number;
     /** Per-pixel projection. Defaults to Mono (the only v1 color space). */
     colorSpace?: ColorSpace;
     /**
@@ -236,6 +244,7 @@ export interface PolicyParamDefaults {
     threshold?: number;
     strength?: number;
     serpentine?: boolean;
+    gamma?: number;
     /** Per-strategy settings defaults (see `RenderLabelPageOptions`). */
     quantizerDefaults?: QuantizerDefaults;
     /** Per-object-type default-quantizer override map (see `RenderLabelPageOptions`). */
@@ -269,7 +278,11 @@ export const buildPolicyMask = async (
 
     const policiesByKey = new Map<
         string,
-        { id: QuantizerId; options: { threshold: number; strength: number; serpentine?: boolean }; index: number }
+        {
+            id: QuantizerId;
+            options: { threshold: number; strength: number; serpentine?: boolean; gamma: number };
+            index: number;
+        }
     >();
     const carriers: { node: ResolvedNode; value: number }[] = [];
     let overflowCount = 0;
@@ -304,7 +317,8 @@ export const buildPolicyMask = async (
         }
         // Resolve the **effective** params before keying: node → strategy settings
         // default → render fallback → engine default. `serpentine` is included so
-        // two nodes differing only in serpentine get distinct slots (D-57(b)).
+        // two nodes differing only in serpentine get distinct slots (D-57(b)),
+        // and `gamma` for the same reason.
         const resolved = resolveQuantizerParams(
             source.quantizerParams,
             policy,
@@ -313,6 +327,7 @@ export const buildPolicyMask = async (
                 threshold: defaults?.threshold,
                 strength: defaults?.strength,
                 serpentine: defaults?.serpentine,
+                gamma: defaults?.gamma,
             },
         );
         const key = policyKeyOf(policy, resolved);
@@ -329,11 +344,14 @@ export const buildPolicyMask = async (
                     // Every pixel-changing knob is explicit, both `true` and
                     // `false`, so no masked policy can inherit the base pass's
                     // value by omitting the key (the base is merged *under* each
-                    // policy's own options). Dedup is by `policyKeyOf`, not by
-                    // `options`, so param-less nodes still share one slot.
+                    // policy's own options). Since gamma differs **per strategy**,
+                    // an omission here would silently apply the global pass's
+                    // curve. Dedup is by `policyKeyOf`, not by `options`, so
+                    // param-less nodes still share one slot.
                     threshold: resolved.threshold,
                     strength: resolved.strength,
                     serpentine: resolved.serpentine,
+                    gamma: resolved.gamma,
                 },
                 index: policiesByKey.size + 1,
             };
@@ -465,8 +483,12 @@ export const buildPolicyMask = async (
  * Build the **global** pass options: the base `QuantizeOptions` for the whole
  * frame (policy index `0`) and the fallback merged *under* every masked policy's
  * own options. The global quantizer's per-strategy settings default applies
- * here, then the render-level fallback. `serpentine` resolves like the others,
- * so a per-strategy serpentine default reaches a global diffuser.
+ * here, then the render-level fallback. `serpentine` and `gamma` resolve like
+ * the others, so a per-strategy default reaches a global diffuser.
+ *
+ * `gamma` is **always** emitted (never left to the engine's neutral default):
+ * the non-neutral diffuser default lives in the policy layer, so an omitted
+ * gamma would silently apply the wrong curve to a global diffuser pass.
  *
  * This base still sits **under** every masked policy, but nothing leaks: with
  * every policy carrying its own explicit knobs, a policy can never inherit the
@@ -474,14 +496,17 @@ export const buildPolicyMask = async (
  */
 const buildQuantizeOptions = (opts: RenderLabelPageOptions): Parameters<typeof quantizeRgba>[2] => {
     const colorSpace = opts.colorSpace ?? MonoColorSpace;
-    const strategyDefaults = opts.quantizerDefaults?.[opts.quantizer ?? 'threshold'];
+    const globalId = opts.quantizer ?? 'threshold';
+    const strategyDefaults = opts.quantizerDefaults?.[globalId];
     const out: NonNullable<Parameters<typeof quantizeRgba>[2]> = { colorSpace };
     const threshold = strategyDefaults?.threshold ?? opts.threshold;
     const strength = strategyDefaults?.strength ?? opts.strength;
     const serpentine = strategyDefaults?.serpentine ?? opts.serpentine;
+    const gamma = strategyDefaults?.gamma ?? opts.gamma ?? DEFAULT_GAMMA_BY_STRATEGY[globalId];
     if (threshold !== undefined) out.threshold = threshold;
     if (strength !== undefined) out.strength = strength;
     if (serpentine !== undefined) out.serpentine = serpentine;
+    out.gamma = gamma;
     return out;
 };
 
@@ -590,6 +615,7 @@ export const renderLabelPage = async (
         threshold: opts.threshold,
         strength: opts.strength,
         serpentine: opts.serpentine,
+        gamma: opts.gamma,
         quantizerDefaults: opts.quantizerDefaults,
         defaultQuantizerByType: opts.defaultQuantizerByType,
     });

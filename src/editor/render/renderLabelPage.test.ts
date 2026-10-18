@@ -7,6 +7,8 @@ import { createLabelDoc } from '../../core/doc/factory';
 import { nodeLookup } from '../../core/doc/derive';
 import type { LabelDoc, Node, Region } from '../../core/doc/types';
 import {
+    DEFAULT_GAMMA_BY_STRATEGY,
+    GAMMA_MAX,
     MonoColorSpace,
     floydSteinberg,
     quantizeRgba,
@@ -261,7 +263,9 @@ describe('renderLabelPage — shared preview/print path', () => {
         if (!entry || typeof entry === 'function') return;
         // `serpentine` is now always explicit (fix 1), so the diffuser's actual
         // options carry the resolved `true` rather than inheriting the base's.
-        expect(entry.options).toEqual({ threshold: 200, strength: 2, serpentine: true });
+        // `gamma` is explicit for the same reason, resolved to this strategy's
+        // own default (text → `threshold` → neutral 1).
+        expect(entry.options).toEqual({ threshold: 200, strength: 2, serpentine: true, gamma: 1 });
     });
 
     it('gives two nodes differing only in serpentine distinct policy slots (D-57(b))', async () => {
@@ -367,6 +371,123 @@ describe('renderLabelPage — shared preview/print path', () => {
 
         expect(off.rgba.data, 'the strategy default changes the global raster').not.toEqual(on.rgba.data);
         expect(unset.rgba.data, 'unset falls back to the engine default (true)').toEqual(on.rgba.data);
+    });
+
+    // A single grey shape (hinted to a diffuser) so the tile pattern is sensitive
+    // to the tone curve; the union covers the whole page. Text/shapes with no
+    // hint resolve no policy and run through the global pass instead.
+    const gammaDoc = (hint?: string): LabelDoc =>
+        imageDoc([
+            node({
+                id: 'g',
+                parentId: null,
+                type: 'shape',
+                shape: 'rectangle',
+                visible: true,
+                locked: false,
+                transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                size: { w: 3000, h: 1500 },
+                fill: '#808080',
+                ...(hint ? { quantizerHint: hint } : {}),
+            }),
+        ]);
+
+    const gammaOptionsAt = (
+        built: Awaited<ReturnType<typeof buildPolicyMask>>,
+        index: number,
+    ): number | undefined => {
+        const entry = built?.policies.get(index);
+        return entry && typeof entry !== 'function' ? entry.options?.gamma : undefined;
+    };
+
+    it('a diffuser policy carries its own per-strategy gamma, never the global base (P14 R14-a)', async () => {
+        const doc = gammaDoc('floydSteinberg');
+        const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+        const byId = nodeLookup(doc.nodes);
+
+        // No settings and no render-level gamma: the policy must still carry the
+        // **policy-layer** default (1.3) rather than omitting the knob and
+        // inheriting the global base's — which, unset, is the engine's neutral 1.
+        const unset = await buildPolicyMask(resolve(doc), byId, dims, doc.label.dpi);
+        expect(gammaOptionsAt(unset, 1)).toBe(DEFAULT_GAMMA_BY_STRATEGY.floydSteinberg);
+        expect(DEFAULT_GAMMA_BY_STRATEGY.floydSteinberg).not.toBe(1);
+
+        // A per-strategy settings default wins over the render-level fallback.
+        const configured = await buildPolicyMask(resolve(doc), byId, dims, doc.label.dpi, undefined, {
+            gamma: 0.5,
+            quantizerDefaults: { floydSteinberg: { gamma: 1.6 } },
+        });
+        expect(gammaOptionsAt(configured, 1)).toBe(1.6);
+
+        // With no settings value, the render-level fallback is the last resort.
+        const fallback = await buildPolicyMask(resolve(doc), byId, dims, doc.label.dpi, undefined, {
+            gamma: 0.5,
+        });
+        expect(gammaOptionsAt(fallback, 1)).toBe(0.5);
+    });
+
+    it('a per-strategy gamma reaches the masked pass end to end (P14)', async () => {
+        const doc = gammaDoc('floydSteinberg');
+        const neutral = await renderLabelPage(doc, {}, {
+            quantizerDefaults: { floydSteinberg: { gamma: 1 } },
+        });
+        const lifted = await renderLabelPage(doc, {}, {
+            quantizerDefaults: { floydSteinberg: { gamma: 1.6 } },
+        });
+        expect(lifted.rgba.data, 'the policy gamma changes the dithered region').not.toEqual(
+            neutral.rgba.data,
+        );
+    });
+
+    it('the global diffuser pass gets its per-strategy gamma too (P14)', async () => {
+        // Unhinted shape → no policy mask → the whole frame runs one global pass.
+        const doc = gammaDoc();
+        const neutral = await renderLabelPage(doc, {}, { quantizer: 'floydSteinberg', gamma: 1 });
+        const policyDefault = await renderLabelPage(doc, {}, { quantizer: 'floydSteinberg' });
+        expect(
+            policyDefault.rgba.data,
+            'an absent gamma is the diffuser default (1.3), not the engine-neutral 1',
+        ).not.toEqual(neutral.rgba.data);
+        // An explicit render-level gamma wins over that default.
+        const overridden = await renderLabelPage(doc, {}, {
+            quantizer: 'floydSteinberg',
+            gamma: 0.7,
+        });
+        expect(overridden.rgba.data).not.toEqual(neutral.rgba.data);
+        expect(overridden.rgba.data).not.toEqual(policyDefault.rgba.data);
+    });
+
+    it('normalises a non-finite or out-of-range render gamma instead of blanking the page (W1)', async () => {
+        // `opts.gamma` is an unvalidated render-level fallback: a NaN/Infinity
+        // gamma used to build a NaN LUT, which lands in the `Uint8Array` as 0 and
+        // blackens every pixel. It must now normalise to the neutral curve.
+        const doc = gammaDoc('floydSteinberg');
+        const neutral = await renderLabelPage(doc, {}, {
+            quantizerDefaults: { floydSteinberg: { gamma: 1 } },
+        });
+        const nan = await renderLabelPage(doc, {}, { gamma: NaN });
+        const infinity = await renderLabelPage(doc, {}, { gamma: Infinity });
+
+        for (const [name, page] of [['NaN', nan], ['Infinity', infinity]] as const) {
+            let dark = 0;
+            for (let i = 0; i < page.rgba.data.length; i += 4) {
+                if (page.rgba.data[i] === 0) dark++;
+            }
+            const pixels = page.rgba.width * page.rgba.height;
+            expect(dark, `${name}: not an all-black raster`).toBeLessThan(pixels);
+            expect(dark, `${name}: the page still has ink`).toBeGreaterThan(0);
+            expect(
+                page.rgba.data,
+                `${name}: byte-identical to the neutral (gamma 1) render`,
+            ).toEqual(neutral.rgba.data);
+        }
+
+        // A finite out-of-range gamma clamps to the max rather than blowing up.
+        const huge = await renderLabelPage(doc, {}, { gamma: 1e9 });
+        const clamped = await renderLabelPage(doc, {}, {
+            quantizerDefaults: { floydSteinberg: { gamma: GAMMA_MAX } },
+        });
+        expect(huge.rgba.data, 'clamped to GAMMA_MAX').toEqual(clamped.rgba.data);
     });
 
     it('collapses absent, empty, and explicit-default params into one shared policy', async () => {
@@ -493,7 +614,13 @@ describe('renderLabelPage — shared preview/print path', () => {
         const fullThreshold = clone(gradient);
         quantizeRgba(fullThreshold, { globalQuantizer: threshold });
         const fullFloyd = clone(gradient);
-        quantizeRgba(fullFloyd, { globalQuantizer: floydSteinberg });
+        // The masked `floydSteinberg` policy carries its own resolved tone curve,
+        // so the reference pass must use the same per-strategy gamma.
+        quantizeRgba(
+            fullFloyd,
+            { globalQuantizer: floydSteinberg },
+            { gamma: DEFAULT_GAMMA_BY_STRATEGY.floydSteinberg },
+        );
 
         const out = clone(gradient);
         quantizeRgba(out, { globalQuantizer: threshold, policies: built.policies, mask, colorSpace: MonoColorSpace });

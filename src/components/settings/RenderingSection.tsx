@@ -3,18 +3,25 @@ import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { useStore } from '../../store/useStore';
 import { Input, Select, SettingRow, Toggle } from '../common/forms';
-import { DEFAULT_POLICY_BY_TYPE, QUANTIZERS } from '../../core/render';
+import {
+    DEFAULT_GAMMA_BY_STRATEGY,
+    DEFAULT_POLICY_BY_TYPE,
+    GAMMA_MAX,
+    GAMMA_MIN,
+    QUANTIZERS,
+} from '../../core/render';
 import type { QuantizerDefaultParams, QuantizerDefaults, QuantizerId } from '../../core/render';
 import type { NodeType } from '../../core/doc/types';
 import type { DefaultQuantizerByType } from '../../store/storeTypes';
 
 /**
- * Rendering preferences — the configurable dithering (§P13 Track R).
+ * Rendering preferences — the configurable dithering (§P13 Track R, §P14 W1).
  *
- * Per strategy: `threshold` exposes only a Threshold knob; the three diffusers
- * expose an Error diffusion knob and a Serpentine scan toggle. Below that, a
- * per-object-type default quantizer select for every type the module fallback
- * map names (shapes deliberately have no policy entry, so none is offered).
+ * Per strategy: `threshold` exposes a Threshold and a Tone curve (gamma) knob;
+ * the diffusers expose an Error diffusion knob, a Tone curve (gamma) knob and a
+ * Serpentine scan toggle. Below that, a per-object-type default quantizer select
+ * for every type the module fallback map names (shapes deliberately have no
+ * policy entry, so none is offered).
  *
  * Every write goes through the settings setters (never the document), and every
  * value is clamped here the way the persisted-settings validator would, since
@@ -38,6 +45,10 @@ const clampThreshold = (value: number): number =>
 /** Strength clamped to `[0,4]` and rounded to 2 dp (matches `validate`). */
 const clampStrength = (value: number): number =>
     Math.round(Math.min(STRENGTH_MAX, Math.max(STRENGTH_MIN, value)) * 100) / 100;
+
+/** Gamma clamped to `[0.1,4]` and rounded to 2 dp (the engine's own clamp). */
+const clampGamma = (value: number): number =>
+    Math.round(Math.min(GAMMA_MAX, Math.max(GAMMA_MIN, value)) * 100) / 100;
 
 /** The diffusers, in registry order — they share the Error diffusion controls. */
 const DIFFUSERS: readonly QuantizerId[] = (Object.keys(QUANTIZERS) as QuantizerId[]).filter(
@@ -163,21 +174,29 @@ interface DiffuserSettingsProps {
     name: string;
     strength: number | undefined;
     serpentine: boolean | undefined;
+    gamma: number | undefined;
+    /** This strategy's engine gamma default, shown when nothing is stored. */
+    gammaFallback: number;
     onStrength: (value: number) => void;
     onSerpentine: (value: boolean) => void;
+    onGamma: (value: number) => void;
 }
 
-/** One diffuser's Error diffusion number + Serpentine scan toggle. */
+/** One diffuser's Error diffusion number + Tone curve + Serpentine scan toggle. */
 const DiffuserSettings: React.FC<DiffuserSettingsProps> = ({
     name,
     strength,
     serpentine,
+    gamma,
+    gammaFallback,
     onStrength,
     onSerpentine,
+    onGamma,
 }) => {
     const { t } = useTranslation();
     const strengthId = useId();
     const serpentineId = useId();
+    const gammaId = useId();
     return (
         <div className="pt-2">
             <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400">{name}</h4>
@@ -193,6 +212,19 @@ const DiffuserSettings: React.FC<DiffuserSettingsProps> = ({
                 step={0.1}
                 normalize={clampStrength}
                 onCommit={onStrength}
+            />
+            <QuantizerNumberField
+                id={gammaId}
+                label={t('settings.rendering.gamma')}
+                description={t('settings.rendering.gammaDescription')}
+                ariaLabel={t('settings.rendering.gammaAria', { strategy: name })}
+                value={gamma}
+                fallback={gammaFallback}
+                min={GAMMA_MIN}
+                max={GAMMA_MAX}
+                step={0.1}
+                normalize={clampGamma}
+                onCommit={onGamma}
             />
             <SettingRow
                 label={t('settings.rendering.serpentine')}
@@ -231,27 +263,47 @@ const TypeDefaultSelect: React.FC<TypeDefaultSelectProps> = ({ label, value, onC
     );
 };
 
-/** Threshold strategy: only the binary-cutoff knob is meaningful. */
-const ThresholdSettings: React.FC<{ value: number | undefined; onCommit: (value: number) => void }> = ({
-    value,
-    onCommit,
-}) => {
+/** Threshold strategy: the binary-cutoff knob plus a neutral-by-default tone curve. */
+const ThresholdSettings: React.FC<{
+    value: number | undefined;
+    onCommit: (value: number) => void;
+    gamma: number | undefined;
+    onGamma: (value: number) => void;
+}> = ({ value, onCommit, gamma, onGamma }) => {
     const { t } = useTranslation();
     const id = useId();
+    const gammaId = useId();
     return (
-        <QuantizerNumberField
-            id={id}
-            label={t('settings.rendering.threshold')}
-            description={t('settings.rendering.thresholdDescription')}
-            ariaLabel={t('settings.rendering.threshold')}
-            value={value}
-            fallback={THRESHOLD_FALLBACK}
-            min={THRESHOLD_MIN}
-            max={THRESHOLD_MAX}
-            step={1}
-            normalize={clampThreshold}
-            onCommit={onCommit}
-        />
+        <>
+            <QuantizerNumberField
+                id={id}
+                label={t('settings.rendering.threshold')}
+                description={t('settings.rendering.thresholdDescription')}
+                ariaLabel={t('settings.rendering.threshold')}
+                value={value}
+                fallback={THRESHOLD_FALLBACK}
+                min={THRESHOLD_MIN}
+                max={THRESHOLD_MAX}
+                step={1}
+                normalize={clampThreshold}
+                onCommit={onCommit}
+            />
+            <QuantizerNumberField
+                id={gammaId}
+                label={t('settings.rendering.gamma')}
+                description={t('settings.rendering.gammaDescription')}
+                ariaLabel={t('settings.rendering.gammaAria', {
+                    strategy: t('editor.mfp.quantizerOptions.threshold'),
+                })}
+                value={gamma}
+                fallback={DEFAULT_GAMMA_BY_STRATEGY.threshold}
+                min={GAMMA_MIN}
+                max={GAMMA_MAX}
+                step={0.1}
+                normalize={clampGamma}
+                onCommit={onGamma}
+            />
+        </>
     );
 };
 
@@ -288,6 +340,8 @@ export const RenderingSection: React.FC = () => {
                 <ThresholdSettings
                     value={quantizerDefaults.threshold?.threshold}
                     onCommit={(value) => setStrategyParam('threshold', { threshold: value })}
+                    gamma={quantizerDefaults.threshold?.gamma}
+                    onGamma={(value) => setStrategyParam('threshold', { gamma: value })}
                 />
                 {DIFFUSERS.map((id) => (
                     <DiffuserSettings
@@ -295,8 +349,11 @@ export const RenderingSection: React.FC = () => {
                         name={t(STRATEGY_LABEL_KEYS[id])}
                         strength={quantizerDefaults[id]?.strength}
                         serpentine={quantizerDefaults[id]?.serpentine}
+                        gamma={quantizerDefaults[id]?.gamma}
+                        gammaFallback={DEFAULT_GAMMA_BY_STRATEGY[id]}
                         onStrength={(value) => setStrategyParam(id, { strength: value })}
                         onSerpentine={(value) => setStrategyParam(id, { serpentine: value })}
+                        onGamma={(value) => setStrategyParam(id, { gamma: value })}
                     />
                 ))}
             </section>
