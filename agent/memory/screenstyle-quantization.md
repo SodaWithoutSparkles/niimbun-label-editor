@@ -3,6 +3,11 @@
 > **DROPPED by the owner (2026-10-17).** The ScreenStyle/ScreenVAE integration is not planned; this
 > file is kept as **design rationale only** (the screentone direction was dropped with it). Nothing
 > below is a work item. See [`dithering.md`](dithering.md) §2.3 and §8.
+>
+> **2026-10-19 — owner re-asked for a feasibility assessment; the drop stands until they decide.**
+> The engine is small (a stateless point op, cheaper than `floydSteinberg`), the plumbing is ~13
+> mechanical sites, and the work is blocked on owner decisions: pitch default, tone-level count K,
+> screen angles, the `doc dpi ≠ head dpi` policy, and settings-only vs per-node params.
 
 **Verdict: the model cannot be ported as a quantizer (3 hard blockers). The *idea* can —
 ship classical screentone as a procedural quantizer instead. ScreenStyle is the design
@@ -105,6 +110,12 @@ lines of table-driven JS:
    rect rather than its ink, so a screentone policy on a logo with transparency smears
    its cell pattern across the transparent area.
 
+**Point ops are immune to the cross-policy seam problem (D-05).** Confirmed against the current
+code, not the earlier analysis: `applyPolicy` (`policy.ts:238-285`) quantizes a **fresh copy of the
+whole frame** per policy and scatters only that policy's masked pixels, so a stateless point op
+(this screentone, `threshold`) carries nothing across a region edge. D-05's seam drift is a property
+of the *diffusers* (`floydSteinberg`, `atkinson`, `ostromoukhov`), listed in the register.
+
 ## 4. Design if we ship it
 
 Add `screentone` (and possibly `lineScreen`) to `src/core/render/quantize.ts`:
@@ -139,6 +150,38 @@ k vs rank[(u,v) mod P]     --> ink
   or a global choice for `image` content.
 - **Dither `strength` is meaningless** for this quantizer — ignore it, and consider
   reusing the field or documenting it as N/A in the inspector.
+
+### 4a. Head-locked pitch — what the pipeline actually gives us (verified recon, 2026-10-19)
+
+- **The blocker: no head-dpi concept anywhere in the render path.** The raster dpi is
+  `doc.label.dpi` (`core/doc/types.ts:295`; clamped 100–1200, `validate.ts:83-97`) and
+  `renderLabelPage.ts:570` (`opts.dpi ?? opts.assets?.dpi ?? doc.label.dpi`). The printhead's dot
+  resolution is never an input to rendering. So the precondition above collapses to: pitch must be
+  an **integer raster px *and* `doc dpi == head dpi`** — outside that equality there is no
+  "integer number of head dots" to express.
+- **Nothing resamples.** The raster is encoded 1:1 in printer dots (`printLabel.ts:235`
+  `ImageEncoder.encodeCanvas`, no scale step). A document whose dpi differs from the head's is
+  therefore both **physically mis-scaled** (a 203-dpi page on a ~300-dpi head prints at ≈0.68×) and
+  **off the physical dot grid**. The only existing signal is the **non-blocking, advisory**
+  `rollDpiMismatch` warning (`components/print/printDialogModel.ts:62-81`, gated at
+  `PrintDialog.tsx:189`): it compares the *printer-tag-reported* dpi against `doc.label.dpi` and
+  neither blocks nor changes the render dpi. A `dpi` override path exists and is honoured
+  (`print/printLabel.ts:122-137` `renderOptionsOf`) — but the dialog never sets it. Registered as
+  debt **D-69** ([`tech-debt.md`](tech-debt.md)).
+- **Not observable in-repo:** whether the printer firmware internally rescales a raster whose width
+  is not the head's dot count. Unknown — do not speculate.
+- **Legal pitch table** (pitch = an integer number of head dots; ≥0.4 mm advisory floor, ≥0.5 mm
+  preferred; dot pitch = `headDpi/25.4` dots/mm — B1_PRO 567 dots ≈ 48.006 mm ⇒ 300 dpi ⇒ 11.811
+  dots/mm):
+  - 300 dpi head: 5 dots = 0.423 mm · 6 = 0.508 · 8 = 0.677 · 10 = 0.847 · 12 = 1.016
+  - 203 dpi head: 4 dots = 0.500 mm · 5 = 0.626 · 6 = 0.751 · 8 = 1.001
+- **The dpi of each render path** — a head-locked screen reproduces only at the head dpi and looks
+  different on the others: print = **document dpi**; single-page print preview = document dpi; the
+  live quantized preview = document dpi when it fits its 1 M px budget (`tech-debt.md` D-60), else
+  lower; **gallery/queue thumbnails = 100 dpi** (`components/print/usePrintThumbnails.ts:45`).
+- **The reference's own ordered dither is dpi-blind** — `references/niimblue/src/utils/post_process.ts:117-165`
+  (`BAYER_MATRICES {2,4,8}`, indexed by integer px `% patternSize`) makes no attempt at physical
+  pitch alignment. That is the naive approach; ours must be head-aware.
 
 ## 5. Honest cost/benefit
 
