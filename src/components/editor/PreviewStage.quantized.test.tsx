@@ -101,7 +101,13 @@ describe('PreviewStage — live quantized preview', () => {
         await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 50);
 
         const chip = screen.getByTestId('quantized-preview-chip');
+        // 20 × 10 mm at 300 dpi fits the pixel budget, so the overlay is
+        // dithered at the document (print) resolution — no "approximate
+        // resolution" hedge. The chip deliberately does not claim the full
+        // printed page: print-only transforms are applied downstream.
         expect(chip).toHaveTextContent('Quantized preview');
+        expect(chip).toHaveTextContent('dithered at print resolution');
+        expect(chip).not.toHaveTextContent('approximate');
         // Never a hit target: the editor stays fully interactive underneath.
         expect(chip.className).toContain('pointer-events-none');
 
@@ -117,6 +123,32 @@ describe('PreviewStage — live quantized preview', () => {
         await flush(QUANTIZED_PREVIEW_IDLE_MS + 100);
         expect(screen.queryByTestId('quantized-preview-chip')).toBeNull();
         expect(stage.getLayers().length).toBe(baseLayers);
+    });
+
+    it('says the resolution is approximate when the budget forces a lower dpi', async () => {
+        // 200 × 100 mm at 300 dpi is ~2.8 M px — over the 1 M px budget, so the
+        // overlay renders below the document dpi and the chip must say so.
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({
+                id: 'doc-1',
+                now: 1_700_000_000,
+                backingW: 20_000,
+                backingH: 10_000,
+                nodes: [textNode()],
+            }),
+            selectedNodeIds: ['t1'],
+            activeTool: 'select',
+            snapEnabled: false,
+        });
+        render(<PreviewStage />);
+
+        await tuneThreshold(90);
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 50);
+
+        const chip = screen.getByTestId('quantized-preview-chip');
+        expect(chip).toHaveTextContent('Quantized preview');
+        expect(chip).toHaveTextContent('approximate resolution');
     });
 
     it('never mutates the document and never pushes an undo entry', async () => {

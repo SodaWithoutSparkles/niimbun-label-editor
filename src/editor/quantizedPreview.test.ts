@@ -5,7 +5,6 @@ import type { Node } from '../core/doc/types';
 import { rasterDimensions } from '../core/render';
 import { MAX_RASTER_PIXELS } from './render/renderLabelPage';
 import {
-    QUANTIZED_PREVIEW_DPI_CAP,
     QUANTIZED_PREVIEW_MAX_PIXELS,
     QUANTIZED_PREVIEW_MIN_DPI,
     quantizedPreviewDpi,
@@ -15,9 +14,9 @@ import {
 
 /**
  * P14 W3 pure policy: what counts as "tuning" (the trigger key) and how much
- * raster the live preview may pay for (the dpi cap + the `MAX_RASTER_PIXELS`
- * degradation). The lifecycle — debounce, supersede, idle revert — is covered by
- * `components/editor/useQuantizedPreview.test.tsx`.
+ * raster the live preview may pay for (the preview pixel budget + the
+ * `MAX_RASTER_PIXELS` degradation). The lifecycle — debounce, supersede, idle
+ * revert — is covered by `components/editor/useQuantizedPreview.test.tsx`.
  *
  * happy-dom (not node): the module reads `MAX_RASTER_PIXELS` from
  * `renderLabelPage`, whose module graph loads Konva.
@@ -52,10 +51,11 @@ const makeDoc = (over: { dpi?: number; backingW?: number; backingH?: number } = 
     return doc;
 };
 
-describe('quantizedPreviewDpi — the cost cap', () => {
-    it('caps a high document dpi at the preview cap', () => {
-        expect(quantizedPreviewDpi(makeDoc({ dpi: 300 }))).toBe(QUANTIZED_PREVIEW_DPI_CAP);
-        expect(quantizedPreviewDpi(makeDoc({ dpi: 203 }))).toBe(QUANTIZED_PREVIEW_DPI_CAP);
+describe('quantizedPreviewDpi — the pixel budget', () => {
+    it('renders at the document dpi when the raster fits the budget', () => {
+        // A small/medium label is the exact print raster: no cap, same dpi.
+        expect(quantizedPreviewDpi(makeDoc({ dpi: 300 }))).toBe(300);
+        expect(quantizedPreviewDpi(makeDoc({ dpi: 203 }))).toBe(203);
     });
 
     it('never raises a low document dpi', () => {
@@ -68,11 +68,11 @@ describe('quantizedPreviewDpi — the cost cap', () => {
     });
 
     it('lowers the dpi until the raster fits the preview pixel budget', () => {
-        // A 1 m × 1 m backing at the preview cap is ~35 M px — 35× the budget.
+        // A 1 m × 1 m backing at 300 dpi is ~139 M px — 139× the budget.
         const doc = makeDoc({ dpi: 300, backingW: 100_000, backingH: 100_000 });
         const dpi = quantizedPreviewDpi(doc);
         expect(dpi).toBeGreaterThan(0);
-        expect(dpi).toBeLessThanOrEqual(QUANTIZED_PREVIEW_DPI_CAP);
+        expect(dpi).toBeLessThan(doc.label.dpi);
         const { widthPx, heightPx } = rasterDimensions(doc.label.backingW, doc.label.backingH, dpi);
         // The whole point: the value handed to `renderLabelPage` fits the preview
         // budget (and therefore the pipeline's own `MAX_RASTER_PIXELS`).
@@ -80,24 +80,33 @@ describe('quantizedPreviewDpi — the cost cap', () => {
         expect(widthPx * heightPx).toBeLessThanOrEqual(MAX_RASTER_PIXELS);
     });
 
-    it('keeps the full preview dpi for real label sizes', () => {
-        // 40 × 30 mm (the default) and 100 × 150 mm both fit the budget at 150 dpi,
-        // so the budget must not degrade the everyday case.
+    it('keeps the full document dpi for label sizes that fit the budget', () => {
+        // 40 × 30 mm (the default) and 60 × 40 mm both fit the 1 M px budget at
+        // 300 dpi, so the budget must not degrade the everyday case.
         for (const [w, h] of [
             [4000, 3000],
-            [10_000, 15_000],
+            [6000, 4000],
         ] as const) {
-            expect(quantizedPreviewDpi(makeDoc({ dpi: 300, backingW: w, backingH: h }))).toBe(
-                QUANTIZED_PREVIEW_DPI_CAP,
-            );
+            expect(quantizedPreviewDpi(makeDoc({ dpi: 300, backingW: w, backingH: h }))).toBe(300);
         }
+    });
+
+    it('returns a usable, budget-sized dpi below the document dpi when the full one would not fit', () => {
+        // 100 × 150 mm at 300 dpi is ~2.1 M px — over budget — so the fallback must
+        // drop below the document dpi but still fit.
+        const doc = makeDoc({ dpi: 300, backingW: 10_000, backingH: 15_000 });
+        const dpi = quantizedPreviewDpi(doc);
+        expect(dpi).toBeGreaterThan(0);
+        expect(dpi).toBeLessThan(doc.label.dpi);
+        const { widthPx, heightPx } = rasterDimensions(doc.label.backingW, doc.label.backingH, dpi);
+        expect(widthPx * heightPx).toBeLessThanOrEqual(QUANTIZED_PREVIEW_MAX_PIXELS);
     });
 
     it('keeps going past four reductions instead of suppressing a renderable preview', () => {
         // A degenerate axis: the height rounds to a single pixel, so the raster is
         // ~linear in dpi rather than dpi² and the candidates converge one step at a
-        // time — 150 → 122 → 110 → 104 → 101 → 100. A fixed attempt cap returned 0
-        // here, i.e. it silently dropped a preview that *is* renderable.
+        // time — 300 → 173 → 131 → 114 → 106 → 102 → 100. A fixed attempt cap
+        // returned 0 here, i.e. it silently dropped a preview that *is* renderable.
         const backingW = 25_400_000;
         const backingH = 1;
         const doc = makeDoc({ dpi: 300, backingW, backingH });
@@ -107,11 +116,10 @@ describe('quantizedPreviewDpi — the cost cap', () => {
         };
 
         // The fourth candidate still exceeds the budget: the old cap gave up here.
-        expect(pixelsAt(101)).toBeGreaterThan(QUANTIZED_PREVIEW_MAX_PIXELS);
+        expect(pixelsAt(114)).toBeGreaterThan(QUANTIZED_PREVIEW_MAX_PIXELS);
 
         const dpi = quantizedPreviewDpi(doc);
-        expect(dpi).toBeGreaterThan(0);
-        expect(dpi).toBeLessThanOrEqual(QUANTIZED_PREVIEW_DPI_CAP);
+        expect(dpi).toBe(100);
         expect(pixelsAt(dpi)).toBeLessThanOrEqual(QUANTIZED_PREVIEW_MAX_PIXELS);
     });
 
@@ -162,11 +170,11 @@ describe('quantizedPreviewOptions', () => {
         expect(quantizedPreviewOptions(makeDoc({ dpi: 0 }))).toBeNull();
     });
 
-    it('threads the capped dpi and the store dither settings into the render options', () => {
+    it('threads the document dpi and the store dither settings into the render options', () => {
         const doc = makeDoc({ dpi: 300 });
         const options = quantizedPreviewOptions(doc, undefined, { threshold: { gamma: 1.5 } }, { image: 'atkinson' });
         expect(options).not.toBeNull();
-        expect(options?.dpi).toBe(QUANTIZED_PREVIEW_DPI_CAP);
+        expect(options?.dpi).toBe(300);
         expect(options?.quantizerDefaults).toEqual({ threshold: { gamma: 1.5 } });
         expect(options?.defaultQuantizerByType).toEqual({ image: 'atkinson' });
         // The editor canvas shows the logical orientation: no print override may

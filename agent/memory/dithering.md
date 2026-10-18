@@ -100,8 +100,9 @@ the tone curve ships as a per-strategy `gamma` setting; Ostromoukhov ships.**
   every masked policy carries it explicitly. Any new per-policy knob must be set explicitly too.
 - **Diffusion is inherently sequential** (no parallel/GPU win); ordering matters, so the
   preview reruns are the real latency budget. Since **P14** the editor *does* paint a quantized
-  overlay, but only as a capped-dpi, capped-pixel approximation (~0.17–0.25 s worst case at its
-  1 M px budget on the shared 2-core box; `D-60`/`D-61`) on an inspector-only trigger — the Konva
+  overlay, but only as a budget-only approximation: document dpi when the raster fits the 1 M px
+  budget, otherwise a lower dpi that fits (~0.17–0.25 s worst case at its 1 M px budget on the
+  shared 2-core box; `D-60`/`D-61`) on an inspector-only trigger — the Konva
   canvas itself is still never quantized, and the print path's cost is unchanged.
 - `MAX_RASTER_PIXELS = 16_000_000` (`renderLabelPage.ts:157`); a full-frame `Uint8ClampedArray`
   copy per policy + one `Float32Array` per quantizer call.
@@ -224,7 +225,8 @@ Commits `2b0f70a` (W1 gamma), `f2d3bc9` (W2 Ostromoukhov), `8468b54` (W3 live pr
   - ⚠ **No clean licence** on the reference C or the Observable notebook: only the **numeric** table
     was transcribed. Do **not** vendor the reference C or the notebook code (`D-66`).
 - **Live quantized preview** (W3): inspector-only trigger, 60 ms debounce, 1.5 s idle revert,
-  150 dpi cap + 1 M px budget, `pointer-events: none` react-konva overlay, never mutates the doc.
+  document dpi when the raster fits the 1 M px budget (the exact print raster, 1:1) else a dpi
+  that fits the budget, `pointer-events: none` react-konva overlay, never mutates the doc.
   Pure policy in `editor/quantizedPreview.ts`; lifecycle in
   `components/editor/useQuantizedPreview.ts`; layer in
   `components/editor/QuantizedPreviewLayer.tsx`. `previewOptionsKey` moved to the pure
@@ -234,7 +236,7 @@ Commits `2b0f70a` (W1 gamma), `f2d3bc9` (W2 Ostromoukhov), `8468b54` (W3 live pr
   screentone, and the ScreenStyle/ScreenVAE integration; together with the `toneCurve` enum, the
   S-curve and any per-node/per-paper curve.
 - **Residuals are registered** in [`tech-debt.md`](tech-debt.md) as **D-58…D-67**: per-strategy-only
-  gamma, the inspector-only trigger, the capped-dpi/pixel approximation, the synchronous render
+  gamma, the inspector-only trigger, the budget-only pixel approximation, the synchronous render
   cost, the mid-edit hide, the unverified hardware behaviour change at gamma 1.3, mask-palette
   pressure (R14-b), the cutoff-band deviation, the licence, and the blue-noise-under-clipping
   question.

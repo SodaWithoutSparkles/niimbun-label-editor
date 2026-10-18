@@ -22,30 +22,25 @@ import { MAX_RASTER_PIXELS, type RenderLabelPageOptions } from './render/renderL
  * the pixels around the leaf. Re-rendering just the selected node would show a
  * pattern no printer produces, so the caller renders the whole page through the
  * same `renderLabelPage` the print path uses. The only approximation left is the
- * dpi cap below (risk R14-e).
+ * pixel budget below (risk R14-e) — and it binds only on a label too large to
+ * render at its document dpi, so for everything that fits the overlay **is** the
+ * print raster at the same dpi.
  *
  * Layer: `editor/` is the pure-logic layer (`.ts` only, no React). It may import
  * `core/` and its own `editor/render/` sibling; the hook that consumes it lives
  * in `components/`.
  */
 
-/**
- * Preview dpi cap. The overlay is for judging **pattern and tone**, not for
- * pixel-peeping — and the dot pattern is itself a function of dpi, so a capped
- * render is an approximation and the UI affordance says so (R14-e). Render cost
- * is dpi², so 150 dpi costs ~55 % of a 203 dpi document-dpi render while staying
- * legible at the editor's on-screen zoom.
- */
-export const QUANTIZED_PREVIEW_DPI_CAP = 150;
-
 /** Below this the pattern carries no information: show nothing instead. */
 export const QUANTIZED_PREVIEW_MIN_DPI = 20;
 
 /**
- * Preview **pixel** budget. The dpi cap alone is not a cost bound: a 200 mm
- * label at 150 dpi is 1.4 M px, and the pipeline's own `MAX_RASTER_PIXELS`
- * (16 M px) permits a render + quantization pass large enough to freeze editing
- * while a knob pause triggers it. This budget keeps the worst case a hitch.
+ * Preview **pixel** budget — the *only* cost bound. There is no dpi cap: the
+ * preview renders at the **document dpi** whenever the raster fits this budget,
+ * so for small and medium labels the overlay **is** the print raster, 1:1. Only
+ * a label too large to render at its document dpi falls back to a lower dpi, and
+ * only then is the render an approximation (the dot pattern is itself a function
+ * of dpi — risk R14-e) that the UI affordance flags as such.
  *
  * Measured on the shared path (`renderLabelPage`, one text node, 150 dpi,
  * inclusive of resolve → rasterize → policy mask → clip → quantize → encode;
@@ -56,18 +51,18 @@ export const QUANTIZED_PREVIEW_MIN_DPI = 20;
  *
  * 1 M px is therefore the largest round budget that keeps a pessimistic
  * worst-case render to a quarter of a second — a one-off debounced hitch during a
- * pause in tuning, not a freeze — and it still fits a full 100 × 150 mm label at
- * the 150 dpi cap (524 k px) without any degradation.
+ * pause in tuning, not a freeze — and it still covers the everyday case at full
+ * document dpi: a 25 × 78 mm label in a 300 dpi document is 272 k px ≈ 0.09 s and
+ * renders at **300 dpi**.
  */
 export const QUANTIZED_PREVIEW_MAX_PIXELS = 1_000_000;
 
 /**
- * The dpi the preview pays for: the document dpi, capped at
- * {@link QUANTIZED_PREVIEW_DPI_CAP}, then lowered until the raster fits the
- * preview pixel budget (which itself stays inside `MAX_RASTER_PIXELS`, the limit
- * `renderLabelPage` enforces with a `RangeError`). Returns `0` when the document
- * cannot be rendered at any usable dpi — the caller then shows **nothing**,
- * never an error.
+ * The dpi the preview pays for: the **document dpi**, lowered only until the
+ * raster fits the preview pixel budget (which itself stays inside
+ * `MAX_RASTER_PIXELS`, the limit `renderLabelPage` enforces with a `RangeError`).
+ * Returns `0` when the document cannot be rendered at any usable dpi — the caller
+ * then shows **nothing**, never an error.
  */
 export const quantizedPreviewDpi = (doc: LabelDoc): number => {
     const docDpi = doc.label.dpi;
@@ -76,7 +71,7 @@ export const quantizedPreviewDpi = (doc: LabelDoc): number => {
     // unreachable by design; take the min anyway so this stays correct if either
     // number moves.
     const budget = Math.min(QUANTIZED_PREVIEW_MAX_PIXELS, MAX_RASTER_PIXELS);
-    let dpi = Math.floor(Math.min(docDpi, QUANTIZED_PREVIEW_DPI_CAP));
+    let dpi = Math.floor(docDpi);
     // Iterate until the raster fits or the dpi is no longer usable — **no fixed
     // attempt cap**: a cap could give up on a candidate that fits a few steps
     // later and silently suppress an otherwise renderable preview. Termination is
@@ -140,8 +135,8 @@ export const quantizedPreviewTrigger = (node: Node | undefined): QuantizedPrevie
 };
 
 /**
- * The render options for the preview: the **capped** dpi, the editor's prepared
- * asset deps, and the store's dither settings — i.e. the same inputs the print
+ * The render options for the preview: the **document dpi** (lowered only when the
+ * pixel budget binds), the editor's prepared asset deps, and the store's dither settings — i.e. the same inputs the print
  * path threads in, minus the print transport overrides. `invert`/`mirror`/
  * `offset` are deliberately absent: the editor canvas shows the logical/label
  * orientation (the same convention `usePrintThumbnails` documents), and the

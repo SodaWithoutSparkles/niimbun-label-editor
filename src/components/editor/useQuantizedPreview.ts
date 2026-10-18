@@ -22,7 +22,7 @@ import { previewOptionsKey, previewOverridesKey } from '../../editor/render/prev
  * While a user tunes the selected node's quantization state (`quantizerHint` /
  * `quantizerParams.threshold|strength|serpentine`), the preview canvas paints the
  * **printed** raster over the label area and reverts to the normal colour view
- * after a short idle. The pure policy — the trigger key, the dpi cap, the
+ * after a short idle. The pure policy — the trigger key, the pixel budget, the
  * `MAX_RASTER_PIXELS` degradation — lives in `editor/quantizedPreview.ts`; this
  * hook owns only the effects: debounce, supersede, idle revert, teardown.
  *
@@ -99,6 +99,13 @@ export interface QuantizedPreview {
     image: CanvasImageSource | undefined;
     /** `true` while the overlay should be painted (the chip shows with it). */
     active: boolean;
+    /**
+     * `true` when the painted raster was rendered **below** the document dpi — the
+     * 1 M px budget bound a label too large to render at its document dpi, so the
+     * overlay approximates the print raster and the chip must say so. `false`
+     * means the overlay **is** the print raster, rendered at the document dpi.
+     */
+    approximate: boolean;
 }
 
 /** A render plan plus its content key; `null` = the document cannot be rendered. */
@@ -113,6 +120,12 @@ interface RenderedContent {
     ctxKey: string;
 }
 
+/** The raster currently painted, plus the dpi policy it was rendered with. */
+interface PaintedPreview {
+    image: CanvasImageSource;
+    approximate: boolean;
+}
+
 /**
  * Is `content` still what the inputs resolve to? The document is compared by
  * identity (any edit mints a fresh `currentDoc`) and the override map by
@@ -125,7 +138,7 @@ const sameContent = (content: RenderedContent, inputs: UseQuantizedPreviewOption
 export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): QuantizedPreview => {
     const { doc, selectedNodeIds, enabled = true, revertOn, resolveContext } = options;
 
-    const [bitmap, setBitmap] = useState<CanvasImageSource | null>(null);
+    const [painted, setPainted] = useState<PaintedPreview | null>(null);
 
     // Latest inputs, read at render time. Deliberately not effect dependencies: a
     // fresh (but equal) `assets`/settings/context object, or a doc repaint that
@@ -168,7 +181,7 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
         generationRef.current += 1;
         clearTimers();
         paintedRef.current = null;
-        setBitmap(null);
+        setPainted(null);
     }, [clearTimers]);
 
     /** Plan the render from the newest inputs, with the staleness key. */
@@ -212,11 +225,17 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
                 // sample-row change): the raster no longer matches the canvas.
                 if (!sameContent(content, inputsRef.current)) return;
                 paintedRef.current = content;
-                setBitmap(page.canvas);
+                setPainted({
+                    image: page.canvas,
+                    // The plan's dpi is the document dpi unless the 1 M px budget
+                    // forced a lower one; carry that verdict with the raster so the
+                    // chip never recomputes what the hook already knows.
+                    approximate: (plan.options.dpi ?? 0) < Math.floor(target.label.dpi),
+                });
                 idleRef.current = setTimeout(() => {
                     idleRef.current = null;
                     paintedRef.current = null;
-                    setBitmap(null);
+                    setPainted(null);
                 }, QUANTIZED_PREVIEW_IDLE_MS);
             } catch {
                 // A `RangeError` from `MAX_RASTER_PIXELS` or a bad dpi is expected
@@ -305,5 +324,9 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
         [],
     );
 
-    return { image: bitmap ?? undefined, active: bitmap !== null };
+    return {
+        image: painted?.image,
+        active: painted !== null,
+        approximate: painted?.approximate ?? false,
+    };
 };

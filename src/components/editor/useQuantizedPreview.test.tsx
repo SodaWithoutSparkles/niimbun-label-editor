@@ -7,7 +7,6 @@ import type { LabelDoc, Node } from '../../core/doc/types';
 import { rasterDimensions } from '../../core/render';
 import { installCanvasShim } from '../../test/canvasHarness';
 import type { RenderedLabelPage } from '../../editor/render';
-import { QUANTIZED_PREVIEW_DPI_CAP } from '../../editor/quantizedPreview';
 import {
     QUANTIZED_PREVIEW_DEBOUNCE_MS,
     QUANTIZED_PREVIEW_IDLE_MS,
@@ -137,11 +136,12 @@ describe('useQuantizedPreview — debounce and idle revert', () => {
         await flush(200);
         expect(result.current.active).toBe(false);
         expect(result.current.image).toBeUndefined();
+        expect(result.current.approximate).toBe(false);
     });
 
-    it('passes the capped dpi and the store dither settings to the shared path', async () => {
+    it('passes the document dpi and the store dither settings to the shared path', async () => {
         const doc = makeDoc();
-        const { rerender } = mount(
+        const { result, rerender } = mount(
             props(doc, { quantizerDefaults: { threshold: { gamma: 1.5 } }, defaultQuantizerByType: { image: 'atkinson' } }),
         );
         await act(async () => {
@@ -150,9 +150,32 @@ describe('useQuantizedPreview — debounce and idle revert', () => {
         await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
 
         const options = renderMock.mock.calls[0]![2] as Record<string, unknown>;
-        expect(options.dpi).toBe(QUANTIZED_PREVIEW_DPI_CAP);
+        expect(options.dpi).toBe(Math.floor(doc.label.dpi));
         expect(options.quantizerDefaults).toEqual({ threshold: { gamma: 1.5 } });
         expect(options.defaultQuantizerByType).toEqual({ image: 'atkinson' });
+        // It fit the pixel budget, so this raster *is* the print raster.
+        expect(result.current.approximate).toBe(false);
+    });
+
+    it('flags the raster as approximate when the pixel budget forces a lower dpi', async () => {
+        // 200 × 100 mm at 300 dpi is ~2.8 M px — over the 1 M px budget.
+        const doc = makeDoc({ backingW: 20_000, backingH: 10_000 });
+        const { result, rerender } = mount(props(doc));
+        await act(async () => {
+            rerender(props(withThreshold(doc, 90)));
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+
+        const options = renderMock.mock.calls[0]![2] as Record<string, unknown>;
+        expect(options.dpi).toBeLessThan(doc.label.dpi);
+        expect(result.current.approximate).toBe(true);
+
+        // The idle revert clears the flag with the overlay (`setPainted(null)`):
+        // it must not stay `true` for a raster that is no longer painted.
+        await flush(QUANTIZED_PREVIEW_IDLE_MS + 100);
+        expect(result.current.active).toBe(false);
+        expect(result.current.image).toBeUndefined();
+        expect(result.current.approximate).toBe(false);
     });
 
     it("renders with the canvas's own resolve context (the sample-row overrides)", async () => {
@@ -476,10 +499,10 @@ describe('useQuantizedPreview — real pipeline wiring', () => {
     });
 
     it(
-        'renders the whole page through renderLabelPage at the capped dpi',
+        'renders the whole page through renderLabelPage at the document dpi',
         async () => {
             const doc = makeDoc();
-            // The factory normalizes dpi; a 300 dpi document is the capped case.
+            // The factory normalizes dpi; a plain 300 dpi document fits the budget.
             doc.label.dpi = 300;
             const changed = withThreshold(doc, 90);
             const { result, rerender } = mount({ doc, selectedNodeIds: ['t1'] });
@@ -490,7 +513,9 @@ describe('useQuantizedPreview — real pipeline wiring', () => {
 
             const image = result.current.image as HTMLCanvasElement | undefined;
             expect(image).toBeInstanceOf(HTMLCanvasElement);
-            const expected = rasterDimensions(doc.label.backingW, doc.label.backingH, QUANTIZED_PREVIEW_DPI_CAP);
+            // The overlay is the exact print raster: same dpi, no approximation.
+            expect(result.current.approximate).toBe(false);
+            const expected = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
             expect(image!.width).toBe(expected.widthPx);
             expect(image!.height).toBe(expected.heightPx);
 

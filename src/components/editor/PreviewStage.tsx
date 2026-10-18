@@ -1898,7 +1898,11 @@ export const PreviewStage: React.FC = () => {
                     data-testid="quantized-preview-chip"
                     className="pointer-events-none absolute top-2 right-2 z-30 rounded border border-gray-500 bg-gray-900/80 px-2 py-1 text-xs text-gray-100"
                 >
-                    {t('editor.quantizedPreview.chip')}
+                    {t(
+                        quantizedPreview.approximate
+                            ? 'editor.quantizedPreview.chipApproximate'
+                            : 'editor.quantizedPreview.chip',
+                    )}
                 </div>
             )}
 

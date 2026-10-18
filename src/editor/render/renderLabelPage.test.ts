@@ -392,6 +392,36 @@ describe('renderLabelPage — shared preview/print path', () => {
             }),
         ]);
 
+    /**
+     * A 10×5 mm @254 dpi doc (100×50 px), same single grey shape as `gammaDoc`.
+     *
+     * The W1 guard lives in `normalizeGamma`, which builds the quantizer's tone
+     * LUT — it is dpi- and label-size-independent, so this small raster proves
+     * exactly the same thing as a full page for a fraction of the cost
+     * (tech-debt D-23: heavy real-canvas files flake under parallel load).
+     */
+    const tinyGammaDoc = (): LabelDoc =>
+        createLabelDoc({
+            backingW: 1000,
+            backingH: 500,
+            dpi: 254,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 1000, h: 500 }],
+            nodes: [
+                node({
+                    id: 'g',
+                    parentId: null,
+                    type: 'shape',
+                    shape: 'rectangle',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    size: { w: 1000, h: 500 },
+                    fill: '#808080',
+                    quantizerHint: 'floydSteinberg',
+                }),
+            ],
+        });
+
     const gammaOptionsAt = (
         built: Awaited<ReturnType<typeof buildPolicyMask>>,
         index: number,
@@ -461,7 +491,8 @@ describe('renderLabelPage — shared preview/print path', () => {
         // `opts.gamma` is an unvalidated render-level fallback: a NaN/Infinity
         // gamma used to build a NaN LUT, which lands in the `Uint8Array` as 0 and
         // blackens every pixel. It must now normalise to the neutral curve.
-        const doc = gammaDoc('floydSteinberg');
+        // A tiny label is enough: the guard is about the LUT, not the output size.
+        const doc = tinyGammaDoc();
         const neutral = await renderLabelPage(doc, {}, {
             quantizerDefaults: { floydSteinberg: { gamma: 1 } },
         });
