@@ -29,7 +29,7 @@ print done {"pagesPrinted":3}
 - `printPage` sends `printStatus` (oneWay) → `setPageSize13b` → bitmap rows → `pageEnd`. B1_PRO ≈ D110M_V4 hardware.
 - The adapter must pass `pageColor` explicitly (`SingleColor`); the reference app does. Encoded pages are `SingleColor`.
 
-### ⚠ Progress `page` is inconsistent on D110M_V4 (P7 must handle)
+### ⚠ Progress `page` is inconsistent on D110M_V4 (handled in P7; hardware check still owed)
 
 Observed event order on a 1-page job:
 ```
@@ -37,7 +37,7 @@ progress {"page":1,"pagesTotal":1,...}   // niimbluelib's initial emit (1-based)
 progress {"page":0,"pagesTotal":1,...}   // status-poll path reports 0-based
 progress {"page":1,"pagesTotal":1,100}   // final (1-based)
 ```
-`page` goes **1 → 0 → 1**: the status-poll path (`waitUntilPrintFinishedByStatusPoll`) reports a **0-based** `page` while the library's own first/last emit is 1-based. `pagesTotal` is stable. Do NOT build a monotonic progress bar directly on `page` — clamp it monotonic, or derive progress from `(pagePrintProgress + pageFeedProgress)` as niim.blue does. Also `pageFeedProgress` stays 0 throughout on this model. Add a P7 test/guard; unverified whether `page` is also non-monotonic across multi-page jobs.
+`page` goes **1 → 0 → 1**: the status-poll path (`waitUntilPrintFinishedByStatusPoll`) reports a **0-based** `page` while the library's own first/last emit is 1-based. `pagesTotal` is stable. Do NOT build a monotonic progress bar directly on `page` — clamp it monotonic, or derive progress from `(pagePrintProgress + pageFeedProgress)` as niim.blue does. Also `pageFeedProgress` stays 0 throughout on this model. The guard **shipped in P7**: `src/print/jobRunner.ts:120-132` clamps `page` monotonic (`Math.max(1, page, rawPage)`) and derives the percentage from `max(clampPercent(pagePrintProgress), clampPercent(pageFeedProgress))` — but whether the contract is right at the printer is still **unverified on hardware** — carried as **D-27** — and it is also unverified whether `page` is non-monotonic across multi-page jobs.
 
 ### First-run harness bugs (fixed; the adapter was always correct)
 
@@ -59,7 +59,7 @@ niim.blue passes `quantity` per `printPage` and `totalPages = pages * copies`; o
 
 ## Reference clone
 
-`references/niimblue/` (gitignored) — the niim.blue Svelte app. Key files for our pipeline: `src/components/PrintPreview.svelte` (print flow + options + progress math), `src/utils/canvas_preprocess.ts`, `src/utils/canvas_utils.ts`, `src/utils/post_process.ts`, `src/utils/dither.ts`, `src/fabric-object/custom_canvas.ts`. **P4/P5 should read these before building the render pipeline.**
+`references/niimblue/` (gitignored) — the niim.blue Svelte app. Key files for our pipeline: `src/components/PrintPreview.svelte` (print flow + options + progress math), `src/utils/canvas_preprocess.ts`, `src/utils/canvas_utils.ts`, `src/utils/post_process.ts`, `src/utils/dither.ts`, `src/fabric-object/custom_canvas.ts`. **These are the sources our pipeline was ported from** — P4 (render seam + encoder) and P5 (objects/assets) shipped 2026-10-04, so read them to trace *why* a behaviour is what it is, not as pending work.
 
 ## EncodedImage gotchas (bit-plane encoding, P4)
 
@@ -82,9 +82,9 @@ niim.blue passes `quantity` per `printPage` and `totalPages = pages * copies`; o
 - **Per-object quantizer policy masks:** no hint anywhere ⇒ no mask, exactly one global pass (guardrail). Painting every rendered leaf (globals = mask 0) in the same tree order as the raster gives topmost-wins.
 - **Testing:** real canvas in Vitest via `src/test/canvasHarness.ts` (`installCanvasShim()`, `@napi-rs/canvas` dev dep). Guard `src/test/canvasHarness.guard.test.ts` forbids product imports.
 
-## Narrow-roll placement (P7 must fix — found by hardware smoke 2026-10-04)
+## Narrow-roll placement (found by hardware smoke 2026-10-04; knobs shipped in P7, hardware re-check not exercised)
 
-Printing a **25 mm** label on the **567-dot (~48 mm)** printhead left-aligns content at the origin of the padded bit plane, so on the owner's **50×30 mm** test roll the box printed ~15.5 mm from the left edge (blank head columns), and the printer trimmed 78−30 mm at the tag boundary (IR sensor). This is transport behavior, **not** a clip/render bug (invariant 6: raster stays the backing rect). P7 owns the fix: feed/label offset + centering knobs (`PrintPreview.svelte` `offset.{x,y,offsetType}`) and the printhead-overflow warning.
+Printing a **25 mm** label on the **567-dot (~48 mm)** printhead left-aligns content at the origin of the padded bit plane, so on the owner's **50×30 mm** test roll the box printed ~15.5 mm from the left edge (blank head columns), and the printer trimmed 78−30 mm at the tag boundary (IR sensor). This is transport behavior, **not** a clip/render bug (invariant 6: raster stays the backing rect). **Status:** the fix shipped in P7 — feed/label offset + centring knobs (`PrintDialog.tsx:118-120` state → `:211` `{x, y, type: offsetType}` on the print task, ported from `PrintPreview.svelte`'s `offset.{x,y,offsetType}`) plus the `printheadOverflow` warning (`:183`). **The physical placement was never re-verified on hardware**: `P7-SMOKE.md` §B records "offset centring — *(not exercised)*", so treat the narrow-roll behaviour as still open as found on 2026-10-04.
 
 ## Gotchas (learned the hard way)
 
