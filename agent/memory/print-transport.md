@@ -86,6 +86,12 @@ niim.blue passes `quantity` per `printPage` and `totalPages = pages * copies`; o
 
 Printing a **25 mm** label on the **567-dot (~48 mm)** printhead left-aligns content at the origin of the padded bit plane, so on the owner's **50×30 mm** test roll the box printed ~15.5 mm from the left edge (blank head columns), and the printer trimmed 78−30 mm at the tag boundary (IR sensor). This is transport behavior, **not** a clip/render bug (invariant 6: raster stays the backing rect). **Status:** the fix shipped in P7 — feed/label offset + centring knobs (`PrintDialog.tsx:118-120` state → `:211` `{x, y, type: offsetType}` on the print task, ported from `PrintPreview.svelte`'s `offset.{x,y,offsetType}`) plus the `printheadOverflow` warning (`:183`). **Hardware re-check 2026-10-19 (owner, B1_PRO):** content **narrower** than the loaded roll (`30×20` on a `50×30` roll) prints at `(10,0)–(40,20)` — centred horizontally, top-aligned, remaining areas empty, no unwanted underfill. Content **wider** than the loaded roll (`50×30` on a `40×30` roll) prints only the centre `40×30` and is clipped **symmetrically and silently** (5 mm lost per side, x 0–5 and x 45–50 gone). The narrow case matches `P7-SMOKE.md` §B's prediction (printer centres, no underfill warning); the wide case exposes a new gap — **D-68** (roll-width clipping, no warning).
 
+### ⚠ Device-reported roll/paper data is NFC-tag **advice, not source-of-truth** (owner, 2026-10-19)
+
+`rollWidthHm`/`rollHeightHm`, `rfid.consumablesType` and `usedPaper`/`allPaper` come from the **NFC label tag**, which may be **user-written** or **harvested from a genuine roll**. The printer has **no sensors, camera or calibration** to verify it — owner, verbatim: *"The printer's reported value is just an advice, not source-of-truth."* Anything derived (roll width, paper dims, consumables type, usage counters) is a **hint, never a measurement**.
+
+**Decision — no automatic offset.** Asked whether content narrower than the loaded roll (printer centres X, top-aligns Y) should auto-default an offset, the owner said **no**: that would trust an advisory value (*"the printer has no way to tell. It aint got cameras or calibrated rulers"*). Narrower-than-roll content stays **fully manual** — the existing Offset X/Y knobs.
+
 ## Gotchas (learned the hard way)
 
 - **Pass only defined option keys to `newPrintTask`.** It spreads options over library defaults, so `{ pageColor: undefined }` *overwrites* the default and `validatePage` throws on the first real page. Build a `Partial<PrintOptions>` conditionally.
@@ -116,7 +122,9 @@ Printing a **25 mm** label on the **567-dot (~48 mm)** printhead left-aligns con
   `rollWidthHm`/`rollHeightHm`, `capabilities`, plus `hardwareVersion`, `softwareVersion` and
   `rfid?: { tagPresent, usedPaper?, allPaper?, consumablesType? }`. `rfid` comes from
   `CombinedRfidInfo.labelRfidInfo` (NOT `ribbonRfidInfo`), is `undefined` when absent, and is captured
-  once at connect — `refreshInfo?()` re-fetches printer+RFID and re-emits.
+  once at connect — `refreshInfo?()` re-fetches printer+RFID and re-emits. **⚠ Advisory only**
+  (tag-derived, possibly user-written or harvested) — never treat as a measurement (see the
+  narrow-roll note above).
 - **Paper dims are NOT duplicated:** the RFID dimensions cell renders `hmToMm(rollWidthHm) ×
   hmToMm(rollHeightHm)`. **There is no firmware field in the lib** — the reference's `HW | sw | FW`
   strip is 4 cells where "FW" is a trailing *tag*, not a value.
