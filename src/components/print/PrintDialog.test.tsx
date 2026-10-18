@@ -82,6 +82,7 @@ class FakeRunner implements JobRunner {
     quantities: number[] = [];
     autoResolve = true;
     private resolver: ((result: JobRunResult) => void) | undefined;
+    private progressSink: ((progress: JobProgress) => void) | undefined;
 
     isBusy(): boolean {
         return this.busy;
@@ -103,6 +104,7 @@ class FakeRunner implements JobRunner {
     ): Promise<JobRunResult> {
         this.lastJob = job;
         this.busy = true;
+        this.progressSink = opts?.onProgress;
         opts?.onProgress?.({ page: 1, pagesTotal: job.totalPages, percent: 0, phase: 'sending' });
 
         if (this.autoResolve) {
@@ -125,6 +127,11 @@ class FakeRunner implements JobRunner {
                 resolve(result);
             };
         });
+    }
+
+    /** Push a progress snapshot through the callback the dialog registered. */
+    push(progress: JobProgress): void {
+        this.progressSink?.(progress);
     }
 }
 
@@ -385,6 +392,50 @@ describe('PrintDialog — progress, cancel and order', () => {
             expect(screen.getByTestId('print-outcome')).toHaveTextContent('Printed 2 pages.'),
         );
         expect(screen.getByTestId('print-progress-bar')).toHaveStyle({ width: '100%' });
+    });
+
+    it('renders independent send and print bars with honest labels', async () => {
+        const runner = new FakeRunner();
+        runner.autoResolve = false;
+        renderDialog({ runner, printerStatus: statusOf(B1_PRO) });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        await waitFor(() => expect(runner.isBusy()).toBe(true));
+
+        // Nothing reported yet: no send bar at all (never a dead 0 % one), and
+        // the print bar does not claim to be printing before it is.
+        expect(screen.queryByTestId('print-send-progress-bar')).not.toBeInTheDocument();
+        expect(screen.getByText('Waiting to print… · 0%')).toBeInTheDocument();
+
+        act(() => {
+            runner.push({
+                page: 1,
+                pagesTotal: 2,
+                percent: 0,
+                send: { page: 1, percent: 40 },
+                phase: 'sending',
+            });
+        });
+
+        expect(screen.getByTestId('print-send-progress-bar')).toHaveStyle({ width: '40%' });
+        expect(screen.getByTestId('print-progress-bar')).toHaveStyle({ width: '0%' });
+        expect(screen.getByText('Sending page 1 / 2 · 40%')).toBeInTheDocument();
+        expect(screen.getByText('Waiting to print… · 0%')).toBeInTheDocument();
+
+        act(() => {
+            runner.push({
+                page: 2,
+                pagesTotal: 2,
+                percent: 100,
+                send: { page: 2, percent: 100 },
+                phase: 'printing',
+            });
+        });
+
+        expect(screen.getByTestId('print-send-progress-bar')).toHaveStyle({ width: '100%' });
+        expect(screen.getByTestId('print-progress-bar')).toHaveStyle({ width: '100%' });
+        expect(screen.getByText('Sending page 2 / 2 · 100%')).toBeInTheDocument();
+        expect(screen.getByText('Printing page 2 / 2 · 100%')).toBeInTheDocument();
     });
 });
 

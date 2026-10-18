@@ -3,7 +3,7 @@ import { instantiateClient, PageColorType } from '@mmote/niimbluelib';
 import type { EncodedImage, NiimbotAbstractClient } from '@mmote/niimbluelib';
 import { NiimbotTransport } from './niimbotAdapter';
 import { PrintAbortedError } from './transport';
-import type { PrintJob, PrintPage, PrinterStatus, PrintProgress } from './transport';
+import type { PrintJob, PrintPage, PrinterStatus, PrintProgress, SendProgress } from './transport';
 
 const encodedImage = (): EncodedImage => ({}) as EncodedImage;
 
@@ -449,6 +449,51 @@ describe('NiimbotTransport orchestration', () => {
     expect(received).toHaveLength(1);
   });
 
+  it('forwards printpacketprogress as send progress and stops after unsubscribe', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = await connectedTransport(fake);
+
+    const received: SendProgress[] = [];
+    const listener = (progress: SendProgress) => received.push(progress);
+    const unsubscribe = transport.onSendProgress(listener);
+
+    fake.printPage.mockImplementationOnce(async () => {
+      fake.handlers['printpacketprogress']?.({ progress: 40 });
+      fake.handlers['printpacketprogress']?.({ progress: 100 });
+    });
+
+    await transport.print(jobOf([1]));
+
+    expect(received).toEqual([
+      { page: 1, copies: 1, progress: 40 },
+      { page: 1, copies: 1, progress: 100 },
+    ]);
+
+    unsubscribe();
+    fake.handlers['printpacketprogress']?.({ progress: 50 });
+    expect(received).toHaveLength(2);
+  });
+
+  it('anchors each page upload at the range of copies it covers', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = await connectedTransport(fake);
+    const received: SendProgress[] = [];
+    transport.onSendProgress((progress) => received.push(progress));
+
+    // One `printPage` per source page, each reporting a full upload.
+    fake.printPage.mockImplementation(async () => {
+      fake.handlers['printpacketprogress']?.({ progress: 100 });
+    });
+
+    await transport.print(jobOf([2, 3]));
+
+    // The first source page covers copies 1–2, the second copies 3–5.
+    expect(received).toEqual([
+      { page: 1, copies: 2, progress: 100 },
+      { page: 3, copies: 3, progress: 100 },
+    ]);
+  });
+
   it('emits connecting, connected (with printer details), printing, connected', async () => {
     const fake = makeFakeClient({ taskType: 'B1' });
     const transport = new NiimbotTransport({ createClient: () => fake.client });
@@ -487,6 +532,10 @@ describe('NiimbotTransport orchestration', () => {
     await transport.disconnect();
 
     expect(fake.client.off).toHaveBeenCalledWith('printprogress', expect.any(Function));
+    expect(fake.client.off).toHaveBeenCalledWith(
+      'printpacketprogress',
+      expect.any(Function),
+    );
     expect(fake.client.off).toHaveBeenCalledWith('connect', expect.any(Function));
     expect(fake.client.off).toHaveBeenCalledWith('disconnect', expect.any(Function));
     await expect(transport.print(jobOf([1]))).rejects.toThrow('Not connected');

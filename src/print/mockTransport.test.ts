@@ -88,6 +88,61 @@ describe('MockTransport', () => {
     expect(listener).not.toHaveBeenCalled();
   });
 
+  it('emits a synthetic send curve that finishes before each page print event', async () => {
+    const transport = await connected();
+    const events: Array<{
+      kind: 'send' | 'print';
+      page: number;
+      value: number;
+      copies?: number;
+    }> = [];
+    transport.onSendProgress((progress) =>
+      events.push({
+        kind: 'send',
+        page: progress.page,
+        copies: progress.copies,
+        value: progress.progress,
+      }),
+    );
+    transport.onProgress((progress) =>
+      events.push({ kind: 'print', page: progress.page, value: progress.pagePrintProgress }),
+    );
+
+    await transport.print(jobOf([2]));
+
+    expect(events.map((event) => event.kind)).toEqual([
+      'send',
+      'send',
+      'send',
+      'print',
+      'send',
+      'send',
+      'send',
+      'print',
+    ]);
+    // 0 → 50 → 100, then the print event: the upload comes first. The mock
+    // models one physical copy per curve, so each send covers `copies: 1`.
+    expect(events.slice(0, 3)).toEqual([
+      { kind: 'send', page: 1, copies: 1, value: 0 },
+      { kind: 'send', page: 1, copies: 1, value: 50 },
+      { kind: 'send', page: 1, copies: 1, value: 100 },
+    ]);
+    expect(events[3]).toEqual({ kind: 'print', page: 1, value: 100 });
+    // The curve restarts for the next physical page.
+    expect(events[4]).toEqual({ kind: 'send', page: 2, copies: 1, value: 0 });
+  });
+
+  it('stops emitting send progress after unsubscribe', async () => {
+    const transport = await connected();
+    const listener = vi.fn();
+    const unsubscribe = transport.onSendProgress(listener);
+
+    unsubscribe();
+    await transport.print(jobOf([1]));
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
   it('throws when printing before connect()', async () => {
     const transport = new MockTransport();
 

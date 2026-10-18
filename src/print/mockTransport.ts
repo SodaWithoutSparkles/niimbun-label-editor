@@ -9,6 +9,7 @@ import type {
   PrintProgress,
   PrintResult,
   PrinterTransport,
+  SendProgress,
   TransportState,
 } from './transport';
 
@@ -86,6 +87,7 @@ export class MockTransport implements PrinterTransport {
 
   private readonly statusListeners = new Set<(status: PrinterStatus) => void>();
   private readonly progressListeners = new Set<(progress: PrintProgress) => void>();
+  private readonly sendListeners = new Set<(progress: SendProgress) => void>();
 
   constructor(options: MockTransportOptions = {}) {
     this.deviceName = options.deviceName ?? 'Mock Niimbot';
@@ -144,6 +146,13 @@ export class MockTransport implements PrinterTransport {
     };
   }
 
+  onSendProgress(listener: (progress: SendProgress) => void): () => void {
+    this.sendListeners.add(listener);
+    return () => {
+      this.sendListeners.delete(listener);
+    };
+  }
+
   async print(job: PrintJob): Promise<PrintResult> {
     if (!this.connected) {
       throw new Error('Not connected');
@@ -189,8 +198,19 @@ export class MockTransport implements PrinterTransport {
         record.quantities.push(quantity);
 
         for (let copy = 0; copy < quantity; copy++) {
-          throwIfAborted(job.signal);
-          await this.delay(this.pageDelayMs);
+          // Synthetic upload ("send") curve, spread over the same per-page
+          // delay budget so the dev harness shows it moving. The real signal is
+          // 0–100 per page; the mock models one physical copy per iteration, so
+          // each curve covers exactly one copy (`copies: 1`).
+          const sendPage = printed + 1;
+          const sendSteps = [0, 50, 100];
+          for (const progress of sendSteps) {
+            throwIfAborted(job.signal);
+            await this.delay(this.pageDelayMs / sendSteps.length);
+            throwIfAborted(job.signal);
+            this.emitSendProgress({ page: sendPage, copies: 1, progress });
+          }
+
           printed += 1;
           this.emitProgress({
             page: printed,
@@ -248,6 +268,12 @@ export class MockTransport implements PrinterTransport {
 
   private emitProgress(progress: PrintProgress): void {
     for (const listener of this.progressListeners) {
+      listener(progress);
+    }
+  }
+
+  private emitSendProgress(progress: SendProgress): void {
+    for (const listener of this.sendListeners) {
       listener(progress);
     }
   }

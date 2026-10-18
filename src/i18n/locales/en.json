@@ -822,7 +822,8 @@
       "policyOverflow_other": "{{count}} objects fell back to the default dither policy (per-node policy limit reached)."
     },
     "progress": {
-      "sending": "Sending…",
+      "sending": "Sending page {{page}} / {{total}}",
+      "waiting": "Waiting to print…",
       "printing": "Printing page {{page}} / {{total}}",
       "percent": "{{percent}}%"
     },

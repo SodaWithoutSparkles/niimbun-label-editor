@@ -391,10 +391,22 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     }, [open, showOverflow, capabilities?.printheadPixels, orientedWidthPx, plan?.warning, mismatch, policyOverflowCount, notices, mirrorLostPx, doc.meta.id, setEditorWarnings]);
 
     const handleProgress = (next: JobProgress): void => {
-        setProgress((previous) => ({
-            ...next,
-            percent: Math.max(previous?.percent ?? 0, next.percent),
-        }));
+        setProgress((previous) => {
+            // Print and send are independent channels (R15-b): clamping them
+            // against one shared value would freeze whichever lags behind.
+            const percent = Math.max(previous?.percent ?? 0, next.percent);
+            const send = next.send
+                ? {
+                      page: next.send.page,
+                      percent: Math.max(previous?.send?.percent ?? 0, next.send.percent),
+                  }
+                : undefined;
+            return {
+                ...next,
+                percent,
+                ...(send ? { send } : {}),
+            };
+        });
     };
 
     const handlePrint = async (): Promise<void> => {
@@ -771,24 +783,47 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                 )}
 
                 {progress && (
-                    <div className="space-y-1">
-                        <div className="h-2 w-full overflow-hidden rounded bg-gray-700">
-                            <div
-                                data-testid="print-progress-bar"
-                                className="h-full bg-blue-500 transition-[width]"
-                                style={{ width: `${progress.percent}%` }}
-                            />
+                    <div className="space-y-2">
+                        {progress.send && (
+                            <div className="space-y-1">
+                                <div className="h-2 w-full overflow-hidden rounded bg-gray-700">
+                                    <div
+                                        data-testid="print-send-progress-bar"
+                                        className="h-full bg-amber-500 transition-[width]"
+                                        style={{ width: `${progress.send.percent}%` }}
+                                    />
+                                </div>
+                                <p className="text-xs text-gray-400">
+                                    {t('print.progress.sending', {
+                                        page: progress.send.page,
+                                        total: progress.pagesTotal,
+                                    })}
+                                    {' · '}
+                                    {t('print.progress.percent', {
+                                        percent: progress.send.percent,
+                                    })}
+                                </p>
+                            </div>
+                        )}
+                        <div className="space-y-1">
+                            <div className="h-2 w-full overflow-hidden rounded bg-gray-700">
+                                <div
+                                    data-testid="print-progress-bar"
+                                    className="h-full bg-blue-500 transition-[width]"
+                                    style={{ width: `${progress.percent}%` }}
+                                />
+                            </div>
+                            <p className="text-xs text-gray-400">
+                                {progress.phase === 'sending'
+                                    ? t('print.progress.waiting')
+                                    : t('print.progress.printing', {
+                                          page: progress.page,
+                                          total: progress.pagesTotal,
+                                      })}
+                                {' · '}
+                                {t('print.progress.percent', { percent: progress.percent })}
+                            </p>
                         </div>
-                        <p className="text-xs text-gray-400">
-                            {progress.phase === 'sending'
-                                ? t('print.progress.sending')
-                                : t('print.progress.printing', {
-                                      page: progress.page,
-                                      total: progress.pagesTotal,
-                                  })}
-                            {' · '}
-                            {t('print.progress.percent', { percent: progress.percent })}
-                        </p>
                     </div>
                 )}
             </div>

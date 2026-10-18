@@ -10,6 +10,7 @@ import type {
     PrintPage,
     PrintProgress,
     PrintResult,
+    SendProgress,
     TransportState,
 } from './transport';
 
@@ -35,15 +36,23 @@ const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  * Minimal transport with a scripted progress sequence and an observable
  * `printEnd` counter. Emits every event in `script`, honouring the abort signal
  * at event boundaries so cancellation is deterministic.
+ *
+ * `sendScript` is emitted so that each page's upload precedes that page's print
+ * event (entries are keyed by the `page` they cover and emitted in order); tests
+ * that only exercise the print channel leave it empty and therefore get no send
+ * channel at all — as with a real transport that does not implement
+ * {@link PrinterTransport.onSendProgress}.
  */
 class FakeTransport implements PrinterTransport {
     readonly progressListeners = new Set<(progress: PrintProgress) => void>();
+    readonly sendListeners = new Set<(progress: SendProgress) => void>();
     readonly statusListeners = new Set<(status: PrinterStatus) => void>();
 
     state: TransportState = 'connected';
     printEndCalls = 0;
     printedPages = 0;
     script: PrintProgress[] = [];
+    sendScript: SendProgress[] = [];
     eventDelayMs = 0;
     failWith?: unknown;
 
@@ -59,12 +68,28 @@ class FakeTransport implements PrinterTransport {
         this.state = 'printing';
         this.emitStatus();
         try {
+            // Emit every upload whose page range starts at or before `page`, so
+            // a page's send events land before its print event.
+            let sendIndex = 0;
+            const flushSendsUpTo = (page: number): void => {
+                while (
+                    sendIndex < this.sendScript.length &&
+                    this.sendScript[sendIndex]!.page <= page
+                ) {
+                    if (job.signal?.aborted) throw abortError();
+                    this.emitSend(this.sendScript[sendIndex]!);
+                    sendIndex += 1;
+                }
+            };
             for (const event of this.script) {
                 if (job.signal?.aborted) throw abortError();
                 if (this.eventDelayMs > 0) await delay(this.eventDelayMs);
                 if (job.signal?.aborted) throw abortError();
+                flushSendsUpTo(event.page);
                 this.emitProgress({ ...event, pagesTotal: job.totalPages });
             }
+            // A send trail longer than the print script still has to drain.
+            flushSendsUpTo(Number.POSITIVE_INFINITY);
             if (this.failWith !== undefined) throw this.failWith;
             this.printedPages = job.totalPages;
             return { pagesPrinted: this.printedPages };
@@ -91,12 +116,29 @@ class FakeTransport implements PrinterTransport {
         };
     }
 
+    onSendProgress(listener: (progress: SendProgress) => void): () => void {
+        this.sendListeners.add(listener);
+        return () => {
+            this.sendListeners.delete(listener);
+        };
+    }
+
     get progressListenerCount(): number {
         return this.progressListeners.size;
     }
 
+    get sendListenerCount(): number {
+        return this.sendListeners.size;
+    }
+
     emitProgress(progress: PrintProgress): void {
         for (const listener of [...this.progressListeners]) {
+            listener(progress);
+        }
+    }
+
+    emitSend(progress: SendProgress): void {
+        for (const listener of [...this.sendListeners]) {
             listener(progress);
         }
     }
@@ -111,6 +153,13 @@ class FakeTransport implements PrinterTransport {
 describe('createJobRunner', () => {
     it('clamps page and percent monotonic under a 1 → 0 → 1 script', async () => {
         const transport = new FakeTransport();
+        // Upload precedes printing: one page, so the whole send curve lands
+        // before the first print event.
+        transport.sendScript = [
+            { page: 1, copies: 1, progress: 0 },
+            { page: 1, copies: 1, progress: 50 },
+            { page: 1, copies: 1, progress: 100 },
+        ];
         transport.script = [
             { page: 1, pagesTotal: 1, pagePrintProgress: 0, pageFeedProgress: 0 },
             { page: 0, pagesTotal: 1, pagePrintProgress: 50, pageFeedProgress: 0 },
@@ -124,12 +173,23 @@ describe('createJobRunner', () => {
         });
 
         expect(result).toEqual({ cancelled: false, pagesPrinted: 1 });
-        // sending + three device events + the terminal 100% emit.
-        expect(progress.map((entry) => entry.page)).toEqual([1, 1, 1, 1, 1]);
-        // max(print, feed) reaches 50 on the mid event (not the average 25),
-        // then 100; the terminal emit repeats 100.
-        expect(progress.map((entry) => entry.percent)).toEqual([0, 0, 50, 100, 100]);
+        // initial + three send events + three device events + terminal 100%.
+        expect(progress.map((entry) => entry.page)).toEqual([1, 1, 1, 1, 1, 1, 1, 1]);
+        // Print channel unchanged: max(print, feed) reaches 50 on the mid event
+        // (not the average 25), then 100; the terminal emit repeats 100.
+        expect(progress.map((entry) => entry.percent)).toEqual([
+            0, 0, 0, 0, 0, 50, 100, 100,
+        ]);
+        // Send channel is absent until the transport reports it, then carries the
+        // job-wide value on every emit (one page: the raw value is job-wide).
+        expect(progress.map((entry) => entry.send?.percent ?? null)).toEqual([
+            null, 0, 50, 100, 100, 100, 100, 100,
+        ]);
+        // `phase` is the job phase, monotonic: send events never move it back.
         expect(progress.map((entry) => entry.phase)).toEqual([
+            'sending',
+            'sending',
+            'sending',
             'sending',
             'printing',
             'printing',
@@ -137,6 +197,127 @@ describe('createJobRunner', () => {
             'printing',
         ]);
         expect(progress.every((entry) => entry.pagesTotal === 1)).toBe(true);
+        // Resolving completes the send channel as well.
+        expect(progress.at(-1)?.send).toEqual({ page: 1, percent: 100 });
+    });
+
+    it('projects per-page upload progress into a job-wide monotonic send percent', async () => {
+        const transport = new MockTransport();
+        await transport.connect();
+        const runner = createJobRunner(transport);
+        const progress: JobProgress[] = [];
+
+        const result = await runner.run(jobOf([1, 1, 1]), {
+            onProgress: (entry) => progress.push(entry),
+        });
+
+        expect(result).toEqual({ cancelled: false, pagesPrinted: 3 });
+
+        const sendPercents = progress
+            .filter((entry) => entry.send !== undefined)
+            .map((entry) => entry.send!.percent);
+        expect(sendPercents.length).toBeGreaterThan(0);
+        // Never decreases, even though the raw value restarts at 0 per page.
+        for (let index = 1; index < sendPercents.length; index += 1) {
+            expect(sendPercents[index]).toBeGreaterThanOrEqual(sendPercents[index - 1]!);
+        }
+        // Page 1 contributes 0..33, page 2 33..66, page 3 66..100.
+        expect(progress.find((entry) => entry.send?.page === 2)?.send?.percent).toBe(33);
+        const last = progress.at(-1)!;
+        expect(last.send).toEqual({ page: 3, percent: 100 });
+        expect(last).toMatchObject({ page: 3, percent: 100, phase: 'printing' });
+    });
+
+    it('spreads a grouped upload across the copies it covers, not one copy', async () => {
+        const transport = new FakeTransport();
+        // A 5-page job whose first row carries 3 copies: [3, 1, 1].
+        transport.sendScript = [
+            { page: 1, copies: 3, progress: 0 },
+            { page: 1, copies: 3, progress: 50 },
+            { page: 1, copies: 3, progress: 100 },
+            { page: 4, copies: 1, progress: 0 },
+            { page: 4, copies: 1, progress: 50 },
+            { page: 4, copies: 1, progress: 100 },
+            { page: 5, copies: 1, progress: 0 },
+            { page: 5, copies: 1, progress: 50 },
+            { page: 5, copies: 1, progress: 100 },
+        ];
+        transport.script = [1, 2, 3, 4, 5].map((page) => ({
+            page,
+            pagesTotal: 5,
+            pagePrintProgress: 100,
+            pageFeedProgress: 0,
+        }));
+        const runner = createJobRunner(transport);
+        const progress: JobProgress[] = [];
+
+        const result = await runner.run(jobOf([3, 1, 1]), {
+            onProgress: (entry) => progress.push(entry),
+        });
+
+        expect(result).toEqual({ cancelled: false, pagesPrinted: 5 });
+        const sendPercents = progress
+            .filter((entry) => entry.send !== undefined)
+            .map((entry) => entry.send!.percent);
+
+        // The 3-copy upload must span 0 → 60 % (3/5), not 0 → 20 % (1/5).
+        expect(sendPercents.slice(0, 3)).toEqual([0, 30, 60]);
+        // Every value it passes through: a single-copy weighting would instead
+        // stall at 20 % and then leap to 60 % when the next row starts.
+        expect(
+            sendPercents.filter(
+                (value, index) => index === 0 || value !== sendPercents[index - 1],
+            ),
+        ).toEqual([0, 30, 60, 70, 80, 90, 100]);
+
+        for (let index = 1; index < sendPercents.length; index += 1) {
+            expect(sendPercents[index]).toBeGreaterThanOrEqual(sendPercents[index - 1]!);
+        }
+        // The print channel is untouched by the upload's span.
+        expect(progress.at(-1)).toMatchObject({
+            page: 5,
+            percent: 100,
+            phase: 'printing',
+        });
+    });
+
+    it('keeps the send and print channels independent (R15-b)', async () => {
+        const transport = new MockTransport();
+        await transport.connect();
+        const runner = createJobRunner(transport);
+        const progress: JobProgress[] = [];
+
+        await runner.run(jobOf([1, 1, 1]), {
+            onProgress: (entry) => progress.push(entry),
+        });
+
+        const firstPrint = progress.findIndex((entry) => entry.phase === 'printing');
+        expect(firstPrint).toBeGreaterThan(0);
+        const afterFirstPrint = progress.slice(firstPrint);
+        // Printing page 1 pins the print bar at 33 %...
+        expect(
+            afterFirstPrint
+                .filter((entry) => entry.page === 1)
+                .every((entry) => entry.percent === 33),
+        ).toBe(true);
+        // ...while the upload of page 2 keeps moving the send bar. A single
+        // shared monotonic clamp would have frozen it here.
+        expect(
+            afterFirstPrint.some(
+                (entry) => entry.send !== undefined && entry.send.percent > 33,
+            ),
+        ).toBe(true);
+
+        let printPercent = -1;
+        let sendPercent = -1;
+        for (const entry of progress) {
+            expect(entry.percent).toBeGreaterThanOrEqual(printPercent);
+            printPercent = entry.percent;
+            if (entry.send !== undefined) {
+                expect(entry.send.percent).toBeGreaterThanOrEqual(sendPercent);
+                sendPercent = entry.send.percent;
+            }
+        }
     });
 
     it('rejects a concurrent run while a job is active', async () => {
@@ -188,11 +369,13 @@ describe('createJobRunner', () => {
         await runner.run(jobOf([1]));
         expect(transport.printEndCalls).toBe(1);
         expect(transport.progressListenerCount).toBe(0);
+        expect(transport.sendListenerCount).toBe(0);
 
         const second = await runner.run(jobOf([1]));
         expect(second.cancelled).toBe(false);
         expect(transport.printEndCalls).toBe(2);
         expect(transport.progressListenerCount).toBe(0);
+        expect(transport.sendListenerCount).toBe(0);
     });
 
     it('unsubscribes and clears the controller when cancelled', async () => {

@@ -118,6 +118,39 @@ export interface PrinterStatus {
   rfid?: PrinterRfidInfo;
 }
 
+/**
+ * Upload ("send") progress: the bitmap packets for one page being written to
+ * the printer. This is a **separate channel** from {@link PrintProgress}: it
+ * describes the transfer *before* a page is printed, has a different lifetime
+ * (it restarts for every page) and, on some transports, may not be reported at
+ * all. So a transport that cannot report it simply does not implement
+ * {@link PrinterTransport.onSendProgress}; consumers must then hide the send
+ * indicator rather than render a permanently dead 0 % bar.
+ *
+ * Source signal: niimbluelib's `printpacketprogress`, emitted from
+ * `AbstractPrintTask.printPage` for every page's packet upload. It is **not**
+ * `PrintProgress.pageFeedProgress`, which stays 0 on `D110M_V4`.
+ */
+export interface SendProgress {
+  /**
+   * 1-based **physical copy index** of the first copy the uploading page covers
+   * (the first copy of the page's quantity group). `progress` restarts at 0 for
+   * every page, so this anchor plus {@link SendProgress.copies} is what lets a
+   * consumer project a job-wide percentage:
+   * `((page - 1) + copies * progress / 100) / pagesTotal * 100`.
+   */
+  page: number;
+  /**
+   * How many physical copies the uploading page covers — its `quantity`. One
+   * `printPage` uploads a single bitmap that the printer repeats `copies` times,
+   * so the upload's share of the job is `copies`, not one copy. Must be a
+   * positive integer; a missing or invalid value is treated as `1`.
+   */
+  copies: number;
+  /** 0–100 upload progress of that page. */
+  progress: number;
+}
+
 export interface PrintProgress {
   /**
    * 1-based **physical copy index** (`1..pagesTotal`), not a source-page index.
@@ -151,4 +184,13 @@ export interface PrinterTransport {
   onStatus(listener: (status: PrinterStatus) => void): () => void;
   /** Subscribe to print progress; returns an unsubscribe function. */
   onProgress(listener: (progress: PrintProgress) => void): () => void;
+  /**
+   * Subscribe to upload ("send") progress; returns an unsubscribe function.
+   *
+   * Optional on purpose: a transport that has no upload signal omits the method
+   * entirely, and consumers must then leave the send indicator out. A transport
+   * that implements it but never fires is handled the same way — the runner
+   * only publishes a send percentage once the first event arrives.
+   */
+  onSendProgress?(listener: (progress: SendProgress) => void): () => void;
 }

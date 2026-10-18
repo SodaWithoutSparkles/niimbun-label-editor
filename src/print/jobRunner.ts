@@ -11,11 +11,20 @@ import type { PrintJob, PrinterTransport, PrintResult } from './transport';
  * - **Non-monotonic `page`** — the D110M_V4 status-poll path reports `page`
  *   1 → 0 → 1 (see `agent/memory/print-transport.md`). The reported page is
  *   clamped monotonic so the bar never jumps backwards.
- * - **Non-monotonic/absent intra-page percent** — overall percent is derived
- *   from `max(pagePrintProgress, pageFeedProgress)` across `pagesTotal` and
- *   clamped non-decreasing. `pageFeedProgress` stays 0 on D110M_V4, so a
+ * - **Non-monotonic/absent intra-page percent** — overall print percent is
+ *   derived from `max(pagePrintProgress, pageFeedProgress)` across `pagesTotal`
+ *   and clamped non-decreasing. `pageFeedProgress` stays 0 on D110M_V4, so a
  *   `max` (not an average) is required for the bar to move; the transport
  *   resolving forces a terminal `100%`.
+ * - **Per-page upload progress** — the separate send channel reports 0–100 for
+ *   *one page at a time* (it restarts at 0 per page), and one page's upload can
+ *   cover several physical copies (`quantity > 1`). It is projected onto the
+ *   same job-wide 1..`pagesTotal` scale using the range the transport reports
+ *   (its first copy and how many copies it covers) and clamped non-decreasing
+ *   **independently** of the print percent: one shared clamp would freeze the
+ *   send bar as soon as printing overtook it. The send value stays absent until
+ *   the transport reports it, so a transport with no upload signal never shows a
+ *   dead bar.
  *
  * Cancel is cooperative: `cancel()` aborts the controller and the transport
  * observes it at page boundaries. The transport's `finally` runs `printEnd` —
@@ -28,11 +37,24 @@ import type { PrintJob, PrinterTransport, PrintResult } from './transport';
  */
 
 export interface JobProgress {
-    /** 1-based, monotonic. */
+    /** 1-based, monotonic. Print channel (physical copy). */
     page: number;
     pagesTotal: number;
-    /** 0..100, never decreases. */
+    /** Print channel: 0..100, never decreases. */
     percent: number;
+    /**
+     * Upload ("send") channel, absent until the transport reports any upload
+     * progress. `page` is the page the upload belongs to and `percent` is the
+     * job-wide, non-decreasing projection — never the raw per-page value.
+     *
+     * The two channels are independent: `percent` may outrun `send.percent`
+     * (printing overtakes uploading) without either one freezing.
+     */
+    send?: { page: number; percent: number };
+    /**
+     * Job phase, monotonic: `'sending'` until the first print progress is
+     * reported, `'printing'` from then on. Send events never move it back.
+     */
     phase: 'sending' | 'printing';
 }
 
@@ -94,10 +116,27 @@ export function createJobRunner(transport: PrinterTransport): JobRunner {
             // Last monotonic physical page reported; also the abort-page fallback.
             let page = 0;
             let percent = 0;
+            // Send channel: `sendPercent === null` means "the transport has not
+            // reported any upload progress" (or has no such channel at all).
+            let sendPage = 0;
+            let sendPercent: number | null = null;
+            let phase: JobProgress['phase'] = 'sending';
 
             // A consumer callback must never abort a print or wedge the runner:
-            // swallow its errors and keep the job alive.
-            const emit = (entry: JobProgress): void => {
+            // swallow its errors and keep the job alive. The send channel is
+            // folded in here so every emit carries a consistent snapshot.
+            const emit = (next: {
+                page: number;
+                percent: number;
+                phase: JobProgress['phase'];
+            }): void => {
+                const entry: JobProgress = {
+                    ...next,
+                    pagesTotal,
+                    ...(sendPercent === null
+                        ? {}
+                        : { send: { page: sendPage, percent: sendPercent } }),
+                };
                 try {
                     onProgress?.(entry);
                 } catch {
@@ -106,12 +145,40 @@ export function createJobRunner(transport: PrinterTransport): JobRunner {
             };
 
             let unsubscribe: (() => void) | undefined;
+            let unsubscribeSend: (() => void) | undefined;
 
             try {
                 // Inside the try: if the consumer throws on this first emit, the
-                // `finally` still releases `busy`/`controller`. The job is
-                // "sending" until the transport reports its first page.
-                emit({ page: 1, pagesTotal, percent: 0, phase: 'sending' });
+                // `finally` still releases `busy`/`controller`. Nothing has been
+                // printed yet, and `send` is absent until a transport reports
+                // upload progress — so this claims no progress it does not have.
+                emit({ page: 1, percent: 0, phase: 'sending' });
+
+                unsubscribeSend = transport.onSendProgress?.((event) => {
+                    // The anchor is the page this upload belongs to; restarting
+                    // at 0 per page must never move the job-wide value back.
+                    const rawPage = Number.isFinite(event.page) ? event.page : sendPage;
+                    sendPage = Math.min(pagesTotal, Math.max(1, sendPage, rawPage));
+                    // One upload can cover several physical copies (`quantity >
+                    // 1`). Weighting it as a single copy would stall the bar
+                    // across the group and then leap at the next one, so the
+                    // intra-upload percentage is spread over the group's span.
+                    const rawCopies = Number.isFinite(event.copies)
+                        ? Math.floor(event.copies)
+                        : 1;
+                    const span = Math.max(
+                        1,
+                        Math.min(rawCopies, pagesTotal - sendPage + 1),
+                    );
+                    const intraPage = clampPercent(event.progress);
+                    const derived = Math.floor(
+                        ((sendPage - 1 + span * (intraPage / 100)) / pagesTotal) * 100,
+                    );
+                    sendPercent = Math.max(sendPercent ?? 0, clampPercent(derived));
+                    // The print channel keeps its own last values while sending;
+                    // `Math.max(1, page)` keeps the pre-print `0` internal.
+                    emit({ page: Math.max(1, page), percent, phase });
+                });
 
                 unsubscribe = transport.onProgress((event) => {
                     const rawPage = Number.isFinite(event.page) ? event.page : page;
@@ -130,8 +197,9 @@ export function createJobRunner(transport: PrinterTransport): JobRunner {
                         ((page - 1 + pageAverage / 100) / pagesTotal) * 100,
                     );
                     percent = Math.max(percent, clampPercent(derived));
+                    phase = 'printing';
 
-                    emit({ page, pagesTotal, percent, phase: 'printing' });
+                    emit({ page, percent, phase });
                 });
 
                 const result: PrintResult = await transport.print({
@@ -140,10 +208,16 @@ export function createJobRunner(transport: PrinterTransport): JobRunner {
                 });
 
                 // The transport resolved: every declared page was sent. Force the
-                // terminal 100% because feed progress may never report it.
+                // terminal 100% because feed progress may never report it. The
+                // whole bitmap stream is uploaded by then, so a send channel that
+                // exists is completed too — but never invented if it was absent.
                 page = pagesTotal;
                 percent = 100;
-                emit({ page: pagesTotal, pagesTotal, percent: 100, phase: 'printing' });
+                if (sendPercent !== null) {
+                    sendPage = pagesTotal;
+                    sendPercent = 100;
+                }
+                emit({ page: pagesTotal, percent: 100, phase: 'printing' });
 
                 // A Cancel that landed after the final page did not change what
                 // printed, but must still be reported truthfully.
@@ -166,6 +240,7 @@ export function createJobRunner(transport: PrinterTransport): JobRunner {
                 // Unsubscribe and release the controller even when a consumer
                 // callback or the transport threw.
                 unsubscribe?.();
+                unsubscribeSend?.();
                 controller = undefined;
                 busy = false;
             }

@@ -241,6 +241,22 @@ gamma of 1.3 changes every existing error-diffusion document's output — worth 
 before v1 (D-63). New residual ids **D-58…D-67** in [`memory/tech-debt.md`](../memory/tech-debt.md);
 D-05 stays open and now also covers `ostromoukhov`.
 
+## P15 — Two-phase print progress (send / print)
+
+State: **IN PROGRESS (2026-10-19, owner request).** Action plan:
+[`phase15_action-plan.md`](phase15_action-plan.md) — carries the recon and the two settled decisions.
+
+Owner request: *"progress bar currently doesnt match the niim.blue reference. The reference correctly
+displays the sending progress and the printing progress. This seems to just show the print progress.
+Maybe we need 2x progress bar, one for send one for print."*
+
+- Recon (verified): the reference is **one bar with a flipping label**, fed by `printprogress` and
+  `printpacketprogress`; our adapter **never subscribes** to the latter, so upload is a blank stretch
+  and our `'sending'` phase is a synthetic `percent: 0` emit.
+- Owner decisions: **two bars, job-wide and monotonic** (not the reference's flipping single bar, not
+  per-page resets); the **mock gains a synthetic send curve** so the harness/tests can show it.
+- Must not reuse `pageFeedProgress` as "send" — it is 0 on the owner's D110M_V4. **D-27 stays open.**
+
 ## Risks & checkpoints
 
 - **R1 — resolved by the D decision (2026-10-09).** D keeps the symbol filling the authored box, so the owner-decided target-based verdict formula is correct verbatim: no drawn/target divergence, no 6–8.4 mm shrinkage band, no checkpoint table needed. Residual, owner-accepted: N/N+1 device-px module pitch where the factor is fractional (≤ 1 px at 203 dpi = 0.125 mm, within scanner noise).

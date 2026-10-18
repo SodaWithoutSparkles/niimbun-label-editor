@@ -13,6 +13,7 @@ import type {
   NiimbotClientType,
   PrinterInfo,
   PrintOptions,
+  PrintPacketProgressEvent,
   PrintProgressEvent,
   RfidInfo,
 } from '@mmote/niimbluelib';
@@ -25,6 +26,7 @@ import type {
   PrintResult,
   PrinterStatus,
   PrintProgress,
+  SendProgress,
   TransportState,
 } from './transport';
 import { mmToHm } from '../core/hm';
@@ -63,8 +65,13 @@ export class NiimbotTransport implements PrinterTransport {
   /** Total pages of the in-flight job; used to detect upstream progress swap. */
   private activeTotalPages?: number;
 
+  /** First physical copy + copy count of the page currently uploading. */
+  private activeSendPage?: number;
+  private activeSendCopies?: number;
+
   private readonly statusListeners = new Set<(status: PrinterStatus) => void>();
   private readonly progressListeners = new Set<(progress: PrintProgress) => void>();
+  private readonly sendListeners = new Set<(progress: SendProgress) => void>();
 
   private readonly handlePrintProgress = (event: PrintProgressEvent): void => {
     let { page, pagesTotal } = event;
@@ -85,6 +92,20 @@ export class NiimbotTransport implements PrinterTransport {
       pagesTotal,
       pagePrintProgress: event.pagePrintProgress,
       pageFeedProgress: event.pageFeedProgress,
+    });
+  };
+
+  private readonly handlePrintPacketProgress = (
+    event: PrintPacketProgressEvent,
+  ): void => {
+    // `printpacketprogress` fires per `printPage` and carries only a 0–100
+    // value; `activeSendPage`/`activeSendCopies` are the range that page's
+    // upload covers (its `quantity` physical copies). Never fall back to
+    // `pageFeedProgress`: it stays 0 on D110M_V4.
+    this.emitSendProgress({
+      page: this.activeSendPage ?? 1,
+      copies: this.activeSendCopies ?? 1,
+      progress: event.progress,
     });
   };
 
@@ -251,6 +272,11 @@ export class NiimbotTransport implements PrinterTransport {
         if (!Number.isInteger(page.quantity) || page.quantity < 1) {
           throw new Error('Invalid page quantity: ' + page.quantity);
         }
+        // Anchor this page's upload at the range it covers: the first physical
+        // copy it produces and how many copies that is (quantity > 1 uploads one
+        // bitmap for the whole group, but it advances the job by `quantity`).
+        this.activeSendPage = printed + 1;
+        this.activeSendCopies = page.quantity;
         await task.printPage(page.data, page.quantity);
         await task.waitForPageFinished();
         printed += page.quantity;
@@ -261,6 +287,8 @@ export class NiimbotTransport implements PrinterTransport {
       failed = true;
     } finally {
       this.activeTotalPages = undefined;
+      this.activeSendPage = undefined;
+      this.activeSendCopies = undefined;
       try {
         // Always reset printer state / cut paper, even after an abort or error.
         const ended = await client.protocol.printEnd();
@@ -306,6 +334,13 @@ export class NiimbotTransport implements PrinterTransport {
     };
   }
 
+  onSendProgress(listener: (progress: SendProgress) => void): () => void {
+    this.sendListeners.add(listener);
+    return () => {
+      this.sendListeners.delete(listener);
+    };
+  }
+
   private getOrCreateClient(): NiimbotAbstractClient {
     if (!this.client) {
       const create = this.options.createClient;
@@ -343,6 +378,7 @@ export class NiimbotTransport implements PrinterTransport {
       return;
     }
     client.on('printprogress', this.handlePrintProgress);
+    client.on('printpacketprogress', this.handlePrintPacketProgress);
     client.on('connect', this.handleConnect);
     client.on('disconnect', this.handleDisconnect);
     client.on('heartbeat', this.handleHeartbeat);
@@ -355,6 +391,7 @@ export class NiimbotTransport implements PrinterTransport {
       return;
     }
     client.off('printprogress', this.handlePrintProgress);
+    client.off('printpacketprogress', this.handlePrintPacketProgress);
     client.off('connect', this.handleConnect);
     client.off('disconnect', this.handleDisconnect);
     client.off('heartbeat', this.handleHeartbeat);
@@ -422,6 +459,12 @@ export class NiimbotTransport implements PrinterTransport {
 
   private emitProgress(progress: PrintProgress): void {
     for (const listener of this.progressListeners) {
+      listener(progress);
+    }
+  }
+
+  private emitSendProgress(progress: SendProgress): void {
+    for (const listener of this.sendListeners) {
       listener(progress);
     }
   }
