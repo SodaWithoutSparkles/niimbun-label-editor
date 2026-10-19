@@ -6,12 +6,19 @@ import { Input, Select, SettingRow, Toggle } from '../common/forms';
 import {
     DEFAULT_GAMMA_BY_STRATEGY,
     DEFAULT_POLICY_BY_TYPE,
+    DEFAULT_SCREENTONE,
     GAMMA_MAX,
     GAMMA_MIN,
-    QUANTIZERS,
+    SCREENTONE_ANGLES,
+    SCREENTONE_LEVELS_MAX,
+    SCREENTONE_LEVELS_MIN,
+    SCREENTONE_PITCH_MM_MAX,
+    SCREENTONE_PITCH_MM_MIN,
+    isScreentoneAngle,
 } from '../../core/render';
 import type { QuantizerDefaultParams, QuantizerDefaults, QuantizerId } from '../../core/render';
 import type { NodeType } from '../../core/doc/types';
+import type { ScreentoneAngle } from '../../core/render';
 import type { DefaultQuantizerByType } from '../../store/storeTypes';
 
 /**
@@ -19,7 +26,9 @@ import type { DefaultQuantizerByType } from '../../store/storeTypes';
  *
  * Per strategy: `threshold` exposes a Threshold and a Tone curve (gamma) knob;
  * the diffusers expose an Error diffusion knob, a Tone curve (gamma) knob and a
- * Serpentine scan toggle. Below that, a per-object-type default quantizer select
+ * Serpentine scan toggle; `screentone` exposes Levels / Screen pitch / Screen
+ * angle and a Tone curve — never Error diffusion or Serpentine (inert for a
+ * point screen). Below that, a per-object-type default quantizer select
  * for every type the module fallback map names (shapes deliberately have no
  * policy entry, so none is offered).
  *
@@ -51,9 +60,12 @@ const clampGamma = (value: number): number =>
     Math.round(Math.min(GAMMA_MAX, Math.max(GAMMA_MIN, value)) * 100) / 100;
 
 /** The diffusers, in registry order — they share the Error diffusion controls. */
-const DIFFUSERS: readonly QuantizerId[] = (Object.keys(QUANTIZERS) as QuantizerId[]).filter(
-    (id) => id !== 'threshold',
-);
+const DIFFUSERS: readonly QuantizerId[] = [
+    'floydSteinberg',
+    'stucki',
+    'atkinson',
+    'ostromoukhov',
+];
 
 /** Strategy display names reuse the inspector's option labels. */
 const STRATEGY_LABEL_KEYS = {
@@ -62,7 +74,16 @@ const STRATEGY_LABEL_KEYS = {
     stucki: 'editor.mfp.quantizerOptions.stucki',
     atkinson: 'editor.mfp.quantizerOptions.atkinson',
     ostromoukhov: 'editor.mfp.quantizerOptions.ostromoukhov',
+    screentone: 'editor.mfp.quantizerOptions.screentone',
 } as const satisfies Record<QuantizerId, string>;
+
+/** Angle option labels — the stored id is numeric, the label spells the angle. */
+const SCREENTONE_ANGLE_LABEL_KEYS = {
+    0: 'settings.rendering.screentoneAngleOptions.deg0',
+    14: 'settings.rendering.screentoneAngleOptions.deg14',
+    27: 'settings.rendering.screentoneAngleOptions.deg27',
+    45: 'settings.rendering.screentoneAngleOptions.deg45',
+} as const satisfies Record<ScreentoneAngle, string>;
 
 /**
  * Per-object-type selects mirror `DEFAULT_POLICY_BY_TYPE` exactly, so they
@@ -90,6 +111,7 @@ const QUANTIZER_OPTION_KEYS = {
     stucki: 'editor.mfp.quantizerOptions.stucki',
     atkinson: 'editor.mfp.quantizerOptions.atkinson',
     ostromoukhov: 'editor.mfp.quantizerOptions.ostromoukhov',
+    screentone: 'editor.mfp.quantizerOptions.screentone',
 } as const satisfies Record<QuantizerId | '', string>;
 
 type QuantizerOptionValue = keyof typeof QUANTIZER_OPTION_KEYS;
@@ -244,6 +266,115 @@ const DiffuserSettings: React.FC<DiffuserSettingsProps> = ({
     );
 };
 
+/** Integer screentone levels, clamped to `[2,8]` (matches `validate`). */
+const clampLevels = (value: number): number =>
+    Math.min(SCREENTONE_LEVELS_MAX, Math.max(SCREENTONE_LEVELS_MIN, Math.round(value)));
+
+/** Screentone pitch clamped to `[0.3,2]` mm and rounded to 2 dp (matches `validate`). */
+const clampPitch = (value: number): number =>
+    Math.round(Math.min(SCREENTONE_PITCH_MM_MAX, Math.max(SCREENTONE_PITCH_MM_MIN, value)) * 100) / 100;
+
+interface ScreentoneSettingsProps {
+    levels: number | undefined;
+    pitchMm: number | undefined;
+    angle: ScreentoneAngle | undefined;
+    gamma: number | undefined;
+    onLevels: (value: number) => void;
+    onPitchMm: (value: number) => void;
+    onAngle: (value: ScreentoneAngle) => void;
+    onGamma: (value: number) => void;
+}
+
+/**
+ * The screentone strategy: tones / pitch / angle plus a neutral-by-default tone
+ * curve. Deliberately **no** Error diffusion or Serpentine controls — a
+ * clustered-dot screen is a point op, so those knobs are inert.
+ */
+const ScreentoneSettings: React.FC<ScreentoneSettingsProps> = ({
+    levels,
+    pitchMm,
+    angle,
+    gamma,
+    onLevels,
+    onPitchMm,
+    onAngle,
+    onGamma,
+}) => {
+    const { t } = useTranslation();
+    const name = t(STRATEGY_LABEL_KEYS.screentone);
+    const levelsId = useId();
+    const pitchId = useId();
+    const angleId = useId();
+    const gammaId = useId();
+    const angleValue = String(
+        angle !== undefined && isScreentoneAngle(angle) ? angle : DEFAULT_SCREENTONE.angle,
+    );
+    return (
+        <div className="pt-2">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400">{name}</h4>
+            <QuantizerNumberField
+                id={levelsId}
+                label={t('settings.rendering.screentoneLevels')}
+                description={t('settings.rendering.screentoneLevelsDescription')}
+                ariaLabel={t('settings.rendering.screentoneLevelsAria', { strategy: name })}
+                value={levels}
+                fallback={DEFAULT_SCREENTONE.levels}
+                min={SCREENTONE_LEVELS_MIN}
+                max={SCREENTONE_LEVELS_MAX}
+                step={1}
+                normalize={clampLevels}
+                onCommit={onLevels}
+            />
+            <QuantizerNumberField
+                id={pitchId}
+                label={t('settings.rendering.screentonePitch')}
+                description={t('settings.rendering.screentonePitchDescription')}
+                ariaLabel={t('settings.rendering.screentonePitchAria', { strategy: name })}
+                value={pitchMm}
+                fallback={DEFAULT_SCREENTONE.pitchMm}
+                min={SCREENTONE_PITCH_MM_MIN}
+                max={SCREENTONE_PITCH_MM_MAX}
+                step={0.01}
+                normalize={clampPitch}
+                onCommit={onPitchMm}
+            />
+            <SettingRow
+                label={t('settings.rendering.screentoneAngle')}
+                description={t('settings.rendering.screentoneAngleDescription')}
+                htmlFor={angleId}
+            >
+                <Select
+                    id={angleId}
+                    aria-label={t('settings.rendering.screentoneAngle')}
+                    value={angleValue}
+                    onChange={(value) => {
+                        const parsed = Number(value);
+                        if (isScreentoneAngle(parsed)) onAngle(parsed);
+                    }}
+                    options={SCREENTONE_ANGLES.map((value) => ({
+                        value: String(value),
+                        label: t(SCREENTONE_ANGLE_LABEL_KEYS[value]),
+                    }))}
+                    className="w-40"
+                />
+            </SettingRow>
+            <QuantizerNumberField
+                id={gammaId}
+                label={t('settings.rendering.gamma')}
+                description={t('settings.rendering.screentoneGammaDescription')}
+                ariaLabel={t('settings.rendering.gammaAria', { strategy: name })}
+                value={gamma}
+                fallback={DEFAULT_GAMMA_BY_STRATEGY.screentone}
+                min={GAMMA_MIN}
+                max={GAMMA_MAX}
+                step={0.1}
+                normalize={clampGamma}
+                onCommit={onGamma}
+            />
+        </div>
+    );
+};
+
 interface TypeDefaultSelectProps {
     label: string;
     value: string;
@@ -358,6 +489,16 @@ export const RenderingSection: React.FC = () => {
                         onGamma={(value) => setStrategyParam(id, { gamma: value })}
                     />
                 ))}
+                <ScreentoneSettings
+                    levels={quantizerDefaults.screentone?.screentoneLevels}
+                    pitchMm={quantizerDefaults.screentone?.screentonePitchMm}
+                    angle={quantizerDefaults.screentone?.screentoneAngle}
+                    gamma={quantizerDefaults.screentone?.gamma}
+                    onLevels={(value) => setStrategyParam('screentone', { screentoneLevels: value })}
+                    onPitchMm={(value) => setStrategyParam('screentone', { screentonePitchMm: value })}
+                    onAngle={(value) => setStrategyParam('screentone', { screentoneAngle: value })}
+                    onGamma={(value) => setStrategyParam('screentone', { gamma: value })}
+                />
             </section>
 
             <section>

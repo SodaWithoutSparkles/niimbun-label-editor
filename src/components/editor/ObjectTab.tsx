@@ -30,10 +30,20 @@ import { importFontFile } from '../../editor/assetImport';
 import type { ContentSource, ImageRef, Node, ShapeKind, ShapeNode } from '../../core/doc/types';
 import {
     DEFAULT_GAMMA_BY_STRATEGY,
+    DEFAULT_SCREENTONE,
+    SCREENTONE_LEVELS_MAX,
+    SCREENTONE_LEVELS_MIN,
+    SCREENTONE_PITCH_MM_MAX,
+    SCREENTONE_PITCH_MM_MIN,
+    isScreentoneAngle,
     resolveQuantizer,
+    resolveQuantizerParams,
+    screentoneSnap,
     type QuantizerDefaults,
     type QuantizerId,
+    type ScreentoneAngle,
 } from '../../core/render';
+import { resolvePrintDpi } from '../../print/resolvedDpi';
 import type { NodePatch } from '../../store/storeTypes';
 import { bytesProviderFor } from './usePreparedAssets';
 import { useSampleRowState } from './sampleRowContext';
@@ -102,6 +112,9 @@ const FIELD_LABEL_KEYS = {
     quantizerStrength: 'editor.mfp.field.quantizerStrength',
     quantizerSerpentine: 'editor.mfp.field.quantizerSerpentine',
     quantizerGamma: 'editor.mfp.field.quantizerGamma',
+    screentoneLevels: 'editor.mfp.field.screentoneLevels',
+    screentonePitchMm: 'editor.mfp.field.screentonePitch',
+    screentoneAngle: 'editor.mfp.field.screentoneAngle',
     templateTrust: 'editor.mfp.field.templateTrust',
 } as const;
 
@@ -131,12 +144,27 @@ const QUANTIZER_LABEL_KEYS = {
     stucki: 'editor.mfp.quantizerOptions.stucki',
     atkinson: 'editor.mfp.quantizerOptions.atkinson',
     ostromoukhov: 'editor.mfp.quantizerOptions.ostromoukhov',
+    screentone: 'editor.mfp.quantizerOptions.screentone',
 } as const satisfies Record<QuantizerId | '', string>;
 
 type QuantizerOption = keyof typeof QUANTIZER_LABEL_KEYS;
 
 const isQuantizerOption = (option: string): option is QuantizerOption =>
     option in QUANTIZER_LABEL_KEYS;
+
+/**
+ * i18n keys for the `screentoneAngle` select. The stored value is the numeric
+ * angle; the label spells out the real lattice angle for 27 (26.6°).
+ */
+const SCREENTONE_ANGLE_LABEL_KEYS = {
+    0: 'editor.mfp.screentoneAngleOptions.deg0',
+    14: 'editor.mfp.screentoneAngleOptions.deg14',
+    27: 'editor.mfp.screentoneAngleOptions.deg27',
+    45: 'editor.mfp.screentoneAngleOptions.deg45',
+} as const satisfies Record<ScreentoneAngle, string>;
+
+const isScreentoneAngleOption = (option: string): option is `${ScreentoneAngle}` =>
+    option in SCREENTONE_ANGLE_LABEL_KEYS;
 
 /**
  * i18n keys for the `quantizerSerpentine` select. `''` is the explicit
@@ -164,6 +192,9 @@ const QUANTIZER_PARAM_VISIBILITY: Partial<Record<string, QuantizerParamVisibilit
     quantizerThreshold: 'threshold',
     quantizerStrength: 'diffusion',
     quantizerSerpentine: 'diffusion',
+    screentoneLevels: 'screentone',
+    screentonePitchMm: 'screentone',
+    screentoneAngle: 'screentone',
 };
 
 /**
@@ -219,6 +250,9 @@ const isWrapOption = (option: string): option is TextWrap => option in WRAP_LABE
 const optionLabel = (fieldKey: string, option: string, t: TFunction): string => {
     if (fieldKey === 'quantizerHint' && isQuantizerOption(option)) return t(QUANTIZER_LABEL_KEYS[option]);
     if (fieldKey === 'quantizerSerpentine' && isSerpentineOption(option)) return t(SERPENTINE_LABEL_KEYS[option]);
+    if (fieldKey === 'screentoneAngle' && isScreentoneAngleOption(option)) {
+        return t(SCREENTONE_ANGLE_LABEL_KEYS[option]);
+    }
     if (fieldKey === 'wrap' && isWrapOption(option)) return t(WRAP_LABEL_KEYS[option]);
     if (fieldKey === 'format' && isCodeFormat(option)) return t(CODE_FORMAT_LABEL_KEYS[option]);
     return option;
@@ -229,7 +263,11 @@ const TRANSFORM_KEYS = ['x', 'y', 'rotDeg', 'scaleX', 'scaleY'] as const;
 const isTransformKey = (key: string): boolean => (TRANSFORM_KEYS as readonly string[]).includes(key);
 
 /** Resolve a top-level-or-transform numeric prop from the first selected node. */
-const numberValue = (node: Node, key: string): number => {
+const numberValue = (
+    node: Node,
+    key: string,
+    context: { id: QuantizerId | undefined; quantizerDefaults: QuantizerDefaults },
+): number => {
     if (isTransformKey(key)) {
         return node.transform[key as (typeof TRANSFORM_KEYS)[number]];
     }
@@ -240,6 +278,12 @@ const numberValue = (node: Node, key: string): number => {
     if (key === 'strokeWidth') return node.strokeWidth ?? DEFAULT_SHAPE_STROKE_WIDTH;
     if (key === 'quantizerThreshold') return node.quantizerParams?.threshold ?? 128;
     if (key === 'quantizerStrength') return node.quantizerParams?.strength ?? 1;
+    if (key === 'screentoneLevels' || key === 'screentonePitchMm') {
+        return (
+            node.quantizerParams?.[key] ??
+            inheritedScreentone(context.id, context.quantizerDefaults, key)
+        );
+    }
     // An absent `quietZone` means "derived default", not 0, so show the
     // effective value the render path resolves (mirrors `strokeWidth`).
     if (key === 'quietZone') {
@@ -250,6 +294,29 @@ const numberValue = (node: Node, key: string): number => {
     const value = (node as unknown as Record<string, unknown>)[key];
     return typeof value === 'number' ? value : 0;
 };
+
+/** Screentone knob → the render default it inherits when nothing is stored. */
+const SCREENTONE_DEFAULT_BY_KNOB = {
+    screentoneLevels: DEFAULT_SCREENTONE.levels,
+    screentonePitchMm: DEFAULT_SCREENTONE.pitchMm,
+    screentoneAngle: DEFAULT_SCREENTONE.angle,
+} as const;
+
+type ScreentoneKnob = keyof typeof SCREENTONE_DEFAULT_BY_KNOB;
+
+/**
+ * The screentone value a node inherits when it stores none: the strategy's
+ * settings default, then `DEFAULT_SCREENTONE` — the same chain the render path
+ * resolves through `resolveQuantizerParams`.
+ */
+const inheritedScreentone = (
+    id: QuantizerId | undefined,
+    quantizerDefaults: QuantizerDefaults,
+    knob: ScreentoneKnob,
+): number =>
+    id === undefined
+        ? SCREENTONE_DEFAULT_BY_KNOB[knob]
+        : resolveQuantizerParams(undefined, id, quantizerDefaults)[knob];
 
 /**
  * The gamma a strategy inherits when a node stores none: the persisted
@@ -267,12 +334,24 @@ const inheritedGamma = (id: QuantizerId | undefined, quantizerDefaults: Quantize
 const gammaValue = (node: Node, inherited: number): number =>
     node.quantizerParams?.gamma ?? inherited;
 
-const stringValue = (node: Node, key: string): string => {
+const stringValue = (
+    node: Node,
+    key: string,
+    context: { id: QuantizerId | undefined; quantizerDefaults: QuantizerDefaults },
+): string => {
     // Per-node serpentine is stored inside `quantizerParams`, not as a top-level
     // prop; map it to the select's `''`/`on`/`off` convention.
     if (key === 'quantizerSerpentine') {
         const serpentine = node.quantizerParams?.serpentine;
         return serpentine === undefined ? '' : serpentine ? 'on' : 'off';
+    }
+    // The screentone angle is a number in `quantizerParams` but a string option
+    // in the select; an absent value shows the inherited angle.
+    if (key === 'screentoneAngle') {
+        const stored =
+            node.quantizerParams?.screentoneAngle ??
+            inheritedScreentone(context.id, context.quantizerDefaults, 'screentoneAngle');
+        return String(stored);
     }
     const value = (node as unknown as Record<string, unknown>)[key];
     return typeof value === 'string' ? value : '';
@@ -357,6 +436,10 @@ export const numberRange = (
             return { min: 0, max: 4, step: 0.1 };
         case 'quantizerGamma':
             return { min: 0.1, max: 4, step: 0.05 };
+        case 'screentoneLevels':
+            return { min: SCREENTONE_LEVELS_MIN, max: SCREENTONE_LEVELS_MAX, step: 1 };
+        case 'screentonePitchMm':
+            return { min: SCREENTONE_PITCH_MM_MIN, max: SCREENTONE_PITCH_MM_MAX, step: 0.01 };
         case 'quietZone':
             return { min: 0, max: MAX_QUIET_ZONE, step: 1 };
         default:
@@ -491,6 +574,10 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     // Persisted per-strategy knob defaults: a node's gamma "auto" value inherits
     // the strategy's setting, then falls back to the engine default.
     const quantizerDefaults = useStore((state) => state.quantizerDefaults);
+    // The effective print dpi drives the screentone pitch readout (outside print
+    // runtime, this is the dpi the print path would snap at).
+    const usePrinterDpi = useStore((state) => state.usePrinterDpi);
+    const printerStatus = useStore((state) => state.printerStatus);
     const addImageRef = useStore((state) => state.addImageRef);
     const addFontRef = useStore((state) => state.addFontRef);
     const updateImageRef = useStore((state) => state.updateImageRef);
@@ -615,7 +702,13 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     const setNumber = (key: string, value: number) => {
         gestureRef.current = true;
         for (const node of selected) {
-            if (key === 'quantizerThreshold' || key === 'quantizerStrength' || key === 'quantizerGamma') {
+            if (
+                key === 'quantizerThreshold' ||
+                key === 'quantizerStrength' ||
+                key === 'quantizerGamma' ||
+                key === 'screentoneLevels' ||
+                key === 'screentonePitchMm'
+            ) {
                 const current = useStore.getState().currentDoc?.nodes.find((entry) => entry.id === node.id) ?? node;
                 const params = { ...current.quantizerParams };
                 if (key === 'quantizerGamma') {
@@ -634,6 +727,38 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                     const inherited = inheritedGamma(id, quantizerDefaults);
                     if (rounded === inherited) delete params.gamma;
                     else params.gamma = rounded;
+                } else if (key === 'screentoneLevels' || key === 'screentonePitchMm') {
+                    // Screen knobs: clamp/round exactly like the document
+                    // validator, then store only a value that differs from what
+                    // the node already inherits (strategy setting → default), so
+                    // "auto" stays implicit and is never pinned.
+                    const bounded =
+                        key === 'screentoneLevels'
+                            ? Math.max(
+                                  SCREENTONE_LEVELS_MIN,
+                                  Math.min(
+                                      SCREENTONE_LEVELS_MAX,
+                                      Math.round(
+                                          Number.isFinite(value) ? value : SCREENTONE_LEVELS_MIN,
+                                      ),
+                                  ),
+                              )
+                            : Math.round(
+                                  Math.max(
+                                      SCREENTONE_PITCH_MM_MIN,
+                                      Math.min(
+                                          SCREENTONE_PITCH_MM_MAX,
+                                          Number.isFinite(value) ? value : SCREENTONE_PITCH_MM_MIN,
+                                      ),
+                                  ) * 100,
+                              ) / 100;
+                    const id = resolveQuantizer(
+                        { type: current.type, quantizerHint: current.quantizerHint },
+                        defaultQuantizerByType,
+                    );
+                    const inherited = inheritedScreentone(id, quantizerDefaults, key);
+                    if (bounded === inherited) delete params[key];
+                    else params[key] = bounded;
                 } else {
                     const option = key === 'quantizerThreshold' ? 'threshold' : 'strength';
                     const range = option === 'threshold' ? [0, 255] : [0, 4];
@@ -704,6 +829,24 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                 updateNodeTransient(node.id, {
                     quantizerParams: Object.keys(params).length ? params : undefined,
                 });
+            } else if (key === 'screentoneAngle') {
+                // The angle is a number in `quantizerParams`; store it only when
+                // it differs from the inherited angle (strategy setting → the
+                // 45° default), so the field keeps its implicit default.
+                const angle = Number(value);
+                if (!isScreentoneAngle(angle)) continue;
+                const current = useStore.getState().currentDoc?.nodes.find((entry) => entry.id === node.id) ?? node;
+                const params = { ...current.quantizerParams };
+                const id = resolveQuantizer(
+                    { type: current.type, quantizerHint: current.quantizerHint },
+                    defaultQuantizerByType,
+                );
+                const inherited = inheritedScreentone(id, quantizerDefaults, 'screentoneAngle');
+                if (angle === inherited) delete params.screentoneAngle;
+                else params.screentoneAngle = angle;
+                updateNodeTransient(node.id, {
+                    quantizerParams: Object.keys(params).length ? params : undefined,
+                });
             } else {
                 updateNodeTransient(node.id, { [key]: value } as never);
             }
@@ -736,6 +879,35 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
         defaultQuantizerByType,
     );
     const effectiveGamma = inheritedGamma(effectiveQuantizerId, quantizerDefaults);
+    // The chain the screentone fields inherit from (strategy setting → default).
+    const quantizerContext = { id: effectiveQuantizerId, quantizerDefaults };
+    // The dpi the print path would snap a screentone at (mirrors
+    // `resolvePrintDpi`): the printer's reported dpi when that setting is on and
+    // a value is known, otherwise the label's dpi hint.
+    const effectivePrintDpi = resolvePrintDpi({
+        usePrinterDpi,
+        printerDpi: printerStatus.dpi,
+        docDpi: doc?.label.dpi ?? 300,
+    }).dpi;
+
+    /**
+     * Live snapped-pitch readout under the pitch field: the requested mm, the
+     * whole-dot period the engine will actually use at the effective print dpi,
+     * and that dpi. Rotated bases land on a fractional dot period (`8.5 dots`).
+     */
+    const screentonePitchReadout = (): string | undefined => {
+        if (first === undefined) return undefined;
+        const pitchMm = numberValue(first, 'screentonePitchMm', quantizerContext);
+        const angle = Number(stringValue(first, 'screentoneAngle', quantizerContext));
+        if (!isScreentoneAngle(angle)) return undefined;
+        const snap = screentoneSnap(pitchMm, angle, effectivePrintDpi);
+        const dots = snap.basis[1] === 0 ? String(Math.round(snap.dots)) : snap.dots.toFixed(1);
+        return t('editor.mfp.screentonePitchReadout', {
+            pitch: snap.pitchMm.toFixed(2),
+            dots,
+            dpi: effectivePrintDpi,
+        });
+    };
 
     const renderField = (field: FieldDescriptor) => {
         const label = labelFor(field.key, t);
@@ -765,13 +937,19 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                         <SettingRow
                             key={field.key}
                             label={label}
-                            description={field.key === 'strokeWidth' ? t('editor.mfp.field.strokeWidthHint') : undefined}
+                            description={
+                                field.key === 'strokeWidth'
+                                    ? t('editor.mfp.field.strokeWidthHint')
+                                    : field.key === 'screentonePitchMm'
+                                      ? screentonePitchReadout()
+                                      : undefined
+                            }
                         >
                             <PopoverSlider
                                 value={
                                     field.key === 'quantizerGamma'
                                         ? gammaValue(first, effectiveGamma)
-                                        : numberValue(first, field.key)
+                                        : numberValue(first, field.key, quantizerContext)
                                 }
                                 onChange={(value) => setNumber(field.key, value)}
                                 min={range.min}
@@ -785,7 +963,7 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
             case 'string':
                 return (
                     <SettingRow key={field.key} label={label}>
-                        <Input value={stringValue(first, field.key)} onChange={(value) => setString(field.key, value)} className="w-40" />
+                        <Input value={stringValue(first, field.key, quantizerContext)} onChange={(value) => setString(field.key, value)} className="w-40" />
                     </SettingRow>
                 );
             case 'dataContent': {
@@ -879,7 +1057,7 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                 );
             case 'select': {
                 const options = field.options ?? [];
-                const raw = stringValue(first, field.key);
+                const raw = stringValue(first, field.key, quantizerContext);
                 // Absent enum ⇒ the render default; a family resolved by a font
                 // selection may not be in the curated list, so keep it selectable.
                 const value = raw !== '' ? raw : (FIELD_DEFAULTS[field.key] ?? '');
@@ -891,6 +1069,7 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                             onChange={(next) => setString(field.key, next)}
                             options={withCurrent.map((option) => ({ value: option, label: optionLabel(field.key, option, t) }))}
                             className="w-36"
+                            aria-label={label}
                         />
                     </SettingRow>
                 );
@@ -905,7 +1084,7 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                     <SettingRow key={field.key} label={label}>
                         <div className="flex items-center gap-2">
                             <Select
-                                value={stringValue(first, field.key)}
+                                value={stringValue(first, field.key, quantizerContext)}
                                 onChange={(value) => setString(field.key, value)}
                                 options={options}
                                 className="w-32"
@@ -934,7 +1113,7 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                     <SettingRow key={field.key} label={label}>
                         <div className="flex items-center gap-2">
                             <Select
-                                value={stringValue(first, field.key)}
+                                value={stringValue(first, field.key, quantizerContext)}
                                 onChange={handleFontSelect}
                                 options={options}
                                 className="w-32"
@@ -954,7 +1133,7 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                 return (
                     <SettingRow key={field.key} label={label}>
                         <ColorPicker
-                            color={stringValue(first, field.key) || colorDefault(first, field.key)}
+                            color={stringValue(first, field.key, quantizerContext) || colorDefault(first, field.key)}
                             onChange={(value) => setColor(field.key, value)}
                             supportsAlpha
                             menuAlign="right"

@@ -1,5 +1,5 @@
 import type { Node, NodeType } from '../core/doc/types';
-import { QUANTIZERS, resolveQuantizer, type QuantizerByType } from '../core/render';
+import { QUANTIZERS, SCREENTONE_ANGLES, resolveQuantizer, type QuantizerByType } from '../core/render';
 import { BARCODE_SYMBOLOGIES, CODE_FORMATS, IMAGE_FITS, QR_ERROR_CORRECTIONS } from '../core/doc/objects';
 
 /**
@@ -195,11 +195,13 @@ export const QUANTIZER_HINT_OPTIONS: readonly string[] = ['', ...Object.keys(QUA
  *   - `'threshold'` — only the threshold knob (strength/serpentine do nothing
  *     for a point threshold — D-57(c));
  *   - `'diffusion'` — the diffusion knobs (Error diffusion + Serpentine scan);
+ *   - `'screentone'` — the screen knobs (levels / pitch / angle); strength is
+ *     inert for a point screen, so it stays hidden with serpentine;
  *   - `'hidden'` — no effective quantizer, so every knob is inert.
  * Resolution is hint → per-type default (`byType`) → module constant, matching
  * the render path, so a per-type setting can reveal or hide the knobs.
  */
-export type QuantizerParamVisibility = 'threshold' | 'diffusion' | 'hidden';
+export type QuantizerParamVisibility = 'threshold' | 'diffusion' | 'screentone' | 'hidden';
 
 export const quantizerParamVisibility = (
     node: Node,
@@ -207,7 +209,9 @@ export const quantizerParamVisibility = (
 ): QuantizerParamVisibility => {
     const id = resolveQuantizer(node, byType);
     if (id === undefined) return 'hidden';
-    return id === 'threshold' ? 'threshold' : 'diffusion';
+    if (id === 'threshold') return 'threshold';
+    if (id === 'screentone') return 'screentone';
+    return 'diffusion';
 };
 
 /**
@@ -231,6 +235,17 @@ export const RESERVED_FIELDS: readonly FieldDescriptor[] = [
     // Per-node tone-curve gamma. Applies to every strategy (for `threshold` it
     // only moves the binarisation cutoff), so it is not gated to one visibility class.
     { key: 'quantizerGamma', scope: 'reserved', kind: 'number', wired: true },
+    // Screentone knobs (screentone only). `strength`/`serpentine` are inert for a
+    // point screen, so they stay hidden by the `'screentone'` visibility class.
+    { key: 'screentoneLevels', scope: 'reserved', kind: 'number', wired: true },
+    { key: 'screentonePitchMm', scope: 'reserved', kind: 'number', wired: true },
+    {
+        key: 'screentoneAngle',
+        scope: 'reserved',
+        kind: 'select',
+        wired: true,
+        options: SCREENTONE_ANGLES.map(String),
+    },
     // Read-only template trust state for the open document.
     { key: 'templateTrust', scope: 'reserved', kind: 'templateTrust', wired: true },
 ];

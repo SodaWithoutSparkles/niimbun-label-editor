@@ -1,5 +1,6 @@
 import type { RgbaBuffer } from './colorspace';
 import { normalizeGamma } from './quantize';
+import type { ScreentoneAngle } from './screentone';
 import type {
     Quantizer,
     QuantizerDefaultParams,
@@ -88,7 +89,20 @@ export const DEFAULT_GAMMA_BY_STRATEGY: Record<QuantizerId, number> = {
     stucki: 1.3,
     atkinson: 1.3,
     ostromoukhov: 1.3,
+    // Neutral: a tone curve before the level index is meaningful, but moving it
+    // by default would silently shift every screentone tone.
+    screentone: 1,
 };
+
+/**
+ * Render defaults for the screentone engine. They live here (beside the gamma
+ * map), never in the engine: `screentone.ts` stays neutral, like `gamma`.
+ */
+export const DEFAULT_SCREENTONE: {
+    levels: number;
+    pitchMm: number;
+    angle: ScreentoneAngle;
+} = { levels: 4, pitchMm: 0.5, angle: 45 };
 
 /** A node's explicit quantizer params (structural, mirrors `Node['quantizerParams']`). */
 export interface PolicyParams {
@@ -96,6 +110,9 @@ export interface PolicyParams {
     strength?: number;
     serpentine?: boolean;
     gamma?: number;
+    screentoneLevels?: number;
+    screentonePitchMm?: number;
+    screentoneAngle?: ScreentoneAngle;
 }
 
 /** A policy's fully-resolved params: every knob has a value. */
@@ -104,6 +121,9 @@ export interface ResolvedPolicyParams {
     strength: number;
     serpentine: boolean;
     gamma: number;
+    screentoneLevels: number;
+    screentonePitchMm: number;
+    screentoneAngle: ScreentoneAngle;
 }
 
 /**
@@ -115,7 +135,8 @@ export interface ResolvedPolicyParams {
  * settings default is consulted before the render-level fallback. `serpentine`
  * resolves through the same chain: a node with no `serpentine` inherits the
  * strategy's settings default rather than pinning `true`. `gamma`'s engine
- * default is per strategy (`DEFAULT_GAMMA_BY_STRATEGY`).
+ * default is per strategy (`DEFAULT_GAMMA_BY_STRATEGY`); the screentone knobs
+ * fall back to `DEFAULT_SCREENTONE` (4 levels / 0.5 mm / 45°).
  */
 export const resolveQuantizerParams = (
     nodeParams: PolicyParams | undefined,
@@ -136,6 +157,21 @@ export const resolveQuantizerParams = (
             strategy?.gamma ??
             fallback?.gamma ??
             DEFAULT_GAMMA_BY_STRATEGY[id],
+        screentoneLevels:
+            nodeParams?.screentoneLevels ??
+            strategy?.screentoneLevels ??
+            fallback?.screentoneLevels ??
+            DEFAULT_SCREENTONE.levels,
+        screentonePitchMm:
+            nodeParams?.screentonePitchMm ??
+            strategy?.screentonePitchMm ??
+            fallback?.screentonePitchMm ??
+            DEFAULT_SCREENTONE.pitchMm,
+        screentoneAngle:
+            nodeParams?.screentoneAngle ??
+            strategy?.screentoneAngle ??
+            fallback?.screentoneAngle ??
+            DEFAULT_SCREENTONE.angle,
     };
 };
 
@@ -147,9 +183,16 @@ export const resolveQuantizerParams = (
  * `normalizeGamma`d value, so raw inputs that render identically (e.g.
  * `Infinity` vs `1`, or an out-of-range `10` vs the clamped `4`) share one slot
  * instead of over-splitting the 8-entry palette.
+ *
+ * The screentone knobs are all keyed (levels, pitch at 2 dp, angle by its
+ * numeric id), so two nodes that differ only in one of them get distinct slots
+ * (D-57(b)). `dpi` is **not** keyed: it is a render-level constant shared by
+ * every policy in a pass, not a per-policy knob.
  */
 export const policyKeyOf = (id: QuantizerId, params: ResolvedPolicyParams): string =>
-    `${id}:${params.threshold}:${params.strength}:${params.serpentine}:${normalizeGamma(params.gamma)}`;
+    `${id}:${params.threshold}:${params.strength}:${params.serpentine}:${normalizeGamma(
+        params.gamma,
+    )}:${params.screentoneLevels}:${params.screentonePitchMm.toFixed(2)}:${params.screentoneAngle}`;
 
 /**
  * Deterministic content key for the dither settings maps. Pure and headless,

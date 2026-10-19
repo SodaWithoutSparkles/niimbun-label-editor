@@ -1,6 +1,13 @@
 import type { hm } from '../hm';
 import { GAMMA_MAX, GAMMA_MIN, QUANTIZERS, type QuantizerId } from '../render/quantize';
 import {
+    isScreentoneAngle,
+    SCREENTONE_LEVELS_MAX,
+    SCREENTONE_LEVELS_MIN,
+    SCREENTONE_PITCH_MM_MAX,
+    SCREENTONE_PITCH_MM_MIN,
+} from '../render/screentone';
+import {
     BARCODE_SYMBOLOGIES,
     CODE_FORMATS,
     DEFAULT_CODE_FORMAT,
@@ -424,7 +431,7 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
     if (value.quantizerParams !== undefined) {
         if (isRecord(value.quantizerParams)) {
             const raw = value.quantizerParams;
-            const params: { threshold?: number; strength?: number; serpentine?: boolean; gamma?: number } = {};
+            const params: NonNullable<BaseNode['quantizerParams']> = {};
             if (raw.threshold !== undefined) {
                 if (isFiniteNumber(raw.threshold)) {
                     // Compare against the pre-clamp rounded value so a pure round
@@ -464,6 +471,45 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
                 'node.quantizerParams.serpentine: invalid value dropped',
             );
             if (serpentine !== undefined) params.serpentine = serpentine;
+            if (raw.screentoneLevels !== undefined) {
+                if (isFiniteNumber(raw.screentoneLevels)) {
+                    const rounded = Math.round(raw.screentoneLevels);
+                    params.screentoneLevels = Math.max(
+                        SCREENTONE_LEVELS_MIN,
+                        Math.min(SCREENTONE_LEVELS_MAX, rounded),
+                    );
+                    if (params.screentoneLevels !== rounded) {
+                        repairs?.push(
+                            'node.quantizerParams.screentoneLevels: clamped to 2–8',
+                        );
+                    }
+                } else {
+                    repairs?.push('node.quantizerParams.screentoneLevels: invalid value dropped');
+                }
+            }
+            if (raw.screentonePitchMm !== undefined) {
+                if (isFiniteNumber(raw.screentonePitchMm)) {
+                    const rounded = Math.round(raw.screentonePitchMm * 100) / 100;
+                    params.screentonePitchMm = Math.max(
+                        SCREENTONE_PITCH_MM_MIN,
+                        Math.min(SCREENTONE_PITCH_MM_MAX, rounded),
+                    );
+                    if (params.screentonePitchMm !== rounded) {
+                        repairs?.push(
+                            'node.quantizerParams.screentonePitchMm: clamped to 0.3–2',
+                        );
+                    }
+                } else {
+                    repairs?.push('node.quantizerParams.screentonePitchMm: invalid value dropped');
+                }
+            }
+            if (raw.screentoneAngle !== undefined) {
+                if (isScreentoneAngle(raw.screentoneAngle)) {
+                    params.screentoneAngle = raw.screentoneAngle;
+                } else {
+                    repairs?.push('node.quantizerParams.screentoneAngle: unknown angle dropped');
+                }
+            }
             if (Object.keys(params).length) base.quantizerParams = params;
         } else repairs?.push('node.quantizerParams: invalid value dropped');
     }

@@ -149,6 +149,57 @@ describe('RenderingSection — per-strategy defaults', () => {
     });
 });
 
+describe('RenderingSection — screentone strategy', () => {
+    it('renders Levels / Screen pitch / Screen angle + gamma, never diffusion knobs', () => {
+        useStore.setState({ quantizerDefaults: {} });
+        render(<RenderingSection />);
+
+        expect(spinbutton(/screentone levels/i).value).toBe('4');
+        expect(spinbutton(/screentone screen pitch/i).value).toBe('0.5');
+        expect(spinbutton(/screentone tone curve gamma/i).value).toBe('1');
+        expect(screen.getByRole('combobox', { name: 'Screen angle' })).toHaveValue('45');
+        expect(Array.from((screen.getByRole('combobox', { name: 'Screen angle' }) as HTMLSelectElement).options).map((option) => option.textContent)).toEqual([
+            '0°',
+            '14°',
+            '26.6°',
+            '45°',
+        ]);
+        // A point screen has no error to diffuse: those controls are never offered.
+        expect(screen.queryByRole('spinbutton', { name: /screentone error diffusion/i })).toBeNull();
+        expect(screen.queryByRole('switch', { name: /screentone/i })).toBeNull();
+        // The pitch description names the snap and the non-head caveat.
+        expect(screen.getByText(/Snapped to whole printer dots/)).toBeInTheDocument();
+        expect(screen.getByText(/only when printing at the printer's reported dpi/)).toBeInTheDocument();
+    });
+
+    it('writes the three knobs with clamps', () => {
+        useStore.setState({ quantizerDefaults: {} });
+        render(<RenderingSection />);
+
+        const levels = spinbutton(/screentone levels/i);
+        fireEvent.change(levels, { target: { value: '12' } });
+        fireEvent.blur(levels);
+        expect(useStore.getState().quantizerDefaults.screentone).toEqual({ screentoneLevels: 8 });
+
+        const pitch = spinbutton(/screentone screen pitch/i);
+        fireEvent.change(pitch, { target: { value: '0.1' } });
+        fireEvent.blur(pitch);
+        expect(useStore.getState().quantizerDefaults.screentone).toEqual({
+            screentoneLevels: 8,
+            screentonePitchMm: 0.3,
+        });
+
+        fireEvent.change(screen.getByRole('combobox', { name: 'Screen angle' }), {
+            target: { value: '27' },
+        });
+        expect(useStore.getState().quantizerDefaults.screentone).toEqual({
+            screentoneLevels: 8,
+            screentonePitchMm: 0.3,
+            screentoneAngle: 27,
+        });
+    });
+});
+
 describe('RenderingSection — per-object-type default quantizer', () => {
     it('lists a select per policy type, defaulting to the theme option', () => {
         useStore.setState({ defaultQuantizerByType: {} });

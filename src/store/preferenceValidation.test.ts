@@ -129,6 +129,49 @@ describe('normalizeQuantizerDefaults', () => {
         });
     });
 
+    it('clamps the screentone knobs (levels int 2..8, pitch 0.3..2.0 at 2 dp)', () => {
+        expect(
+            normalizeQuantizerDefaults({
+                screentone: { screentoneLevels: 4.6, screentonePitchMm: 0.5049, screentoneAngle: 27 },
+            }),
+        ).toEqual({
+            screentone: { screentoneLevels: 5, screentonePitchMm: 0.5, screentoneAngle: 27 },
+        });
+        expect(
+            normalizeQuantizerDefaults({
+                screentone: { screentoneLevels: 99, screentonePitchMm: 9 },
+            }),
+        ).toEqual({ screentone: { screentoneLevels: 8, screentonePitchMm: 2 } });
+        expect(
+            normalizeQuantizerDefaults({
+                screentone: { screentoneLevels: 1, screentonePitchMm: 0.01 },
+            }),
+        ).toEqual({ screentone: { screentoneLevels: 2, screentonePitchMm: 0.3 } });
+    });
+
+    it('drops a screentone angle that is not one of the four', () => {
+        expect(
+            normalizeQuantizerDefaults({
+                screentone: { screentoneAngle: 15 as never, screentoneLevels: 4 },
+            }),
+        ).toEqual({ screentone: { screentoneLevels: 4 } });
+        expect(normalizeQuantizerDefaults({ screentone: { screentoneAngle: '45' as never } })).toEqual(
+            {},
+        );
+    });
+
+    it('drops a non-finite screentone value but keeps the valid ones', () => {
+        expect(
+            normalizeQuantizerDefaults({
+                screentone: {
+                    screentoneLevels: Number.NaN,
+                    screentonePitchMm: Infinity,
+                    screentoneAngle: 0,
+                },
+            }),
+        ).toEqual({ screentone: { screentoneAngle: 0 } });
+    });
+
     it('returns undefined only for a non-object value', () => {
         expect(normalizeQuantizerDefaults('nope')).toBeUndefined();
         expect(normalizeQuantizerDefaults(null)).toBeUndefined();

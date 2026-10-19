@@ -29,6 +29,7 @@ import type { PrinterStatus } from '../../print/transport';
 import { useStore } from '../../store/useStore';
 import { createResourceAssetProviders } from '../editor/usePreparedAssets';
 import type { EditorWarning } from '../../editor/warnings';
+import { docUsesScreentone } from '../../editor/screentoneUsage';
 import {
     mergeNotices,
     usePrintThumbnails,
@@ -433,6 +434,15 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         (sum, notice) => (notice.kind === 'mirror-clipped-ink' ? sum + notice.lostPx : sum),
         0,
     );
+    // Print-time honesty (R10 / no silent aliasing): a screentone is snapped to
+    // whole dots at the render dpi, so it is dot-grid-locked only when that dpi
+    // IS the printer's reported head dpi. Only reachable with `usePrinterDpi`
+    // off (or a concurrent dpi change) — the one case worth warning about.
+    const headDpi = printerStatus.dpi;
+    const screentoneUnlocked =
+        docUsesScreentone(doc, defaultQuantizerByType) &&
+        headDpi !== undefined &&
+        resolved.dpi !== headDpi;
     useEffect(() => {
         if (!open) {
             clearEditorWarnings('print');
@@ -446,9 +456,12 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         if (mismatch) warnings.push({ id: 'print:mismatch', kind: 'print-mismatch', labelW: mismatch.labelW, labelH: mismatch.labelH, labelDpi: mismatch.labelDpi, resolvedDpi: mismatch.resolvedDpi, printerDpiInUse: mismatch.printerDpiInUse });
         if (policyOverflowCount > 0) warnings.push({ id: 'print:policy-overflow', kind: 'print-policy-overflow', count: policyOverflowCount });
         if (notices.length > 0) warnings.push({ id: 'print:mirror-clipped', kind: 'print-mirror-clipped', pixels: mirrorLostPx });
+        if (screentoneUnlocked && headDpi !== undefined) {
+            warnings.push({ id: 'print:screentone-unlocked', kind: 'print-screentone-unlocked', dpi: resolved.dpi, headDpi });
+        }
         setEditorWarnings('print', { docId: doc.meta.id, warnings });
         return () => setEditorWarnings('print', null);
-    }, [open, showOverflow, capabilities?.printheadPixels, orientedWidthPx, plan?.warning, mismatch, policyOverflowCount, notices, mirrorLostPx, doc.meta.id, setEditorWarnings]);
+    }, [open, showOverflow, capabilities?.printheadPixels, orientedWidthPx, plan?.warning, mismatch, policyOverflowCount, notices, mirrorLostPx, screentoneUnlocked, headDpi, resolved.dpi, doc.meta.id, setEditorWarnings]);
 
     const handleProgress = (next: JobProgress): void => {
         setProgress((previous) => {
@@ -515,7 +528,8 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         plan?.warning !== undefined ||
         mismatch !== undefined ||
         notices.length > 0 ||
-        policyOverflowCount > 0;
+        policyOverflowCount > 0 ||
+        screentoneUnlocked;
 
     /**
      * Commit the off-mode DPI box: parse, clamp like the document validator
@@ -927,6 +941,17 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                 className="rounded border border-amber-700 bg-amber-900/30 px-2 py-1 text-xs text-amber-200"
                             >
                                 {t('print.warnings.mirrorClipped', { pixels: mirrorLostPx })}
+                            </p>
+                        )}
+                        {screentoneUnlocked && headDpi !== undefined && (
+                            <p
+                                data-testid="print-warning-screentone-unlocked"
+                                className="rounded border border-amber-700 bg-amber-900/30 px-2 py-1 text-xs text-amber-200"
+                            >
+                                {t('print.warnings.screentoneUnlocked', {
+                                    dpi: resolved.dpi,
+                                    headDpi,
+                                })}
                             </p>
                         )}
                     </div>

@@ -278,7 +278,16 @@ describe('renderLabelPage — shared preview/print path', () => {
         // options carry the resolved `true` rather than inheriting the base's.
         // `gamma` is explicit for the same reason, resolved to this strategy's
         // own default (text → `threshold` → neutral 1).
-        expect(entry.options).toEqual({ threshold: 200, strength: 2, serpentine: true, gamma: 1 });
+        expect(entry.options).toEqual({
+            threshold: 200,
+            strength: 2,
+            serpentine: true,
+            gamma: 1,
+            // Screentone knobs are explicit in every policy block (P13).
+            screentoneLevels: 4,
+            screentonePitchMm: 0.5,
+            screentoneAngle: 45,
+        });
     });
 
     it('gives two nodes differing only in serpentine distinct policy slots (D-57(b))', async () => {

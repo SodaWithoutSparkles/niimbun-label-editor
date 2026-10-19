@@ -4,6 +4,7 @@ import { hasFill, hasStroke } from '../../core/doc/objects';
 import type { LabelDoc, Node } from '../../core/doc/types';
 import {
     DEFAULT_GAMMA_BY_STRATEGY,
+    DEFAULT_SCREENTONE,
     HM_PER_INCH,
     MonoColorSpace,
     QUANTIZERS,
@@ -21,6 +22,7 @@ import {
     type QuantizerPolicy,
     type QuantizerPolicies,
     type RgbaBuffer,
+    type ScreentoneAngle,
 } from '../../core/render';
 import type { AssetDeps, AssetWarning, PreparedAsset } from './assets';
 import { applyRegionClip } from './clip';
@@ -64,9 +66,9 @@ export interface RenderLabelPageOptions {
     /** Global quantizer. Defaults to `'threshold'`. */
     quantizer?: QuantizerId;
     /**
-     * Per-strategy settings defaults (threshold/strength/serpentine), keyed by
-     * quantizer id. A node param overrides these; they override the render-level
-     * `threshold`/`strength`/`serpentine` fallbacks below. Absent/empty = the
+     * Per-strategy settings defaults (threshold / strength / serpentine / gamma
+     * / the screentone knobs), keyed by quantizer id. A node param overrides
+     * these; they override the render-level fallbacks below. Absent/empty = the
      * engine defaults, byte-identical to before this option existed.
      */
     quantizerDefaults?: QuantizerDefaults;
@@ -93,6 +95,19 @@ export interface RenderLabelPageOptions {
      * diffusers) — never to the engine's neutral 1.
      */
     gamma?: number;
+    /**
+     * Screentone tone levels (2..8) forwarded **underneath** the per-strategy
+     * and per-node values. Absent, it resolves to `DEFAULT_SCREENTONE.levels`.
+     */
+    screentoneLevels?: number;
+    /**
+     * Screentone pitch in mm (0.3..2.0) forwarded **underneath** the
+     * per-strategy and per-node values. Absent, it resolves to
+     * `DEFAULT_SCREENTONE.pitchMm`. Snapped at the effective render dpi.
+     */
+    screentonePitchMm?: number;
+    /** Screentone angle forwarded underneath the per-strategy and per-node values. */
+    screentoneAngle?: ScreentoneAngle;
     /** Per-pixel projection. Defaults to Mono (the only v1 color space). */
     colorSpace?: ColorSpace;
     /**
@@ -272,6 +287,9 @@ export interface PolicyParamDefaults {
     strength?: number;
     serpentine?: boolean;
     gamma?: number;
+    screentoneLevels?: number;
+    screentonePitchMm?: number;
+    screentoneAngle?: ScreentoneAngle;
     /** Per-strategy settings defaults (see `RenderLabelPageOptions`). */
     quantizerDefaults?: QuantizerDefaults;
     /** Per-object-type default-quantizer override map (see `RenderLabelPageOptions`). */
@@ -307,7 +325,15 @@ export const buildPolicyMask = async (
         string,
         {
             id: QuantizerId;
-            options: { threshold: number; strength: number; serpentine?: boolean; gamma: number };
+            options: {
+                threshold: number;
+                strength: number;
+                serpentine?: boolean;
+                gamma: number;
+                screentoneLevels: number;
+                screentonePitchMm: number;
+                screentoneAngle: ScreentoneAngle;
+            };
             index: number;
         }
     >();
@@ -355,6 +381,9 @@ export const buildPolicyMask = async (
                 strength: defaults?.strength,
                 serpentine: defaults?.serpentine,
                 gamma: defaults?.gamma,
+                screentoneLevels: defaults?.screentoneLevels,
+                screentonePitchMm: defaults?.screentonePitchMm,
+                screentoneAngle: defaults?.screentoneAngle,
             },
         );
         const key = policyKeyOf(policy, resolved);
@@ -379,6 +408,13 @@ export const buildPolicyMask = async (
                     strength: resolved.strength,
                     serpentine: resolved.serpentine,
                     gamma: resolved.gamma,
+                    // Screentone knobs are explicit for the same reason (P13):
+                    // the base options carry the *global* strategy's values, so
+                    // an omitted key here would silently apply them to this
+                    // policy. `dpi` is a render constant inherited from the base.
+                    screentoneLevels: resolved.screentoneLevels,
+                    screentonePitchMm: resolved.screentonePitchMm,
+                    screentoneAngle: resolved.screentoneAngle,
                 },
                 index: policiesByKey.size + 1,
             };
@@ -515,13 +551,19 @@ export const buildPolicyMask = async (
  *
  * `gamma` is **always** emitted (never left to the engine's neutral default):
  * the non-neutral diffuser default lives in the policy layer, so an omitted
- * gamma would silently apply the wrong curve to a global diffuser pass.
+ * gamma would silently apply the wrong curve to a global diffuser pass. The
+ * screentone knobs are emitted for the same reason (their render defaults live
+ * in `DEFAULT_SCREENTONE`), and `dpi` — the effective render dpi — is a
+ * render-level constant that every masked policy inherits from this base.
  *
  * This base still sits **under** every masked policy, but nothing leaks: with
  * every policy carrying its own explicit knobs, a policy can never inherit the
  * base's value by omission.
  */
-const buildQuantizeOptions = (opts: RenderLabelPageOptions): Parameters<typeof quantizeRgba>[2] => {
+const buildQuantizeOptions = (
+    opts: RenderLabelPageOptions,
+    dpi: number,
+): Parameters<typeof quantizeRgba>[2] => {
     const colorSpace = opts.colorSpace ?? MonoColorSpace;
     const globalId = opts.quantizer ?? 'threshold';
     const strategyDefaults = opts.quantizerDefaults?.[globalId];
@@ -534,6 +576,19 @@ const buildQuantizeOptions = (opts: RenderLabelPageOptions): Parameters<typeof q
     if (strength !== undefined) out.strength = strength;
     if (serpentine !== undefined) out.serpentine = serpentine;
     out.gamma = gamma;
+    // The effective render dpi: a render-level constant, inherited by every
+    // masked policy from this base (never duplicated per policy).
+    out.dpi = dpi;
+    // Screentone knobs always resolve, so a global `screentone` pass never falls
+    // back to the engine's neutral (2 levels) instead of the policy default.
+    out.screentoneLevels =
+        strategyDefaults?.screentoneLevels ?? opts.screentoneLevels ?? DEFAULT_SCREENTONE.levels;
+    out.screentonePitchMm =
+        strategyDefaults?.screentonePitchMm ??
+        opts.screentonePitchMm ??
+        DEFAULT_SCREENTONE.pitchMm;
+    out.screentoneAngle =
+        strategyDefaults?.screentoneAngle ?? opts.screentoneAngle ?? DEFAULT_SCREENTONE.angle;
     return out;
 };
 
@@ -689,6 +744,9 @@ export const renderLabelPage = async (
         strength: opts.strength,
         serpentine: opts.serpentine,
         gamma: opts.gamma,
+        screentoneLevels: opts.screentoneLevels,
+        screentonePitchMm: opts.screentonePitchMm,
+        screentoneAngle: opts.screentoneAngle,
         quantizerDefaults: opts.quantizerDefaults,
         defaultQuantizerByType: opts.defaultQuantizerByType,
     });
@@ -697,7 +755,7 @@ export const renderLabelPage = async (
     // Pre-clip: the diffusion pass sees a white surround outside the union.
     applyRegionClip(imageData, { widthPx, heightPx }, doc.label.regions, hmPerPx);
 
-    const quantizeOptions = buildQuantizeOptions(opts);
+    const quantizeOptions = buildQuantizeOptions(opts, dpi);
     quantizeRgba(
         imageData,
         {

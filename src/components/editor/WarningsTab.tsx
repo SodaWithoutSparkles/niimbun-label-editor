@@ -75,6 +75,11 @@ const useWarningText = (): ((warning: EditorWarning) => string) => {
                 return t('print.warnings.policyOverflow', { count: warning.count });
             case 'print-mirror-clipped':
                 return t('print.warnings.mirrorClipped', { pixels: warning.pixels });
+            case 'print-screentone-unlocked':
+                return t('print.warnings.screentoneUnlocked', {
+                    dpi: warning.dpi,
+                    headDpi: warning.headDpi,
+                });
         }
     }, [t]);
 };

@@ -20,7 +20,14 @@ export type EditorWarning =
     | (WarningBase & { kind: 'print-interleaved'; pages: number; cap: number })
     | (WarningBase & { kind: 'print-mismatch'; labelW: number; labelH: number; labelDpi: number; resolvedDpi: number; printerDpiInUse: boolean })
     | (WarningBase & { kind: 'print-policy-overflow'; count: number })
-    | (WarningBase & { kind: 'print-mirror-clipped'; pixels: number });
+    | (WarningBase & { kind: 'print-mirror-clipped'; pixels: number })
+    /**
+     * The document uses a screentone but the job will not render at the
+     * printer's reported head dpi, so the screen is snapped to a non-head dot
+     * grid (not dot-grid-locked). Only reachable with `usePrinterDpi` off or a
+     * concurrent dpi change.
+     */
+    | (WarningBase & { kind: 'print-screentone-unlocked'; dpi: number; headDpi: number });
 
 export interface EditorWarningGroup {
     docId: string;

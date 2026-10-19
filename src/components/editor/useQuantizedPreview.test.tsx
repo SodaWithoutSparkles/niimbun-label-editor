@@ -59,6 +59,16 @@ const withThreshold = (base: LabelDoc, threshold: number): LabelDoc => {
     return next;
 };
 
+/** A fresh doc with one per-node screentone knob changed — what its slider writes. */
+const withScreentone = (
+    base: LabelDoc,
+    params: NonNullable<Node['quantizerParams']>,
+): LabelDoc => {
+    const next = structuredClone(base);
+    next.nodes[0]!.quantizerParams = params;
+    return next;
+};
+
 /** A fresh doc with an unrelated node field changed (a move). */
 const moved = (base: LabelDoc): LabelDoc => {
     const next = structuredClone(base);
@@ -352,6 +362,26 @@ describe('useQuantizedPreview — only quantization-relevant changes trigger', (
         });
         await flush(500);
         expect(renderMock).not.toHaveBeenCalled();
+    });
+
+    it('re-renders for each screentone knob (levels / pitch / angle)', async () => {
+        // A screentone's screen *is* its quantization: a knob edit must re-plan.
+        const knobs: NonNullable<Node['quantizerParams']>[] = [
+            { screentoneLevels: 6 },
+            { screentonePitchMm: 0.75 },
+            { screentoneAngle: 27 },
+        ];
+        for (const knob of knobs) {
+            renderMock.mockClear();
+            const doc = makeDoc();
+            const { rerender } = mount(props(doc));
+            await act(async () => {
+                rerender(props(withScreentone(doc, knob)));
+            });
+            await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+            expect(renderMock, JSON.stringify(knob)).toHaveBeenCalledTimes(1);
+            cleanup();
+        }
     });
 
     it('baselines a newly selected node without opening a preview', async () => {

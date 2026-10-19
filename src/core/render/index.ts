@@ -41,9 +41,26 @@ export {
 } from './quantize';
 
 export {
+    screentone,
+    screentoneSnap,
+    isScreentoneAngle,
+    SCREENTONE_ANGLES,
+    SCREENTONE_LEVELS_MAX,
+    SCREENTONE_LEVELS_MIN,
+    SCREENTONE_MAX_LEVELS,
+    SCREENTONE_PITCH_MM_MAX,
+    SCREENTONE_PITCH_MM_MIN,
+    SCREENTONE_RANK_SIZE,
+    SCREENTONE_RANK_TABLE,
+    type ScreentoneAngle,
+    type ScreentoneSnap,
+} from './screentone';
+
+export {
     applyPolicy,
     DEFAULT_GAMMA_BY_STRATEGY,
     DEFAULT_POLICY_BY_TYPE,
+    DEFAULT_SCREENTONE,
     policyKeyOf,
     quantizerSettingsKey,
     resolveQuantizer,

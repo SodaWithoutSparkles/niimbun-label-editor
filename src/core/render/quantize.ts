@@ -1,6 +1,7 @@
 import type { ColorSpace, RgbaBuffer } from './colorspace';
 import { OSTROMOUKHOV_COEFFICIENTS } from './ostromoukhovTable';
 import { preprocessGrey, projectGrey, toByte } from './preprocess';
+import { screentone, type ScreentoneAngle } from './screentone';
 
 export { GAMMA_MAX, GAMMA_MIN, buildToneLut, normalizeGamma } from './preprocess';
 
@@ -46,6 +47,28 @@ export interface QuantizeOptions {
      * byte-identical to before this option existed.
      */
     gamma?: number;
+    /**
+     * Screentone tone levels, clamped to `[2, 8]` as an integer. Ignored by
+     * every other quantizer. The render default (`4`) lives in the policy layer
+     * (`core/render/policy.ts`), never here.
+     */
+    screentoneLevels?: number;
+    /**
+     * Screentone cell pitch in mm, clamped to `[0.3, 2.0]` and then snapped to
+     * an integer lattice step at `dpi` (see `screentoneSnap`). Ignored by every
+     * other quantizer.
+     */
+    screentonePitchMm?: number;
+    /** Screentone screen angle (`0 | 14 | 27 | 45`). Ignored by every other quantizer. */
+    screentoneAngle?: ScreentoneAngle;
+    /**
+     * Effective raster dpi for this pass. **Required by `screentone`** (the
+     * pitch can only be snapped to the printer's dot grid at a known
+     * resolution); ignored by every other quantizer. Deliberately **not** a
+     * policy knob: it is a render-level constant, so it never enters
+     * `QuantizerDefaultParams` or a policy key.
+     */
+    dpi?: number;
     /** Per-pixel projection. Defaults to `MonoColorSpace`. */
     colorSpace?: ColorSpace;
 }
@@ -54,16 +77,29 @@ export interface QuantizeOptions {
 export type Quantizer = (rgba: RgbaBuffer, opts?: QuantizeOptions) => RgbaBuffer;
 
 /** Registry keys. Extend here (and `QUANTIZERS`) when adding policies. */
-export type QuantizerId = 'threshold' | 'floydSteinberg' | 'stucki' | 'atkinson' | 'ostromoukhov';
+export type QuantizerId =
+    | 'threshold'
+    | 'floydSteinberg'
+    | 'stucki'
+    | 'atkinson'
+    | 'ostromoukhov'
+    | 'screentone';
 
 /**
  * Per-strategy default parameters — the knobs a quantizer uses when neither a
- * node nor the render call supplies a value. `colorSpace` is deliberately
- * excluded: it is a per-render projection choice, not a per-strategy default.
+ * node nor the render call supplies a value. `colorSpace` and `dpi` are
+ * deliberately excluded: they are render-level choices, not per-strategy
+ * defaults.
  */
 export type QuantizerDefaultParams = Pick<
     QuantizeOptions,
-    'threshold' | 'strength' | 'serpentine' | 'gamma'
+    | 'threshold'
+    | 'strength'
+    | 'serpentine'
+    | 'gamma'
+    | 'screentoneLevels'
+    | 'screentonePitchMm'
+    | 'screentoneAngle'
 >;
 
 /**
@@ -338,6 +374,12 @@ export const atkinson: Quantizer = createDiffuser(
  */
 export const ostromoukhov: Quantizer = createVariableDiffuser();
 
+/**
+ * Head-locked clustered-dot screentone (P4). Unlike every other quantizer it
+ * **requires** `opts.dpi`; see `screentone.ts`.
+ */
+export { screentone };
+
 /** Extensible registry keyed by `QuantizerId`. */
 export const QUANTIZERS: Record<QuantizerId, Quantizer> = {
     threshold,
@@ -345,4 +387,5 @@ export const QUANTIZERS: Record<QuantizerId, Quantizer> = {
     stucki,
     atkinson,
     ostromoukhov,
+    screentone,
 };

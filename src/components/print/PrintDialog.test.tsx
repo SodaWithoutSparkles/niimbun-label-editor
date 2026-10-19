@@ -362,6 +362,77 @@ describe('PrintDialog — warnings', () => {
     });
 });
 
+describe('PrintDialog — screentone print-time honesty', () => {
+    /** A doc whose only node explicitly resolves to the screentone policy. */
+    const screentoneDoc = (): LabelDoc => {
+        const doc = narrowDoc();
+        doc.nodes = [
+            {
+                id: 'n1',
+                parentId: null,
+                type: 'shape',
+                shape: 'rectangle',
+                visible: true,
+                locked: false,
+                transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                size: { w: 1000, h: 1000 },
+                quantizerHint: 'screentone',
+            },
+        ];
+        return doc;
+    };
+
+    it('warns when a screentone prints at a dpi other than the reported head dpi', async () => {
+        useStore.setState({ usePrinterDpi: false });
+        renderDialog({
+            doc: screentoneDoc(),
+            runner: new FakeRunner(),
+            printerStatus: { ...statusOf(B1_PRO), dpi: 203 },
+        });
+
+        const warning = screen.getByTestId('print-warning-screentone-unlocked');
+        expect(warning).toHaveTextContent('(203)');
+        expect(warning).toHaveTextContent('Printing at 300 dpi will not be dot-grid-locked.');
+        await waitFor(() => {
+            const published = useStore
+                .getState()
+                .editorWarnings.print?.warnings.find(
+                    (entry) => entry.kind === 'print-screentone-unlocked',
+                );
+            expect(published).toMatchObject({ dpi: 300, headDpi: 203 });
+        });
+    });
+
+    it('does not warn when the job prints at the reported head dpi', () => {
+        renderDialog({
+            doc: screentoneDoc(),
+            runner: new FakeRunner(),
+            printerStatus: { ...statusOf(B1_PRO), dpi: 203 },
+        });
+
+        // The setting is on, so the resolved dpi IS 203: dot-grid-locked.
+        expect(screen.queryByTestId('print-warning-screentone-unlocked')).not.toBeInTheDocument();
+    });
+
+    it('does not warn when no head dpi is reported or no node uses screentone', () => {
+        useStore.setState({ usePrinterDpi: false });
+        renderDialog({
+            doc: screentoneDoc(),
+            runner: new FakeRunner(),
+            printerStatus: statusOf(B1_PRO),
+        });
+        expect(screen.queryByTestId('print-warning-screentone-unlocked')).not.toBeInTheDocument();
+        cleanup();
+
+        renderDialog({
+            doc: narrowDoc(),
+            runner: new FakeRunner(),
+            printerStatus: { ...statusOf(B1_PRO), dpi: 203 },
+        });
+        expect(screen.queryByTestId('print-warning-screentone-unlocked')).not.toBeInTheDocument();
+    });
+});
+
 describe('PrintDialog — progress, cancel and order', () => {
     it('cancels a running job and shows the cancelled outcome', async () => {
         const runner = new FakeRunner();

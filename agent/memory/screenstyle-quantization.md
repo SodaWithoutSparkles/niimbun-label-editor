@@ -1,13 +1,14 @@
 # ScreenStyle (`references/ScreenStyle/`) — can it be a quantizer?
 
-> **DROPPED by the owner (2026-10-17).** The ScreenStyle/ScreenVAE integration is not planned; this
-> file is kept as **design rationale only** (the screentone direction was dropped with it). Nothing
-> below is a work item. See [`dithering.md`](dithering.md) §2.3 and §8.
+> **ScreenStyle/ScreenVAE integration: still NOT planned (owner, 2026-10-17).** This file is kept as
+> **design rationale**; §4's procedural **screentone SHIPPED in P4 of the 2026-10-19 run**
+> ([`dithering.md`](dithering.md) §10) — the blockers below apply to the *model*, not to that engine.
+> See [`dithering.md`](dithering.md) §2.3, §8 and §10.
 >
-> **2026-10-19 — owner re-asked for a feasibility assessment; the drop stands until they decide.**
-> The engine is small (a stateless point op, cheaper than `floydSteinberg`), the plumbing is ~13
-> mechanical sites, and the work is blocked on owner decisions: pitch default, tone-level count K,
-> screen angles, the `doc dpi ≠ head dpi` policy, and settings-only vs per-node params.
+> **2026-10-19 — owner re-asked for a feasibility assessment.** Settled in P4: pitch default 0.5 mm
+> (snapped at the print dpi), K = 4 (selectable 2–8), angles 0/14/27/45, per-node params **and**
+> per-strategy settings, and the `doc dpi ≠ head dpi` case surfaced as a print warning. The
+> tone-stability median filter is deferred.
 
 **Verdict: the model cannot be ported as a quantizer (3 hard blockers). The *idea* can —
 ship classical screentone as a procedural quantizer instead. ScreenStyle is the design

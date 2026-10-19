@@ -1,5 +1,6 @@
 import type { hm } from '../hm';
 import type { QuantizerId } from '../render/quantize';
+import type { ScreentoneAngle } from '../render/screentone';
 import type { BarcodeSymbology, CodeFormat, ImageFit, QrErrorCorrection, TextWrap } from './objects';
 
 /**
@@ -80,7 +81,18 @@ export interface BaseNode {
      * settings default, then the render-level default. `serpentine` is meaningful
      * only for the error-diffusion quantizers (threshold ignores it).
      */
-    quantizerParams?: { threshold?: number; strength?: number; serpentine?: boolean; gamma?: number };
+    quantizerParams?: {
+        threshold?: number;
+        strength?: number;
+        serpentine?: boolean;
+        gamma?: number;
+        /** Screentone tone levels, integer `[2, 8]` (screentone only). */
+        screentoneLevels?: number;
+        /** Screentone cell pitch in mm, `[0.3, 2.0]`, snapped to dots at render dpi. */
+        screentonePitchMm?: number;
+        /** Screentone screen angle (one of `SCREENTONE_ANGLES`). */
+        screentoneAngle?: ScreentoneAngle;
+    };
 } // + type-specific fields (text props, shape kind, image resource ref, qr payload…)
 
 /** The composed transform shape. Derived type; never stored on a node. */

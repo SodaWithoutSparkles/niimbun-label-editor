@@ -1,5 +1,12 @@
 import { roundHm, type hm } from '../hm';
 import { GAMMA_MAX, GAMMA_MIN } from '../render/quantize';
+import {
+    isScreentoneAngle,
+    SCREENTONE_LEVELS_MAX,
+    SCREENTONE_LEVELS_MIN,
+    SCREENTONE_PITCH_MM_MAX,
+    SCREENTONE_PITCH_MM_MIN,
+} from '../render/screentone';
 import { PAPER_TYPE_SEEDS } from './paper-types';
 import { normalizeDpi } from './validate';
 import type { Guide, LabelDoc, Node, Region, Transform } from './types';
@@ -122,6 +129,38 @@ export const roundNode = (node: Node): Node => {
             // bypassed validation), so a valid `serpentine` round-trips verbatim.
             ...(typeof node.quantizerParams.serpentine === 'boolean'
                 ? { serpentine: node.quantizerParams.serpentine }
+                : {}),
+            // Screentone knobs: the same clamp/round discipline as `validate`, so
+            // a factory-built node and a parsed import converge on one value.
+            ...(node.quantizerParams.screentoneLevels !== undefined &&
+            Number.isFinite(node.quantizerParams.screentoneLevels)
+                ? {
+                      screentoneLevels: Math.max(
+                          SCREENTONE_LEVELS_MIN,
+                          Math.min(
+                              SCREENTONE_LEVELS_MAX,
+                              Math.round(node.quantizerParams.screentoneLevels),
+                          ),
+                      ),
+                  }
+                : {}),
+            ...(node.quantizerParams.screentonePitchMm !== undefined &&
+            Number.isFinite(node.quantizerParams.screentonePitchMm)
+                ? {
+                      screentonePitchMm:
+                          Math.round(
+                              Math.max(
+                                  SCREENTONE_PITCH_MM_MIN,
+                                  Math.min(
+                                      SCREENTONE_PITCH_MM_MAX,
+                                      node.quantizerParams.screentonePitchMm,
+                                  ),
+                              ) * 100,
+                          ) / 100,
+                  }
+                : {}),
+            ...(isScreentoneAngle(node.quantizerParams.screentoneAngle)
+                ? { screentoneAngle: node.quantizerParams.screentoneAngle }
                 : {}),
         };
     }

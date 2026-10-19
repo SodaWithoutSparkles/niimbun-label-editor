@@ -150,6 +150,7 @@ describe('ObjectTab — quantizer policy (P4)', () => {
             'Stucki',
             'Atkinson',
             'Ostromoukhov',
+            'Screentone',
         ]);
     });
 
@@ -588,6 +589,114 @@ describe('per-node quantizer gamma', () => {
         fireEvent.pointerUp(document);
 
         expect(paramsOf('a')).toBeUndefined();
+    });
+});
+
+describe('per-node screentone params (P4)', () => {
+    const paramsOf = (id: string) =>
+        useStore.getState().currentDoc!.nodes.find((n) => n.id === id)!.quantizerParams;
+
+    const screentoneNode = (over: Record<string, unknown> = {}): Node =>
+        shapeNode({ quantizerHint: 'screentone', ...over });
+
+    /** Open the PopoverSlider row labelled `label` and return its number input. */
+    const openField = (label: string): HTMLInputElement => {
+        const row = screen.getByText(label).closest('.items-center.justify-between') as HTMLElement;
+        fireEvent.click(row.querySelector('.cursor-pointer') as HTMLElement);
+        return document.querySelector('input[type="number"]') as HTMLInputElement;
+    };
+
+    /** Close the open PopoverSlider row so the next `openField` targets its own. */
+    const closeField = (label: string): void => {
+        const row = screen.getAllByText(label)[0]!.closest('.items-center.justify-between') as HTMLElement;
+        fireEvent.click(row.querySelector('.cursor-pointer') as HTMLElement);
+    };
+
+    const renderNode = (selected: Node) => {
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: [selected.id] });
+        render(<ObjectTab selected={[selected]} />);
+    };
+
+    it('shows the screen knobs and gamma, and hides threshold/strength/serpentine', () => {
+        renderNode(screentoneNode());
+
+        expect(screen.getByText('Screen levels')).toBeTruthy();
+        expect(screen.getByText('Screen pitch')).toBeTruthy();
+        expect(screen.getByText('Screen angle')).toBeTruthy();
+        expect(screen.getByText('Tone curve (gamma)')).toBeTruthy();
+        // Inert for a point screen: never silently accepted.
+        expect(screen.queryByText('Error diffusion')).toBeNull();
+        expect(screen.queryByText('Serpentine scan')).toBeNull();
+        expect(screen.queryByText('128')).toBeNull();
+    });
+
+    it('shows the inherited defaults and the snapped pitch readout at the print dpi', () => {
+        // Angle 0° yields the plan's exact readout table: 0.5 mm @ 300 dpi → 6
+        // dots → 0.51 mm.
+        renderNode(screentoneNode({ quantizerParams: { screentoneAngle: 0 } }));
+
+        expect(openField('Screen levels').value).toBe('4');
+        closeField('Screen levels');
+        expect(screen.getByText('0.51 mm — 6 dots @ 300 dpi')).toBeTruthy();
+        const angle = screen.getByRole('combobox', { name: 'Screen angle' }) as HTMLSelectElement;
+        expect(angle.value).toBe('0');
+        expect(Array.from(angle.options).map((option) => option.textContent)).toEqual([
+            '0°',
+            '14°',
+            '26.6°',
+            '45°',
+        ]);
+        // The default angle (45°) snaps to a fractional dot period.
+        expect(screentoneNode().quantizerParams).toBeUndefined();
+    });
+
+    it('snaps a rotated default at the effective print dpi', () => {
+        useStore.setState({ usePrinterDpi: true });
+        renderNode(screentoneNode());
+        // 45° basis (1,1): 0.5 mm at 300 dpi → 4 lattice steps → 5.7 dots.
+        expect(screen.getByText('0.48 mm — 5.7 dots @ 300 dpi')).toBeTruthy();
+    });
+
+    it('writes clamped levels/pitch and deletes each key at the inherited value', () => {
+        renderNode(screentoneNode());
+
+        const levels = openField('Screen levels');
+        fireEvent.change(levels, { target: { value: '12' } });
+        expect(paramsOf('s')).toEqual({ screentoneLevels: 8 });
+        // 4 is the inherited default, so it must stay implicit (key deleted).
+        fireEvent.change(levels, { target: { value: '4' } });
+        expect(paramsOf('s')).toBeUndefined();
+        fireEvent.pointerUp(document);
+        closeField('Screen levels');
+
+        const pitch = openField('Screen pitch');
+        fireEvent.change(pitch, { target: { value: '0.1' } });
+        expect(paramsOf('s')).toEqual({ screentonePitchMm: 0.3 });
+        fireEvent.change(pitch, { target: { value: '0.75' } });
+        expect(paramsOf('s')).toEqual({ screentonePitchMm: 0.75 });
+        fireEvent.change(pitch, { target: { value: '0.5' } });
+        fireEvent.pointerUp(document);
+        expect(paramsOf('s')).toBeUndefined();
+    });
+
+    it('writes the numeric angle and deletes it at the inherited angle', () => {
+        renderNode(screentoneNode());
+        const angle = screen.getByRole('combobox', { name: 'Screen angle' });
+
+        fireEvent.change(angle, { target: { value: '27' } });
+        fireEvent.pointerUp(document);
+        expect(paramsOf('s')).toEqual({ screentoneAngle: 27 });
+
+        // 45° is the inherited default (DEFAULT_SCREENTONE), so it is dropped.
+        fireEvent.change(angle, { target: { value: '45' } });
+        fireEvent.pointerUp(document);
+        expect(paramsOf('s')).toBeUndefined();
+    });
+
+    it('inherits the strategy setting before the module default', () => {
+        useStore.setState({ quantizerDefaults: { screentone: { screentoneLevels: 6 } } });
+        renderNode(screentoneNode());
+        expect(openField('Screen levels').value).toBe('6');
     });
 });
 

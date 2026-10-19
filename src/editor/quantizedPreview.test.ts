@@ -170,6 +170,23 @@ describe('quantizedPreviewTrigger — what counts as tuning', () => {
         expect(quantizedPreviewTrigger(textNode({ quantizerParams: { threshold: 90 } }))?.key).not.toBe(base?.key);
         expect(quantizedPreviewTrigger(textNode({ quantizerParams: { strength: 2 } }))?.key).not.toBe(base?.key);
         expect(quantizedPreviewTrigger(textNode({ quantizerParams: { serpentine: false } }))?.key).not.toBe(base?.key);
+        // Every screentone knob changes pixels, so every one re-triggers.
+        expect(quantizedPreviewTrigger(textNode({ quantizerParams: { screentoneLevels: 6 } }))?.key).not.toBe(base?.key);
+        expect(quantizedPreviewTrigger(textNode({ quantizerParams: { screentonePitchMm: 0.75 } }))?.key).not.toBe(base?.key);
+        expect(quantizedPreviewTrigger(textNode({ quantizerParams: { screentoneAngle: 27 } }))?.key).not.toBe(base?.key);
+    });
+
+    it('keys each screentone knob independently', () => {
+        const keys = [
+            textNode({ quantizerParams: { screentoneLevels: 4 } }),
+            textNode({ quantizerParams: { screentoneLevels: 6 } }),
+            textNode({ quantizerParams: { screentonePitchMm: 0.5 } }),
+            textNode({ quantizerParams: { screentonePitchMm: 0.75 } }),
+            textNode({ quantizerParams: { screentoneAngle: 0 } }),
+            textNode({ quantizerParams: { screentoneAngle: 27 } }),
+        ].map((node) => quantizedPreviewTrigger(node)?.key);
+        // Each pair differs: levels, pitch and angle are all keyed.
+        expect(new Set(keys).size).toBe(keys.length);
     });
 
     it('is stable when an unrelated node field changes', () => {

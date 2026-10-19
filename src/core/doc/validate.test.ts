@@ -519,6 +519,104 @@ describe('isNode — quantizerParams', () => {
     });
 });
 
+describe('isNode — screentone params (P4)', () => {
+    it('round-trips the three screen knobs', () => {
+        expect(
+            isNode(
+                baseNode({
+                    quantizerHint: 'screentone',
+                    quantizerParams: {
+                        screentoneLevels: 6,
+                        screentonePitchMm: 0.75,
+                        screentoneAngle: 27,
+                    },
+                }),
+            )?.quantizerParams,
+        ).toEqual({ screentoneLevels: 6, screentonePitchMm: 0.75, screentoneAngle: 27 });
+    });
+
+    it('clamps levels to 2–8 and pitch to 0.3–2 mm, with repairs', () => {
+        const repairs: string[] = [];
+        const low = isNode(
+            baseNode({ quantizerParams: { screentoneLevels: 1, screentonePitchMm: 0.1 } }),
+            repairs,
+        );
+        expect(low?.quantizerParams).toEqual({ screentoneLevels: 2, screentonePitchMm: 0.3 });
+        expect(repairs).toContain('node.quantizerParams.screentoneLevels: clamped to 2–8');
+        expect(repairs).toContain('node.quantizerParams.screentonePitchMm: clamped to 0.3–2');
+
+        const highRepairs: string[] = [];
+        const high = isNode(
+            baseNode({ quantizerParams: { screentoneLevels: 12, screentonePitchMm: 9 } }),
+            highRepairs,
+        );
+        expect(high?.quantizerParams).toEqual({ screentoneLevels: 8, screentonePitchMm: 2 });
+        expect(highRepairs).toContain('node.quantizerParams.screentoneLevels: clamped to 2–8');
+        expect(highRepairs).toContain('node.quantizerParams.screentonePitchMm: clamped to 0.3–2');
+    });
+
+    it('rounds levels to an integer and pitch to 2 dp without a false clamp repair', () => {
+        const repairs: string[] = [];
+        expect(
+            isNode(
+                baseNode({ quantizerParams: { screentoneLevels: 4.6, screentonePitchMm: 0.5678 } }),
+                repairs,
+            )?.quantizerParams,
+        ).toEqual({ screentoneLevels: 5, screentonePitchMm: 0.57 });
+        expect(repairs.join(' ')).not.toContain('clamped');
+    });
+
+    it('drops a non-finite knob and an unknown angle, with repairs', () => {
+        const repairs: string[] = [];
+        expect(
+            isNode(
+                baseNode({
+                    quantizerParams: {
+                        screentoneLevels: Number.NaN,
+                        screentonePitchMm: Number.POSITIVE_INFINITY,
+                        screentoneAngle: 30,
+                    },
+                }),
+                repairs,
+            )?.quantizerParams,
+        ).toBeUndefined();
+        expect(repairs).toContain('node.quantizerParams.screentoneLevels: invalid value dropped');
+        expect(repairs).toContain('node.quantizerParams.screentonePitchMm: invalid value dropped');
+        expect(repairs).toContain('node.quantizerParams.screentoneAngle: unknown angle dropped');
+    });
+
+    it('deletes a params object left empty and keeps a valid angle in roundNode', () => {
+        expect(
+            isNode(
+                baseNode({
+                    quantizerParams: {
+                        screentoneLevels: 'x',
+                        screentonePitchMm: 'y',
+                        screentoneAngle: 90,
+                    },
+                }),
+            )?.quantizerParams,
+        ).toBeUndefined();
+        expect(
+            roundNode(
+                baseNode({
+                    quantizerParams: {
+                        screentoneLevels: 4.6,
+                        screentonePitchMm: 2.555,
+                        screentoneAngle: 14,
+                    },
+                }) as unknown as Node,
+            ).quantizerParams,
+        ).toEqual({ screentoneLevels: 5, screentonePitchMm: 2, screentoneAngle: 14 });
+        // An invalid angle is dropped; the remaining knobs survive.
+        expect(
+            roundNode(
+                baseNode({ quantizerParams: { screentoneAngle: 30 } }) as unknown as Node,
+            ).quantizerParams,
+        ).toBeUndefined();
+    });
+});
+
 describe('isNode — quantizerHint (P4)', () => {
     it('keeps a known quantizer id', () => {
         expect(isNode(baseNode({ quantizerHint: 'atkinson' }))?.quantizerHint).toBe('atkinson');

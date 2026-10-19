@@ -1,6 +1,13 @@
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n/languages';
 import { GAMMA_MAX, GAMMA_MIN, QUANTIZERS, type QuantizerId } from '../core/render/quantize';
 import type { QuantizerDefaultParams, QuantizerDefaults } from '../core/render/quantize';
+import {
+    isScreentoneAngle,
+    SCREENTONE_LEVELS_MAX,
+    SCREENTONE_LEVELS_MIN,
+    SCREENTONE_PITCH_MM_MAX,
+    SCREENTONE_PITCH_MM_MIN,
+} from '../core/render/screentone';
 import type { NodeType } from '../core/doc/types';
 import {
     CONNECT_METHODS,
@@ -201,7 +208,10 @@ export const normalizeDefaultPaperTypeId = (value: unknown): string | undefined 
  * remains (so an empty per-strategy object is dropped). `threshold` is clamped
  * to `[0,255]` as an integer; `strength` to `[0,4]` rounded to 2 dp (matching
  * `core/doc/validate`); `gamma` to `[0.1,4]` rounded to 2 dp (the `quantize.ts`
- * clamp); `serpentine` must be a boolean.
+ * clamp); `serpentine` must be a boolean. The screentone knobs clamp like the
+ * engine: `levels` to an integer `[2,8]`, `pitchMm` to `[0.3,2.0]` at 2 dp, and
+ * `angle` must be one of the four supported values (a bad angle is dropped, not
+ * defaulted, so the render default still applies downstream).
  */
 const normalizeQuantizerDefaultParams = (value: unknown): QuantizerDefaultParams | undefined => {
     if (!isRecord(value)) return undefined;
@@ -221,6 +231,24 @@ const normalizeQuantizerDefaultParams = (value: unknown): QuantizerDefaultParams
     if (isFiniteNumber(value.gamma)) {
         params.gamma =
             Math.round(Math.min(GAMMA_MAX, Math.max(GAMMA_MIN, value.gamma)) * 100) / 100;
+    }
+    if (isFiniteNumber(value.screentoneLevels)) {
+        params.screentoneLevels = Math.min(
+            SCREENTONE_LEVELS_MAX,
+            Math.max(SCREENTONE_LEVELS_MIN, Math.round(value.screentoneLevels)),
+        );
+    }
+    if (isFiniteNumber(value.screentonePitchMm)) {
+        params.screentonePitchMm =
+            Math.round(
+                Math.min(
+                    SCREENTONE_PITCH_MM_MAX,
+                    Math.max(SCREENTONE_PITCH_MM_MIN, value.screentonePitchMm),
+                ) * 100,
+            ) / 100;
+    }
+    if (isScreentoneAngle(value.screentoneAngle)) {
+        params.screentoneAngle = value.screentoneAngle;
     }
     if (typeof value.serpentine === 'boolean') params.serpentine = value.serpentine;
     return Object.keys(params).length > 0 ? params : undefined;

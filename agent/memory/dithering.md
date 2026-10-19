@@ -6,15 +6,16 @@ Owner decision 2026-10-16: **record only, no code** at the time — **superseded
 P13 landed the configurable per-strategy defaults, the per-node `serpentine` and the `policyKeyOf`
 fix (§7). P14 landed the gamma tone curve and the `ostromoukhov` strategy, and the owner **dropped**
 ordered/Bayer, screentone and ScreenStyle/ScreenVAE (2026-10-17). **P1 of the 2026-10-19 run landed
-§9** (the named grey preprocess stage + per-object gamma; **D-58 retired**). **Read §7, §8 and §9
-first.**
+§9** (the named grey preprocess stage + per-object gamma; **D-58 retired**); **P4 of that run landed
+§10** (head-locked screentone; D-64 measured). **Read §7–§10 first.**
 Companion file: [`screenstyle-quantization.md`](screenstyle-quantization.md) (procedural
 screentone design, K-level tone ramp). Read both before touching `src/core/render/quantize.ts`.
 
 ## 1. What ships today
 
-`src/core/render/quantize.ts` (390 LOC) — one static-kernel diffusion engine (`createDiffuser`),
-one variable-coefficient path (`createVariableDiffuser`, `ostromoukhov` only), five quantizers.
+`src/core/render/quantize.ts` — one static-kernel diffusion engine (`createDiffuser`),
+one variable-coefficient path (`createVariableDiffuser`, `ostromoukhov` only), the point-op
+`threshold`, and (since P4) `screentone` from `src/core/render/screentone.ts` — six quantizers.
 
 | thing | anchor | detail |
 |---|---|---|
@@ -65,11 +66,10 @@ the tone curve ships as a per-strategy `gamma` setting; Ostromoukhov ships.**
      thermal output, and P14 did **not** adopt it (default 1.3 for diffusers). `Error diffusion`
      (Wikipedia, printer considerations) is the only citable rationale for a *shaping* curve:
      printers overlap dots, so tone-scale linearisation may be applied to the source.
-3. **Ordered / Bayer + screentone — DROPPED by the owner (2026-10-17); analysis kept for a future
-   revisit.** Bayer 2/4/8 exists only in the vendored reference
-   (`references/niimblue/src/utils/post_process.ts:117-165`) — never shipped. Screentone design is
-   in [`screenstyle-quantization.md`](screenstyle-quantization.md). Both are **point ops**: no
-   diffusion, so no error buffer and **immune to the cross-policy seam problem below**.
+3. **Ordered / Bayer — still dropped (owner 2026-10-17). Screentone SHIPPED in P4 (§10).** Bayer
+   2/4/8 exists only in the vendored reference (`references/niimblue/src/utils/post_process.ts:117-165`)
+   — never shipped, and it is **dpi-blind**; the shipped screentone is head-locked instead. Both are
+   **point ops**: no diffusion, so no error buffer and **immune to the cross-policy seam problem below**.
 
 ## 3. Architecture constraints any new method must respect
 
@@ -273,3 +273,44 @@ Commits `2b0f70a` (W1 gamma), `f2d3bc9` (W2 Ostromoukhov), `8468b54` (W3 live pr
   `renderLabelPage.gamma.test.ts` (distinct mask slots, per-object beats the setting, neutral
   byte-identity, `parseDoc` round-trip), plus the extended `validate`/`ObjectTab`/`inspectorModel`
   suites. Full suite 2228 green; `tsc --noEmit` clean.
+
+## 10. Landed in P4 of the 2026-10-19 run — head-locked screentone (closes the §2 gap; D-64 measured)
+
+- **New engine `src/core/render/screentone.ts`** (pure, no store): projected grey → P1 tone chain →
+  `K`-level index → one precomputed **clustered-dot rank table**. `ink = rank < level`,
+  `level = round((1 - grey/255) * (levels-1))`, `0` = paper, `levels-1` = **solid ink**. A stateless
+  point op: O(1)/px, no error buffer, **cheaper than Floyd–Steinberg**, and immune to the cross-policy
+  seam (D-05) like `threshold`. Ignores `threshold`/`strength`/`serpentine`; `gamma` applies.
+- **Rotation is an integer lattice**, not float rotation: bases `(1,0)/(4,1)/(2,1)/(1,1)` =
+  0°/14°/26.565°/45°, lattice coords `u=(a*x+b*y)/S`, `v=(-b*x+a*y)/S`, `S = step*(a²+b²)` — exact
+  periodicity, no trig, no drift. The rank table is one deterministic `Uint8Array(64*64)` in **cell
+  space** (wrap-aware Euclidean distance from the cell centre, `MAX_LEVELS = 8`), and its value is
+  **rescaled into the current `levels` domain** before the compare
+  (`min(levels-2, floor(raw*(levels-1)/7))`) — without that, `level = levels-1` is not solid for K < 8.
+- **Pitch is physical, never raw px.** `dpi` is a **required** `QuantizeOptions` input (missing ⇒
+  `RangeError`: head-locked or nothing) because the raster is encoded 1:1 in printer dots.
+  `step = max(1, round(pitchMm * dpi/25.4 / |basis|))`, snapped **up** while the period is < 0.4 mm;
+  `dots = step*|basis|`, `pitchMm = dots*25.4/dpi`. Verified: 300 dpi 0° → 5/6/8/12 dots =
+  0.423/0.508/0.677/1.016 mm; 203 dpi → 4/6/8 = 0.500/0.751/1.001 mm.
+- **Params + precedence:** `screentoneLevels` (2–8), `screentonePitchMm` (0.3–2.0), `screentoneAngle`
+  (0|14|27|45) — document data (`quantizerParams`) with node → per-strategy setting →
+  `DEFAULT_SCREENTONE` (4 / 0.5 mm / 45°; gamma 1). `policyKeyOf` keys all three (pitch 2 dp);
+  every knob is set explicitly in the per-policy options (P13 trap). The inspector exposes them only
+  for an effective screentone and shows the live snap readout (`0.51 mm — 6 dots @ 300 dpi`) at the
+  **resolved print dpi**; `strength`/`serpentine` are hidden for it rather than silently dead.
+- **Never a default for symbol/text types** — `DEFAULT_POLICY_BY_TYPE` is untouched; screentone is
+  opt-in per node (or an explicit per-type setting). A screentoned QR does not scan (R10).
+- **Non-head dpi paths are accepted approximations:** queue thumbnails (fixed 100 dpi) and the live
+  preview's 1 M px budget fallback snap at their own effective dpi and are **not** dot-grid-locked.
+  If the print's resolved dpi ≠ the printer-reported head dpi (only with `usePrinterDpi` off), the
+  print dialog raises **one** `print-screentone-unlocked` warning. `docUsesScreentone` ignores hidden
+  nodes (including ancestor-hidden groups); it scans conservatively if a malformed orphan exists
+  (false-positive warning only).
+- **D-64 measured (palette pressure):** 9 distinct screentone policies ⇒ **8 held, `overflowCount 1`**;
+  the 9th node falls back fully to the global pass. The existing `print-policy-overflow` warning
+  surfaces it.
+- **Tone-stability median filter: deferred** (revisit after the owner's first screentone test print).
+- **Tests:** engine unit/golden suite (`screentone.test.ts`, pinned 8×8 planes at 300 dpi, K ramp,
+  periodicity, strength-inert, missing-dpi throw), `renderLabelPage.screentone.test.ts` (distinct
+  slots per knob, the D-64 measurement, 6 px @300 vs 4 px @203 period, strength-inert end-to-end,
+  never a default), doc round-trip + UI + print-warning suites. Full suite 2361 green; `tsc` clean.

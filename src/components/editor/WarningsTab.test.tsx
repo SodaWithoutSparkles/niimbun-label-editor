@@ -88,6 +88,30 @@ describe('WarningsTab', () => {
         expect(row).toHaveTextContent('591 px wide vs 567 px');
     });
 
+    it('renders the screentone non-head-dpi warning with both dpis', async () => {
+        const doc = makeDoc();
+        useStore.setState({
+            currentDoc: doc,
+            editorWarnings: {
+                print: preview(doc.meta.id, [
+                    {
+                        id: 'print:screentone-unlocked',
+                        kind: 'print-screentone-unlocked',
+                        dpi: 300,
+                        headDpi: 203,
+                    },
+                ]),
+            },
+        });
+
+        render(<WarningsTab />);
+
+        const row = await screen.findByTestId('warning-print:screentone-unlocked');
+        expect(row.tagName).toBe('P');
+        expect(row).toHaveTextContent("(203)");
+        expect(row).toHaveTextContent('Printing at 300 dpi will not be dot-grid-locked.');
+    });
+
     it('ignores a group scoped to another document', async () => {
         const doc = makeDoc('doc-1');
         useStore.setState({

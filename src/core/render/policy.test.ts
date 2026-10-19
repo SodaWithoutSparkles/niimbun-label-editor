@@ -5,6 +5,7 @@ import {
     applyPolicy,
     DEFAULT_GAMMA_BY_STRATEGY,
     DEFAULT_POLICY_BY_TYPE,
+    DEFAULT_SCREENTONE,
     policyKeyOf,
     quantizerSettingsKey,
     resolveQuantizer,
@@ -140,13 +141,29 @@ describe('policyKeyOf (D-57(b))', () => {
         const resolved = resolveQuantizerParams(undefined, 'floydSteinberg', {
             floydSteinberg: { threshold: 200, strength: 2 },
         });
-        expect(resolved).toEqual({ threshold: 200, strength: 2, serpentine: true, gamma: 1.3 });
+        expect(resolved).toEqual({
+            threshold: 200,
+            strength: 2,
+            serpentine: true,
+            gamma: 1.3,
+            screentoneLevels: 4,
+            screentonePitchMm: 0.5,
+            screentoneAngle: 45,
+        });
         // A node param overrides the setting; the render fallback only fills gaps.
         expect(
             resolveQuantizerParams({ threshold: 50 }, 'floydSteinberg', {
                 floydSteinberg: { threshold: 200 },
             }, { strength: 3 }),
-        ).toEqual({ threshold: 50, strength: 3, serpentine: true, gamma: 1.3 });
+        ).toEqual({
+            threshold: 50,
+            strength: 3,
+            serpentine: true,
+            gamma: 1.3,
+            screentoneLevels: 4,
+            screentonePitchMm: 0.5,
+            screentoneAngle: 45,
+        });
     });
 });
 
@@ -163,16 +180,26 @@ describe('gamma — tone curve per strategy (P14 W1)', () => {
             stucki: 1.3,
             atkinson: 1.3,
             ostromoukhov: 1.3,
+            screentone: 1,
         });
-        // Every diffuser shares the dot-gain default; only `threshold` is neutral.
+        // Every diffuser shares the dot-gain default; `threshold` and the point
+        // screentone stay neutral.
         for (const [id, gamma] of Object.entries(DEFAULT_GAMMA_BY_STRATEGY)) {
-            expect(gamma, id).toBe(id === 'threshold' ? 1 : 1.3);
+            expect(gamma, id).toBe(id === 'threshold' || id === 'screentone' ? 1 : 1.3);
         }
     });
 
     it('gives ostromoukhov its own policy slot, distinct from the other strategies', () => {
         const resolved = resolveQuantizerParams(undefined, 'ostromoukhov');
-        expect(resolved).toEqual({ threshold: 128, strength: 1, serpentine: true, gamma: 1.3 });
+        expect(resolved).toEqual({
+            threshold: 128,
+            strength: 1,
+            serpentine: true,
+            gamma: 1.3,
+            screentoneLevels: 4,
+            screentonePitchMm: 0.5,
+            screentoneAngle: 45,
+        });
         expect(policyKeyOf('ostromoukhov', resolved)).not.toBe(
             policyKeyOf('floydSteinberg', resolveQuantizerParams(undefined, 'floydSteinberg')),
         );
@@ -256,6 +283,94 @@ describe('gamma — tone curve per strategy (P14 W1)', () => {
         expect(quantizerSettingsKey({ threshold: { gamma: 1 } })).not.toBe(
             quantizerSettingsKey({ threshold: { gamma: 1.2 } }),
         );
+    });
+});
+
+describe('screentone params (P4)', () => {
+    it('keeps the render defaults in the policy layer', () => {
+        expect(DEFAULT_SCREENTONE).toEqual({ levels: 4, pitchMm: 0.5, angle: 45 });
+        expect(DEFAULT_GAMMA_BY_STRATEGY.screentone).toBe(1);
+        // Never a default policy for a node type (a screentoned symbol will not scan).
+        expect(Object.values(DEFAULT_POLICY_BY_TYPE)).not.toContain('screentone');
+    });
+
+    it('resolves node → strategy setting → render fallback → DEFAULT_SCREENTONE', () => {
+        const bare = resolveQuantizerParams(undefined, 'screentone');
+        expect(bare).toMatchObject({
+            screentoneLevels: 4,
+            screentonePitchMm: 0.5,
+            screentoneAngle: 45,
+        });
+
+        // Render fallback beats the policy default ...
+        const fallback = resolveQuantizerParams(undefined, 'screentone', undefined, {
+            screentoneLevels: 3,
+            screentonePitchMm: 0.8,
+            screentoneAngle: 27,
+        });
+        expect(fallback).toMatchObject({
+            screentoneLevels: 3,
+            screentonePitchMm: 0.8,
+            screentoneAngle: 27,
+        });
+
+        // ... a strategy setting beats the render fallback ...
+        const settings = resolveQuantizerParams(
+            undefined,
+            'screentone',
+            { screentone: { screentoneLevels: 5, screentonePitchMm: 1.2, screentoneAngle: 14 } },
+            { screentoneLevels: 3, screentonePitchMm: 0.8, screentoneAngle: 27 },
+        );
+        expect(settings).toMatchObject({
+            screentoneLevels: 5,
+            screentonePitchMm: 1.2,
+            screentoneAngle: 14,
+        });
+
+        // ... and an explicit node value beats everything.
+        const node = resolveQuantizerParams(
+            { screentoneLevels: 8, screentonePitchMm: 2, screentoneAngle: 0 },
+            'screentone',
+            { screentone: { screentoneLevels: 5 } },
+            { screentoneLevels: 3 },
+        );
+        expect(node).toMatchObject({
+            screentoneLevels: 8,
+            screentonePitchMm: 2,
+            screentoneAngle: 0,
+        });
+    });
+
+    it('policyKeyOf differs when only one screentone knob differs', () => {
+        const base = resolveQuantizerParams(undefined, 'screentone');
+        const key = (params: Parameters<typeof resolveQuantizerParams>[0]) =>
+            policyKeyOf('screentone', resolveQuantizerParams(params, 'screentone'));
+
+        const baseKey = policyKeyOf('screentone', base);
+        expect(key({ screentoneLevels: 5 })).not.toBe(baseKey);
+        expect(key({ screentonePitchMm: 0.8 })).not.toBe(baseKey);
+        expect(key({ screentoneAngle: 0 })).not.toBe(baseKey);
+        expect(key({ screentoneAngle: 14 })).not.toBe(baseKey);
+    });
+
+    it('keys the pitch at 2 dp, so sub-0.01 mm differences share a slot', () => {
+        const base = resolveQuantizerParams(undefined, 'screentone');
+        const keyFor = (pitch: number) =>
+            policyKeyOf('screentone', { ...base, screentonePitchMm: pitch });
+        expect(keyFor(0.5)).toBe(keyFor(0.501));
+        expect(keyFor(0.5)).not.toBe(keyFor(0.51));
+    });
+
+    it('quantizerSettingsKey carries the screentone settings (preview/thumbnail cache)', () => {
+        const base = quantizerSettingsKey({ screentone: { screentoneLevels: 4 } });
+        expect(base).toContain('screentone:screentoneLevels=4');
+        expect(base).not.toBe(quantizerSettingsKey({ screentone: { screentoneLevels: 6 } }));
+        expect(
+            quantizerSettingsKey({ screentone: { screentonePitchMm: 0.5 } }),
+        ).not.toBe(quantizerSettingsKey({ screentone: { screentonePitchMm: 0.8 } }));
+        expect(
+            quantizerSettingsKey({ screentone: { screentoneAngle: 0 } }),
+        ).not.toBe(quantizerSettingsKey({ screentone: { screentoneAngle: 45 } }));
     });
 });
 

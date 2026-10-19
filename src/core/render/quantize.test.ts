@@ -124,7 +124,8 @@ describe('diffusers (golden pixels, full RGB)', () => {
 
     it('every quantizer output pixel is exactly 0,0,0 or 255,255,255', () => {
         for (const quantizer of Object.values(QUANTIZERS)) {
-            for (const pixel of run(quantizer, ramp)) {
+            // `screentone` requires the effective raster dpi (P4).
+            for (const pixel of run(quantizer, ramp, { dpi: 300 })) {
                 expect(isBitPixel(pixel)).toBe(true);
             }
         }
@@ -201,17 +202,25 @@ describe('createDiffuser guards', () => {
 });
 
 describe('QUANTIZERS registry', () => {
-    it('exposes all five named quantizers', () => {
+    it('exposes all six named quantizers', () => {
         expect(Object.keys(QUANTIZERS).sort()).toEqual([
             'atkinson',
             'floydSteinberg',
             'ostromoukhov',
+            'screentone',
             'stucki',
             'threshold',
         ]);
         for (const quantizer of Object.values(QUANTIZERS)) {
             expect(typeof quantizer).toBe('function');
         }
+    });
+
+    it('registers screentone and requires the effective dpi (P4)', () => {
+        expect(typeof QUANTIZERS.screentone).toBe('function');
+        expect(() => run(QUANTIZERS.screentone, ramp)).toThrow(/dpi/);
+        const pixels = run(QUANTIZERS.screentone, ramp, { dpi: 300 });
+        for (const pixel of pixels) expect(isBitPixel(pixel)).toBe(true);
     });
 });
 
@@ -380,9 +389,9 @@ describe('tone curve (gamma) — diffusers', () => {
         // Neutral output still has white pixels; a NaN LUT would make them all 0.
         for (const quantizer of Object.values(QUANTIZERS)) {
             for (const gamma of [NaN, Infinity, -Infinity]) {
-                const pixels = run(quantizer, plane, { gamma });
+                const pixels = run(quantizer, plane, { gamma, dpi: 300 });
                 expect(pixels, `gamma ${gamma} is byte-identical to the neutral pass`).toEqual(
-                    run(quantizer, plane),
+                    run(quantizer, plane, { dpi: 300 }),
                 );
                 expect(pixels.some(([r]) => r === 255), `gamma ${gamma} keeps white ink`).toBe(true);
             }
@@ -419,7 +428,10 @@ describe('tone curve (gamma) — existing golden planes stay byte-identical', ()
         // The `gamma: 1` path must not round the float projection: it equals the
         // no-gamma path exactly for every quantizer.
         for (const quantizer of Object.values(QUANTIZERS)) {
-            expect(run(quantizer, ramp, { gamma: 1 })).toEqual(run(quantizer, ramp));
+            // `screentone` requires the effective raster dpi (P4).
+            expect(run(quantizer, ramp, { gamma: 1, dpi: 300 })).toEqual(
+                run(quantizer, ramp, { dpi: 300 }),
+            );
         }
     });
 
