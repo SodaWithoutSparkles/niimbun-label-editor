@@ -5,7 +5,9 @@ S-curve + gamma-1.8 LUT applicable, and what label-file fields would they need?)
 Owner decision 2026-10-16: **record only, no code** at the time — **superseded by P13 and P14.**
 P13 landed the configurable per-strategy defaults, the per-node `serpentine` and the `policyKeyOf`
 fix (§7). P14 landed the gamma tone curve and the `ostromoukhov` strategy, and the owner **dropped**
-ordered/Bayer, screentone and ScreenStyle/ScreenVAE (2026-10-17). **Read §7 and §8 first.**
+ordered/Bayer, screentone and ScreenStyle/ScreenVAE (2026-10-17). **P1 of the 2026-10-19 run landed
+§9** (the named grey preprocess stage + per-object gamma; **D-58 retired**). **Read §7, §8 and §9
+first.**
 Companion file: [`screenstyle-quantization.md`](screenstyle-quantization.md) (procedural
 screentone design, K-level tone ramp). Read both before touching `src/core/render/quantize.ts`.
 
@@ -47,11 +49,13 @@ the tone curve ships as a per-strategy `gamma` setting; Ostromoukhov ships.**
    needed. (The paper PDF was never obtainable; the table is authoritative instead.)
    ⛔ `references/Ostromoukhov/chat.md` is an LLM-generated summary with a **wrong** table — never use
    it. Only `varcoeffED.c` is authoritative, and neither carries a licence (§8, `D-66`).
-2. **Pre-dither tone curve — IMPLEMENTED as gamma-only, per strategy (P14, `2b0f70a`).** A 256-entry
-   LUT applied to the **projected source** (baked once into the diffuser's grey plane; per pixel in
-   the point-op `threshold`), never to the error-adjusted value. Gamma is a **setting**, never
-   document data: `quantizerDefaults[strategy].gamma`, engine default per strategy
-   (`DEFAULT_GAMMA_BY_STRATEGY`, `policy.ts:85`). **Dropped by the owner (2026-10-17):** the
+2. **Pre-dither tone curve — IMPLEMENTED as gamma-only.** A 256-entry LUT applied to the
+   **projected source** by the named grey preprocess stage (**P1, 2026-10-19, §9**; before that:
+   baked once into the diffuser's grey plane and per pixel in the point-op `threshold`), never to the
+   error-adjusted value. Gamma is a **per-strategy setting**
+   (`quantizerDefaults[strategy].gamma`, engine default per strategy `DEFAULT_GAMMA_BY_STRATEGY`,
+   `policy.ts:85`) **and, since P1, also per-object document data** (`quantizerParams.gamma`;
+   D-58 retired). **Dropped by the owner (2026-10-17):** the
    `toneCurve` enum (`'none'|'gamma'|'sCurve'`), the parametric S-curve (`pivot`/`contrast`), and any
    per-node or per-paper curve. See §8 for the defaults and the rationale.
    - **Two different things, easy to conflate.** (a) *Gamma correction* = sRGB→linear
@@ -122,7 +126,7 @@ v0 alpha.
 | new ids (`ostromoukhov`, `bayer2/4/8`) | none | registry only; validate auto-accepts — **`ostromoukhov` shipped this way in P14** |
 | serpentine per node | — | **implemented (P13)**: `quantizerParams.serpentine?: boolean` with a new `toOptionalBoolean` validate guard; the effective value is node → per-strategy setting → engine default `true`, so an unset value never means `true` |
 | damping / retention | **reuse `strength`** | 0.90–0.94 fits its `[0,4]` clamp; add a separate `retention` only if `strength > 1` must keep meaning *amplify* |
-| ~~tone curve~~ | **none — moot (P14)** | Gamma ships as a **setting** (`quantizerDefaults[strategy].gamma`, clamp `[0.1, 4]`, 2dp, per-strategy default `DEFAULT_GAMMA_BY_STRATEGY`). The `toneCurve` enum, the S-curve and any per-node/per-paper field were **dropped by the owner (2026-10-17)**. A future per-node curve would be a `quantizerParams.gamma` addition — `policyKeyOf` already keys gamma |
+| per-object tone curve | **`quantizerParams.gamma`** | **implemented (P1, 2026-10-19)**: soundness 2 dp, clamp `[0.1,4]`, non-finite dropped; precedence node → per-strategy setting → engine default. The per-strategy setting (`quantizerDefaults[strategy].gamma`) stays as the layer below; the `toneCurve` enum and the parametric S-curve remain **dropped** (owner, 2026-10-17) |
 
 UI cost per new param: `RESERVED_FIELDS` (`editor/inspectorModel.ts:220`, moved out of
 `components/`), `ObjectTab`'s
@@ -240,3 +244,32 @@ Commits `2b0f70a` (W1 gamma), `f2d3bc9` (W2 Ostromoukhov), `8468b54` (W3 live pr
   cost, the mid-edit hide, the unverified hardware behaviour change at gamma 1.3, mask-palette
   pressure (R14-b), the cutoff-band deviation, the licence, and the blue-noise-under-clipping
   question.
+
+## 9. Landed in P1 of the 2026-10-19 run — grey preprocess stage + per-object gamma
+
+- **New pure module `src/core/render/preprocess.ts`**: `GreyPlane`, `projectGrey` (RGBA → one float
+  per pixel), `GreyOp`/`applyGreyChain`/`preprocessGrey`, `buildPreprocessChain`. The moved
+  `GAMMA_MIN/MAX`, `normalizeGamma`, `buildToneLut`, `toByte` live there and are **re-exported from
+  `quantize.ts`**, so `core/render/index.ts` and every existing import are unchanged. v1 chain
+  membership is the **tone curve only** — `invert`/`mirror` stay post-quantize print overrides.
+- **All three engines route through it** (`createDiffuser`, `createVariableDiffuser`, `threshold`):
+  project → preprocess → scan, so the "same three sites" duplication is now one implementation.
+  Neutral params build an **empty** chain, so the neutral path still does not round the projection
+  and `gamma: 1` stays byte-identical (all pre-existing golden planes pass unchanged).
+- **Projection was *not* hoisted** into `applyPolicy` (the plan left it open): `Quantizer` stays
+  `(rgba, opts) => rgba` — public, sync, pure, in-place — and the win would have been one projection
+  pass per frame only. Revisit if projection ever profiles hot.
+- **Per-object gamma (retires D-58).** `quantizerParams.gamma` is document data
+  (`types.ts` → `validate.ts` 2 dp + clamp `[0.1,4]` + non-finite drop → `factory.roundNode`), and
+  the inspector exposes it for **every** visible strategy (it moves a `threshold` cutoff too); it is
+  hidden only when no quantizer resolves. Precedence is unchanged and already correct:
+  node → per-strategy setting → engine default (`resolveQuantizerParams`; `policyKeyOf` was already
+  keying the normalized gamma).
+- **Inspector semantics worth remembering:** the field displays and deletes against the
+  **inherited** value (strategy setting → engine default), never the engine default alone —
+  otherwise a node cannot select a curve that differs from its setting. Deleting keeps "auto"
+  implicit; an override equal to the inherited value is stored only when it is genuinely different.
+- **Tests:** `preprocess.test.ts` (neutral no-op, LUT parity, projection parity, ordering),
+  `renderLabelPage.gamma.test.ts` (distinct mask slots, per-object beats the setting, neutral
+  byte-identity, `parseDoc` round-trip), plus the extended `validate`/`ObjectTab`/`inspectorModel`
+  suites. Full suite 2228 green; `tsc --noEmit` clean.

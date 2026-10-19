@@ -471,6 +471,52 @@ describe('isNode — quantizerParams', () => {
         // an `updateNode` edit converge on the same 2 dp value.
         expect(JSON.stringify(second.doc)).toBe(JSON.stringify(first.doc));
     });
+
+    it('accepts, rounds, clamps, and drops gamma with the matching repairs', () => {
+        expect(isNode(baseNode({ quantizerParams: { gamma: 2.2 } }))?.quantizerParams).toEqual({
+            gamma: 2.2,
+        });
+
+        const roundRepairs: string[] = [];
+        expect(
+            isNode(baseNode({ quantizerParams: { gamma: 1.23456 } }), roundRepairs)?.quantizerParams,
+        ).toEqual({ gamma: 1.23 });
+        expect(roundRepairs.join(' ')).not.toContain('clamped');
+
+        const lowRepairs: string[] = [];
+        expect(
+            isNode(baseNode({ quantizerParams: { gamma: 0 } }), lowRepairs)?.quantizerParams,
+        ).toEqual({ gamma: 0.1 });
+        expect(lowRepairs).toContain('node.quantizerParams.gamma: clamped to 0.1–4');
+
+        const highRepairs: string[] = [];
+        expect(
+            isNode(baseNode({ quantizerParams: { gamma: 9 } }), highRepairs)?.quantizerParams,
+        ).toEqual({ gamma: 4 });
+        expect(highRepairs).toContain('node.quantizerParams.gamma: clamped to 0.1–4');
+
+        const invalidRepairs: string[] = [];
+        expect(
+            isNode(baseNode({ quantizerParams: { gamma: Number.NaN } }), invalidRepairs)?.quantizerParams,
+        ).toBeUndefined();
+        expect(invalidRepairs).toContain('node.quantizerParams.gamma: invalid value dropped');
+    });
+
+    it('rounds and clamps gamma in roundNode, deleting a gamma-only-invalid params object', () => {
+        expect(
+            roundNode(baseNode({ quantizerParams: { gamma: 1.23456 } }) as unknown as Node).quantizerParams,
+        ).toEqual({ gamma: 1.23 });
+        expect(
+            roundNode(baseNode({ quantizerParams: { gamma: 0 } }) as unknown as Node).quantizerParams,
+        ).toEqual({ gamma: 0.1 });
+        expect(
+            roundNode(baseNode({ quantizerParams: { gamma: 9 } }) as unknown as Node).quantizerParams,
+        ).toEqual({ gamma: 4 });
+        expect(
+            roundNode(baseNode({ quantizerParams: { gamma: Number.NaN } }) as unknown as Node)
+                .quantizerParams,
+        ).toBeUndefined();
+    });
 });
 
 describe('isNode — quantizerHint (P4)', () => {

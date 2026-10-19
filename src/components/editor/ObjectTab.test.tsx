@@ -464,6 +464,133 @@ describe('per-node quantizer params', () => {
     });
 });
 
+describe('per-node quantizer gamma', () => {
+    const paramsOf = (id: string) =>
+        useStore.getState().currentDoc!.nodes.find((n) => n.id === id)!.quantizerParams;
+
+    const gammaRow = (): HTMLElement =>
+        screen.getByText('Tone curve (gamma)').closest('.items-center.justify-between') as HTMLElement;
+
+    /** Displayed value of the gamma slider row. */
+    const gammaDisplay = (): string => gammaRow().querySelector('.font-mono')?.textContent?.trim() ?? '';
+
+    /** Open the gamma slider row and return its number input. */
+    const openGamma = (): HTMLInputElement => {
+        fireEvent.click(gammaRow().querySelector('.cursor-pointer') as HTMLElement);
+        return document.querySelector('input[type="number"]') as HTMLInputElement;
+    };
+
+    it('renders for a threshold node and an image node, hidden for a quantizerless shape', () => {
+        const threshold = textNode();
+        useStore.setState({ currentDoc: doc([threshold]), selectedNodeIds: ['t'] });
+        const thresholdView = render(<ObjectTab selected={[threshold]} />);
+        expect(screen.getByText('Tone curve (gamma)')).toBeTruthy();
+        thresholdView.unmount();
+
+        const image = imageNode();
+        useStore.setState({ currentDoc: doc([image]), selectedNodeIds: ['a'] });
+        const imageView = render(<ObjectTab selected={[image]} />);
+        expect(screen.getByText('Tone curve (gamma)')).toBeTruthy();
+        imageView.unmount();
+
+        const shape = shapeNode();
+        useStore.setState({ currentDoc: doc([shape]), selectedNodeIds: ['s'] });
+        render(<ObjectTab selected={[shape]} />);
+        expect(screen.queryByText('Tone curve (gamma)')).toBeNull();
+    });
+
+    it("displays the strategy's engine default when the node stores no gamma", () => {
+        const image = imageNode();
+        useStore.setState({ currentDoc: doc([image]), selectedNodeIds: ['a'] });
+        const imageView = render(<ObjectTab selected={[image]} />);
+        expect(gammaDisplay()).toBe('1.3');
+        imageView.unmount();
+
+        const threshold = textNode();
+        useStore.setState({ currentDoc: doc([threshold]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[threshold]} />);
+        expect(gammaDisplay()).toBe('1');
+    });
+
+    it('rounds a committed gamma to 2 dp without dropping the other params', () => {
+        const selected = shapeNode({
+            quantizerHint: 'floydSteinberg',
+            quantizerParams: { strength: 2.5, serpentine: false },
+        });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['s'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        const input = openGamma();
+        fireEvent.change(input, { target: { value: '1.777' } });
+        fireEvent.pointerUp(document);
+
+        expect(paramsOf('s')).toEqual({ strength: 2.5, serpentine: false, gamma: 1.78 });
+    });
+
+    it('deletes the key at the engine default, and the params object when it empties', () => {
+        const selected = shapeNode({ quantizerHint: 'floydSteinberg' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['s'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        const input = openGamma();
+        fireEvent.change(input, { target: { value: '2' } });
+        expect(paramsOf('s')).toEqual({ gamma: 2 });
+
+        // 1.3 is the diffuser engine default, so storing it would be
+        // indistinguishable from absent: the key (and the empty object) go.
+        fireEvent.change(input, { target: { value: '1.3' } });
+        fireEvent.pointerUp(document);
+        expect(paramsOf('s')).toBeUndefined();
+    });
+
+    it('displays the strategy setting when it overrides the engine default', () => {
+        const image = imageNode();
+        useStore.setState({
+            currentDoc: doc([image]),
+            selectedNodeIds: ['a'],
+            quantizerDefaults: { floydSteinberg: { gamma: 1.6 } },
+        });
+        render(<ObjectTab selected={[image]} />);
+        expect(gammaDisplay()).toBe('1.6');
+    });
+
+    it('stores a value equal to the engine default when the strategy setting differs', () => {
+        // A threshold node's engine default is 1, but the strategy setting is
+        // 1.6, so `1` is NOT the inherited value: deleting it at the engine
+        // default would silently render at 1.6 and make a neutral curve
+        // unselectable (the reported bug).
+        const threshold = textNode({ quantizerHint: 'threshold' });
+        useStore.setState({
+            currentDoc: doc([threshold]),
+            selectedNodeIds: ['t'],
+            quantizerDefaults: { threshold: { gamma: 1.6 } },
+        });
+        render(<ObjectTab selected={[threshold]} />);
+
+        const input = openGamma();
+        fireEvent.change(input, { target: { value: '1' } });
+        fireEvent.pointerUp(document);
+
+        expect(paramsOf('t')).toEqual({ gamma: 1 });
+    });
+
+    it('deletes the key at the inherited setting value', () => {
+        const image = imageNode();
+        useStore.setState({
+            currentDoc: doc([image]),
+            selectedNodeIds: ['a'],
+            quantizerDefaults: { floydSteinberg: { gamma: 1.6 } },
+        });
+        render(<ObjectTab selected={[image]} />);
+
+        const input = openGamma();
+        fireEvent.change(input, { target: { value: '1.6' } });
+        fireEvent.pointerUp(document);
+
+        expect(paramsOf('a')).toBeUndefined();
+    });
+});
+
 describe('shape kind conversion (must-fix #5)', () => {
     it('seeds points from size when converting a rectangle to a polygon', () => {
         const patch = shapeKindPatch(shapeNode() as never, 'polygon') as {

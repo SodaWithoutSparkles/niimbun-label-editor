@@ -28,7 +28,12 @@ import {
 import { fontBadges, type FontBadge } from '../../editor/render/fontAssets';
 import { importFontFile } from '../../editor/assetImport';
 import type { ContentSource, ImageRef, Node, ShapeKind, ShapeNode } from '../../core/doc/types';
-import type { QuantizerId } from '../../core/render';
+import {
+    DEFAULT_GAMMA_BY_STRATEGY,
+    resolveQuantizer,
+    type QuantizerDefaults,
+    type QuantizerId,
+} from '../../core/render';
 import type { NodePatch } from '../../store/storeTypes';
 import { bytesProviderFor } from './usePreparedAssets';
 import { useSampleRowState } from './sampleRowContext';
@@ -96,6 +101,7 @@ const FIELD_LABEL_KEYS = {
     quantizerThreshold: 'editor.mfp.field.quantizerThreshold',
     quantizerStrength: 'editor.mfp.field.quantizerStrength',
     quantizerSerpentine: 'editor.mfp.field.quantizerSerpentine',
+    quantizerGamma: 'editor.mfp.field.quantizerGamma',
     templateTrust: 'editor.mfp.field.templateTrust',
 } as const;
 
@@ -159,6 +165,14 @@ const QUANTIZER_PARAM_VISIBILITY: Partial<Record<string, QuantizerParamVisibilit
     quantizerStrength: 'diffusion',
     quantizerSerpentine: 'diffusion',
 };
+
+/**
+ * Quantizer params that apply to **every** strategy, so they show whenever any
+ * quantizer resolves (not just one visibility class). Gamma is a tone curve
+ * applied before quantization: for a diffuser it shapes the dots, and for a
+ * point threshold it only moves the binarisation cutoff.
+ */
+const QUANTIZER_PARAM_ANY_VISIBILITY = new Set<string>(['quantizerGamma']);
 
 /**
  * i18n keys for the `format` select (2D code bcid → nice label). Literal map so
@@ -236,6 +250,22 @@ const numberValue = (node: Node, key: string): number => {
     const value = (node as unknown as Record<string, unknown>)[key];
     return typeof value === 'number' ? value : 0;
 };
+
+/**
+ * The gamma a strategy inherits when a node stores none: the persisted
+ * per-strategy setting, else the engine default. A neutral `1` when no
+ * quantizer resolves.
+ */
+const inheritedGamma = (id: QuantizerId | undefined, quantizerDefaults: QuantizerDefaults): number =>
+    id === undefined ? 1 : (quantizerDefaults[id]?.gamma ?? DEFAULT_GAMMA_BY_STRATEGY[id] ?? 1);
+
+/**
+ * Effective tone-curve gamma shown for a node: its stored value, else the
+ * inherited value (strategy setting → engine default). Mirroring Threshold /
+ * Error diffusion, so an absent node value shows what the render path applies.
+ */
+const gammaValue = (node: Node, inherited: number): number =>
+    node.quantizerParams?.gamma ?? inherited;
 
 const stringValue = (node: Node, key: string): string => {
     // Per-node serpentine is stored inside `quantizerParams`, not as a top-level
@@ -325,6 +355,8 @@ export const numberRange = (
             return { min: 0, max: 255, step: 1 };
         case 'quantizerStrength':
             return { min: 0, max: 4, step: 0.1 };
+        case 'quantizerGamma':
+            return { min: 0.1, max: 4, step: 0.05 };
         case 'quietZone':
             return { min: 0, max: MAX_QUIET_ZONE, step: 1 };
         default:
@@ -456,6 +488,9 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     // Per-object-type default quantizers: the visibility gate below must mirror
     // the effective strategy the render path resolves (hint → type default).
     const defaultQuantizerByType = useStore((state) => state.defaultQuantizerByType);
+    // Persisted per-strategy knob defaults: a node's gamma "auto" value inherits
+    // the strategy's setting, then falls back to the engine default.
+    const quantizerDefaults = useStore((state) => state.quantizerDefaults);
     const addImageRef = useStore((state) => state.addImageRef);
     const addFontRef = useStore((state) => state.addFontRef);
     const updateImageRef = useStore((state) => state.updateImageRef);
@@ -580,18 +615,36 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     const setNumber = (key: string, value: number) => {
         gestureRef.current = true;
         for (const node of selected) {
-            if (key === 'quantizerThreshold' || key === 'quantizerStrength') {
+            if (key === 'quantizerThreshold' || key === 'quantizerStrength' || key === 'quantizerGamma') {
                 const current = useStore.getState().currentDoc?.nodes.find((entry) => entry.id === node.id) ?? node;
-                const option = key === 'quantizerThreshold' ? 'threshold' : 'strength';
-                const range = option === 'threshold' ? [0, 255] : [0, 4];
-                const rounded = option === 'threshold' ? Math.round(value) : value;
-                const bounded = Math.max(range[0]!, Math.min(range[1]!, Number.isFinite(rounded) ? rounded : 0));
                 const params = { ...current.quantizerParams };
-                if (option === 'threshold') {
-                    if (bounded === 128) delete params.threshold;
-                    else params.threshold = bounded;
-                } else if (bounded === 1) delete params.strength;
-                else params.strength = bounded;
+                if (key === 'quantizerGamma') {
+                    // Tone curve: clamp to [0.1, 4] and round to 2 dp. Store the
+                    // value unless it matches what the node already inherits
+                    // (strategy setting → engine default): only then is an absent
+                    // key the same thing, so drop it and keep "auto" implicit
+                    // without pinning a value that would be ignored.
+                    const rounded = Math.round(
+                        Math.max(0.1, Math.min(4, Number.isFinite(value) ? value : 1)) * 100,
+                    ) / 100;
+                    const id = resolveQuantizer(
+                        { type: current.type, quantizerHint: current.quantizerHint },
+                        defaultQuantizerByType,
+                    );
+                    const inherited = inheritedGamma(id, quantizerDefaults);
+                    if (rounded === inherited) delete params.gamma;
+                    else params.gamma = rounded;
+                } else {
+                    const option = key === 'quantizerThreshold' ? 'threshold' : 'strength';
+                    const range = option === 'threshold' ? [0, 255] : [0, 4];
+                    const rounded = option === 'threshold' ? Math.round(value) : value;
+                    const bounded = Math.max(range[0]!, Math.min(range[1]!, Number.isFinite(rounded) ? rounded : 0));
+                    if (option === 'threshold') {
+                        if (bounded === 128) delete params.threshold;
+                        else params.threshold = bounded;
+                    } else if (bounded === 1) delete params.strength;
+                    else params.strength = bounded;
+                }
                 updateNodeTransient(node.id, {
                     quantizerParams: Object.keys(params).length ? params : undefined,
                 });
@@ -677,15 +730,24 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     // The selected node's effective quantizer strategy drives which per-node
     // quantizer params are shown (see `QUANTIZER_PARAM_VISIBILITY`).
     const quantizerVisibility = quantizerParamVisibility(first, defaultQuantizerByType);
+    // The effective strategy, used to show gamma's inherited value.
+    const effectiveQuantizerId = resolveQuantizer(
+        { type: first.type, quantizerHint: first.quantizerHint },
+        defaultQuantizerByType,
+    );
+    const effectiveGamma = inheritedGamma(effectiveQuantizerId, quantizerDefaults);
 
     const renderField = (field: FieldDescriptor) => {
         const label = labelFor(field.key, t);
         // Per-node quantizer params follow the node's effective strategy, not
         // just "any quantizer resolves": a threshold node hides the diffusion
         // knobs (they do nothing), a diffuser hides the threshold. A node with
-        // no effective quantizer hides all three (fix #3 / D-57(c)).
+        // no effective quantizer hides all of them (fix #3 / D-57(c)) — except
+        // gamma, which applies to every strategy.
         const requiredVisibility = QUANTIZER_PARAM_VISIBILITY[field.key];
-        if (requiredVisibility !== undefined && requiredVisibility !== quantizerVisibility) {
+        if (QUANTIZER_PARAM_ANY_VISIBILITY.has(field.key)) {
+            if (quantizerVisibility === 'hidden') return null;
+        } else if (requiredVisibility !== undefined && requiredVisibility !== quantizerVisibility) {
             return null;
         }
         if (!field.wired) {
@@ -706,7 +768,11 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                             description={field.key === 'strokeWidth' ? t('editor.mfp.field.strokeWidthHint') : undefined}
                         >
                             <PopoverSlider
-                                value={numberValue(first, field.key)}
+                                value={
+                                    field.key === 'quantizerGamma'
+                                        ? gammaValue(first, effectiveGamma)
+                                        : numberValue(first, field.key)
+                                }
                                 onChange={(value) => setNumber(field.key, value)}
                                 min={range.min}
                                 max={range.max}

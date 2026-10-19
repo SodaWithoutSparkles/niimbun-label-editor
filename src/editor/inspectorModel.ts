@@ -228,6 +228,9 @@ export const RESERVED_FIELDS: readonly FieldDescriptor[] = [
     // auto convention: `''` ⇒ no per-node value (the strategy's settings default
     // applies — never a pinned `true`), `on`/`off` ⇒ an explicit boolean.
     { key: 'quantizerSerpentine', scope: 'reserved', kind: 'select', wired: true, options: ['', 'on', 'off'] },
+    // Per-node tone-curve gamma. Applies to every strategy (for `threshold` it
+    // only moves the binarisation cutoff), so it is not gated to one visibility class.
+    { key: 'quantizerGamma', scope: 'reserved', kind: 'number', wired: true },
     // Read-only template trust state for the open document.
     { key: 'templateTrust', scope: 'reserved', kind: 'templateTrust', wired: true },
 ];

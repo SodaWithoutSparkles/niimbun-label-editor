@@ -80,7 +80,7 @@ export interface BaseNode {
      * settings default, then the render-level default. `serpentine` is meaningful
      * only for the error-diffusion quantizers (threshold ignores it).
      */
-    quantizerParams?: { threshold?: number; strength?: number; serpentine?: boolean };
+    quantizerParams?: { threshold?: number; strength?: number; serpentine?: boolean; gamma?: number };
 } // + type-specific fields (text props, shape kind, image resource ref, qr payload…)
 
 /** The composed transform shape. Derived type; never stored on a node. */

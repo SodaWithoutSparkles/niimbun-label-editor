@@ -1,15 +1,21 @@
-import { MonoColorSpace, type ColorSpace, type RgbaBuffer } from './colorspace';
+import type { ColorSpace, RgbaBuffer } from './colorspace';
 import { OSTROMOUKHOV_COEFFICIENTS } from './ostromoukhovTable';
+import { preprocessGrey, projectGrey, toByte } from './preprocess';
+
+export { GAMMA_MAX, GAMMA_MIN, buildToneLut, normalizeGamma } from './preprocess';
 
 /**
  * Quantizers: RGBA(A) → exact black/white 1-bit pixels. Pure and headless — no
  * React, Konva or DOM, no document state. Each quantizer mutates its input
  * buffer in place and returns it (parity with the reference dither impl).
  *
- * Control flow: the selected `ColorSpace` projects each pixel to a scalar, then
- * the quantizer (with optional error diffusion) emits exact `0`/`255`. Diffusion
- * operates on the projected values, never on the raw channels. `MonoColorSpace`
- * is the default; pass `opts.colorSpace` to swap the projection.
+ * Control flow: `preprocess.ts` projects each pixel through the selected
+ * `ColorSpace` onto a grey plane and applies the tone curve, then the quantizer
+ * (with optional error diffusion) emits exact `0`/`255` from that plane.
+ * Diffusion operates on the projected values, never on the raw channels.
+ * `MonoColorSpace` is the default; pass `opts.colorSpace` to swap the
+ * projection. `invert`/`mirror` are post-quantize print overrides and are not
+ * part of preprocessing.
  *
  * The three diffusers are ported from `references/niimblue/src/utils/dither.ts`
  * (`createDiffuser`): error diffusion over a 2D weight grid + `denom`, with an
@@ -75,49 +81,6 @@ const writePixel = (data: Uint8ClampedArray, offset: number, value: number): voi
     data[offset + 2] = value;
 };
 
-/** Tone-curve gamma clamp, shared by the engine, the validator and the UI. */
-export const GAMMA_MIN = 0.1;
-export const GAMMA_MAX = 4;
-
-/**
- * Normalise a caller-supplied gamma into the tone curve's domain: any
- * non-finite value (`NaN`, `±Infinity`) collapses to the neutral `1`, and a
- * finite value is clamped to `[GAMMA_MIN, GAMMA_MAX]`. Shared by `buildToneLut`
- * and `toneLutFor` so a stray render-level fallback can never reach the LUT as
- * `NaN` (which would zero every entry and raster a black page).
- */
-export const normalizeGamma = (gamma: number): number =>
-    Number.isFinite(gamma) ? Math.min(GAMMA_MAX, Math.max(GAMMA_MIN, gamma)) : 1;
-
-/** Round + clamp a projected grey to the tone LUT's index domain (`0..255`). */
-const toByte = (value: number): number => Math.min(255, Math.max(0, Math.round(value)));
-
-/**
- * Build the 256-entry tone-curve LUT for `gamma` (`normalizeGamma`d to
- * `[0.1, 4]`): `lut[i] = round(255 * (i / 255) ** (1 / gamma))`. Identity at
- * `gamma === 1`; `> 1` lightens midtones (dot-gain compensation), `< 1`
- * darkens. Index it with the rounded + clamped projected value (`0..255`).
- * Shared by both quantizer paths so the curve can never drift between them.
- */
-export const buildToneLut = (gamma: number): Uint8Array => {
-    const exponent = 1 / normalizeGamma(gamma);
-    const lut = new Uint8Array(256);
-    for (let i = 0; i < 256; i++) {
-        lut[i] = Math.round(255 * (i / 255) ** exponent);
-    }
-    return lut;
-};
-
-/**
- * The tone LUT for `gamma`, or `undefined` for the neutral value. The neutral
- * path must **not** round the projection, so a `normalizeGamma`d `1` stays
- * byte-identical to the output from before the tone curve existed.
- */
-const toneLutFor = (gamma: number): Uint8Array | undefined => {
-    const normalized = normalizeGamma(gamma);
-    return normalized === 1 ? undefined : buildToneLut(normalized);
-};
-
 /**
  * Build an error-diffusion quantizer from a 2D weight grid.
  *
@@ -160,17 +123,14 @@ export const createDiffuser = (
 
     return (rgba: RgbaBuffer, options: QuantizeOptions = {}): RgbaBuffer => {
         const { threshold = 128, strength = 1, serpentine = true, gamma = 1 } = options;
-        const colorSpace = options.colorSpace ?? MonoColorSpace;
+        const colorSpace = options.colorSpace;
         const { data, width, height } = rgba;
 
-        const buffer = new Float32Array(width * height);
-        // The tone curve maps the **source**, so it is baked into the grey plane
-        // once here — never applied to the error-adjusted value in the scan loop.
-        const toneLut = toneLutFor(gamma);
-        for (let p = 0, i = 0; i < data.length; p++, i += 4) {
-            const gray = colorSpace.toGray(data[i], data[i + 1], data[i + 2]);
-            buffer[p] = toneLut === undefined ? gray : toneLut[toByte(gray)];
-        }
+        // Project + tone-curve once into the grey plane; diffusion then works on
+        // its floats and never touches the raw channels.
+        const plane = projectGrey(rgba, colorSpace);
+        preprocessGrey(plane, { gamma });
+        const buffer = plane.data;
 
         const diffusionStrength = Math.max(0, strength);
 
@@ -242,22 +202,19 @@ export const createDiffuser = (
 export const createVariableDiffuser = (): Quantizer => {
     return (rgba: RgbaBuffer, options: QuantizeOptions = {}): RgbaBuffer => {
         const { threshold: cutoff = 128, strength = 1, serpentine = true, gamma = 1 } = options;
-        const colorSpace = options.colorSpace ?? MonoColorSpace;
+        const colorSpace = options.colorSpace;
         const { data, width, height } = rgba;
 
-        // The tone curve maps the **source**, so it is baked into both planes
-        // once here — never applied to the error-adjusted value in the scan loop.
-        // `source` is the rounded byte the coefficient row is indexed by (the C
-        // reads a raw source byte); `buffer` keeps the unrounded projection so
-        // the neutral `gamma` path stays byte-identical to `createDiffuser`.
+        // Project + tone-curve once into the grey plane. `source` is the rounded
+        // byte the coefficient row is indexed by (the C reads a raw source
+        // byte); `buffer` keeps the unrounded projection so the neutral `gamma`
+        // path stays byte-identical to `createDiffuser`.
+        const plane = projectGrey(rgba, colorSpace);
+        preprocessGrey(plane, { gamma });
+        const buffer = plane.data;
         const source = new Uint8Array(width * height);
-        const buffer = new Float32Array(width * height);
-        const toneLut = toneLutFor(gamma);
-        for (let p = 0, i = 0; i < data.length; p++, i += 4) {
-            const gray = colorSpace.toGray(data[i], data[i + 1], data[i + 2]);
-            const projected = toneLut === undefined ? gray : toneLut[toByte(gray)];
-            source[p] = toByte(projected);
-            buffer[p] = projected;
+        for (let p = 0; p < buffer.length; p++) {
+            source[p] = toByte(buffer[p]);
         }
 
         const diffusionStrength = Math.max(0, strength);
@@ -334,15 +291,16 @@ export const createVariableDiffuser = (): Quantizer => {
 /** Simple projection threshold, no diffusion. `projected < threshold ? 0 : 255`. */
 export const threshold: Quantizer = (rgba: RgbaBuffer, options: QuantizeOptions = {}): RgbaBuffer => {
     const { threshold: cutoff = 128, gamma = 1 } = options;
-    const colorSpace = options.colorSpace ?? MonoColorSpace;
+    const colorSpace = options.colorSpace;
     const { data } = rgba;
-    // No grey plane here, so the same tone curve is applied per pixel. It maps
-    // the source, so only the binarisation cutoff moves.
-    const toneLut = toneLutFor(gamma);
-    for (let i = 0; i < data.length; i += 4) {
-        const gray = colorSpace.toGray(data[i], data[i + 1], data[i + 2]);
-        const projected = toneLut === undefined ? gray : toneLut[toByte(gray)];
-        writePixel(data, i, projected < cutoff ? 0 : 255);
+
+    // One projection + one preprocess pass, then a point op over the plane; no
+    // per-pixel tone-LUT lookup of its own.
+    const plane = projectGrey(rgba, colorSpace);
+    preprocessGrey(plane, { gamma });
+    const { data: buffer } = plane;
+    for (let p = 0, i = 0; p < buffer.length; p++, i += 4) {
+        writePixel(data, i, buffer[p] < cutoff ? 0 : 255);
     }
     return rgba;
 };

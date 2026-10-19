@@ -726,6 +726,7 @@
         "quantizerThreshold": "Threshold",
         "quantizerStrength": "Error diffusion",
         "quantizerSerpentine": "Serpentine scan",
+        "quantizerGamma": "Tone curve (gamma)",
         "templateTrust": "Template trust"
       }
     },

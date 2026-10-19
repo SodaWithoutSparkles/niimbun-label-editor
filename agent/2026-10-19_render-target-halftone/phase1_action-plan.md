@@ -1,6 +1,6 @@
 # P1 action plan — grey preprocess stage + per-object gamma
 
-- Parent plan: [`plan.md`](plan.md) §P1. Status: **in progress** (2026-10-19).
+- Parent plan: [`plan.md`](plan.md) §P1. Status: **DONE** (2026-10-19) — reviewed, committed.
 - Goal: one named grey-domain preprocess stage (gamma as its first member) used by every quantizer,
   and `quantizerParams.gamma` as document data with node → per-strategy setting → engine default
   precedence. **Retires D-58.**
@@ -107,3 +107,17 @@ Tests (`src/core/render/preprocess.test.ts` + existing suites):
   committed separately before implementation starts).
 - After commit: update `agent/memory/tech-debt.md` (D-58 retired) and `agent/memory/dithering.md`
   §9, phase receipt, ask the owner before P2.
+
+## Outcome (2026-10-19)
+
+- Shipped as specified: `preprocess.ts` (project → ordered grey chain → quantize) used by all three
+  engines; `quantizerParams.gamma` end to end (type → validate → factory → inspector → i18n);
+  projection **not** hoisted (see §Decision).
+- One review round (`review`, CHANGES NEEDED) + one fix: the inspector deleted the node gamma against
+  the *engine* default, so a node could not select a curve differing from its per-strategy setting.
+  Now both the displayed and the deleted-at value use the **inherited** chain (strategy setting →
+  engine default). `review-fast` caught that the regression test for it used a diffuser node (engine
+  default 1.3) and therefore passed pre-fix; the test now uses a `threshold` node with a differing
+  strategy setting.
+- Verification: full suite **2228 passed / 167 files**, `tsc --noEmit` clean.
+- Memory: **D-58 closed**; `dithering.md` §9 + `memory.md` index line updated.

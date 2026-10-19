@@ -1,5 +1,5 @@
 import type { hm } from '../hm';
-import { QUANTIZERS, type QuantizerId } from '../render/quantize';
+import { GAMMA_MAX, GAMMA_MIN, QUANTIZERS, type QuantizerId } from '../render/quantize';
 import {
     BARCODE_SYMBOLOGIES,
     CODE_FORMATS,
@@ -421,7 +421,7 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
     if (value.quantizerParams !== undefined) {
         if (isRecord(value.quantizerParams)) {
             const raw = value.quantizerParams;
-            const params: { threshold?: number; strength?: number; serpentine?: boolean } = {};
+            const params: { threshold?: number; strength?: number; serpentine?: boolean; gamma?: number } = {};
             if (raw.threshold !== undefined) {
                 if (isFiniteNumber(raw.threshold)) {
                     // Compare against the pre-clamp rounded value so a pure round
@@ -443,6 +443,17 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
                         repairs?.push('node.quantizerParams.strength: clamped to 0–4');
                     }
                 } else repairs?.push('node.quantizerParams.strength: invalid value dropped');
+            }
+            if (raw.gamma !== undefined) {
+                if (isFiniteNumber(raw.gamma)) {
+                    // Same false-positive avoidance as `threshold`: compare against
+                    // the pre-clamp rounded value so a pure round is not a clamp.
+                    const rounded = Math.round(raw.gamma * 100) / 100;
+                    params.gamma = Math.max(GAMMA_MIN, Math.min(GAMMA_MAX, rounded));
+                    if (params.gamma !== rounded) {
+                        repairs?.push('node.quantizerParams.gamma: clamped to 0.1–4');
+                    }
+                } else repairs?.push('node.quantizerParams.gamma: invalid value dropped');
             }
             const serpentine = toOptionalBoolean(
                 raw.serpentine,

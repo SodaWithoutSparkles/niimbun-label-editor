@@ -1,4 +1,5 @@
 import { roundHm, type hm } from '../hm';
+import { GAMMA_MAX, GAMMA_MIN } from '../render/quantize';
 import { PAPER_TYPE_SEEDS } from './paper-types';
 import { normalizeDpi } from './validate';
 import type { Guide, LabelDoc, Node, Region, Transform } from './types';
@@ -108,6 +109,14 @@ export const roundNode = (node: Node): Node => {
                 : {}),
             ...(node.quantizerParams.strength !== undefined && Number.isFinite(node.quantizerParams.strength)
                 ? { strength: Math.round(Math.max(0, Math.min(4, node.quantizerParams.strength)) * 100) / 100 }
+                : {}),
+            ...(node.quantizerParams.gamma !== undefined && Number.isFinite(node.quantizerParams.gamma)
+                ? {
+                      gamma:
+                          Math.round(
+                              Math.max(GAMMA_MIN, Math.min(GAMMA_MAX, node.quantizerParams.gamma)) * 100,
+                          ) / 100,
+                  }
                 : {}),
             // A boolean needs no rounding; drop only a non-boolean (a caller that
             // bypassed validation), so a valid `serpentine` round-trips verbatim.
