@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { LabelDoc } from '../../core/doc/types';
 import { useStore } from '../../store/useStore';
-import { renderDocThumbnail } from '../../editor/render/docThumbnail';
+import { renderDocPreview } from '../../editor/render/docThumbnail';
 import { createResourceAssetDeps } from './usePreparedAssets';
 
 /**
@@ -9,10 +9,13 @@ import { createResourceAssetDeps } from './usePreparedAssets';
  *
  * Mounted once for the app's lifetime (`App.tsx`, beside `useUrlSync`). Watches
  * `currentDoc` and, after a short idle debounce, renders a small PNG thumbnail
- * through the shared render path (`renderDocThumbnail` → `renderLabelPage`) and
- * stores it via `labelRepo.putThumb`. Because the trigger is the **document**, it
- * fires regardless of how the doc changed — autosave on or off, explicit save or
- * not — so it covers the cases a `saveDoc`-only save-hook could not.
+ * through the colour preview producer (`renderDocPreview` → `renderPageBase`)
+ * and writes both outputs: its PNG `blob` via `labelRepo.putThumb`, and its
+ * downscaled `metaThumb` via the history-free `setDocThumb` store action (the
+ * gallery fallback when the `thumbs` store is missing). Because the trigger is
+ * the **document**, it fires regardless of how the doc changed — autosave on or off,
+ * explicit save or not — so it covers the cases a `saveDoc`-only save-hook could
+ * not.
  *
  * Why a components-layer hook and not a store save-hook: the store must not
  * import a renderer (`code-organization.md` — dependencies flow one way;
@@ -59,6 +62,7 @@ export const useDocThumbnail = (): void => {
     const labelRepo = useStore((state) => state.labelRepo);
     const resourceRepo = useStore((state) => state.resourceRepo);
     const refreshGallery = useStore((state) => state.refreshGallery);
+    const setDocThumb = useStore((state) => state.setDocThumb);
 
     // Repo-backed bytes/fonts, memoized on the repo alone (see
     // `usePreparedAssets`): a new identity per render would bypass the decode
@@ -73,6 +77,8 @@ export const useDocThumbnail = (): void => {
     assetsRef.current = assets;
     const refreshRef = useRef(refreshGallery);
     refreshRef.current = refreshGallery;
+    const setDocThumbRef = useRef(setDocThumb);
+    setDocThumbRef.current = setDocThumb;
 
     // Per-doc monotonic render tokens: only the newest render for a doc writes.
     const tokensRef = useRef(new Map<string, number>());
@@ -97,14 +103,48 @@ export const useDocThumbnail = (): void => {
         const docId = target.meta.id;
         const token = (tokensRef.current.get(docId) ?? 0) + 1;
         tokensRef.current.set(docId, token);
-        return renderDocThumbnail(target, assetsRef.current, {})
-            .then((blob) => {
-                // `null` = unrenderable; a bumped token = a newer render superseded
-                // this one. Either way, do not write.
+        return renderDocPreview(target, assetsRef.current, {})
+            .then(async (preview) => {
+                const metaThumb = preview?.metaThumb;
+                // The two outputs are independent: the in-memory fallback must
+                // not depend on the IDB blob (a failed encode/put must not drop
+                // it). Re-check the token immediately before committing, and
+                // compare only the `dataUrl` — `at` changes on every render.
+                // The patch changes `currentDoc` identity, so the debounce runs
+                // once more; that render produces the same `dataUrl` and
+                // therefore does NOT patch again (no render/patch loop).
+                if (
+                    metaThumb &&
+                    tokensRef.current.get(docId) === token &&
+                    target.meta.thumb?.dataUrl !== metaThumb.dataUrl
+                ) {
+                    // Mark dirty only when the action actually changed the doc.
+                    // `setDocThumb` no-ops when the image is already present (or
+                    // another doc is open); an unchanged thumb must not trigger
+                    // a full-library `refreshGallery`. Capture the previous
+                    // `dataUrl` and confirm the store now carries the produced
+                    // one — a genuine change on both sides of the call.
+                    const before = useStore.getState().currentDoc?.meta.thumb?.dataUrl;
+                    setDocThumbRef.current(docId, metaThumb);
+                    const after = useStore.getState().currentDoc?.meta.thumb?.dataUrl;
+                    if (after === metaThumb.dataUrl && before !== metaThumb.dataUrl) {
+                        dirtyRef.current = true;
+                    }
+                }
+
+                const blob = preview?.blob ?? null;
+                // `null` = unrenderable/no encoder; a bumped token = a newer
+                // render superseded this one. In both cases skip the blob; the
+                // patch above (if any) still stands.
                 if (blob === null || tokensRef.current.get(docId) !== token) return undefined;
-                return repo.putThumb(docId, blob).then(() => {
+                try {
+                    await repo.putThumb(docId, blob);
                     dirtyRef.current = true;
-                });
+                } catch {
+                    // Non-fatal and isolated: a failed IDB write must not undo
+                    // or reject the successful `meta.thumb` patch above.
+                }
+                return undefined;
             })
             .catch(() => undefined);
     }, []);

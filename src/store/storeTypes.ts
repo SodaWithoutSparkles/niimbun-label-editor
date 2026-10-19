@@ -319,6 +319,14 @@ export interface AppState {
      */
     setLabelDpi: (dpi: number) => void;
     /**
+     * Patch `doc.meta.thumb` on the **open** doc, without an undo entry and
+     * without stamping `updatedAt`: a cosmetic preview is not a user edit. A
+     * different `docId`, or the identical `dataUrl`, is a no-op. When the patch
+     * applies, an autosave is scheduled so the record persists when autosave is
+     * on. Used by the thumbnail hook after a successful render.
+     */
+    setDocThumb: (docId: string, thumb: LabelDoc['meta']['thumb']) => void;
+    /**
      * Attach (`{ csvId, name }`) or clear (`null`) `doc.data.csv` as one undo
      * entry. The `CsvRef` is built here as `local` with `resourceId === csvId`,
      * so a caller cannot attach a non-local or mismatched source. A blank

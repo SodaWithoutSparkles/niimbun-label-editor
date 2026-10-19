@@ -1,18 +1,23 @@
 // @vitest-environment happy-dom
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { loadImage } from '@napi-rs/canvas';
 import { installCanvasShim } from '../../test/canvasHarness';
 import { createLabelDoc } from '../../core/doc/factory';
-import type { ImageRef, LabelDoc, Node } from '../../core/doc/types';
+import { parseDoc } from '../../core/doc/serialize';
+import { THUMB_MAX_BYTES, THUMB_MAX_SIDE } from '../../core/doc/validate';
+import type { ImageRef, LabelDoc, Node, Region } from '../../core/doc/types';
+import { rasterDimensions } from '../../core/render';
 import type { AssetDeps } from './assets';
 
 /**
- * D-50 producer: `renderDocThumbnail` renders a document to a small PNG blob
- * through the shared `renderLabelPage` path, must resolve `null` (never reject)
- * for anything it cannot render, and must forward the caller's `assets` so a
- * document with a locally-stored image renders its real content.
+ * D-50 colour producer: `renderDocPreview` renders the **design the user made**
+ * (no policy mask, no quantization, no print-only overrides), at
+ * `GALLERY_THUMBNAIL_DPI`, plus the downscaled `meta.thumb` data URL. It must
+ * never reject: anything it cannot render resolves `null`, and a `meta.thumb`
+ * that cannot fit the caps is `undefined` (never a failed preview).
  */
 
-// Spy seam: `renderLabelPage` imports `prepareResolvedAssets` by name, so wrap
+// Spy seam: `renderPageBase` imports `prepareResolvedAssets` by name, so wrap
 // the module and pass arguments through unchanged (same technique as
 // `renderLabelPage.test.ts`). This proves the `assets` argument reaches the
 // asset-preparation stage.
@@ -31,10 +36,23 @@ vi.mock('./prepareAssets', async (importOriginal) => {
     };
 });
 
-import { GALLERY_THUMBNAIL_DPI, renderDocThumbnail } from './docThumbnail';
+import { GALLERY_THUMBNAIL_DPI, renderDocPreview, type MetaThumb } from './docThumbnail';
 
 beforeAll(() => {
     installCanvasShim();
+});
+
+const rect = (fill: string, hint?: 'threshold'): Node => ({
+    id: 'r1',
+    parentId: null,
+    type: 'shape',
+    shape: 'rectangle',
+    visible: true,
+    locked: false,
+    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+    size: { w: 4000, h: 3000 },
+    fill,
+    ...(hint ? { quantizerHint: hint } : {}),
 });
 
 const textNode: Node = {
@@ -50,55 +68,188 @@ const textNode: Node = {
 };
 
 const imageNode: Node = {
-    id: 'i1',
+    id: 'photo',
     parentId: null,
     type: 'image',
     imageId: 'img-1',
     visible: true,
     locked: false,
-    transform: { x: 500, y: 500, rotDeg: 0, scaleX: 1, scaleY: 1 },
-    size: { w: 2000, h: 2000 },
+    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+    size: { w: 8000, h: 8000 },
 };
 
 const localImageRef: ImageRef = {
     imageId: 'img-1',
-    name: 'Logo',
+    name: 'Photo',
     source: { kind: 'local', mediaType: 'image/png', resourceId: 'r-1' },
-    widthPx: 8,
-    heightPx: 8,
+    widthPx: 512,
+    heightPx: 512,
 };
 
-const docWithImage = (): LabelDoc => {
-    const doc = createLabelDoc({ id: 'doc-img', name: 'Image', nodes: [imageNode], now: 1_000 });
-    doc.resources.images.push(localImageRef);
-    return doc;
+const doc = (nodes: Node[], regions: Region[] = [], backing?: { w: number; h: number }): LabelDoc =>
+    createLabelDoc({
+        id: 'doc-1',
+        name: 'Test',
+        nodes,
+        regions,
+        ...(backing ? { backingW: backing.w, backingH: backing.h } : {}),
+        now: 1_000,
+    });
+
+const pixelAt = (data: Uint8ClampedArray, width: number, x: number, y: number): number[] => {
+    const i = (y * width + x) * 4;
+    return [data[i]!, data[i + 1]!, data[i + 2]!, data[i + 3]!];
 };
 
-/** An opaque black raster, standing in for a decoded local image. */
-const blackRaster = (): HTMLCanvasElement => {
+/** A deterministic high-entropy RGB raster, standing in for a photo. */
+const noiseCanvas = (size = 512): HTMLCanvasElement => {
     const canvas = document.createElement('canvas');
-    canvas.width = 8;
-    canvas.height = 8;
+    canvas.width = size;
+    canvas.height = size;
     const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, 8, 8);
+    const image = ctx.createImageData(size, size);
+    let seed = 0x12345678;
+    for (let i = 0; i < image.data.length; i += 4) {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        image.data[i] = seed >>> 24;
+        image.data[i + 1] = (seed >>> 16) & 0xff;
+        image.data[i + 2] = (seed >>> 8) & 0xff;
+        image.data[i + 3] = 255;
+    }
+    ctx.putImageData(image, 0, 0);
     return canvas;
 };
 
-describe('renderDocThumbnail', () => {
-    it('renders a simple document to a small PNG blob', async () => {
-        const doc = createLabelDoc({ id: 'doc-1', name: 'Test', nodes: [textNode], now: 1_000 });
+/** Decoded byte count + raster size of a `meta.thumb`, as the validator sees it. */
+const thumbStats = async (
+    thumb: MetaThumb,
+): Promise<{ bytes: number; width: number; height: number }> => {
+    const base64 = thumb.dataUrl.slice(thumb.dataUrl.indexOf(',') + 1);
+    const image = await loadImage(thumb.dataUrl);
+    return { bytes: atob(base64).length, width: image.width, height: image.height };
+};
 
-        const blob = await renderDocThumbnail(doc);
+/** Assert a thumb fits the caps and survives `parseDoc` with the thumb kept. */
+const expectValidMetaThumb = async (thumb: MetaThumb | undefined): Promise<void> => {
+    expect(thumb).toBeDefined();
+    if (!thumb) return;
+    const stats = await thumbStats(thumb);
+    expect(stats.bytes).toBeGreaterThan(0);
+    expect(stats.bytes).toBeLessThanOrEqual(THUMB_MAX_BYTES);
+    expect(Math.max(stats.width, stats.height)).toBeLessThanOrEqual(THUMB_MAX_SIDE);
+    // `mediaType` mirrors the data URL's own MIME segment.
+    expect(thumb.dataUrl.startsWith(`data:${thumb.mediaType};base64,`)).toBe(true);
+    expect(Math.abs(thumb.at - Math.floor(Date.now() / 1000))).toBeLessThanOrEqual(2);
 
-        expect(blob).toBeInstanceOf(Blob);
-        expect(blob!.type).toBe('image/png');
-        expect(blob!.size).toBeGreaterThan(0);
+    const base = doc([]);
+    const parsed = await parseDoc(JSON.stringify({ ...base, meta: { ...base.meta, thumb } }));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.doc.meta.thumb).toEqual(thumb);
+};
+
+describe('renderDocPreview', () => {
+    it('renders colour: a threshold-hinted node still yields intermediate RGB', async () => {
+        // `#808080` quantizes to pure black or white; colour keeps the mid-grey.
+        const source = doc([rect('#808080', 'threshold'), textNode]);
+        const preview = await renderDocPreview(source);
+        expect(preview).not.toBeNull();
+        if (!preview) return;
+
+        const dims = rasterDimensions(source.label.backingW, source.label.backingH, GALLERY_THUMBNAIL_DPI);
+        expect(preview.rgba.width).toBe(dims.widthPx);
+        expect(preview.rgba.height).toBe(dims.heightPx);
+        const mid = pixelAt(
+            preview.rgba.data,
+            preview.rgba.width,
+            Math.floor(preview.rgba.width / 2),
+            Math.floor(preview.rgba.height / 2),
+        );
+        expect(mid[0]).toBeGreaterThan(60);
+        expect(mid[0]).toBeLessThan(200);
+        expect(mid[0]).toBe(mid[1]);
+        expect(mid[1]).toBe(mid[2]);
+
+        // The canvas holds the same colour pixels (not a 1-bit readback).
+        const ctx = preview.canvas.getContext('2d')!;
+        const canvasPixel = ctx.getImageData(
+            Math.floor(preview.canvas.width / 2),
+            Math.floor(preview.canvas.height / 2),
+            1,
+            1,
+        ).data;
+        expect(canvasPixel[0]).toBe(mid[0]);
+        expect(canvasPixel[1]).toBe(mid[1]);
+        expect(canvasPixel[2]).toBe(mid[2]);
+    }, 15_000);
+
+    it('still clips to the label regions (outside the union is white)', async () => {
+        const regions: Region[] = [{ kind: 'rect', x: 0, y: 0, w: 2000, h: 3000 }];
+        const preview = await renderDocPreview(doc([rect('#808080')], regions));
+        expect(preview).not.toBeNull();
+        if (!preview) return;
+
+        const y = Math.floor(preview.rgba.height / 2);
+        const inside = pixelAt(preview.rgba.data, preview.rgba.width, 10, y);
+        const outside = pixelAt(preview.rgba.data, preview.rgba.width, preview.rgba.width - 3, y);
+        expect(inside[0]).toBeLessThan(200); // the grey node survives inside
+        expect(outside).toEqual([255, 255, 255, 255]); // white outside the union
+    }, 15_000);
+
+    it('produces a colour PNG blob at the 100-dpi raster size', async () => {
+        const source = doc([rect('#3366cc', 'threshold')]);
+        const preview = await renderDocPreview(source);
+        expect(preview).not.toBeNull();
+        if (!preview) return;
+
+        const dims = rasterDimensions(source.label.backingW, source.label.backingH, GALLERY_THUMBNAIL_DPI);
+        expect(preview.canvas.width).toBe(dims.widthPx);
+        expect(preview.canvas.height).toBe(dims.heightPx);
+        expect(preview.blob).toBeInstanceOf(Blob);
+        expect(preview.blob!.type).toBe('image/png');
+        expect(preview.blob!.size).toBeGreaterThan(0);
+
+        const encoded = await loadImage(new Uint8Array(await preview.blob!.arrayBuffer()));
+        expect(encoded.width).toBe(dims.widthPx);
+        expect(encoded.height).toBe(dims.heightPx);
+    }, 15_000);
+
+    it('builds a capped meta thumb for a large label', async () => {
+        const large = doc(
+            [
+                rect('#ffffff'),
+                { ...textNode, transform: { x: 2000, y: 2000, rotDeg: 0, scaleX: 1, scaleY: 1 } },
+            ],
+            [],
+            { w: 20_000, h: 15_000 },
+        );
+        const preview = await renderDocPreview(large);
+        expect(preview).not.toBeNull();
+        if (!preview) return;
+
+        // The source raster is wider than the cap, so the thumb is downscaled.
+        expect(Math.max(preview.canvas.width, preview.canvas.height)).toBeGreaterThan(THUMB_MAX_SIDE);
+        await expectValidMetaThumb(preview.metaThumb);
+    }, 15_000);
+
+    it('falls back to JPEG (and shrinks) for a photo-heavy label', async () => {
+        const photo = doc([imageNode], [], { w: 8000, h: 8000 });
+        photo.resources.images.push(localImageRef);
+        const assets: AssetDeps = {
+            resolveImage: () => ({ image: noiseCanvas(), widthPx: 512, heightPx: 512 }),
+        };
+
+        const preview = await renderDocPreview(photo, assets);
+        expect(preview).not.toBeNull();
+        if (!preview) return;
+
+        // High-entropy content cannot fit 64 KB as a 512 px PNG; the producer
+        // must have moved to JPEG/smaller sizes rather than failing.
+        expect(preview.metaThumb?.mediaType).toBe('image/jpeg');
+        await expectValidMetaThumb(preview.metaThumb);
     }, 15_000);
 
     it('resolves null (never rejects) for a document that cannot render', async () => {
-        // A physical size past the 16M-pixel raster cap makes `renderLabelPage`
-        // throw on its pre-flight; the helper must swallow it.
         const broken = createLabelDoc({
             id: 'doc-2',
             name: 'Broken',
@@ -107,20 +258,23 @@ describe('renderDocThumbnail', () => {
             now: 1_000,
         });
 
-        await expect(renderDocThumbnail(broken)).resolves.toBeNull();
+        await expect(renderDocPreview(broken)).resolves.toBeNull();
     }, 15_000);
 
     it('resolves null (never rejects) for a malformed document', async () => {
-        await expect(renderDocThumbnail({} as LabelDoc)).resolves.toBeNull();
+        await expect(renderDocPreview({} as LabelDoc)).resolves.toBeNull();
     });
 
-    it('forwards the assets argument into the shared render path', async () => {
-        const doc = docWithImage();
-        const assets: AssetDeps = { resolveImage: () => ({ image: blackRaster(), widthPx: 8, heightPx: 8 }) };
+    it('forwards the assets argument into the shared render path at the thumbnail dpi', async () => {
+        const photo = doc([imageNode], [], { w: 8000, h: 8000 });
+        photo.resources.images.push(localImageRef);
+        const assets: AssetDeps = {
+            resolveImage: () => ({ image: noiseCanvas(32), widthPx: 32, heightPx: 32 }),
+        };
 
         prepareSpy.mockClear();
-        await renderDocThumbnail(doc, assets, {});
-        // `renderLabelPage` spreads `opts.assets` and adds a `dpi`, so the deps
+        await renderDocPreview(photo, assets, {});
+        // `renderPageBase` spreads `opts.assets` and adds a `dpi`, so the deps
         // object identity changes — compare the provider we care about.
         expect(prepareSpy).toHaveBeenCalled();
         expect(prepareSpy.mock.calls.at(-1)![2].resolveImage).toBe(assets.resolveImage);
@@ -128,25 +282,27 @@ describe('renderDocThumbnail', () => {
         expect(prepareSpy.mock.calls.at(-1)![2].dpi).toBe(GALLERY_THUMBNAIL_DPI);
 
         prepareSpy.mockClear();
-        await renderDocThumbnail(doc);
+        await renderDocPreview(photo);
         expect(prepareSpy).toHaveBeenCalled();
         expect(prepareSpy.mock.calls.at(-1)![2].resolveImage).toBeUndefined();
     }, 15_000);
 
     // Differential proof that `assets` changes the pixels: a local-image doc
-    // renders different bytes with the provider (image drawn as ink) than
-    // without it (image missing → blank page). Same doc, same dpi.
+    // renders different bytes with the provider (image drawn) than without it
+    // (image missing → white page). Same doc, same dpi.
     it('renders a local image only when the assets provider is passed', async () => {
-        const doc = docWithImage();
-        const assets: AssetDeps = { resolveImage: () => ({ image: blackRaster(), widthPx: 8, heightPx: 8 }) };
+        const photo = doc([imageNode], [], { w: 8000, h: 8000 });
+        photo.resources.images.push(localImageRef);
+        const assets: AssetDeps = {
+            resolveImage: () => ({ image: noiseCanvas(64), widthPx: 64, heightPx: 64 }),
+        };
 
-        const withAsset = await renderDocThumbnail(doc, assets, {});
-        const withoutAsset = await renderDocThumbnail(doc);
+        const withAsset = await renderDocPreview(photo, assets, {});
+        const withoutAsset = await renderDocPreview(photo);
 
-        expect(withAsset).toBeInstanceOf(Blob);
-        expect(withoutAsset).toBeInstanceOf(Blob);
-        const a = new Uint8Array(await withAsset!.arrayBuffer());
-        const b = new Uint8Array(await withoutAsset!.arrayBuffer());
-        expect(a).not.toEqual(b);
+        expect(withAsset).not.toBeNull();
+        expect(withoutAsset).not.toBeNull();
+        if (!withAsset || !withoutAsset) return;
+        expect(withAsset.rgba.data).not.toEqual(withoutAsset.rgba.data);
     }, 15_000);
 });

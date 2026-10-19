@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ImageOff } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { LabelCard } from './LabelCard';
+import { useThumbBackfill } from './useThumbBackfill';
 
 /**
  * Gallery home surface — a grid of pseudo-cards. Art is never rendered from a
@@ -15,6 +16,11 @@ export const GalleryView: React.FC = () => {
     const storageError = useStore((state) => state.storageError);
     const openLabel = useStore((state) => state.openLabel);
     const addNotification = useStore((state) => state.addNotification);
+
+    // D-50: fill in cards whose label has no saved preview (bounded, once per
+    // gallery visit). Mounted above the early returns so the hook order is
+    // stable across the loading/empty/error states.
+    useThumbBackfill();
 
     const handleOpen = useCallback(
         (id: string) => {

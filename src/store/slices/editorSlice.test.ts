@@ -1404,3 +1404,43 @@ describe('editorSlice — attachCsv (P6 W6)', () => {
         expect(store.getState().docPast).toHaveLength(before);
     });
 });
+
+describe('editorSlice — setDocThumb (P3 W2)', () => {
+    const thumb = {
+        mediaType: 'image/png',
+        dataUrl: 'data:image/png;base64,AAAA',
+        at: 1_700_000_000,
+    };
+
+    it('patches the open doc without history or an updatedAt stamp', () => {
+        const store = setupStore();
+        const before = store.getState().currentDoc!;
+
+        store.getState().setDocThumb('doc-1', thumb);
+
+        const after = store.getState().currentDoc!;
+        expect(after).not.toBe(before);
+        expect(after.meta.thumb).toEqual(thumb);
+        expect(after.meta.updatedAt).toBe(before.meta.updatedAt);
+        expect(store.getState().docPast).toHaveLength(0);
+        expect(store.getState().docFuture).toHaveLength(0);
+    });
+
+    it('ignores another doc id, and an identical dataUrl even when `at` differs', () => {
+        const store = setupStore();
+        const before = store.getState().currentDoc!;
+
+        // A late render for a document no longer open must not patch this one.
+        store.getState().setDocThumb('doc-2', thumb);
+        expect(store.getState().currentDoc).toBe(before);
+
+        store.getState().setDocThumb('doc-1', thumb);
+        const patched = store.getState().currentDoc!;
+        expect(patched.meta.thumb).toEqual(thumb);
+
+        // Only the data URL matters: `at` changes on every render.
+        store.getState().setDocThumb('doc-1', { ...thumb, at: thumb.at + 1 });
+        expect(store.getState().currentDoc).toBe(patched);
+        expect(store.getState().docPast).toHaveLength(0);
+    });
+});

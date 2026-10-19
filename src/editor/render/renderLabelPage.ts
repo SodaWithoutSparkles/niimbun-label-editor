@@ -583,14 +583,35 @@ const countInkPx = (rgba: RgbaBuffer): number => {
 };
 
 /**
- * Render a label page to final 1-bit RGBA. The single entry point for both the
- * preview and the print path; only encoding differs downstream (invariant 7).
+ * Everything the render path produces **before** quantization: the resolved
+ * scene, the effective dpi and raster dimensions, the prepared assets and their
+ * warnings, and the colour `imageData` the rasterizer read back.
+ *
+ * The one prelude shared by the print path (`renderLabelPage`) and the colour
+ * path (`renderDocPreview` in `docThumbnail.ts`), so the two can never drift on
+ * dpi handling, raster limits or asset preparation.
  */
-export const renderLabelPage = async (
+export interface BasePage {
+    dpi: number;
+    nodes: ResolvedNode[];
+    widthPx: number;
+    heightPx: number;
+    imageData: RgbaBuffer;
+    assets: ReadonlyMap<string, PreparedAsset>;
+    warnings?: ReadonlyMap<string, AssetWarning>;
+}
+
+/**
+ * Resolve, pre-flight and rasterize a document to **colour** RGBA at `opts.dpi`
+ * (chain: `opts.dpi` → `opts.assets?.dpi` → `doc.label.dpi`). This is exactly
+ * the pre-quantize prelude of {@link renderLabelPage}; callers that want the
+ * printed 1-bit page continue into the mask/quantize/override stages there.
+ */
+export const renderPageBase = async (
     doc: LabelDoc,
     ctx: ResolveContext = {},
-    opts: RenderLabelPageOptions = {},
-): Promise<RenderedLabelPage> => {
+    opts: { dpi?: number; assets?: AssetDeps } = {},
+): Promise<BasePage> => {
     // Validate the effective dpi **before** resolve so a bad `opts.dpi` cannot
     // pay a full resolve/template pass (invariant 9). A caller-supplied
     // `assets.dpi` is honoured, then the label's dpi hint (`doc.label.dpi`).
@@ -636,6 +657,31 @@ export const renderLabelPage = async (
 
     const rasterOpts: RasterizeOptions = { widthPx, heightPx, dpi };
     const { imageData } = await rasterizeResolved(nodes, rasterOpts, assets);
+
+    return { dpi, nodes, widthPx, heightPx, imageData, assets, warnings };
+};
+
+/**
+ * Render a label page to final 1-bit RGBA. The single entry point for both the
+ * preview and the print path; only encoding differs downstream (invariant 7).
+ */
+export const renderLabelPage = async (
+    doc: LabelDoc,
+    ctx: ResolveContext = {},
+    opts: RenderLabelPageOptions = {},
+): Promise<RenderedLabelPage> => {
+    const {
+        dpi,
+        nodes,
+        widthPx,
+        heightPx,
+        imageData,
+        assets,
+        warnings,
+    } = await renderPageBase(doc, ctx, {
+        ...(opts.dpi !== undefined ? { dpi: opts.dpi } : {}),
+        ...(opts.assets !== undefined ? { assets: opts.assets } : {}),
+    });
 
     const byId = nodeLookup(doc.nodes);
     const policy = await buildPolicyMask(nodes, byId, { widthPx, heightPx }, dpi, assets, {

@@ -511,6 +511,21 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             commit(next, doc);
         },
 
+        setDocThumb: (docId, thumb) => {
+            const doc = get().currentDoc;
+            // A late render must never patch another (now open) document.
+            if (!doc || doc.meta.id !== docId) return;
+            // Compare the data URL only: `at` changes on every render, so it
+            // would turn an identical image into an endless patch/render loop.
+            if (doc.meta.thumb?.dataUrl === thumb?.dataUrl) return;
+            // No clone of the whole doc and no history/`updatedAt`: the preview
+            // is cosmetic. The new `meta` object gives `currentDoc` a new
+            // identity so subscribers repaint.
+            const next: LabelDoc = { ...doc, meta: { ...doc.meta, thumb } };
+            set({ currentDoc: next });
+            scheduleAutosave(next);
+        },
+
         setDocCsv: (csv) => {
             const doc = get().currentDoc;
             if (!doc) return;

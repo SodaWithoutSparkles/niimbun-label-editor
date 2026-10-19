@@ -32,21 +32,33 @@ No router dependency. The address is the app state:
 - **Persistence:** `view`/`gallerySection` stay **unpersisted** (`useStore.partialize`) — a reload
   with no hash must land in the gallery.
 
-## Gallery card art (D-50, P13b `e75c596`)
+## Gallery card art (D-50 closed by P3 of the 2026-10-19 run)
 
-- Producer: `src/editor/render/docThumbnail.ts` (`renderDocThumbnail(doc, assets?, ctx?)`, the
-  shared `renderLabelPage` at 100 dpi, **repo-backed providers** — without `assets` a local image or
-  imported font renders *nothing*), driven by `src/components/editor/useDocThumbnail.ts`, mounted
-  app-wide from `App.tsx`.
-- The hook debounces on `currentDoc` (1 s, coalesced), guards with a **per-doc monotonic token** so a
-  slow older render cannot overwrite a newer thumbnail, writes `labelRepo.putThumb` (never returns a
-  rejection), marks dirty, and refreshes the gallery **once on the editor → gallery transition**
-  (a per-write `refreshGallery` would be a full-library read roughly every second while editing).
-- `labelRepo` resolves `LabelSummary.thumb` from the `thumbs` store to a **data URL string**, so
-  `LabelCard` uses it directly; the geometry `PlaceholderArt` stays for labels without one.
-- **`store/` must not import a renderer** — the hook lives in `components/` by design.
-- Residual: no backfill (a label never reopened/edited keeps its placeholder) and `meta.thumb` is
-  never written.
+- **Colour, not quantized.** `src/editor/render/docThumbnail.ts` → `renderDocPreview(doc, assets?,
+  ctx?)` calls the shared prelude `renderPageBase` (extracted from `renderLabelPage`) at 100 dpi,
+  applies the **region clip**, then draws the raster — it deliberately skips mask build,
+  quantization and the print-only overrides (invert/mirror/offset). It returns **two independent
+  outputs**: `blob` = the 100-dpi PNG for the `thumbs` IDB store, and `metaThumb` =
+  `{mediaType, dataUrl, at}` downscaled to the `validate.ts` caps (≤512 px longest side, ≤64 KB
+  decoded; PNG → JPEG q0.85 → halve down to 128 px, else `undefined`). `THUMB_MAX_SIDE` /
+  `THUMB_MAX_BYTES` are exported from `validate.ts` so producer and validator cannot drift.
+- Driven by `src/components/editor/useDocThumbnail.ts` (app-wide from `App.tsx`): 1 s debounce,
+  per-doc monotonic token, writes the blob via `labelRepo.putThumb` **and** patches
+  `doc.meta.thumb` via the history-free `setDocThumb` (no undo entry; schedules autosave). The two
+  writes are independent (one failing never discards the other) and the patch no-ops on an
+  identical `dataUrl` — that `dataUrl` comparison is what stops the render → patch → render loop
+  (the patch changes `currentDoc` identity by design).
+- `labelRepo` resolves `LabelSummary.thumb` from the `thumbs` store first, then
+  `meta.thumb.dataUrl`; `LabelCard` renders it; `PlaceholderArt` only when both are absent.
+- **D-50 backfill:** `src/components/gallery/useThumbBackfill.ts` (mounted in `GalleryView`) fills
+  labels with **no** thumb — bounded to 8 per gallery visit in chunks of 2 with idle gaps, a
+  module-level attempted-id set (StrictMode/remount-safe), one `refreshGallery` per successful
+  batch. It re-checks cancellation before every write and does a **fresh `labelRepo.get` right
+  before `save`**, patching only `meta.thumb`, so an edit saved during the render is never
+  clobbered; a label deleted mid-render has its orphan thumb row removed.
+- **Deliberate:** stale thumbs are displayed as-is (owner decision 6) — no invalidation sweep, and
+  no quantized path exists in the gallery. `store/` must not import a renderer; the hooks live in
+  `components/` by design.
 
 ## Canvas panning input (P13b, D-36 closed)
 

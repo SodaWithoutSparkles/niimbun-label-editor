@@ -728,8 +728,10 @@ export const isGlobalSpec = (value: unknown): GlobalSpec | undefined => {
 // Thumb (trust boundary)
 // ---------------------------------------------------------------------------
 
-const THUMB_MAX_SIDE = 512;
-const THUMB_MAX_BYTES = 64 * 1024;
+/** Longest-side cap for `meta.thumb` (shared with the preview producer). */
+export const THUMB_MAX_SIDE = 512;
+/** Decoded byte cap for `meta.thumb` (shared with the preview producer). */
+export const THUMB_MAX_BYTES = 64 * 1024;
 
 const rasterSubtype = (mediaType: string): 'png' | 'jpeg' | 'webp' | undefined => {
     const sub = mediaType.toLowerCase().replace(/^image\//, '').replace(/^x-/, '');

@@ -22,7 +22,16 @@ import { useStore } from '../../store/useStore';
 const { renderMock } = vi.hoisted(() => ({ renderMock: vi.fn() }));
 
 vi.mock('../../editor/render/docThumbnail', () => ({
-    renderDocThumbnail: renderMock,
+    // `renderMock` returns a `Blob` by default (blob-only assertions keep their
+    // old shape). A full `{ blob, metaThumb }` preview can be returned when a
+    // test needs the `meta.thumb` patch.
+    renderDocPreview: async (...args: unknown[]) => {
+        const result = await renderMock(...args);
+        if (result !== null && typeof result === 'object' && 'blob' in result) {
+            return result;
+        }
+        return { blob: result, metaThumb: undefined };
+    },
     GALLERY_THUMBNAIL_DPI: 100,
 }));
 
@@ -30,10 +39,11 @@ import { DOC_THUMBNAIL_DEBOUNCE_MS, useDocThumbnail } from './useDocThumbnail';
 
 const makeRepo = () => {
     const putThumb = vi.fn(async (_id: string, _thumb: Blob): Promise<void> => undefined);
+    const save = vi.fn(async (_doc: LabelDoc): Promise<void> => undefined);
     const repo: LabelRepo = {
         list: async () => [],
         get: async () => null,
-        save: async () => undefined,
+        save,
         saveAll: async () => ({ ok: [], errors: [] }),
         remove: async () => undefined,
         putThumb,
@@ -41,7 +51,7 @@ const makeRepo = () => {
         removeThumb: async () => undefined,
         listDetailed: async () => ({ ok: [], errors: [] }),
     };
-    return { repo, putThumb };
+    return { repo, putThumb, save };
 };
 
 /** A `ResourceRepo` stand-in exposing only what the bytes provider reads. */
@@ -60,6 +70,13 @@ const edit = (current: LabelDoc, i: number): LabelDoc => {
 
 const pngBlob = (content: string): Blob => new Blob([content], { type: 'image/png' });
 
+/** A `meta.thumb` payload as `renderDocPreview` produces it. */
+const metaThumb = (dataUrl: string, at = 1_700_000_000) => ({
+    mediaType: 'image/png',
+    dataUrl,
+    at,
+});
+
 let refreshSpy: ReturnType<typeof vi.fn>;
 let realRefresh: () => Promise<void>;
 
@@ -75,12 +92,17 @@ beforeEach(() => {
         labelRepo: null,
         resourceRepo: null,
         refreshGallery: refreshSpy as unknown as typeof realRefresh,
+        autoSave: true,
+        docAutosaveDelayMs: 800,
+        docPast: [],
+        docFuture: [],
     });
 });
 
 afterEach(() => {
     cleanup();
     vi.clearAllTimers();
+    vi.restoreAllMocks();
     vi.useRealTimers();
     useStore.setState({
         currentDoc: null,
@@ -88,6 +110,8 @@ afterEach(() => {
         labelRepo: null,
         resourceRepo: null,
         refreshGallery: realRefresh,
+        docPast: [],
+        docFuture: [],
     });
 });
 
@@ -142,6 +166,204 @@ describe('useDocThumbnail', () => {
         expect(putThumb.mock.calls[0]![0]).toBe('doc-1');
         expect(putThumb.mock.calls[0]![1]).toBeInstanceOf(Blob);
         // A completed write only marks dirty; the library is not read per write.
+        expect(refreshSpy).not.toHaveBeenCalled();
+    });
+
+    it('writes both the thumbs blob and the meta.thumb patch', async () => {
+        const { repo, putThumb } = makeRepo();
+        const thumb = metaThumb('data:image/png;base64,AAAA');
+        renderMock.mockResolvedValue({ blob: pngBlob('thumb'), metaThumb: thumb });
+        useStore.setState({ labelRepo: repo });
+        const setDocThumbSpy = vi.spyOn(useStore.getState(), 'setDocThumb');
+        renderHook(() => useDocThumbnail());
+
+        await act(async () => {
+            useStore.setState({ currentDoc: makeDoc() });
+            await vi.advanceTimersByTimeAsync(DOC_THUMBNAIL_DEBOUNCE_MS);
+        });
+        await flush();
+
+        expect(putThumb).toHaveBeenCalledTimes(1);
+        expect(putThumb.mock.calls[0]![1]).toBeInstanceOf(Blob);
+        expect(setDocThumbSpy).toHaveBeenCalledTimes(1);
+        expect(setDocThumbSpy).toHaveBeenCalledWith('doc-1', thumb);
+        // The patch is the document's state, not a repo-side mirror.
+        expect(useStore.getState().currentDoc?.meta.thumb).toEqual(thumb);
+    });
+
+    it('does not patch again when the follow-up render produces the same dataUrl', async () => {
+        const { repo, putThumb } = makeRepo();
+        const thumb = metaThumb('data:image/png;base64,AAAA');
+        renderMock.mockResolvedValue({ blob: pngBlob('thumb'), metaThumb: thumb });
+        useStore.setState({ labelRepo: repo });
+        const setDocThumbSpy = vi.spyOn(useStore.getState(), 'setDocThumb');
+        renderHook(() => useDocThumbnail());
+
+        await act(async () => {
+            useStore.setState({ currentDoc: makeDoc() });
+            await vi.advanceTimersByTimeAsync(DOC_THUMBNAIL_DEBOUNCE_MS);
+        });
+        await flush();
+        expect(setDocThumbSpy).toHaveBeenCalledTimes(1);
+
+        // The patch changed `currentDoc` identity, so the debounce runs once
+        // more. The render is identical, so it must not patch again (no loop).
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DOC_THUMBNAIL_DEBOUNCE_MS);
+        });
+        await flush();
+        expect(renderMock).toHaveBeenCalledTimes(2);
+        expect(putThumb).toHaveBeenCalledTimes(2);
+        expect(setDocThumbSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('the patch creates no undo entry and schedules an autosave when enabled', async () => {
+        const { repo, save } = makeRepo();
+        const thumb = metaThumb('data:image/png;base64,AAAA');
+        renderMock.mockResolvedValue({ blob: pngBlob('thumb'), metaThumb: thumb });
+        const base = makeDoc();
+        useStore.setState({
+            labelRepo: repo,
+            view: 'editor',
+            autoSave: true,
+            docAutosaveDelayMs: 50,
+            docPast: [],
+            docFuture: [],
+        });
+        const setDocThumbSpy = vi.spyOn(useStore.getState(), 'setDocThumb');
+        renderHook(() => useDocThumbnail());
+
+        await act(async () => {
+            useStore.setState({ currentDoc: base });
+            await vi.advanceTimersByTimeAsync(DOC_THUMBNAIL_DEBOUNCE_MS);
+        });
+        await flush();
+
+        expect(setDocThumbSpy).toHaveBeenCalledTimes(1);
+        // Cosmetic preview: neither history nor `updatedAt` changes.
+        expect(useStore.getState().docPast).toHaveLength(0);
+        expect(useStore.getState().docFuture).toHaveLength(0);
+        expect(useStore.getState().currentDoc?.meta.updatedAt).toBe(base.meta.updatedAt);
+        expect(save).not.toHaveBeenCalled();
+
+        // `scheduleAutosave` captured the patched doc; the preference is on.
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(50);
+        });
+        expect(save).toHaveBeenCalledTimes(1);
+        expect(save.mock.calls[0]![0].meta.thumb).toEqual(thumb);
+    });
+
+    it('skips the patch when the produced metaThumb is undefined (still writes the blob)', async () => {
+        const { repo, putThumb } = makeRepo();
+        renderMock.mockResolvedValue({ blob: pngBlob('thumb'), metaThumb: undefined });
+        useStore.setState({ labelRepo: repo });
+        const setDocThumbSpy = vi.spyOn(useStore.getState(), 'setDocThumb');
+        renderHook(() => useDocThumbnail());
+
+        await act(async () => {
+            useStore.setState({ currentDoc: makeDoc() });
+            await vi.advanceTimersByTimeAsync(DOC_THUMBNAIL_DEBOUNCE_MS);
+        });
+        await flush();
+
+        expect(putThumb).toHaveBeenCalledTimes(1);
+        expect(setDocThumbSpy).not.toHaveBeenCalled();
+        expect(useStore.getState().currentDoc?.meta.thumb).toBeUndefined();
+    });
+
+    it('patches meta.thumb even when the blob could not be encoded', async () => {
+        const { repo, putThumb } = makeRepo();
+        const thumb = metaThumb('data:image/png;base64,AAAA');
+        renderMock.mockResolvedValue({ blob: null, metaThumb: thumb });
+        useStore.setState({ labelRepo: repo });
+        const setDocThumbSpy = vi.spyOn(useStore.getState(), 'setDocThumb');
+        renderHook(() => useDocThumbnail());
+
+        await act(async () => {
+            useStore.setState({ currentDoc: makeDoc() });
+            await vi.advanceTimersByTimeAsync(DOC_THUMBNAIL_DEBOUNCE_MS);
+        });
+        await flush();
+
+        // The two outputs are independent: no IDB blob, but the fallback lands.
+        expect(putThumb).not.toHaveBeenCalled();
+        expect(setDocThumbSpy).toHaveBeenCalledWith('doc-1', thumb);
+        expect(useStore.getState().currentDoc?.meta.thumb).toEqual(thumb);
+    });
+
+    it('patches meta.thumb when putThumb rejects, and the hook never rejects', async () => {
+        const { repo, putThumb } = makeRepo();
+        const thumb = metaThumb('data:image/png;base64,AAAA');
+        putThumb.mockRejectedValue(new Error('idb down'));
+        renderMock.mockResolvedValue({ blob: pngBlob('thumb'), metaThumb: thumb });
+        useStore.setState({ labelRepo: repo });
+        const setDocThumbSpy = vi.spyOn(useStore.getState(), 'setDocThumb');
+        renderHook(() => useDocThumbnail());
+
+        await act(async () => {
+            useStore.setState({ currentDoc: makeDoc() });
+            await vi.advanceTimersByTimeAsync(DOC_THUMBNAIL_DEBOUNCE_MS);
+        });
+        await flush();
+
+        expect(putThumb).toHaveBeenCalledTimes(1);
+        expect(setDocThumbSpy).toHaveBeenCalledTimes(1);
+        expect(useStore.getState().currentDoc?.meta.thumb).toEqual(thumb);
+
+        // The chain resolved (no rejection): the patch marked it dirty, so the
+        // transition still performs the one refresh.
+        await act(async () => {
+            useStore.setState({ view: 'gallery' });
+        });
+        await flush();
+        expect(refreshSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not mark dirty when the thumb patch is a store no-op', async () => {
+        const { repo, putThumb } = makeRepo();
+        const thumb = metaThumb('data:image/png;base64,AAAA');
+        const base = makeDoc();
+        // The first render never reaches the store write; the follow-up (fired
+        // by the transition flush) also produces no blob.
+        renderMock.mockResolvedValue({ blob: null, metaThumb: thumb });
+        let resolveRender!: (preview: { blob: Blob | null; metaThumb: ReturnType<typeof metaThumb> }) => void;
+        renderMock.mockImplementationOnce(
+            () =>
+                new Promise<{ blob: Blob | null; metaThumb: ReturnType<typeof metaThumb> }>((r) => {
+                    resolveRender = r;
+                }),
+        );
+        useStore.setState({ labelRepo: repo });
+        const setDocThumbSpy = vi.spyOn(useStore.getState(), 'setDocThumb');
+        renderHook(() => useDocThumbnail());
+
+        await act(async () => {
+            useStore.setState({ currentDoc: base });
+            await vi.advanceTimersByTimeAsync(DOC_THUMBNAIL_DEBOUNCE_MS);
+        });
+
+        // A concurrent write already put this exact image on the current doc.
+        const already = { ...base, meta: { ...base.meta, thumb } };
+        await act(async () => {
+            useStore.setState({ currentDoc: already });
+        });
+
+        await act(async () => {
+            resolveRender({ blob: null, metaThumb: thumb });
+        });
+        await flush();
+
+        // The render target lacked the thumb, so the patch was attempted; the
+        // store's live doc already had it, so the action no-op'd. No blob and no
+        // real change ⇒ nothing was written.
+        expect(setDocThumbSpy).toHaveBeenCalledWith('doc-1', thumb);
+        expect(putThumb).not.toHaveBeenCalled();
+
+        await act(async () => {
+            useStore.setState({ view: 'gallery' });
+        });
+        await flush();
         expect(refreshSpy).not.toHaveBeenCalled();
     });
 
@@ -216,6 +438,58 @@ describe('useDocThumbnail', () => {
         // Exactly one write, and it is the newer thumbnail.
         expect(putThumb).toHaveBeenCalledTimes(1);
         expect(putThumb.mock.calls[0]![1]).toBe(newerBlob);
+    });
+
+    it('a superseded token cannot patch the doc either', async () => {
+        const { repo, putThumb } = makeRepo();
+        useStore.setState({ labelRepo: repo });
+
+        let resolveOlder!: (preview: { blob: Blob; metaThumb: ReturnType<typeof metaThumb> }) => void;
+        let resolveNewer!: (preview: { blob: Blob; metaThumb: ReturnType<typeof metaThumb> }) => void;
+        const olderThumb = metaThumb('data:image/png;base64,T0xE');
+        const newerThumb = metaThumb('data:image/png;base64,TkVX');
+        renderMock
+            .mockReturnValueOnce(
+                new Promise<{ blob: Blob; metaThumb: ReturnType<typeof metaThumb> }>((r) => {
+                    resolveOlder = r;
+                }),
+            )
+            .mockReturnValueOnce(
+                new Promise<{ blob: Blob; metaThumb: ReturnType<typeof metaThumb> }>((r) => {
+                    resolveNewer = r;
+                }),
+            );
+
+        const base = makeDoc();
+        const setDocThumbSpy = vi.spyOn(useStore.getState(), 'setDocThumb');
+        renderHook(() => useDocThumbnail());
+
+        await act(async () => {
+            useStore.setState({ currentDoc: base });
+            await vi.advanceTimersByTimeAsync(DOC_THUMBNAIL_DEBOUNCE_MS);
+        });
+        await act(async () => {
+            useStore.setState({ currentDoc: edit(base, 1) });
+            await vi.advanceTimersByTimeAsync(DOC_THUMBNAIL_DEBOUNCE_MS);
+        });
+        expect(renderMock).toHaveBeenCalledTimes(2);
+
+        const newerBlob = pngBlob('newer');
+        await act(async () => {
+            resolveNewer({ blob: newerBlob, metaThumb: newerThumb });
+        });
+        await flush();
+        await act(async () => {
+            resolveOlder({ blob: pngBlob('older'), metaThumb: olderThumb });
+        });
+        await flush();
+
+        // Only the newer render wrote its blob and its thumb.
+        expect(putThumb).toHaveBeenCalledTimes(1);
+        expect(putThumb.mock.calls[0]![1]).toBe(newerBlob);
+        expect(setDocThumbSpy).toHaveBeenCalledTimes(1);
+        expect(setDocThumbSpy).toHaveBeenCalledWith('doc-1', newerThumb);
+        expect(useStore.getState().currentDoc?.meta.thumb).toEqual(newerThumb);
     });
 
     it('flushes the outgoing document when the open doc changes', async () => {
