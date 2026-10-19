@@ -8,21 +8,35 @@ import { rasterDimensions } from '../../core/render';
 import { createLabelDoc } from '../../core/doc/factory';
 import type { LabelDoc } from '../../core/doc/types';
 import type { CsvRecord } from '../../data/csvRepo';
-import type { RenderedLabelPage } from '../../editor/render';
+import type { RenderedLabelPage, AssetDeps } from '../../editor/render';
 import type { JobProgress, JobRunResult, JobRunner } from '../../print/jobRunner';
 import type { PrintJob, PrinterCapabilities, PrinterStatus } from '../../print/transport';
 import { useStore } from '../../store/useStore';
 import { PrintDialog } from './PrintDialog';
 import { THUMBNAIL_DPI } from './usePrintThumbnails';
 
-const { buildCsvPrintJobMock, renderLabelPageMock } = vi.hoisted(() => ({
+const { buildCsvPrintJobMock, renderLabelPageMock, usePrintThumbnailsMock } = vi.hoisted(() => ({
     buildCsvPrintJobMock: vi.fn(),
     renderLabelPageMock: vi.fn(),
+    usePrintThumbnailsMock: vi.fn(),
 }));
 
 vi.mock('../../print/printLabel', async (importOriginal) => {
     const actual = await importOriginal<typeof import('../../print/printLabel')>();
     return { ...actual, buildCsvPrintJob: buildCsvPrintJobMock };
+});
+
+// Spy wrapper around the real hook: records the options the dialog passes
+// (D-28 scope assertions) while keeping the actual behaviour.
+vi.mock('./usePrintThumbnails', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./usePrintThumbnails')>();
+    return {
+        ...actual,
+        usePrintThumbnails: (options: Parameters<typeof actual.usePrintThumbnails>[0]) => {
+            usePrintThumbnailsMock(options);
+            return actual.usePrintThumbnails(options);
+        },
+    };
 });
 
 // No real canvas in happy-dom: the shared render path is stubbed to a data URL.
@@ -72,7 +86,7 @@ beforeEach(() => {
 
 afterEach(() => {
     cleanup();
-    useStore.setState({ editorWarnings: {} });
+    useStore.setState({ editorWarnings: {}, usePrinterDpi: true });
 });
 
 class FakeRunner implements JobRunner {
@@ -167,6 +181,7 @@ const renderDialog = (overrides: {
     csv?: CsvRecord | null;
     runner: FakeRunner;
     printerStatus: PrinterStatus;
+    assets?: AssetDeps;
 }) => {
     const onClose = vi.fn();
     render(
@@ -177,6 +192,7 @@ const renderDialog = (overrides: {
             csv={overrides.csv ?? null}
             runner={overrides.runner}
             printerStatus={overrides.printerStatus}
+            assets={overrides.assets}
         />,
     );
     return { onClose };
@@ -264,9 +280,10 @@ describe('PrintDialog — warnings', () => {
         });
 
         expect(screen.queryByTestId('print-warning-overflow')).not.toBeInTheDocument();
-        // The ink check is lazy: no size overflow means no doc-dpi render. (The
-        // page preview passes `dpi: doc.label.dpi`, the thumbnail cache
-        // `dpi: THUMBNAIL_DPI`; only the ink check omits `dpi` entirely.)
+        // The ink check is lazy: no size overflow means no extra render beyond
+        // the page preview. (Both the preview and the ink check now pass the
+        // resolved `dpi`; the thumbnail cache would pass `dpi: THUMBNAIL_DPI`.)
+        expect(renderLabelPageMock).toHaveBeenCalledTimes(1);
         const inkCheckCalls = renderLabelPageMock.mock.calls.filter(
             ([, , opts]) => (opts as { dpi?: number } | undefined)?.dpi === undefined,
         );
@@ -657,5 +674,263 @@ describe('PrintDialog — print direction (D-30)', () => {
         expect(buildCsvPrintJobMock.mock.calls[0]![0]).toMatchObject({
             label: { printDirection: 'bottom' },
         });
+    });
+});
+
+describe('PrintDialog — resolved print dpi (P2)', () => {
+    const callDpis = (): Array<number | undefined> =>
+        renderLabelPageMock.mock.calls.map(
+            ([, , opts]) => (opts as { dpi?: number } | undefined)?.dpi,
+        );
+
+    it('previews at the printer-reported dpi when the setting is on', async () => {
+        const doc = narrowDoc(); // hint 300
+        renderDialog({
+            doc,
+            runner: new FakeRunner(),
+            printerStatus: { ...statusOf(B1_PRO), dpi: 203 },
+        });
+
+        await waitFor(() => expect(callDpis()).toContain(203));
+        expect(callDpis()).not.toContain(300);
+
+        const box = screen.getByLabelText('DPI') as HTMLInputElement;
+        expect(box).toBeDisabled();
+        expect(box.value).toBe('203');
+        expect(screen.getByText('Detected from the printer')).toBeInTheDocument();
+    });
+
+    it('falls back to the hint (with a note) when no dpi is reported', async () => {
+        const doc = narrowDoc();
+        renderDialog({ doc, runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+
+        await waitFor(() => expect(callDpis()).toContain(300));
+        const box = screen.getByLabelText('DPI') as HTMLInputElement;
+        expect(box).toBeDisabled();
+        expect(box.value).toBe('300');
+        expect(
+            screen.getByText("No DPI reported by the printer; using the label's DPI hint."),
+        ).toBeInTheDocument();
+    });
+
+    it('uses the hint when the setting is off, even with a reported dpi', async () => {
+        useStore.setState({ usePrinterDpi: false });
+        const doc = narrowDoc();
+        renderDialog({
+            doc,
+            runner: new FakeRunner(),
+            printerStatus: { ...statusOf(B1_PRO), dpi: 203 },
+        });
+
+        await waitFor(() => expect(callDpis()).toContain(300));
+        expect(callDpis()).not.toContain(203);
+        // Off mode: an editable box seeded from the doc hint.
+        const box = screen.getByLabelText('DPI') as HTMLInputElement;
+        expect(box).not.toBeDisabled();
+        expect(box.value).toBe('300');
+    });
+
+    it('the preview and the built print job agree on the resolved dpi', async () => {
+        const runner = new FakeRunner();
+        renderDialog({
+            doc: narrowDoc(),
+            csv: csvOf(2),
+            runner,
+            printerStatus: { ...statusOf(B1_PRO), dpi: 203 },
+        });
+
+        await waitFor(() => expect(callDpis()).toContain(203));
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        const opts = buildCsvPrintJobMock.mock.calls[0]![2] as {
+            overrides?: { dpi?: number };
+        };
+        expect(opts.overrides?.dpi).toBe(203);
+        expect(callDpis()).toContain(203);
+    });
+
+    it('the toggle re-resolves the preview and the job to the hint', async () => {
+        const runner = new FakeRunner();
+        renderDialog({
+            doc: narrowDoc(),
+            runner,
+            printerStatus: { ...statusOf(B1_PRO), dpi: 203 },
+        });
+        await waitFor(() => expect(callDpis()).toContain(203));
+
+        fireEvent.click(screen.getByLabelText('Use printer DPI'));
+        await waitFor(() => expect(callDpis()).toContain(300));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        const opts = buildCsvPrintJobMock.mock.calls[0]![2] as {
+            overrides?: { dpi?: number };
+        };
+        expect(opts.overrides?.dpi).toBe(300);
+    });
+
+    it('sizes the printhead-overflow check from the resolved dpi', async () => {
+        // 60 mm wide at 203 dpi ≈ 479 px, under the 567-dot head — no overflow,
+        // although the doc hint (300) would have tripped the size check.
+        renderDialog({
+            doc: wideDoc(),
+            runner: new FakeRunner(),
+            printerStatus: { ...statusOf(B1_PRO), dpi: 203 },
+        });
+
+        await waitFor(() => expect(callDpis()).toContain(203));
+        expect(screen.queryByTestId('print-warning-overflow')).not.toBeInTheDocument();
+    });
+
+    it('blocks Print and explains when the resolved raster exceeds the cap (R12)', async () => {
+        // 5 m × 2.5 m at 300 dpi ≈ 59055 × 29528 px ≫ the 16 M px cap.
+        const huge = createLabelDoc({ backingW: 500_000, backingH: 250_000, dpi: 300 });
+        // The render seam is stubbed to a small page so the test never allocates
+        // the absurd raster the dialog is refusing to print.
+        renderLabelPageMock.mockResolvedValue(fakeRenderedPage(narrowDoc(), false));
+        renderDialog({ doc: huge, runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+
+        expect(await screen.findByTestId('print-raster-cap')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Print' })).toBeDisabled();
+    });
+
+    it('the mismatch warning carries the resolved dpi and says where it came from', async () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: { ...statusOf(B1_PRO), dpi: 203 },
+        });
+
+        const warning = screen.getByTestId('print-warning-mismatch');
+        expect(warning).toHaveTextContent('Printing will use 203 dpi (from the printer).');
+        await waitFor(() => {
+            const published = useStore
+                .getState()
+                .editorWarnings.print?.warnings.find((entry) => entry.kind === 'print-mismatch');
+            expect(published).toMatchObject({ resolvedDpi: 203, printerDpiInUse: true });
+        });
+    });
+
+    it('the mismatch warning states the hint will be used when the setting is off', async () => {
+        useStore.setState({ usePrinterDpi: false });
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: { ...statusOf(B1_PRO), dpi: 203 },
+        });
+
+        expect(screen.getByTestId('print-warning-mismatch')).toHaveTextContent(
+            "Printing will use 300 dpi (from the label's DPI hint).",
+        );
+    });
+
+    it('commits the off-mode box back to doc.label.dpi, clamped', async () => {
+        useStore.setState({ usePrinterDpi: false });
+        const onChange = vi.fn();
+
+        const Harness = () => {
+            const [doc, setDoc] = useState(() => narrowDoc());
+            return (
+                <PrintDialog
+                    open
+                    onClose={() => {}}
+                    doc={doc}
+                    csv={null}
+                    runner={new FakeRunner()}
+                    printerStatus={statusOf(B1_PRO)}
+                    onDpiChange={(dpi) => {
+                        onChange(dpi);
+                        setDoc((previous) => ({
+                            ...previous,
+                            label: { ...previous.label, dpi },
+                        }));
+                    }}
+                />
+            );
+        };
+
+        render(<Harness />);
+        const box = screen.getByLabelText('DPI');
+        expect(box).not.toBeDisabled();
+
+        fireEvent.change(box, { target: { value: '203' } });
+        fireEvent.blur(box);
+        expect(onChange).toHaveBeenCalledWith(203);
+        await waitFor(() => expect(screen.getByLabelText('DPI')).toHaveValue(203));
+
+        // Out-of-range input clamps like `normalizeDpi` (100–1200).
+        fireEvent.change(screen.getByLabelText('DPI'), { target: { value: '20' } });
+        fireEvent.blur(screen.getByLabelText('DPI'));
+        expect(onChange).toHaveBeenLastCalledWith(100);
+    });
+
+    it('reverts the off-mode box when no write-back seam is provided', async () => {
+        useStore.setState({ usePrinterDpi: false });
+        renderDialog({ runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+
+        const box = screen.getByLabelText('DPI') as HTMLInputElement;
+        expect(box.value).toBe('300');
+        fireEvent.change(box, { target: { value: '203' } });
+        fireEvent.blur(box);
+        // No `onDpiChange` (dev harness): never show an uncommitted value.
+        await waitFor(() => expect(screen.getByLabelText('DPI')).toHaveValue(300));
+    });
+
+    it('disables the DPI controls while a job is printing', async () => {
+        const runner = new FakeRunner();
+        runner.autoResolve = false;
+        renderDialog({
+            runner,
+            printerStatus: { ...statusOf(B1_PRO), dpi: 203 },
+        });
+
+        expect(screen.getByLabelText('Use printer DPI')).toBeEnabled();
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        await waitFor(() => expect(runner.isBusy()).toBe(true));
+
+        expect(screen.getByLabelText('Use printer DPI')).toBeDisabled();
+        expect(screen.getByLabelText('DPI')).toBeDisabled();
+    });
+
+    it('the raster-cap guard accounts for an outer offset (R12)', async () => {
+        // 32000 hm ≈ 3780 px at 300 dpi → 14.3 M px, under the 16 M cap.
+        const big = createLabelDoc({ backingW: 32000, backingH: 32000, dpi: 300 });
+        renderLabelPageMock.mockResolvedValue(fakeRenderedPage(narrowDoc(), false));
+        renderDialog({ doc: big, runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+
+        expect(screen.queryByTestId('print-raster-cap')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Print' })).toBeEnabled();
+
+        // An `outer` offset grows the canvas: 4280² ≈ 18.3 M px > the cap.
+        fireEvent.change(screen.getByLabelText('Offset X'), { target: { value: '500' } });
+        fireEvent.change(screen.getByLabelText('Offset Y'), { target: { value: '500' } });
+        fireEvent.change(screen.getByLabelText('Offset type'), { target: { value: 'outer' } });
+
+        expect(await screen.findByTestId('print-raster-cap')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Print' })).toBeDisabled();
+    });
+});
+
+describe('PrintDialog — D-28 thumbnail asset scope', () => {
+    it('hands the queue thumbnails their own scope, not the print/preview one', async () => {
+        const printAssets: AssetDeps = { resolveImage: () => null };
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf(B1_PRO),
+            assets: printAssets,
+        });
+
+        // The print scope still reaches the shared render path (page preview)…
+        await waitFor(() =>
+            expect(
+                renderLabelPageMock.mock.calls.some(
+                    ([, , opts]) =>
+                        (opts as { assets?: unknown } | undefined)?.assets === printAssets,
+                ),
+            ).toBe(true),
+        );
+
+        // …while the thumbnail hook gets a distinct provider scope object.
+        const options = usePrintThumbnailsMock.mock.calls.at(-1)![0] as { assets?: unknown };
+        expect(options.assets).toBeDefined();
+        expect(options.assets).not.toBe(printAssets);
     });
 });

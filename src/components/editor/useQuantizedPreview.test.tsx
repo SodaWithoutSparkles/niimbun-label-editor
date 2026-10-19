@@ -7,6 +7,7 @@ import type { LabelDoc, Node } from '../../core/doc/types';
 import { rasterDimensions } from '../../core/render';
 import { installCanvasShim } from '../../test/canvasHarness';
 import type { RenderedLabelPage } from '../../editor/render';
+import { useStore } from '../../store/useStore';
 import {
     QUANTIZED_PREVIEW_DEBOUNCE_MS,
     QUANTIZED_PREVIEW_IDLE_MS,
@@ -105,6 +106,9 @@ beforeEach(() => {
     vi.useFakeTimers();
     pages = [];
     renderMock = vi.fn(async () => page());
+    // The base dpi resolution reads the store; seed its defaults so a test that
+    // toggles the setting or the printer status cannot leak into the next one.
+    useStore.setState({ usePrinterDpi: true, printerStatus: { state: 'disconnected' } });
 });
 
 afterEach(() => {
@@ -189,6 +193,120 @@ describe('useQuantizedPreview — debounce and idle revert', () => {
 
         // The domain object itself, not a copy: the same row the canvas shows.
         expect(renderMock.mock.calls[0]![1]).toBe(resolveContext);
+    });
+});
+
+describe('useQuantizedPreview — the base is the resolved print dpi', () => {
+    const dpiOf = (call: number): number => (renderMock.mock.calls[call]![2] as Record<string, unknown>).dpi as number;
+
+    it('renders at the printer-reported dpi when the setting is on and one is reported', async () => {
+        // The document hints 300, the printer reports 203: the overlay is the
+        // print raster, i.e. 203 dpi — and that is not an approximation.
+        useStore.setState({ usePrinterDpi: true, printerStatus: { state: 'connected', dpi: 203 } });
+        const doc = makeDoc();
+        const { result, rerender } = mount(props(doc));
+        await act(async () => {
+            rerender(props(withThreshold(doc, 90)));
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+
+        expect(dpiOf(0)).toBe(203);
+        expect(result.current.approximate).toBe(false);
+    });
+
+    it('falls back to the document dpi hint when the setting is off', async () => {
+        useStore.setState({ usePrinterDpi: false, printerStatus: { state: 'connected', dpi: 203 } });
+        const doc = makeDoc();
+        const { rerender } = mount(props(doc));
+        await act(async () => {
+            rerender(props(withThreshold(doc, 90)));
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+
+        expect(dpiOf(0)).toBe(Math.floor(doc.label.dpi));
+    });
+
+    it('falls back to the document dpi hint when the printer reports nothing', async () => {
+        // Setting on, but the connected printer has no usable dpi: use the hint.
+        useStore.setState({ usePrinterDpi: true, printerStatus: { state: 'connected' } });
+        const doc = makeDoc();
+        const { rerender } = mount(props(doc));
+        await act(async () => {
+            rerender(props(withThreshold(doc, 90)));
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+
+        expect(dpiOf(0)).toBe(Math.floor(doc.label.dpi));
+    });
+
+    it('still applies the pixel-budget fallback below the printer base, flagged approximate', async () => {
+        // Printer base 300 dpi, but 200 × 100 mm is ~2.8 M px — over the budget —
+        // so the render must drop below the base and say so.
+        useStore.setState({ usePrinterDpi: true, printerStatus: { state: 'connected', dpi: 300 } });
+        const doc = makeDoc({ backingW: 20_000, backingH: 10_000 });
+        const { result, rerender } = mount(props(doc));
+        await act(async () => {
+            rerender(props(withThreshold(doc, 90)));
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+
+        expect(dpiOf(0)).toBeLessThan(300);
+        expect(result.current.approximate).toBe(true);
+    });
+
+    it('is not approximate when the rendered dpi equals a printer base below the hint', async () => {
+        // The old comparison used `doc.label.dpi` (the 300 hint), so a 203 dpi
+        // printer raster read as approximate even though it *is* the print raster.
+        useStore.setState({ usePrinterDpi: true, printerStatus: { state: 'connected', dpi: 203 } });
+        const doc = makeDoc();
+        expect(doc.label.dpi).not.toBe(203);
+        const { result, rerender } = mount(props(doc));
+        await act(async () => {
+            rerender(props(withThreshold(doc, 90)));
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+
+        expect(dpiOf(0)).toBe(203);
+        expect(result.current.approximate).toBe(false);
+    });
+
+    it('renders at an exact fractional base without marking it approximate', async () => {
+        // 203.4 must not be floored to 203 and then read as a degenerate raster:
+        // the overlay is the print raster at 203.4 dpi, so `approximate` is false.
+        useStore.setState({ usePrinterDpi: true, printerStatus: { state: 'connected', dpi: 203.4 } });
+        const doc = makeDoc();
+        const { result, rerender } = mount(props(doc));
+        await act(async () => {
+            rerender(props(withThreshold(doc, 90)));
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+
+        expect(dpiOf(0)).toBe(203.4);
+        expect(result.current.approximate).toBe(false);
+    });
+
+    it('hides an overlay rendered at an old base when the resolved base changes', async () => {
+        // A printer connect / `usePrinterDpi` toggle moves the base without
+        // touching the document. The overlay already on screen was rendered at the
+        // old base, so it must not stay up showing a stale raster.
+        useStore.setState({ usePrinterDpi: true, printerStatus: { state: 'connected', dpi: 300 } });
+        const doc = makeDoc();
+        const { result, rerender } = mount(props(doc));
+        await act(async () => {
+            rerender(props(withThreshold(doc, 90)));
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(result.current.active).toBe(true);
+        expect(dpiOf(0)).toBe(300);
+
+        await act(async () => {
+            useStore.setState({ printerStatus: { state: 'connected', dpi: 203 } });
+        });
+        await flush(500);
+
+        expect(result.current.active).toBe(false);
+        // The base change alone starts no new render — it only drops the stale one.
+        expect(renderMock).toHaveBeenCalledTimes(1);
     });
 });
 

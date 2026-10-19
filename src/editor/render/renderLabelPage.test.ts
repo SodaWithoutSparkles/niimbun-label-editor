@@ -18,7 +18,7 @@ import {
 } from '../../core/render';
 import { applyRegionClip } from './clip';
 import type { PreparedAsset } from './assets';
-import { buildPolicyMask, renderLabelPage } from './renderLabelPage';
+import { buildPolicyMask, offsetRasterDimensions, renderLabelPage } from './renderLabelPage';
 import { resolve } from './resolve';
 import { rasterizeResolved } from './rasterize';
 
@@ -42,6 +42,19 @@ vi.mock('./prepareAssets', async (importOriginal) => {
 
 beforeAll(() => {
     installCanvasShim();
+});
+
+describe('offsetRasterDimensions (R12 pre-flight helper)', () => {
+    it('keeps the base size for `inner` and grows it for `outer`', () => {
+        expect(offsetRasterDimensions(100, 200, { x: 30, y: -40, type: 'inner' })).toEqual({
+            widthPx: 100,
+            heightPx: 200,
+        });
+        expect(offsetRasterDimensions(100, 200, { x: 30, y: -40, type: 'outer' })).toEqual({
+            widthPx: 130,
+            heightPx: 240,
+        });
+    });
 });
 
 const node = (value: Record<string, unknown>): Node => value as unknown as Node;

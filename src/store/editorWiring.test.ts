@@ -103,3 +103,32 @@ describe('setPrintDirection', () => {
         expect(store.getState().currentDoc?.label.printDirection).toBe('top');
     });
 });
+
+describe('setLabelDpi', () => {
+    it('writes doc.label.dpi as one undoable change and clamps out-of-range input', () => {
+        const store = createAppStore();
+        store.setState({ currentDoc: doc() });
+        const before = store.getState().currentDoc!;
+        expect(before.label.dpi).toBe(300);
+
+        store.getState().setLabelDpi(203);
+        expect(store.getState().currentDoc?.label.dpi).toBe(203);
+        // Immutable update: the previous doc is replaced, not mutated in place.
+        expect(store.getState().currentDoc).not.toBe(before);
+        expect(before.label.dpi).toBe(300);
+        expect(store.getState().docPast).toHaveLength(1);
+
+        // Clamped like `normalizeDpi` (100–1200, rounded).
+        store.getState().setLabelDpi(40);
+        expect(store.getState().currentDoc?.label.dpi).toBe(100);
+        store.getState().setLabelDpi(5000);
+        expect(store.getState().currentDoc?.label.dpi).toBe(1200);
+        store.getState().setLabelDpi(203.6);
+        expect(store.getState().currentDoc?.label.dpi).toBe(204);
+
+        // No-op write does not add another undo entry.
+        const entries = store.getState().docPast.length;
+        store.getState().setLabelDpi(204);
+        expect(store.getState().docPast).toHaveLength(entries);
+    });
+});

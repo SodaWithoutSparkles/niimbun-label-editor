@@ -2,6 +2,7 @@ import type { hm } from '../../core/hm';
 import type { LabelDoc } from '../../core/doc/types';
 import type { CsvRecord } from '../../data/csvRepo';
 import { snapshotTimes, timesForSnapshot } from '../../print/printTimes';
+import type { ResolvedPrintDpi } from '../../print/resolvedDpi';
 import type { PrinterStatus } from '../../print/transport';
 
 /**
@@ -53,15 +54,25 @@ export interface RollMismatch {
     rollW?: hm;
     rollH?: hm;
     printerDpi?: number;
+    /** The dpi the print will actually use (invariant 7). */
+    resolvedDpi: number;
+    /** `true` when `resolvedDpi` is the printer-reported value, `false` for the hint. */
+    printerDpiInUse: boolean;
 }
 
 /**
  * Compare the document's configured size/dpi with the printer-reported roll
  * values. Returns `undefined` when every reported value matches (or is absent).
+ *
+ * `resolved` carries the effective print dpi (see `resolvePrintDpi`) so the
+ * single mismatch warning can say which dpi the print will use; when the
+ * reported dpi is absent the mismatch can only be a roll-size one and
+ * `printerDpiInUse` is `false`.
  */
 export const rollDpiMismatch = (
     doc: LabelDoc,
     status: PrinterStatus,
+    resolved: ResolvedPrintDpi,
 ): RollMismatch | undefined => {
     const { rollWidthHm, rollHeightHm, dpi } = status;
     const mismatch =
@@ -77,5 +88,7 @@ export const rollDpiMismatch = (
         ...(rollWidthHm !== undefined ? { rollW: rollWidthHm } : {}),
         ...(rollHeightHm !== undefined ? { rollH: rollHeightHm } : {}),
         ...(dpi !== undefined ? { printerDpi: dpi } : {}),
+        resolvedDpi: resolved.dpi,
+        printerDpiInUse: resolved.source === 'printer',
     };
 };

@@ -20,6 +20,7 @@ import {
     defaultKeyboardShortcuts,
     defaultLanguage,
     defaultToolSettings,
+    defaultUsePrinterDpi,
 } from './storeDefaults';
 import { clearLegacyPreferencesIfMigrated, readLegacyPreferences } from './legacyStorage';
 import {
@@ -30,6 +31,7 @@ import {
 /** The preference defaults, used to repair whatever `ui_settings` holds. */
 const persistedDefaults: PersistedSettings = {
     autoSave: defaultAutoSave,
+    usePrinterDpi: defaultUsePrinterDpi,
     keyboardShortcuts: defaultKeyboardShortcuts,
     toolSettings: defaultToolSettings,
     language: defaultLanguage,
@@ -149,6 +151,7 @@ export const createAppStore = (storage?: Storage) => {
                 //    land in localStorage.
                 partialize: (s) => ({
                     autoSave: s.autoSave,
+                    usePrinterDpi: s.usePrinterDpi,
                     keyboardShortcuts: s.keyboardShortcuts,
                     toolSettings: s.toolSettings,
                     language: s.language,

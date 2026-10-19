@@ -37,6 +37,7 @@ export const EditorShell: React.FC = () => {
     const isPrintOpen = useStore((state) => state.isPrintOpen);
     const closePrint = useStore((state) => state.closePrint);
     const setPrintDirection = useStore((state) => state.setPrintDirection);
+    const setLabelDpi = useStore((state) => state.setLabelDpi);
 
     // One runner for the whole app (`createJobRunner` is memoised on the shared
     // transport), so two dialogs can never run concurrently. Read it at render
@@ -114,6 +115,7 @@ export const EditorShell: React.FC = () => {
                         runner={runner}
                         printerStatus={printerStatus}
                         onPrintDirectionChange={setPrintDirection}
+                        onDpiChange={setLabelDpi}
                     />
                 )}
             </div>

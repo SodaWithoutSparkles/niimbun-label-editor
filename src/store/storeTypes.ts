@@ -132,6 +132,16 @@ export interface AppState {
     lastAutoSaveAt: number | null;
     setLastAutoSaveAt: (timestamp: number | null) => void;
 
+    // Print
+    /**
+     * Print raster dpi preference (P2). ON = render at the printer-reported dpi
+     * (falling back to the document's dpi hint when the printer reports none);
+     * OFF = always use the document's dpi hint. Persisted with the other global
+     * settings; never document data.
+     */
+    usePrinterDpi: boolean;
+    setUsePrinterDpi: (value: boolean) => void;
+
     // Keyboard Shortcuts
     keyboardShortcuts: KeyboardShortcutConfig;
     setModifyKey: (key: ModifierKey) => void;
@@ -302,6 +312,12 @@ export interface AppState {
      * entry. A no-op write (same direction) creates no history entry.
      */
     setPrintDirection: (direction: LabelDoc['label']['printDirection']) => void;
+    /**
+     * Set the document's dpi **hint** (`doc.label.dpi`) as one undo entry,
+     * clamped like `normalizeDpi` (100–1200, rounded). A no-op write creates no
+     * history entry.
+     */
+    setLabelDpi: (dpi: number) => void;
     /**
      * Attach (`{ csvId, name }`) or clear (`null`) `doc.data.csv` as one undo
      * entry. The `CsvRef` is built here as `local` with `resourceId === csvId`,

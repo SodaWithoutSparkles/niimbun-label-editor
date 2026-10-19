@@ -4,6 +4,15 @@ import type { AppState, ConnectMethod, DefaultQuantizerByType, KeyboardShortcutC
 
 export const defaultAutoSave = true;
 
+/**
+ * Print raster dpi preference (P2): render at the printer's reported dpi
+ * (`PrinterInfo.resolutionClass`) when one is known, falling back to the
+ * document's dpi hint. Default ON — a printer that reports its head dpi prints
+ * at the correct physical scale. Persisted with the other global settings;
+ * never document data.
+ */
+export const defaultUsePrinterDpi = true;
+
 export const defaultLanguage: SupportedLanguage = 'en';
 
 /**

@@ -16,6 +16,16 @@ const ASSET_WARNING_KEYS = {
 } as const;
 
 /**
+ * The dpi **source** phrase for the roll/dpi mismatch warning — a literal map
+ * for the same reason as {@link ASSET_WARNING_KEYS}: a computed key does not
+ * typecheck.
+ */
+const MISMATCH_SOURCE_KEYS = {
+    printer: 'print.warnings.mismatchSourcePrinter',
+    hint: 'print.warnings.mismatchSourceHint',
+} as const;
+
+/**
  * i18n memory: never annotate a parameter with the whole generic `t` type
  * (`ReturnType<typeof useTranslation>['t']`) — materialising it is
  * instantiation-depth-sensitive (TS2589). Close over `t` in a hook instead,
@@ -52,7 +62,15 @@ const useWarningText = (): ((warning: EditorWarning) => string) => {
             case 'print-interleaved':
                 return t('print.warnings.interleaved', { pages: warning.pages, cap: warning.cap });
             case 'print-mismatch':
-                return t('print.warnings.mismatch', { labelW: warning.labelW, labelH: warning.labelH, labelDpi: warning.labelDpi });
+                return t('print.warnings.mismatch', {
+                    labelW: warning.labelW,
+                    labelH: warning.labelH,
+                    labelDpi: warning.labelDpi,
+                    resolvedDpi: warning.resolvedDpi,
+                    source: t(
+                        MISMATCH_SOURCE_KEYS[warning.printerDpiInUse ? 'printer' : 'hint'],
+                    ),
+                });
             case 'print-policy-overflow':
                 return t('print.warnings.policyOverflow', { count: warning.count });
             case 'print-mirror-clipped':

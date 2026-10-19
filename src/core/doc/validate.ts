@@ -80,6 +80,9 @@ const PRINT_DIRECTIONS: readonly LabelDoc['label']['printDirection'][] = [
     'left',
 ];
 
+// Bounds/default for the label's dpi **hint** (`doc.label.dpi`). The print
+// raster may resolve to the printer's reported dpi instead, so these only
+// bound the stored hint.
 const DPI_MIN = 100;
 const DPI_MAX = 1200;
 const DPI_DEFAULT = 300;
@@ -91,7 +94,7 @@ const TEXT_DIRECTIONS: readonly NonNullable<TextNode['direction']>[] = ['ltr', '
 export const isHm = (value: unknown): hm | undefined =>
     isFiniteNumber(value) ? Math.round(value) : undefined;
 
-/** Clamp a dpi to a rounded integer in [100, 1200]; missing/invalid → 300. */
+/** Clamp a dpi hint to a rounded integer in [100, 1200]; missing/invalid → 300. */
 export const normalizeDpi = (value: unknown): number => {
     if (!isFiniteNumber(value)) return DPI_DEFAULT;
     return Math.min(DPI_MAX, Math.max(DPI_MIN, Math.round(value)));

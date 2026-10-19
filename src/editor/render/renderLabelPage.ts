@@ -13,6 +13,7 @@ import {
     resolveQuantizer,
     resolveQuantizerParams,
     type ColorSpace,
+    type RasterDimensions,
     type PolicyMask,
     type QuantizerByType,
     type QuantizerDefaults,
@@ -101,10 +102,11 @@ export interface RenderLabelPageOptions {
      */
     assets?: AssetDeps;
     /**
-     * Effective render dpi; defaults to `doc.label.dpi`. Drives the raster
-     * dimensions, the `hm → px` stage scale, `hmPerPx` and the policy-mask
-     * scale, so everything downstream stays on one dpi. Thumbnails render at
-     * ~100 dpi through this same path (O1).
+     * Effective render dpi. Resolution chain: `opts.dpi` → `opts.assets?.dpi`
+     * → the label's dpi hint (`doc.label.dpi`). Drives the raster dimensions,
+     * the `hm → px` stage scale, `hmPerPx` and the policy-mask scale, so
+     * everything downstream stays on one dpi. Thumbnails render at ~100 dpi
+     * through this same path (O1).
      */
     dpi?: number;
     /** Post-quantize: flip every RGB channel (`v → 255 - v`), so black ↔ white. */
@@ -155,6 +157,31 @@ export interface RenderNotice {
 
 /** Refuse to allocate absurd rasters (invariant 9). Common canvas limit is ~16M px. */
 export const MAX_RASTER_PIXELS = 16_000_000;
+
+/** The offset the raster applies last: device px + how they grow the canvas. */
+export interface RasterOffset {
+    x: number;
+    y: number;
+    type: 'inner' | 'outer';
+}
+
+/**
+ * Raster dimensions **after** the offset step. `outer` grows the canvas by the
+ * absolute offset per axis (the extra area is filled white); `inner` keeps the
+ * base size (`putImageData` clips). Pure and headless, so the print dialog's
+ * raster-cap guard can pre-flight exactly the numbers this module throws on.
+ */
+export const offsetRasterDimensions = (
+    widthPx: number,
+    heightPx: number,
+    offset: RasterOffset,
+): RasterDimensions => {
+    const outer = offset.type === 'outer';
+    return {
+        widthPx: outer ? widthPx + Math.abs(offset.x) : widthPx,
+        heightPx: outer ? heightPx + Math.abs(offset.y) : heightPx,
+    };
+};
 
 /**
  * Key colours are assigned 1-based per policy index by convention; there is
@@ -566,7 +593,7 @@ export const renderLabelPage = async (
 ): Promise<RenderedLabelPage> => {
     // Validate the effective dpi **before** resolve so a bad `opts.dpi` cannot
     // pay a full resolve/template pass (invariant 9). A caller-supplied
-    // `assets.dpi` is honoured, then the document dpi.
+    // `assets.dpi` is honoured, then the label's dpi hint (`doc.label.dpi`).
     const dpi = opts.dpi ?? opts.assets?.dpi ?? doc.label.dpi;
     if (!Number.isFinite(dpi) || dpi <= 0) {
         throw new RangeError(`renderLabelPage: dpi must be > 0 (got ${dpi})`);
@@ -602,7 +629,7 @@ export const renderLabelPage = async (
     }
     // Thread the **effective** dpi into asset preparation so a `dpi: 50`
     // thumbnail decodes image/QR/barcode assets at its own resolution instead of
-    // the full document dpi (additive: an explicit `assets.imageScale` still
+    // the full target dpi (additive: an explicit `assets.imageScale` still
     // wins; absent `dpi`, `prepareAssets` falls back to `doc.label.dpi`).
     const assetDeps: AssetDeps = { ...(opts.assets ?? {}), dpi };
     const { assets, warnings } = await prepareResolvedAssets(nodes, doc, assetDeps);
@@ -687,8 +714,11 @@ export const renderLabelPage = async (
     // canvas, matching the reference `inner`/`outer` semantics.
     const { x, y, type } = offset;
     const outer = type === 'outer';
-    const outWidthPx = outer ? widthPx + Math.abs(x) : widthPx;
-    const outHeightPx = outer ? heightPx + Math.abs(y) : heightPx;
+    const { widthPx: outWidthPx, heightPx: outHeightPx } = offsetRasterDimensions(
+        widthPx,
+        heightPx,
+        offset,
+    );
 
     // Pre-flight the offset raster before allocating (invariant 9).
     if (

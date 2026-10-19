@@ -22,6 +22,7 @@ import type {
 export type PersistedSettings = Pick<
     AppState,
     | 'autoSave'
+    | 'usePrinterDpi'
     | 'keyboardShortcuts'
     | 'toolSettings'
     | 'language'
@@ -270,6 +271,8 @@ export const validatePersistedSettings = (
 
     return {
         autoSave: normalizeBoolean(persisted.autoSave) ?? defaults.autoSave,
+        usePrinterDpi:
+            normalizeBoolean(persisted.usePrinterDpi) ?? defaults.usePrinterDpi,
         keyboardShortcuts:
             normalizeKeyboardShortcuts(persisted.keyboardShortcuts, defaults.keyboardShortcuts) ??
             defaults.keyboardShortcuts,
@@ -315,6 +318,7 @@ export const pickPersistedKeys = (
     const repaired = validatePersistedSettings(persisted, defaults);
     const picked: Partial<PersistedSettings> = {};
     if ('autoSave' in persisted) picked.autoSave = repaired.autoSave;
+    if ('usePrinterDpi' in persisted) picked.usePrinterDpi = repaired.usePrinterDpi;
     if ('keyboardShortcuts' in persisted) picked.keyboardShortcuts = repaired.keyboardShortcuts;
     if ('toolSettings' in persisted) picked.toolSettings = repaired.toolSettings;
     if ('language' in persisted) picked.language = repaired.language;

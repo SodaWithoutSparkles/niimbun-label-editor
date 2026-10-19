@@ -70,7 +70,7 @@ export interface AssetDeps {
     /**
      * Device px per hm used for the image resolution cap: never upscale past the
      * source and never allocate more than the current viewport/print needs.
-     * Defaults to the document dpi (the print requirement).
+     * Defaults to the effective render dpi (the print requirement).
      */
     imageScale?: number;
     /** Stable symbol raster scale; defaults to `imageScale` when absent. */

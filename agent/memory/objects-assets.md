@@ -39,8 +39,12 @@ from an **async prep step**, keyed by **resolved node id**:
   `AssetWarning = 'missing'|'invalid'|'too-small'`.
 - `prepareAssets.ts` — `prepareResolvedAssets(nodes, doc, deps) → {assets, warnings}`.
   `imageScale` = device px per hm (print default `dpi/HM_PER_INCH`; editor
-  `effectiveZoom * devicePixelRatio`). Decode cache is **per provider**
-  (WeakMap) and bounded; image loads are concurrency-capped.
+  `effectiveZoom * devicePixelRatio`). Decode cache is **per provider object identity**
+  (WeakMap, FIFO 32) and stores the **uncapped** decode, re-capped per call; image loads are
+  concurrency-capped. Since P2 of the 2026-10-19 run the print dialog hands the queue thumbnails
+  their **own** provider scope (`createResourceAssetProviders(resourceRepo)`), so a 100-dpi
+  thumbnail browse can no longer occupy/evict the print scope's decodes — see
+  [`print-transport.md`](print-transport.md) §Print dpi resolution.
 - `imageAssets.ts` — `decodeImageBytes` / `loadImageRef` (local via provider,
   inline, remote via `fetch` with a 15 s timeout + 20 MB cap) / `capImageAsset`
   (**aspect-preserving** `min(source, required px)`, never upscale).

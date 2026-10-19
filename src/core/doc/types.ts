@@ -292,7 +292,8 @@ export interface LabelDoc {
     label: {
         backingW: hm;
         backingH: hm;
-        dpi: number; // default 300; printer-reported; clamp 100–1200
+        // dpi hint (fallback when the printer reports no dpi); default 300; clamp 100–1200
+        dpi: number;
         regions: Region[];
         /** Non-printable editor guides (never clip, print, or join the union). */
         guides: Guide[];

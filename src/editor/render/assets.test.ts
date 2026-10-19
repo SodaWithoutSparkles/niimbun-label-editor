@@ -13,6 +13,8 @@ import { renderQr } from './qrImage';
 import { renderBarcode } from './barcodeImage';
 import { renderLabelPage } from './renderLabelPage';
 import { resolve } from './resolve';
+import { createResourceAssetProviders } from '../../components/editor/usePreparedAssets';
+import type { ResourceRepo } from '../../data/resourceRepo';
 
 beforeAll(() => {
     installCanvasShim();
@@ -968,6 +970,71 @@ describe('prepareResolvedAssets', () => {
 
         expect(providerA).toHaveBeenCalledTimes(1);
         expect(providerB).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('provider-scope isolation (D-28)', () => {
+    /**
+     * The primitive the print dialog relies on for D-28: two provider objects
+     * from the same repo are two decode scopes. The dialog's own wiring (queue
+     * thumbnails vs the print/preview pass) is covered in
+     * `components/print/PrintDialog.test.tsx`.
+     */
+    const docWithLocalImage = (): LabelDoc => {
+        const doc = createLabelDoc({
+            backingW: 3000,
+            backingH: 2000,
+            regions: [...fullRegions],
+            nodes: [imageNode('img', 0, 0, 1000, 1000)],
+        });
+        doc.resources.images.push({
+            imageId: 'i1',
+            name: 'photo',
+            source: { kind: 'local', mediaType: 'image/png', resourceId: 'r1' },
+            widthPx: 10,
+            heightPx: 10,
+        });
+        return doc;
+    };
+
+    /** A repo whose `get` counts how many times the bytes provider was asked. */
+    const countingRepo = (): { repo: ResourceRepo; get: ReturnType<typeof vi.fn> } => {
+        const bytes = new Uint8Array([1, 2, 3]);
+        const get = vi.fn(async (id: string) => ({ id, mediaType: 'image/png', bytes }));
+        return { repo: { get } as unknown as ResourceRepo, get };
+    };
+
+    it('two provider objects from the same repo decode independently (separate scopes)', async () => {
+        const doc = docWithLocalImage();
+        const nodes = resolve(doc);
+        const { repo, get } = countingRepo();
+
+        // `createResourceAssetProviders` mints a fresh `images` provider object
+        // each call — the decode cache's scope key.
+        const depsA = createResourceAssetProviders(repo);
+        const depsB = createResourceAssetProviders(repo);
+        expect(depsA.images).not.toBe(depsB.images);
+
+        const first = prepareResolvedAssets(nodes, doc, depsA);
+        const second = prepareResolvedAssets(nodes, doc, depsB);
+        await Promise.all([first, second]);
+
+        // Two scopes ask the provider twice for the same ref. A shared scope
+        // would have deduped the in-flight promise and asked once.
+        expect(get).toHaveBeenCalledTimes(2);
+    });
+
+    it('one shared provider scope decodes the same ref once', async () => {
+        const doc = docWithLocalImage();
+        const nodes = resolve(doc);
+        const { repo, get } = countingRepo();
+
+        const deps = createResourceAssetProviders(repo);
+        const first = prepareResolvedAssets(nodes, doc, deps);
+        const second = prepareResolvedAssets(nodes, doc, deps);
+        await Promise.all([first, second]);
+
+        expect(get).toHaveBeenCalledTimes(1);
     });
 });
 

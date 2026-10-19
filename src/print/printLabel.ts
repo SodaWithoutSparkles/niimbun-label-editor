@@ -46,7 +46,10 @@ export interface PrintOverrides {
     speed?: 0 | 1;
     labelType?: LabelType;
     pageColor?: PageColorType;
-    /** Effective render dpi; defaults to `doc.label.dpi`. */
+    /**
+     * Effective render dpi; the resolution chain falls back to the label's dpi
+     * hint (`doc.label.dpi`) when no caller/printer dpi is supplied.
+     */
     dpi?: number;
     /** Post-quantize: flip every RGB channel so black ↔ white. */
     invert?: boolean;

@@ -16,11 +16,11 @@ import {
  * Single-label print preview (W5 / decision D5).
  *
  * The `Page` half of the dialog's `View as` switch: **one** record rendered
- * through the shared path at the **document dpi** (`doc.label.dpi`, passed in
- * via `renderOptions`) and shown large, instead of the queue's ~100 dpi
- * thumbnail list. It deliberately does **not** touch `usePrintThumbnails`: that
- * cache is keyed by `rowIndex` alone and sized for 64 px rows, so a doc-dpi
- * raster must never enter it (R10d).
+ * through the shared path at the **resolved print dpi** (passed in via
+ * `renderOptions`) and shown large, instead of the queue's ~100 dpi thumbnail
+ * list. It deliberately does **not** touch `usePrintThumbnails`: that cache is
+ * keyed by `rowIndex` alone and sized for 64 px rows, so a full-res raster must
+ * never enter it (R10d).
  *
  * Lifecycle: exactly one render per `(doc, rowIndex, renderOptions)` identity —
  * never one per queue row. The effect latches a `cancelled` flag and drops any
@@ -77,8 +77,9 @@ export interface PrintPagePreviewProps {
     /** The record to render — the selected active row, never the whole queue. */
     rowIndex: number;
     /**
-     * Render options built by the dialog, **including `dpi`** (the document
-     * dpi). Used as the effect's identity, so it must be memoized by the caller.
+     * Render options built by the dialog, **including `dpi`** (the resolved
+     * print dpi). Used as the effect's identity, so it must be memoized by the
+     * caller.
      */
     renderOptions: RenderLabelPageOptions;
     /** Per-row async content prep (csv/template). Absent = static/fallback only. */
@@ -154,6 +155,8 @@ export const PrintPagePreview = ({
     renderOptionsRef.current = renderOptions;
 
     const optionsKey = previewOptionsKey(renderOptions);
+    /** Effective raster dpi (P2): the options' dpi when set, else the hint. */
+    const effectiveDpi = renderOptions.dpi ?? doc.label.dpi;
 
     const viewport = height !== undefined && height > 0 ? height : DEFAULT_HEIGHT;
     const zoom = PREVIEW_ZOOM_STEPS[zoomIndex] ?? 1;
@@ -289,7 +292,7 @@ export const PrintPagePreview = ({
                                 className="max-w-xs text-center text-xs text-amber-200"
                             >
                                 {failure === 'too-large'
-                                    ? t('print.previewTooLarge', { dpi: doc.label.dpi })
+                                    ? t('print.previewTooLarge', { dpi: effectiveDpi })
                                     : t('print.previewRenderError')}
                             </p>
                         )}

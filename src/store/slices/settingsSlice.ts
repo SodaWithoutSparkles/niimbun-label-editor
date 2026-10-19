@@ -13,6 +13,7 @@ import {
     defaultKeyboardShortcuts,
     defaultLanguage,
     defaultToolSettings,
+    defaultUsePrinterDpi,
 } from '../storeDefaults';
 
 /**
@@ -27,6 +28,12 @@ export const createSettingsSlice: StoreSlice = (set) => ({
         const nextAutoSave = !state.autoSave;
         return { autoSave: nextAutoSave };
     }),
+
+    // Print raster dpi preference (P2). Persisted with the other global
+    // settings; never document data. A value setter (not a toggle) because the
+    // print dialog renders a `Toggle` and reports the checked value.
+    usePrinterDpi: defaultUsePrinterDpi,
+    setUsePrinterDpi: (usePrinterDpi) => set({ usePrinterDpi }),
 
     keyboardShortcuts: defaultKeyboardShortcuts,
     setModifyKey: (key) => set((state) => {
@@ -108,6 +115,7 @@ export const createSettingsSlice: StoreSlice = (set) => ({
 
     resetSettings: () => set({
         autoSave: defaultAutoSave,
+        usePrinterDpi: defaultUsePrinterDpi,
         keyboardShortcuts: defaultKeyboardShortcuts,
         toolSettings: defaultToolSettings,
         language: defaultLanguage,

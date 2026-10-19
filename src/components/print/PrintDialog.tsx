@@ -4,10 +4,13 @@ import { LabelType, PageColorType } from '@mmote/niimbluelib';
 import { Modal } from '../common/dialogs/Modal';
 import { Input, Select, SettingRow, Toggle } from '../common/forms';
 import { rasterDimensions } from '../../core/render';
+import { normalizeDpi } from '../../core/doc/validate';
 import type { LabelDoc } from '../../core/doc/types';
 import type { CsvRecord } from '../../data/csvRepo';
 import {
     renderLabelPage,
+    MAX_RASTER_PIXELS,
+    offsetRasterDimensions,
     type AssetDeps,
     type RenderLabelPageOptions,
     type ResolveContext,
@@ -19,10 +22,12 @@ import {
 } from '../../editor/render/printOrientation';
 import { planSequence, type PrintOrder } from '../../print/sequence';
 import { buildCsvPrintJob, renderOptionsOf, type PrintOverrides } from '../../print/printLabel';
+import { resolvePrintDpi } from '../../print/resolvedDpi';
 import { LABEL_TYPE_OPTIONS } from '../../print/labelTypeNames';
 import type { JobProgress, JobRunner } from '../../print/jobRunner';
 import type { PrinterStatus } from '../../print/transport';
 import { useStore } from '../../store/useStore';
+import { createResourceAssetProviders } from '../editor/usePreparedAssets';
 import type { EditorWarning } from '../../editor/warnings';
 import {
     mergeNotices,
@@ -43,7 +48,7 @@ import {
  * Print dialog (P7 W4).
  *
  * `Modal`-based batch-print surface: a virtualized record list with ~100 dpi
- * thumbnails (`Queue`) or one doc-dpi page preview (`Page`, D5), a
+ * thumbnails (`Queue`) or one resolved-dpi page preview (`Page`, D5), a
  * capability-gated override panel, non-blocking warnings and a
  * monotonic progress bar. The print job itself comes from the shared pipeline
  * (`buildCsvPrintJob` → `planSequence` → `renderLabelPage`/`orientForPrint`,
@@ -71,6 +76,12 @@ export interface PrintDialogProps {
      * Omitted = the control still renders (read-only value) but does nothing.
      */
     onPrintDirectionChange?: (direction: LabelPrintDirection) => void;
+    /**
+     * Store-agnostic label-DPI-hint setter (P2). The off-mode DPI row reports the
+     * committed value; `EditorShell`/the dev harness persists it via
+     * `setLabelDpi`. Omitted = the box still renders but a commit is a no-op.
+     */
+    onDpiChange?: (dpi: number) => void;
 }
 
 type Outcome =
@@ -80,7 +91,7 @@ type Outcome =
 
 /**
  * `Pages` column layout (D5). `queue` = the windowed record list of ~100 dpi
- * thumbnails; `page` = one record at the document dpi (default).
+ * thumbnails; `page` = one record at the resolved print dpi (default).
  */
 export type PrintViewMode = 'queue' | 'page';
 
@@ -97,10 +108,16 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     runner,
     printerStatus,
     onPrintDirectionChange,
+    onDpiChange,
 }) => {
     const { t } = useTranslation();
     const setEditorWarnings = useStore((state) => state.setEditorWarnings);
     const clearEditorWarnings = useStore((state) => state.clearEditorWarnings);
+    // P2: render at the printer-reported dpi (default) or the document's dpi
+    // hint. The setting is persisted; the printer status arrives as a prop.
+    const usePrinterDpi = useStore((state) => state.usePrinterDpi);
+    const setUsePrinterDpi = useStore((state) => state.setUsePrinterDpi);
+    const resourceRepo = useStore((state) => state.resourceRepo);
     // Dither settings (the store's global preference). `src/print/` must stay
     // store-free, so these ride the options object into the shared render path
     // (preview, thumbnails and the print job) from here.
@@ -118,6 +135,8 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     const [offsetX, setOffsetX] = useState('0');
     const [offsetY, setOffsetY] = useState('0');
     const [offsetType, setOffsetType] = useState<'inner' | 'outer'>('inner');
+    /** Off-mode DPI box text (P2); committed to the doc's dpi hint on blur/Enter. */
+    const [dpiInput, setDpiInput] = useState('0');
     const [progress, setProgress] = useState<JobProgress | null>(null);
     const [outcome, setOutcome] = useState<Outcome | null>(null);
     const [busy, setBusy] = useState(false);
@@ -144,10 +163,18 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         setProgress(null);
         setOutcome(null);
         setBusy(false);
-        // The preview always opens on the doc-dpi single page, first record.
+        // The preview always opens on the resolved-dpi single page, first record.
         setViewMode('page');
         setSelectedPage(0);
     }, [open]);
+
+    // The off-mode DPI box tracks the document's dpi hint. Synced on open and
+    // whenever the hint changes (a commit writes it back through the parent),
+    // so the box can never show a stale value. Idempotent under StrictMode.
+    useEffect(() => {
+        if (!open) return;
+        setDpiInput(String(doc.label.dpi));
+    }, [open, doc.label.dpi]);
 
     const rows = rowCountOf(csv);
     const timesFor = useMemo(() => timesForCsv(csv), [csv]);
@@ -171,10 +198,19 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         }
     }, [rows, timesFor, order, copies]);
 
+    // P2 / invariant 7: the ONE resolved dpi the preview, the D-31 ink check and
+    // the print job all render at. `source === 'printer'` only when the reported
+    // dpi is actually in use (setting on + a usable value).
+    const resolved = resolvePrintDpi({
+        usePrinterDpi,
+        printerDpi: printerStatus.dpi,
+        docDpi: doc.label.dpi,
+    });
+
     const dims = useMemo(
         () =>
-            rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi),
-        [doc.label.backingW, doc.label.backingH, doc.label.dpi],
+            rasterDimensions(doc.label.backingW, doc.label.backingH, resolved.dpi),
+        [doc.label.backingW, doc.label.backingH, resolved.dpi],
     );
     const orientedWidthPx =
         doc.label.printDirection === 'left' || doc.label.printDirection === 'right'
@@ -186,7 +222,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         doc.label.printDirection,
         capabilities?.printheadPixels,
     );
-    const mismatch = rollDpiMismatch(doc, printerStatus);
+    const mismatch = rollDpiMismatch(doc, printerStatus, resolved);
 
     const densityMin = capabilities?.densityMin;
     const densityMax = capabilities?.densityMax;
@@ -211,6 +247,15 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         return { x, y, type: offsetType };
     }, [offsetX, offsetY, offsetType]);
 
+    // R12: the print path has no degradation, so a raster above the cap would
+    // throw mid-job. `renderLabelPage` applies the offset last, and an `outer`
+    // offset **grows** the canvas, so the guard must pre-flight the same
+    // offset-expanded dimensions the renderer allocates.
+    const capDims = parsedOffset
+        ? offsetRasterDimensions(dims.widthPx, dims.heightPx, parsedOffset)
+        : dims;
+    const rasterCapExceeded = capDims.widthPx * capDims.heightPx > MAX_RASTER_PIXELS;
+
     const thumbnailOverrides = useMemo<PrintThumbnailOverrides>(
         () => ({
             ...(invert ? { invert: true } : {}),
@@ -222,24 +267,35 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         [invert, mirror, parsedOffset, quantizerDefaults, defaultQuantizerByType],
     );
 
-    // The `Page` view renders **one** record at the **document** dpi through the
-    // same shared path (invariant 7), with the identical invert/mirror/offset
-    // split the queue thumbnails and the print job use. Deliberately not routed
-    // through `usePrintThumbnails`: that cache is keyed by `rowIndex` alone and
-    // its rasters are sized for 64 px rows, so a doc-dpi page must never enter it.
+    // The `Page` view renders **one** record at the **resolved print** dpi
+    // through the same shared path (invariant 7), with the identical
+    // invert/mirror/offset split the queue thumbnails and the print job use.
+    // Deliberately not routed through `usePrintThumbnails`: that cache is keyed
+    // by `rowIndex` alone and its rasters are sized for 64 px rows, so a
+    // full-res page must never enter it.
     // Memoized because its identity is the render effect's dependency.
     const previewRenderOptions = useMemo<RenderLabelPageOptions>(
         () => ({
-            dpi: doc.label.dpi,
+            dpi: resolved.dpi,
             ...(assets !== undefined ? { assets } : {}),
             ...thumbnailOverrides,
         }),
-        [doc.label.dpi, assets, thumbnailOverrides],
+        [resolved.dpi, assets, thumbnailOverrides],
     );
 
     const handlePreviewReport = useCallback(
         (report: PrintPreviewReport) => setPreviewReport(report),
         [],
+    );
+
+    // D-28: the queue thumbnails get their **own** provider scope. The decode
+    // cache is keyed by provider-object identity (`prepareAssets.cacheScope`), so
+    // sharing the print-job `assets` would let 100-dpi thumbnail browsing occupy
+    // and evict the print/preview decodes (one FIFO of 32). The providers carry
+    // the same repo (same font registrations); only the scope object is fresh.
+    const thumbnailAssets = useMemo(
+        () => createResourceAssetProviders(resourceRepo),
+        [resourceRepo],
     );
 
     const {
@@ -251,7 +307,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         doc,
         csv,
         prepareRow,
-        assets,
+        assets: thumbnailAssets,
         overrides: thumbnailOverrides,
         enabled: open,
     });
@@ -289,6 +345,9 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             ...(labelTypeEnabled ? { labelType: effectiveLabelType } : {}),
             // v1 prints single-colour only (spike: B1_PRO supports Single|Double).
             pageColor: PageColorType.SingleColor,
+            // Always set: the job AND the ink check render at the resolved dpi
+            // (in off mode it equals the hint, so today's output is unchanged).
+            dpi: resolved.dpi,
             ...(invert ? { invert: true } : {}),
             ...(mirror ? { mirror: true } : {}),
             ...(parsedOffset ? { offset: parsedOffset } : {}),
@@ -302,6 +361,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             speed,
             labelTypeEnabled,
             effectiveLabelType,
+            resolved.dpi,
             invert,
             mirror,
             parsedOffset,
@@ -312,8 +372,8 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
 
     // D-31: `printheadOverflow` above is only the cheap **size** trigger. A blank
     // over-width label must not warn, so once it trips we lazily render the page
-    // at the document dpi through the shared path (invariant 7) and warn only if
-    // ink actually lands past the head. `renderOptionsOf` applies the *identical*
+    // at the resolved print dpi through the shared path (invariant 7) and warn
+    // only if ink actually lands past the head. `renderOptionsOf` applies the *identical*
     // override split the print job uses, so the sample matches what would print.
     //
     // The sample uses the **first active record's** `prepareRow` context. CSV
@@ -383,7 +443,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             warnings.push({ id: 'print:overflow', kind: 'print-overflow', width: orientedWidthPx, head: capabilities.printheadPixels });
         }
         if (plan?.warning) warnings.push({ id: 'print:interleaved', kind: 'print-interleaved', pages: plan.warning.pages, cap: plan.warning.cap });
-        if (mismatch) warnings.push({ id: 'print:mismatch', kind: 'print-mismatch', labelW: mismatch.labelW, labelH: mismatch.labelH, labelDpi: mismatch.labelDpi });
+        if (mismatch) warnings.push({ id: 'print:mismatch', kind: 'print-mismatch', labelW: mismatch.labelW, labelH: mismatch.labelH, labelDpi: mismatch.labelDpi, resolvedDpi: mismatch.resolvedDpi, printerDpiInUse: mismatch.printerDpiInUse });
         if (policyOverflowCount > 0) warnings.push({ id: 'print:policy-overflow', kind: 'print-policy-overflow', count: policyOverflowCount });
         if (notices.length > 0) warnings.push({ id: 'print:mirror-clipped', kind: 'print-mirror-clipped', pixels: mirrorLostPx });
         setEditorWarnings('print', { docId: doc.meta.id, warnings });
@@ -448,13 +508,36 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         };
     });
 
-    const printDisabled = busy || runner.isBusy() || plan === null || plan.totalPages === 0;
+    const printDisabled =
+        busy || runner.isBusy() || plan === null || plan.totalPages === 0 || rasterCapExceeded;
     const hasWarnings =
         showOverflow ||
         plan?.warning !== undefined ||
         mismatch !== undefined ||
         notices.length > 0 ||
         policyOverflowCount > 0;
+
+    /**
+     * Commit the off-mode DPI box: parse, clamp like the document validator
+     * (100–1200) and report the value so the caller writes it back to
+     * `doc.label.dpi`. A blank/unparsable entry reverts to the current hint.
+     */
+    const commitDpi = (): void => {
+        const parsed = Number(dpiInput);
+        if (dpiInput.trim() === '' || !Number.isFinite(parsed)) {
+            setDpiInput(String(doc.label.dpi));
+            return;
+        }
+        const clamped = normalizeDpi(parsed);
+        // No write-back seam (a dev harness): never leave an uncommitted value
+        // on screen — revert to the document's hint.
+        if (onDpiChange === undefined) {
+            setDpiInput(String(doc.label.dpi));
+            return;
+        }
+        setDpiInput(String(clamped));
+        if (clamped !== doc.label.dpi) onDpiChange(clamped);
+    };
 
     const outcomeText = (value: Outcome): string => {
         if (value.kind === 'success') {
@@ -698,7 +781,54 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                 aria-label={t('print.mirror')}
                             />
                         </SettingRow>
-                        <SettingRow label={t('print.offset')}>
+                        <SettingRow label={t('print.usePrinterDpi')}>
+                            <Toggle
+                                checked={usePrinterDpi}
+                                onChange={setUsePrinterDpi}
+                                disabled={busy}
+                                aria-label={t('print.usePrinterDpi')}
+                            />
+                        </SettingRow>
+                        <SettingRow
+                            label={t('print.dpi')}
+                            description={
+                                usePrinterDpi
+                                    ? resolved.source === 'printer'
+                                        ? t('print.dpiDetected')
+                                        : t('print.dpiHintFallback')
+                                    : undefined
+                            }
+                        >
+                            {usePrinterDpi ? (
+                                <Input
+                                    type="number"
+                                    value={String(resolved.dpi)}
+                                    onChange={() => undefined}
+                                    disabled
+                                    className="w-20"
+                                    aria-label={t('print.dpi')}
+                                />
+                            ) : (
+                                <Input
+                                    type="number"
+                                    min={100}
+                                    max={1200}
+                                    disabled={busy}
+                                    value={dpiInput}
+                                    onChange={setDpiInput}
+                                    onBlur={commitDpi}
+                                    onKeyDown={(event) => {
+                                        if (event.key === 'Enter') commitDpi();
+                                    }}
+                                    className="w-20"
+                                    aria-label={t('print.dpi')}
+                                />
+                            )}
+                        </SettingRow>
+                        <SettingRow
+                            label={t('print.offset')}
+                            description={t('print.offsetUnit', { dpi: resolved.dpi })}
+                        >
                             <div className="flex items-center gap-2">
                                 <Input
                                     value={offsetX}
@@ -728,6 +858,20 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                         </SettingRow>
                     </section>
                 </div>
+
+                {rasterCapExceeded && (
+                    <p
+                        data-testid="print-raster-cap"
+                        role="alert"
+                        className="rounded border border-red-500 bg-red-900/40 px-3 py-2 text-sm font-medium text-red-100"
+                    >
+                        {t('print.rasterCapExceeded', {
+                            dpi: resolved.dpi,
+                            widthPx: dims.widthPx,
+                            heightPx: dims.heightPx,
+                        })}
+                    </p>
+                )}
 
                 {hasWarnings && (
                     <div className="space-y-1">
@@ -763,6 +907,12 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                     labelW: mismatch.labelW,
                                     labelH: mismatch.labelH,
                                     labelDpi: mismatch.labelDpi,
+                                    resolvedDpi: mismatch.resolvedDpi,
+                                    source: t(
+                                        mismatch.printerDpiInUse
+                                            ? 'print.warnings.mismatchSourcePrinter'
+                                            : 'print.warnings.mismatchSourceHint',
+                                    ),
                                 })}
                             </p>
                         )}

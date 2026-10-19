@@ -18,7 +18,7 @@ export type EditorWarning =
     | (WarningBase & { kind: 'csv-rows-capped'; cap: number; total: number })
     | (WarningBase & { kind: 'print-overflow'; width: number; head: number })
     | (WarningBase & { kind: 'print-interleaved'; pages: number; cap: number })
-    | (WarningBase & { kind: 'print-mismatch'; labelW: number; labelH: number; labelDpi: number })
+    | (WarningBase & { kind: 'print-mismatch'; labelW: number; labelH: number; labelDpi: number; resolvedDpi: number; printerDpiInUse: boolean })
     | (WarningBase & { kind: 'print-policy-overflow'; count: number })
     | (WarningBase & { kind: 'print-mirror-clipped'; pixels: number });
 

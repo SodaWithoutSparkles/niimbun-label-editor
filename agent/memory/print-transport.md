@@ -82,7 +82,35 @@ niim.blue passes `quantity` per `printPage` and `totalPages = pages * copies`; o
 - **Per-object quantizer policy masks:** no hint anywhere ⇒ no mask, exactly one global pass (guardrail). Painting every rendered leaf (globals = mask 0) in the same tree order as the raster gives topmost-wins.
 - **Testing:** real canvas in Vitest via `src/test/canvasHarness.ts` (`installCanvasShim()`, `@napi-rs/canvas` dev dep). Guard `src/test/canvasHarness.guard.test.ts` forbids product imports.
 
-## Narrow-roll placement (found by hardware smoke 2026-10-04; knobs shipped in P7, re-checked on hardware 2026-10-19)
+## Print dpi resolution — device-driven (P2 of the 2026-10-19 run; closes D-69)
+
+- **The chain:** `resolvePrintDpi({usePrinterDpi, printerDpi, docDpi}) → {dpi, source}` in
+  `src/print/resolvedDpi.ts` (pure). Printer is used only when the **persisted** setting
+  `usePrinterDpi` (default **on**, edited in the print dialog's Overrides panel) is on *and*
+  `PrinterStatus.dpi` is present, finite and `> 0`; otherwise the **document dpi hint**
+  (`doc.label.dpi`, UI label "DPI hint"; the stored key is unchanged, no migration).
+- **`doc.label.dpi` is no longer the raster dpi** — it is the hint/fallback. `renderLabelPage`'s
+  chain is `opts.dpi ?? opts.assets?.dpi ?? doc.label.dpi`; the dialog now always sets
+  `overrides.dpi` to the resolved value (`printLabel.ts`'s `renderOptionsOf` already honoured it),
+  which is what makes the **print job, the single-page preview, the D-31 ink check and
+  `printheadOverflow`/`orientedWidthPx` agree** (invariant 7).
+- **The raster is encoded 1:1 in printer dots** (`ImageEncoder.encodeCanvas`, no resample) — that is
+  why the render dpi must equal the head dpi: a doc hint ≠ head dpi used to print at the wrong
+  physical scale (203 on a ~300 head ≈ 0.68×). The previous behaviour is now behind the setting.
+- **Provenance (R8):** the reported `dpi` is **device status** (`PrinterInfo.resolutionClass` →
+  `dpiOf`); `printheadPixels` is **model metadata**; roll/paper dims are **NFC-tag advice**. Do not
+  conflate the three.
+- **Deliberately NOT at the effective dpi:** the gallery and print-queue thumbnails (fixed 100 dpi)
+  and the live quantized preview's 1 M px **budget fallback** (it *seeds* from the resolved dpi and
+  only drops when the raster would not fit). Treat all three as accepted approximations — a
+  head-locked halftone pitch (P4) must not be claimed for them.
+- **Offsets are device px at the effective dpi** (`renderLabelPage`'s offset stage) and are
+  dialog-local (not persisted) — the dialog now shows the effective dpi in the offset row. The
+  offset-expanded raster (`outer` → `widthPx+|x|` × `heightPx+|y|`) counts against
+  `MAX_RASTER_PIXELS`: the dialog blocks Print when the **resolved dpi** *or* an outer offset would
+  exceed the cap (`offsetRasterDimensions`, shared with the render path's own pre-flight).
+- **One mismatch warning, not two:** `rollDpiMismatch` carries `resolvedDpi` + `printerDpiInUse`, and
+  the `print-mismatch` message says which dpi the print will use (dialog + Warnings tab).
 
 Printing a **25 mm** label on the **567-dot (~48 mm)** printhead left-aligns content at the origin of the padded bit plane, so on the owner's **50×30 mm** test roll the box printed ~15.5 mm from the left edge (blank head columns), and the printer trimmed 78−30 mm at the tag boundary (IR sensor). This is transport behavior, **not** a clip/render bug (invariant 6: raster stays the backing rect). **Status:** the fix shipped in P7 — feed/label offset + centring knobs (`PrintDialog.tsx:118-120` state → `:211` `{x, y, type: offsetType}` on the print task, ported from `PrintPreview.svelte`'s `offset.{x,y,offsetType}`) plus the `printheadOverflow` warning (`:183`). **Hardware re-check 2026-10-19 (owner, B1_PRO):** content **narrower** than the loaded roll (`30×20` on a `50×30` roll) prints at `(10,0)–(40,20)` — centred horizontally, top-aligned, remaining areas empty, no unwanted underfill. Content **wider** than the loaded roll (`50×30` on a `40×30` roll) prints only the centre `40×30` and is clipped **symmetrically and silently** (5 mm lost per side, x 0–5 and x 45–50 gone). The narrow case matches `P7-SMOKE.md` §B's prediction (printer centres, no underfill warning); the wide case exposes a new gap — **D-68** (roll-width clipping, no warning).
 

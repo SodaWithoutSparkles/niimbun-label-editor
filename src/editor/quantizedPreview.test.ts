@@ -51,28 +51,43 @@ const makeDoc = (over: { dpi?: number; backingW?: number; backingH?: number } = 
     return doc;
 };
 
-describe('quantizedPreviewDpi — the pixel budget', () => {
-    it('renders at the document dpi when the raster fits the budget', () => {
-        // A small/medium label is the exact print raster: no cap, same dpi.
-        expect(quantizedPreviewDpi(makeDoc({ dpi: 300 }))).toBe(300);
-        expect(quantizedPreviewDpi(makeDoc({ dpi: 203 }))).toBe(203);
+describe('quantizedPreviewDpi — the base dpi and the pixel budget', () => {
+    it('renders at the base dpi when the raster fits the budget', () => {
+        // The caller passes the resolved print dpi: for a small/medium label the
+        // preview is the exact print raster, no cap, same dpi.
+        expect(quantizedPreviewDpi(makeDoc({ dpi: 300 }), 300)).toBe(300);
+        expect(quantizedPreviewDpi(makeDoc({ dpi: 203 }), 203)).toBe(203);
     });
 
-    it('never raises a low document dpi', () => {
-        expect(quantizedPreviewDpi(makeDoc({ dpi: 50 }))).toBe(50);
+    it('renders at the exact, unfloored base dpi when the raster fits the budget', () => {
+        // A fractional printer dpi (e.g. 203.4) must render at that dpi: flooring
+        // it here would mislabel an exact print raster as a degraded one.
+        expect(quantizedPreviewDpi(makeDoc({ dpi: 300 }), 203.4)).toBe(203.4);
     });
 
-    it('rejects a document dpi that cannot be rendered at all', () => {
-        expect(quantizedPreviewDpi(makeDoc({ dpi: 0 }))).toBe(0);
-        expect(quantizedPreviewDpi(makeDoc({ dpi: Number.NaN }))).toBe(0);
+    it('seeds from the base even when it differs from the document dpi hint', () => {
+        // The printer reported 300 dpi while the document hints 203: the base wins.
+        expect(quantizedPreviewDpi(makeDoc({ dpi: 203 }), 300)).toBe(300);
+        // And the hint is the base when no printer dpi is resolved.
+        expect(quantizedPreviewDpi(makeDoc({ dpi: 300 }), 203)).toBe(203);
+    });
+
+    it('never raises a low base dpi', () => {
+        expect(quantizedPreviewDpi(makeDoc({ dpi: 50 }), 50)).toBe(50);
+    });
+
+    it('rejects a base dpi that cannot be rendered at all', () => {
+        expect(quantizedPreviewDpi(makeDoc({ dpi: 0 }), 0)).toBe(0);
+        expect(quantizedPreviewDpi(makeDoc({ dpi: Number.NaN }), Number.NaN)).toBe(0);
+        expect(quantizedPreviewDpi(makeDoc({ dpi: 300 }), 0)).toBe(0);
     });
 
     it('lowers the dpi until the raster fits the preview pixel budget', () => {
-        // A 1 m × 1 m backing at 300 dpi is ~139 M px — 139× the budget.
+        // A 1 m × 1 m backing at a 300 dpi base is ~139 M px — 139× the budget.
         const doc = makeDoc({ dpi: 300, backingW: 100_000, backingH: 100_000 });
-        const dpi = quantizedPreviewDpi(doc);
+        const dpi = quantizedPreviewDpi(doc, 300);
         expect(dpi).toBeGreaterThan(0);
-        expect(dpi).toBeLessThan(doc.label.dpi);
+        expect(dpi).toBeLessThan(300);
         const { widthPx, heightPx } = rasterDimensions(doc.label.backingW, doc.label.backingH, dpi);
         // The whole point: the value handed to `renderLabelPage` fits the preview
         // budget (and therefore the pipeline's own `MAX_RASTER_PIXELS`).
@@ -80,24 +95,35 @@ describe('quantizedPreviewDpi — the pixel budget', () => {
         expect(widthPx * heightPx).toBeLessThanOrEqual(MAX_RASTER_PIXELS);
     });
 
-    it('keeps the full document dpi for label sizes that fit the budget', () => {
+    it('keeps the full base dpi for label sizes that fit the budget', () => {
         // 40 × 30 mm (the default) and 60 × 40 mm both fit the 1 M px budget at
         // 300 dpi, so the budget must not degrade the everyday case.
         for (const [w, h] of [
             [4000, 3000],
             [6000, 4000],
         ] as const) {
-            expect(quantizedPreviewDpi(makeDoc({ dpi: 300, backingW: w, backingH: h }))).toBe(300);
+            expect(quantizedPreviewDpi(makeDoc({ dpi: 300, backingW: w, backingH: h }), 300)).toBe(300);
         }
     });
 
-    it('returns a usable, budget-sized dpi below the document dpi when the full one would not fit', () => {
-        // 100 × 150 mm at 300 dpi is ~2.1 M px — over budget — so the fallback must
-        // drop below the document dpi but still fit.
+    it('falls back below the base dpi when the full one would not fit the budget', () => {
+        // 100 × 150 mm at a 300 dpi base is ~2.1 M px — over budget — so the
+        // fallback must drop below the base but still fit.
         const doc = makeDoc({ dpi: 300, backingW: 10_000, backingH: 15_000 });
-        const dpi = quantizedPreviewDpi(doc);
+        const dpi = quantizedPreviewDpi(doc, 300);
         expect(dpi).toBeGreaterThan(0);
-        expect(dpi).toBeLessThan(doc.label.dpi);
+        expect(dpi).toBeLessThan(300);
+        const { widthPx, heightPx } = rasterDimensions(doc.label.backingW, doc.label.backingH, dpi);
+        expect(widthPx * heightPx).toBeLessThanOrEqual(QUANTIZED_PREVIEW_MAX_PIXELS);
+    });
+
+    it('falls back strictly below a fractional base dpi (the budget is an approximation)', () => {
+        // A fractional printer base over budget still drops below that exact base.
+        // 200 × 100 mm at 203.4 dpi is ~1.28 M px — over the 1 M px budget.
+        const doc = makeDoc({ dpi: 300, backingW: 20_000, backingH: 10_000 });
+        const dpi = quantizedPreviewDpi(doc, 203.4);
+        expect(dpi).toBeGreaterThan(0);
+        expect(dpi).toBeLessThan(203.4);
         const { widthPx, heightPx } = rasterDimensions(doc.label.backingW, doc.label.backingH, dpi);
         expect(widthPx * heightPx).toBeLessThanOrEqual(QUANTIZED_PREVIEW_MAX_PIXELS);
     });
@@ -118,7 +144,7 @@ describe('quantizedPreviewDpi — the pixel budget', () => {
         // The fourth candidate still exceeds the budget: the old cap gave up here.
         expect(pixelsAt(114)).toBeGreaterThan(QUANTIZED_PREVIEW_MAX_PIXELS);
 
-        const dpi = quantizedPreviewDpi(doc);
+        const dpi = quantizedPreviewDpi(doc, 300);
         expect(dpi).toBe(100);
         expect(pixelsAt(dpi)).toBeLessThanOrEqual(QUANTIZED_PREVIEW_MAX_PIXELS);
     });
@@ -128,7 +154,7 @@ describe('quantizedPreviewDpi — the pixel budget', () => {
         const doc = makeDoc({ backingW: 4_000_000, backingH: 4_000_000 });
         const atMin = rasterDimensions(doc.label.backingW, doc.label.backingH, QUANTIZED_PREVIEW_MIN_DPI);
         expect(atMin.widthPx * atMin.heightPx).toBeGreaterThan(MAX_RASTER_PIXELS);
-        expect(quantizedPreviewDpi(doc)).toBe(0);
+        expect(quantizedPreviewDpi(doc, doc.label.dpi)).toBe(0);
     });
 });
 
@@ -167,12 +193,12 @@ describe('quantizedPreviewTrigger — what counts as tuning', () => {
 
 describe('quantizedPreviewOptions', () => {
     it('returns null when the dpi cannot be rendered', () => {
-        expect(quantizedPreviewOptions(makeDoc({ dpi: 0 }))).toBeNull();
+        expect(quantizedPreviewOptions(makeDoc({ dpi: 0 }), 0)).toBeNull();
     });
 
-    it('threads the document dpi and the store dither settings into the render options', () => {
+    it('threads the base dpi and the store dither settings into the render options', () => {
         const doc = makeDoc({ dpi: 300 });
-        const options = quantizedPreviewOptions(doc, undefined, { threshold: { gamma: 1.5 } }, { image: 'atkinson' });
+        const options = quantizedPreviewOptions(doc, 300, undefined, { threshold: { gamma: 1.5 } }, { image: 'atkinson' });
         expect(options).not.toBeNull();
         expect(options?.dpi).toBe(300);
         expect(options?.quantizerDefaults).toEqual({ threshold: { gamma: 1.5 } });
@@ -182,5 +208,12 @@ describe('quantizedPreviewOptions', () => {
         expect(options?.invert).toBeUndefined();
         expect(options?.mirror).toBeUndefined();
         expect(options?.offset).toBeUndefined();
+    });
+
+    it('renders at the passed base dpi even below the document dpi hint', () => {
+        // A printer that resolved to 203 dpi while the document hints 300: the
+        // overlay must be the print raster, i.e. 203 dpi.
+        const options = quantizedPreviewOptions(makeDoc({ dpi: 300 }), 203);
+        expect(options?.dpi).toBe(203);
     });
 });

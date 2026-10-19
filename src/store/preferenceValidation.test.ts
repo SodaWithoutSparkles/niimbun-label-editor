@@ -25,6 +25,7 @@ import {
     defaultKeyboardShortcuts,
     defaultLanguage,
     defaultToolSettings,
+    defaultUsePrinterDpi,
 } from './storeDefaults';
 
 describe('normalizeLanguage', () => {
@@ -234,6 +235,7 @@ describe('normalizeGridSpacingHm', () => {
 
 const defaults: PersistedSettings = {
     autoSave: defaultAutoSave,
+    usePrinterDpi: defaultUsePrinterDpi,
     keyboardShortcuts: defaultKeyboardShortcuts,
     toolSettings: defaultToolSettings,
     language: defaultLanguage,
@@ -265,6 +267,14 @@ describe('validatePersistedSettings', () => {
         );
         expect(result.autoSave).toBe(false);
         expect(result.language).toBe('en');
+    });
+
+    it('round-trips the usePrinterDpi preference and repairs bad types', () => {
+        expect(validatePersistedSettings({ usePrinterDpi: false }, defaults).usePrinterDpi).toBe(false);
+        expect(validatePersistedSettings({ usePrinterDpi: true }, defaults).usePrinterDpi).toBe(true);
+        // Wrong-typed / absent => the default (ON).
+        expect(validatePersistedSettings({ usePrinterDpi: 'no' }, defaults).usePrinterDpi).toBe(true);
+        expect(validatePersistedSettings({}, defaults).usePrinterDpi).toBe(defaultUsePrinterDpi);
     });
 
     it('normalizes/clamps gridSpacingHm and falls back when unusable', () => {
@@ -354,6 +364,13 @@ describe('pickPersistedKeys', () => {
         // An invalid value is repaired to the default, not dropped.
         expect(pickPersistedKeys({ connectMethod: 'wifi' }, defaults)).toEqual({ connectMethod: 'bluetooth' });
         expect('connectMethod' in pickPersistedKeys({}, defaults)).toBe(false);
+    });
+
+    it('picks usePrinterDpi only when present', () => {
+        expect(pickPersistedKeys({ usePrinterDpi: false }, defaults)).toEqual({
+            usePrinterDpi: false,
+        });
+        expect('usePrinterDpi' in pickPersistedKeys({}, defaults)).toBe(false);
     });
 
     it('picks a validated defaultPaperTypeId only when present', () => {

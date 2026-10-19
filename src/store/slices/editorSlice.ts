@@ -1,4 +1,5 @@
 import { newLabelId, roundNode } from '../../core/doc/factory';
+import { normalizeDpi } from '../../core/doc/validate';
 import { resizeNodeGeometry } from '../../core/doc/geometry';
 import { effectiveTransform, IDENTITY_MAT2D, nodeLookup, worldPreservingTransform, type Mat2D } from '../../core/doc/derive';
 import { roundHm } from '../../core/hm';
@@ -495,6 +496,18 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             if (doc.label.printDirection === direction) return;
             const next = cloneDoc(doc);
             next.label.printDirection = direction;
+            commit(next, doc);
+        },
+
+        setLabelDpi: (dpi) => {
+            const doc = get().currentDoc;
+            if (!doc) return;
+            // Clamp exactly like the document validator so a write-back cannot
+            // store a corrupt hint; a no-op change creates no undo entry.
+            const clamped = normalizeDpi(dpi);
+            if (clamped === doc.label.dpi) return;
+            const next = cloneDoc(doc);
+            next.label.dpi = clamped;
             commit(next, doc);
         },
 
