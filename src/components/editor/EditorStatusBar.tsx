@@ -4,6 +4,7 @@ import { ChevronDown } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { cn } from '../../utils/cn';
 import { realZoom } from '../../core/viewport';
+import { formatKey } from '../../utils/formatKey';
 import { useSampleRowState } from './sampleRowContext';
 
 /**
@@ -24,6 +25,9 @@ export const EditorStatusBar: React.FC = () => {
     const effectiveZoom = useStore((state) => state.effectiveZoom);
     const screenDpi = useStore((state) => state.screenDpi);
     const setSampleRowIndex = useStore((state) => state.setSampleRowIndex);
+    const renderMode = useStore((state) => state.renderMode);
+    const toggleRenderMode = useStore((state) => state.toggleRenderMode);
+    const quantizedViewKey = useStore((state) => state.keyboardShortcuts.quantizedView);
     const [rowOpen, setRowOpen] = useState(false);
     const popoverRef = useRef<HTMLDivElement>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
@@ -171,6 +175,32 @@ export const EditorStatusBar: React.FC = () => {
                 <span className="rounded border border-gray-600 bg-gray-800 px-2 py-0.5" title={t('editor.status.dpi')}>
                     {t('editor.status.dpi')}: <span className="font-medium text-white">{screenDpi}</span>
                 </span>
+
+                {/* Dithered-view toggle. A plain button (not a status role), so
+                    it reads as actionable to AT: `aria-pressed` carries the mode
+                    and the tooltip documents the Q tap/hold gesture. */}
+                <button
+                    type="button"
+                    data-testid="render-mode-toggle"
+                    aria-pressed={renderMode === 'quantized'}
+                    onClick={() => toggleRenderMode()}
+                    title={t('editor.status.renderModeTitle', { key: formatKey(quantizedViewKey, t) })}
+                    className={cn(
+                        'rounded border px-2 py-0.5 transition-colors',
+                        renderMode === 'quantized'
+                            ? 'border-blue-500 bg-blue-600 text-white hover:bg-blue-500'
+                            : 'border-gray-600 bg-gray-800 hover:bg-gray-700',
+                    )}
+                >
+                    {t('editor.status.renderMode')}:{' '}
+                    <span className="font-medium text-white">
+                        {t(
+                            renderMode === 'quantized'
+                                ? 'editor.status.renderModeQuantized'
+                                : 'editor.status.renderModeNormal',
+                        )}
+                    </span>
+                </button>
 
                 <div className="relative" ref={popoverRef}>
                     <button

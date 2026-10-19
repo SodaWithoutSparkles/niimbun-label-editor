@@ -15,6 +15,14 @@ import type { StoreSlice } from '../storeTypes';
 export type ZoomMode = 'fit' | 'real' | 'manual';
 
 /**
+ * What the preview paints: the ordinary colour canvas (`normal`) or the
+ * **printed** (dithered) raster (`quantized`). A session-only view preference —
+ * it never touches the document and is not persisted, so a reload starts
+ * normal.
+ */
+export type RenderMode = 'normal' | 'quantized';
+
+/**
  * The gallery's nav sections (ui-spec.md §2). Lifted out of `NavSidebar`'s local
  * `useState` so `MainLayout` can swap the main pane (`paper` → the paper-type
  * manager, the rest → `GalleryView`). View-only and never persisted: a reload
@@ -82,4 +90,13 @@ export const createViewSlice: StoreSlice = (set) => ({
     /** Resolved zoom, kept in sync by the Preview. */
     effectiveZoom: 0,
     setEffectiveZoom: (effectiveZoom) => set({ effectiveZoom }),
+
+    /**
+     * Colour vs dithered preview (see `RenderMode`). Session-only: the status
+     * bar chip and the Q hotkey drive it; the preview reads it. Default `normal`.
+     */
+    renderMode: 'normal',
+    setRenderMode: (renderMode) => set({ renderMode }),
+    toggleRenderMode: () =>
+        set((state) => ({ renderMode: state.renderMode === 'normal' ? 'quantized' : 'normal' })),
 });

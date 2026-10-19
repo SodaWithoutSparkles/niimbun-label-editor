@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, render } from '@testing-library/react';
 import '../../i18n';
 import { useStore } from '../../store/useStore';
+import { defaultKeyboardShortcuts } from '../../store/storeDefaults';
 import { createLabelDoc } from '../../core/doc/factory';
 import type { Node } from '../../core/doc/types';
-import { EditorKeyboardShortcuts } from './EditorKeyboardShortcuts';
+import { EditorKeyboardShortcuts, RENDER_MODE_HOLD_MS } from './EditorKeyboardShortcuts';
 
 const node = (id: string, over: Record<string, unknown> = {}): Node =>
     ({
@@ -50,6 +51,7 @@ afterEach(() => {
         isSettingsOpen: false,
         isPrintOpen: false,
         view: 'gallery',
+        renderMode: 'normal',
     });
 });
 
@@ -353,5 +355,288 @@ describe('EditorKeyboardShortcuts — arrow nudge (P4 W4)', () => {
         // swallow the nudge (x stays 0 and no undo entry is pushed).
         expect(x()).toBe(10);
         expect(useStore.getState().docPast).toHaveLength(before + 1);
+    });
+});
+
+describe('EditorKeyboardShortcuts — dithered view (bare Q)', () => {
+    const mode = () => useStore.getState().renderMode;
+    const advance = (ms: number) =>
+        act(() => {
+            vi.advanceTimersByTime(ms);
+        });
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        useStore.setState({
+            renderMode: 'normal',
+            keyboardShortcuts: defaultKeyboardShortcuts,
+            activeTool: 'select',
+        });
+    });
+
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
+    it('toggles on a tap (keyup before the hold threshold)', () => {
+        render(<EditorKeyboardShortcuts />);
+
+        const down = press('q');
+        expect(down.defaultPrevented).toBe(true);
+        advance(RENDER_MODE_HOLD_MS - 1);
+        expect(mode()).toBe('normal');
+
+        release('q');
+        expect(mode()).toBe('quantized');
+
+        press('q');
+        release('q');
+        expect(mode()).toBe('normal');
+    });
+
+    it('peeks dithered while held, then restores the previous mode on release', () => {
+        render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        // Exactly at the threshold the peek has already started.
+        advance(RENDER_MODE_HOLD_MS);
+        expect(mode()).toBe('quantized');
+
+        release('q');
+        expect(mode()).toBe('normal');
+    });
+
+    it('restores dithered when the hold started there', () => {
+        useStore.setState({ renderMode: 'quantized' });
+        render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        advance(RENDER_MODE_HOLD_MS);
+        expect(mode()).toBe('quantized');
+
+        release('q');
+        expect(mode()).toBe('quantized');
+    });
+
+    it('ignores OS auto-repeat: one press is one tap', () => {
+        render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        press('q', { repeat: true });
+        release('q');
+        expect(mode()).toBe('quantized');
+
+        // A stray second keyup is not a second tap.
+        release('q');
+        expect(mode()).toBe('quantized');
+    });
+
+    it('ignores an auto-repeat that arrives after the peek started', () => {
+        render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        advance(RENDER_MODE_HOLD_MS);
+        press('q', { repeat: true });
+        release('q');
+        expect(mode()).toBe('normal');
+    });
+
+    it('is ignored while typing in an input', () => {
+        const input = document.createElement('input');
+        document.body.appendChild(input);
+        render(<EditorKeyboardShortcuts />);
+
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', bubbles: true, cancelable: true }));
+        advance(RENDER_MODE_HOLD_MS);
+        release('q');
+        expect(mode()).toBe('normal');
+        input.remove();
+    });
+
+    it('is ignored while a modal dialog is open', () => {
+        const dialog = document.createElement('dialog');
+        dialog.setAttribute('open', '');
+        document.body.appendChild(dialog);
+        render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        advance(RENDER_MODE_HOLD_MS);
+        release('q');
+        expect(mode()).toBe('normal');
+        dialog.remove();
+    });
+
+    it('does nothing in the gallery', () => {
+        useStore.setState({ view: 'gallery' });
+        render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        release('q');
+        expect(mode()).toBe('normal');
+    });
+
+    it('cancels the pending hold on window blur (no delayed peek, no toggle)', () => {
+        render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        act(() => {
+            window.dispatchEvent(new Event('blur'));
+        });
+        advance(RENDER_MODE_HOLD_MS + 50);
+        expect(mode()).toBe('normal');
+
+        release('q');
+        expect(mode()).toBe('normal');
+    });
+
+    it('restores the mode when the window loses focus mid-peek', () => {
+        render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        advance(RENDER_MODE_HOLD_MS);
+        expect(mode()).toBe('quantized');
+
+        act(() => {
+            window.dispatchEvent(new Event('blur'));
+        });
+        expect(mode()).toBe('normal');
+
+        // The late keyup must not toggle on top of the blur restore.
+        release('q');
+        expect(mode()).toBe('normal');
+    });
+
+    it('no longer arms the rectangle tool (`q` is not a tool shortcut)', () => {
+        render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        release('q');
+        expect(useStore.getState().activeTool).toBe('select');
+
+        // The default moved to `r`.
+        press('r');
+        expect(useStore.getState().activeTool).toBe('shape:rectangle');
+    });
+
+    it('wins over a user-mapped tool shortcut on `q`', () => {
+        useStore.setState({
+            keyboardShortcuts: {
+                ...defaultKeyboardShortcuts,
+                tools: { ...defaultKeyboardShortcuts.tools, rectangle: 'q' },
+            },
+        });
+        render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        release('q');
+
+        expect(useStore.getState().activeTool).toBe('select');
+        expect(mode()).toBe('quantized');
+    });
+
+    it('uses the configured view key instead of `q`', () => {
+        useStore.setState({
+            keyboardShortcuts: { ...defaultKeyboardShortcuts, quantizedView: 'v' },
+        });
+        render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        release('q');
+        expect(mode()).toBe('normal');
+
+        press('v');
+        release('v');
+        expect(mode()).toBe('quantized');
+    });
+
+    it('still wins over a tool mapped to the configured key', () => {
+        useStore.setState({
+            keyboardShortcuts: {
+                ...defaultKeyboardShortcuts,
+                quantizedView: 'v',
+                tools: { ...defaultKeyboardShortcuts.tools, ellipse: 'v' },
+            },
+        });
+        render(<EditorKeyboardShortcuts />);
+
+        press('v');
+        release('v');
+
+        expect(useStore.getState().activeTool).toBe('select');
+        expect(mode()).toBe('quantized');
+    });
+
+    it('restores the previous mode when the editor unmounts mid-hold', () => {
+        const view = render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        advance(RENDER_MODE_HOLD_MS);
+        expect(mode()).toBe('quantized');
+
+        view.unmount();
+        expect(mode()).toBe('normal');
+
+        // The unmount cleared the timer, so nothing can flip the mode later.
+        advance(RENDER_MODE_HOLD_MS + 50);
+        expect(mode()).toBe('normal');
+    });
+
+    it('leaves an explicit chip click alone when the hold releases', () => {
+        // Start dithered: the peek changes nothing, so a single chip click to
+        // normal is the only mode change in the gesture and must survive the
+        // release (a blind restore would put dithered back).
+        useStore.setState({ renderMode: 'quantized' });
+        render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        advance(RENDER_MODE_HOLD_MS);
+        expect(mode()).toBe('quantized');
+
+        act(() => {
+            useStore.getState().toggleRenderMode();
+        });
+        expect(mode()).toBe('normal');
+
+        release('q');
+        expect(mode()).toBe('normal');
+    });
+
+    it('leaves a chip click back to normal alone after an applied peek', () => {
+        // Start normal, let the peek apply, then click the chip back to normal
+        // while the key is still down. The release must not re-apply anything.
+        render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        advance(RENDER_MODE_HOLD_MS);
+        expect(mode()).toBe('quantized');
+
+        act(() => {
+            useStore.getState().toggleRenderMode();
+        });
+        expect(mode()).toBe('normal');
+
+        release('q');
+        expect(mode()).toBe('normal');
+    });
+
+    it('does not re-apply a peek when the press started dithered', () => {
+        // The chip click lands inside the 300 ms window: the timer must not
+        // write `quantized` for a press that started there, or the click to
+        // normal is overridden on release.
+        useStore.setState({ renderMode: 'quantized' });
+        render(<EditorKeyboardShortcuts />);
+
+        press('q');
+        act(() => {
+            useStore.getState().toggleRenderMode();
+        });
+        expect(mode()).toBe('normal');
+
+        advance(RENDER_MODE_HOLD_MS);
+        expect(mode()).toBe('normal');
+
+        release('q');
+        expect(mode()).toBe('normal');
     });
 });

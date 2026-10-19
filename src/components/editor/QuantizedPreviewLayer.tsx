@@ -20,8 +20,11 @@ import { symbolSceneFunc } from '../../editor/render/konvaFactory';
  * The raster is 1-bit, so it draws **nearest-neighbour** (`symbolSceneFunc`,
  * reused from the factory) — a smoothed black/white page at a fractional zoom
  * would blend the halftone into grey and misrepresent the tone the user is
- * judging. The overlay is transient (it reverts ~1.5 s after the last change), so
- * covering the selection handles for that moment is the accepted trade-off.
+ * judging. In `normal` mode the overlay is transient (it reverts ~1.5 s after
+ * the last change), so covering the selection handles for that moment is the
+ * accepted trade-off; in the persistent dithered view (`renderMode ===
+ * 'quantized'`) it stays up until the mode is switched off, which is the point
+ * of the view.
  */
 export interface QuantizedPreviewLayerProps {
     /** The rendered page raster (a fresh canvas per render). */

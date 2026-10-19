@@ -16,10 +16,11 @@ import {
 import { previewOptionsKey, previewOverridesKey } from '../../editor/render/previewKeys';
 import { resolvePrintDpi } from '../../print/resolvedDpi';
 import { useStore } from '../../store/useStore';
+import type { RenderMode } from '../../store/slices/viewSlice';
 
 /**
  * P14 W3 — the live quantized preview's lifecycle (owner decision: the
- * **inspector knobs** are the only trigger).
+ * **inspector knobs** are the only trigger in `normal` mode).
  *
  * While a user tunes the selected node's quantization state (`quantizerHint` /
  * `quantizerParams.threshold|strength|serpentine`), the preview canvas paints the
@@ -29,6 +30,15 @@ import { useStore } from '../../store/useStore';
  * hook owns only the effects: the store reads (the resolved print dpi base), the
  * debounce, supersede, idle revert, teardown.
  *
+ * Two modes (P5 dithered-view, `renderMode`):
+ * - **`normal`** — the transient tuning peek described above: triggered by a
+ *   knob change, reverted after `QUANTIZED_PREVIEW_IDLE_MS`, dismissed on a
+ *   `revertOn` (tool) change.
+ * - **`quantized`** — the persistent dithered view: no trigger and no selection
+ *   needed, a debounced render on every `doc`/`ctxKey`/`baseDpi` change, no
+ *   idle revert and no `revertOn` dismiss. Only a document switch hides it,
+ *   until the new document's raster lands.
+ *
  * Lifecycle rules (all tested):
  * - **Seeded from the print dpi.** The plan's base is
  *   `resolvePrintDpi({ usePrinterDpi, printerDpi, docDpi: doc.label.dpi }).dpi` —
@@ -37,8 +47,9 @@ import { useStore } from '../../store/useStore';
  *   1:1" keeps holding after the print path moved to the printer dpi. The 1 M px
  *   budget may still drop *below* that base (a deliberate approximation, flagged
  *   as `approximate`). A base change (a printer connect / the `usePrinterDpi`
- *   toggle) is part of the raster's identity: an overlay rendered at the old base
- *   is hidden, and a tune in flight re-plans at the new one.
+ *   toggle) is part of the raster's identity: in `normal` mode an overlay
+ *   rendered at the old base is hidden, and a tune in flight re-plans at the new
+ *   one; in `quantized` mode it simply re-renders.
  * - **Debounced.** A burst of knob frames (a slider drag writes a transient node
  *   patch per frame) coalesces into one render per pause.
  * - **Cancelled per generation.** Every supersede (a newer change, a revert, a
@@ -48,13 +59,13 @@ import { useStore } from '../../store/useStore';
  *   sample-row override map the editor canvas resolves with), and a result is
  *   only painted while **both** its options and the content it was rendered from
  *   (document + override *values*) are still current.
- * - **Auto-revert.** The overlay lives `QUANTIZED_PREVIEW_IDLE_MS` after the last
- *   painted raster, and a non-trigger content change hides it immediately rather
- *   than leaving a stale page up.
+ * - **Auto-revert (normal mode only).** The overlay lives
+ *   `QUANTIZED_PREVIEW_IDLE_MS` after the last painted raster, and a non-trigger
+ *   content change hides it immediately rather than leaving a stale page up.
  * - **Never mutates the document.** The hook only reads `doc` and renders; it
  *   pushes no undo entry and never touches the print path's thumbnail cache
  *   (which is keyed at a different dpi).
- * - **StrictMode-idempotent.** The scheduling effect has no cleanup: a replay
+ * - **StrictMode-idempotent.** The scheduling effects have no cleanup: a replay
  *   must not drop a debounce that the first setup armed, and every dependency
  *   change path cancels or reschedules through `clearTimers`.
  */
@@ -97,9 +108,16 @@ export interface UseQuantizedPreviewOptions {
     /**
      * Any change to this value dismisses the overlay — the editor's active tool.
      * Tuning is an inspector activity; switching to a drawing tool must not leave
-     * a stale raster on the canvas.
+     * a stale raster on the canvas. **Normal mode only**: the persistent dithered
+     * view (`mode: 'quantized'`) keeps painting while the user draws.
      */
     revertOn?: string;
+    /**
+     * `normal` = the transient inspector-tune peek (default); `quantized` = the
+     * persistent dithered view (renders on every document/context/base change,
+     * never idle-reverts, ignores `revertOn`).
+     */
+    mode?: RenderMode;
     /** `false` holds no render and drops any overlay (defaults to `true`). */
     enabled?: boolean;
     /** Raster seam; defaults to the shared `renderLabelPage` (invariant 7). */
@@ -161,7 +179,7 @@ const sameContent = (
     baseDpi === content.baseDpi;
 
 export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): QuantizedPreview => {
-    const { doc, selectedNodeIds, enabled = true, revertOn, resolveContext } = options;
+    const { doc, selectedNodeIds, enabled = true, revertOn, resolveContext, mode = 'normal' } = options;
 
     const [painted, setPainted] = useState<PaintedPreview | null>(null);
 
@@ -241,7 +259,7 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
     }, []);
 
     const runRender = useCallback(
-        async (generation: number): Promise<void> => {
+        async (generation: number, persistent: boolean): Promise<void> => {
             const inputs = inputsRef.current;
             const target = inputs.doc;
             const plan = planNow();
@@ -282,11 +300,16 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
                     // dpi is not an approximation.
                     approximate: (plan.options.dpi ?? 0) < plan.baseDpi,
                 });
-                idleRef.current = setTimeout(() => {
-                    idleRef.current = null;
-                    paintedRef.current = null;
-                    setPainted(null);
-                }, QUANTIZED_PREVIEW_IDLE_MS);
+                // The persistent dithered view stays painted until the next
+                // raster replaces it (or a document switch hides it). Only the
+                // transient inspector peek auto-reverts on idle.
+                if (!persistent) {
+                    idleRef.current = setTimeout(() => {
+                        idleRef.current = null;
+                        paintedRef.current = null;
+                        setPainted(null);
+                    }, QUANTIZED_PREVIEW_IDLE_MS);
+                }
             } catch {
                 // A `RangeError` from `MAX_RASTER_PIXELS` or a bad dpi is expected
                 // input, not a crash: degrade to no overlay, never to an error.
@@ -298,30 +321,67 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
 
     const docId = doc?.meta.id ?? null;
 
-    // Dismiss on a document switch or a tool change. Declared before the
-    // scheduling effect so that, in a commit where both changed, the dismiss
-    // clears the overlay first (the scheduler never schedules into a dead
-    // context). `revert` on mount is a no-op state write.
+    // In the persistent dithered view a tool change is not a reason to stop
+    // painting; only the transient inspector peek dismisses on it.
+    const dismissOn = mode === 'quantized' ? null : revertOn;
+
+    // Dismiss on a document switch (both modes), on a tool change (normal mode
+    // only) and on a mode switch. Declared before the scheduling effects so
+    // that, in a commit where several changed, the dismiss clears the overlay
+    // first (the schedulers never schedule into a dead context). `revert` on
+    // mount is a no-op state write.
     useEffect(() => {
         revert();
-    }, [revert, docId, revertOn]);
+    }, [revert, docId, dismissOn, mode]);
 
     // Re-baseline on a document switch. The same node id can appear in two
     // documents (a duplicated label keeps its node ids), so without this a
     // switch to a doc whose node carries different params would look like a
     // tune and open a preview nobody asked for. Declared before the scheduling
-    // effect: React runs effect bodies in declaration order, so the scheduler
-    // below sees the cleared baseline in the same commit.
+    // effects: React runs effect bodies in declaration order, so the schedulers
+    // below see the cleared baseline in the same commit.
     useEffect(() => {
         previousRef.current = null;
     }, [docId]);
 
-    // The trigger. Only a change to the selected node's quantization-relevant
-    // key arms a render; a selection change baselines the new node and drops the
-    // previous node's overlay without rendering. The body also re-runs on a
-    // **content** change (`doc` identity, override values) — see the non-trigger
-    // branch below.
+    // The persistent dithered view (`mode === 'quantized'`). No trigger and no
+    // selection are needed: the mode's arrival, and every content / resolve
+    // context / base-dpi change after it, arms one debounced render. There is no
+    // idle revert (the raster stays painted until replaced) and no `revertOn`
+    // dismiss; the dismiss effect above still hides it on a document switch until
+    // the new document's raster lands.
     useEffect(() => {
+        if (!enabled) {
+            revert();
+            return;
+        }
+        if (mode !== 'quantized') return;
+        // A re-render never reads the normal-mode trigger baseline.
+        previousRef.current = null;
+        generationRef.current += 1;
+        clearTimers();
+        const generation = generationRef.current;
+        debounceRef.current = setTimeout(() => {
+            debounceRef.current = null;
+            void runRender(generation, true);
+        }, QUANTIZED_PREVIEW_DEBOUNCE_MS);
+        // No cleanup: a StrictMode setup → cleanup → setup replay must not drop
+        // the debounce the first setup armed; every dependency change either
+        // cancels or reschedules through `clearTimers`.
+    }, [enabled, mode, doc, ctxKey, baseDpi, revert, clearTimers, runRender]);
+
+    // The trigger (normal mode only). Only a change to the selected node's
+    // quantization-relevant key arms a render; a selection change baselines the
+    // new node and drops the previous node's overlay without rendering. The body
+    // also re-runs on a **content** change (`doc` identity, override values) —
+    // see the non-trigger branch below.
+    useEffect(() => {
+        if (mode !== 'normal') {
+            // The persistent view above owns the raster; never let a stale tune
+            // baseline fire when the user returns to normal mode.
+            previousRef.current = null;
+            return;
+        }
         if (!enabled || trigger === null) {
             previousRef.current = null;
             revert();
@@ -356,7 +416,7 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
         const generation = generationRef.current;
         debounceRef.current = setTimeout(() => {
             debounceRef.current = null;
-            void runRender(generation);
+            void runRender(generation, false);
         }, QUANTIZED_PREVIEW_DEBOUNCE_MS);
         // No cleanup: a StrictMode setup → cleanup → setup replay must not drop
         // the debounce the first setup armed. Every dependency change path above
@@ -364,7 +424,7 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
         // so a printer connect / `usePrinterDpi` toggle re-runs this body: it hides
         // an overlay rendered at the old base, and a tune in flight re-plans at the
         // new one (the 60 ms debounce / 1.5 s idle semantics are unchanged).
-    }, [enabled, trigger?.nodeId, trigger?.key, doc, ctxKey, baseDpi, revert, clearTimers, runRender]);
+    }, [enabled, mode, trigger?.nodeId, trigger?.key, doc, ctxKey, baseDpi, revert, clearTimers, runRender]);
 
     // Unmount: supersede in flight (a late resolve must not paint) and drop the
     // timers. Setup re-derives everything, so a StrictMode replay is harmless.

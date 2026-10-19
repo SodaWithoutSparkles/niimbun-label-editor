@@ -69,11 +69,16 @@ export const defaultKeyboardShortcuts: KeyboardShortcutConfig = {
     },
     tools: {
         select: 's',
-        rectangle: 'q',
+        // `r` for rectangle: bare `q` is the dithered-view hotkey (tap toggles
+        // normal/dithered, hold peeks), and that branch runs before this
+        // tool-shortcut loop, so a `q` mapping here could never fire.
+        rectangle: 'r',
         ellipse: 'w',
         line: 'e',
         text: 't'
-    }
+    },
+    /** Dithered-view shortcut: tap toggles, hold peeks. See `KeyboardShortcutConfig`. */
+    quantizedView: 'q'
 };
 
 export const defaultToolSettings: AppState['toolSettings'] = {

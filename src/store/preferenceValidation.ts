@@ -95,10 +95,34 @@ const isFiniteNumber = (value: unknown): value is number =>
     typeof value === 'number' && Number.isFinite(value);
 
 /**
+ * Where a persisted rectangle shortcut of `q` moves to. Before the dithered-view
+ * mode, `q` was the rectangle default; the view hotkey took that key, so an old
+ * blob is migrated rather than keeping a shortcut whose key now does something
+ * else (owner decision: replacing the existing rectangle shortcut is fine).
+ * Idempotent: `r` stays `r`.
+ */
+export const RECTANGLE_SHORTCUT_MIGRATED_TO = 'r';
+
+/**
+ * Repairs one captured key binding. Space (`' '`) is a real key, so it is
+ * accepted verbatim; every other value is trimmed (a surrounding-whitespace key
+ * could never match `event.key`) and must be non-empty to be usable.
+ */
+const normalizeKeyBinding = (value: unknown, fallback: string): string => {
+    if (!isString(value)) return fallback;
+    if (value === ' ') return value;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : fallback;
+};
+
+/**
  * Returns a fully-repaired `KeyboardShortcutConfig`, or `undefined` when the
  * value is not usable at all (not an object). Missing/wrong-typed nested fields
  * always fall back to their defaults, so a partial config keeps the other eight
  * tool shortcuts.
+ *
+ * Migrations run after the per-field fallback pass, so they are idempotent and
+ * apply to both storage paths (the `persist` merge and the legacy reader).
  */
 export const normalizeKeyboardShortcuts = (
     value: unknown,
@@ -114,6 +138,11 @@ export const normalizeKeyboardShortcuts = (
         const candidate = tools[tool];
         if (isString(candidate)) normalizedTools[tool] = candidate;
     }
+    // Migration: `q` used to be the rectangle default; the dithered-view hotkey
+    // owns it now. See `RECTANGLE_SHORTCUT_MIGRATED_TO`.
+    if (normalizedTools.rectangle.toLowerCase() === 'q') {
+        normalizedTools.rectangle = RECTANGLE_SHORTCUT_MIGRATED_TO;
+    }
 
     return {
         modifyKey: isOneOf(value.modifyKey, MODIFIER_KEYS) ? value.modifyKey : fallback.modifyKey,
@@ -125,6 +154,10 @@ export const normalizeKeyboardShortcuts = (
             key: isString(textSave.key) ? textSave.key : fallback.textSave.key,
         },
         tools: normalizedTools,
+        // A blank/non-string value is unusable (it can never be pressed), so it
+        // falls back to the default key rather than disabling the hotkey. Space
+        // (`' '`) is accepted as-is; other bindings are stored trimmed.
+        quantizedView: normalizeKeyBinding(value.quantizedView, fallback.quantizedView),
     };
 };
 

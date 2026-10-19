@@ -481,6 +481,7 @@ export const PreviewStage: React.FC = () => {
     // exactly as long as the repo identity.
     const quantizerDefaults = useStore((state) => state.quantizerDefaults);
     const defaultQuantizerByType = useStore((state) => state.defaultQuantizerByType);
+    const renderMode = useStore((state) => state.renderMode);
     const previewAssets = useMemo(() => createResourceAssetDeps(resourceRepo), [resourceRepo]);
     // The **same** resolve context the canvas resolves with (above): the overlay
     // must show the row the editor is showing, not the static/fallback path.
@@ -488,6 +489,10 @@ export const PreviewStage: React.FC = () => {
         () => (overrides ? { overrides } : {}),
         [overrides],
     );
+    // Live quantized preview (P14 W3 / P5 dithered view): in `normal` mode the
+    // overlay is the transient inspector-tune peek (triggered by a knob change,
+    // idle-reverted); in `quantized` mode it is the persistent dithered view the
+    // status-bar chip / Q hotkey switch on.
     const quantizedPreview = useQuantizedPreview({
         doc,
         selectedNodeIds,
@@ -495,8 +500,10 @@ export const PreviewStage: React.FC = () => {
         quantizerDefaults,
         defaultQuantizerByType,
         resolveContext: previewContext,
-        // A tool change leaves the tuning context: dismiss the overlay.
+        // A tool change leaves the tuning context: dismiss the transient peek
+        // (the persistent dithered view ignores this).
         revertOn: activeTool,
+        mode: renderMode,
     });
 
     const targets = useMemo<HitTestable[]>(
@@ -1868,8 +1875,9 @@ export const PreviewStage: React.FC = () => {
                 </Layer>
                 {/* Live quantized preview (P14 W3) — on top of the content so the
                     raster is unobstructed; `listening={false}`, so selection and
-                    gestures keep working underneath. Transient: it reverts ~1.5 s
-                    after the last dithering change. */}
+                    gestures keep working underneath. Transient in `normal` mode
+                    (it reverts ~1.5 s after the last dithering change); stays
+                    painted in the dithered view (`renderMode === 'quantized'`). */}
                 {quantizedPreview.image !== undefined && (
                     <QuantizedPreviewLayer
                         image={quantizedPreview.image}

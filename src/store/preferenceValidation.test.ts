@@ -10,6 +10,7 @@ import {
     normalizeQuantizerDefaults,
     normalizeToolSettings,
     pickPersistedKeys,
+    RECTANGLE_SHORTCUT_MIGRATED_TO,
     validatePersistedSettings,
     type PersistedSettings,
 } from './preferenceValidation';
@@ -234,6 +235,98 @@ describe('normalizeKeyboardShortcuts', () => {
         expect(result?.tools.select).toBe('z');
         expect(result?.tools.rectangle).toBe(defaultKeyboardShortcuts.tools.rectangle);
         expect(result?.cancelKey).toBe(defaultKeyboardShortcuts.cancelKey);
+    });
+});
+
+describe('normalizeKeyboardShortcuts — dithered-view key and migration', () => {
+    it('defaults the view key to `q` when absent or unusable', () => {
+        expect(
+            normalizeKeyboardShortcuts({ tools: { select: 'z' } }, defaultKeyboardShortcuts)?.quantizedView,
+        ).toBe('q');
+        expect(
+            normalizeKeyboardShortcuts({ quantizedView: 42 }, defaultKeyboardShortcuts)?.quantizedView,
+        ).toBe('q');
+        expect(
+            normalizeKeyboardShortcuts({ quantizedView: '   ' }, defaultKeyboardShortcuts)?.quantizedView,
+        ).toBe('q');
+    });
+
+    it('keeps a stored view key', () => {
+        expect(
+            normalizeKeyboardShortcuts({ quantizedView: 'v' }, defaultKeyboardShortcuts)?.quantizedView,
+        ).toBe('v');
+    });
+
+    it('accepts Space (` `) as a view key', () => {
+        expect(
+            normalizeKeyboardShortcuts({ quantizedView: ' ' }, defaultKeyboardShortcuts)?.quantizedView,
+        ).toBe(' ');
+    });
+
+    it('trims surrounding whitespace from a view key', () => {
+        expect(
+            normalizeKeyboardShortcuts({ quantizedView: '  q  ' }, defaultKeyboardShortcuts)?.quantizedView,
+        ).toBe('q');
+    });
+
+    it('falls back to `q` for empty / whitespace-only view keys (except exact Space)', () => {
+        for (const blank of ['', '   ', '\t', '\n']) {
+            expect(
+                normalizeKeyboardShortcuts({ quantizedView: blank }, defaultKeyboardShortcuts)
+                    ?.quantizedView,
+            ).toBe('q');
+        }
+    });
+
+    it('migrates a persisted rectangle `q` to `r`', () => {
+        const migrated = normalizeKeyboardShortcuts(
+            { tools: { rectangle: 'q' } },
+            defaultKeyboardShortcuts,
+        );
+        expect(migrated?.tools.rectangle).toBe('r');
+        expect(migrated?.tools.rectangle).toBe(RECTANGLE_SHORTCUT_MIGRATED_TO);
+        // The other tool keys are untouched.
+        expect(migrated?.tools.select).toBe(defaultKeyboardShortcuts.tools.select);
+    });
+
+    it('is idempotent: repairing the repaired blob changes nothing', () => {
+        const once = normalizeKeyboardShortcuts({ tools: { rectangle: 'q' } }, defaultKeyboardShortcuts);
+        const twice = normalizeKeyboardShortcuts(once, defaultKeyboardShortcuts);
+        expect(twice).toEqual(once);
+        // A user who picks `r` keeps it.
+        expect(
+            normalizeKeyboardShortcuts({ tools: { rectangle: 'r' } }, defaultKeyboardShortcuts)?.tools
+                .rectangle,
+        ).toBe('r');
+    });
+
+    it('keeps the view key and the migrated rectangle key distinct', () => {
+        const result = normalizeKeyboardShortcuts(
+            { tools: { rectangle: 'q' }, quantizedView: 'q' },
+            defaultKeyboardShortcuts,
+        );
+        expect(result?.tools.rectangle).toBe('r');
+        expect(result?.quantizedView).toBe('q');
+    });
+
+    it('applies the migration through validatePersistedSettings', () => {
+        const repaired = validatePersistedSettings(
+            { keyboardShortcuts: { tools: { rectangle: 'q' } } },
+            {
+                autoSave: defaultAutoSave,
+                usePrinterDpi: defaultUsePrinterDpi,
+                keyboardShortcuts: defaultKeyboardShortcuts,
+                toolSettings: defaultToolSettings,
+                language: defaultLanguage,
+                screenDpi: DEFAULT_SCREEN_DPI,
+                gridSpacingHm: DEFAULT_GRID_SPACING_HM,
+                connectMethod: DEFAULT_CONNECT_METHOD,
+                quantizerDefaults: DEFAULT_QUANTIZER_DEFAULTS,
+                defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
+            },
+        );
+        expect(repaired.keyboardShortcuts.tools.rectangle).toBe('r');
+        expect(repaired.keyboardShortcuts.quantizedView).toBe('q');
     });
 });
 

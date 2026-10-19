@@ -29,6 +29,7 @@ Pure, injectable `readLegacyPreferences(storage)` / `clearLegacyPreferences(stor
 
 `preferenceValidation.ts` holds shape validators shared by **both** paths (legacy reader and persist `merge`). A present-but-wrong-typed value (e.g. `tools.select = null`) used to poison state and crash at boot; now anything not matching the exact expected shape is treated as "missing" and falls back to default.
 - `normalizeKeyboardShortcuts` / `normalizeToolSettings` / `normalizeColors` return a fully-repaired object, or `undefined` when unusable.
+- **Value migrations inside the repair pass** (idempotent, so they run on every load and on the legacy path alike): the P5 dithered-view run remaps a persisted `keyboardShortcuts.tools.rectangle === 'q'` to `'r'` (`RECTANGLE_SHORTCUT_MIGRATED_TO`) so the new **quantized-view** shortcut (`keyboardShortcuts.quantizedView`, default `'q'`, user-editable in Settings → Shortcuts → View) gets Q. Key bindings are repaired by `normalizeKeyBinding`: Space (`' '`) is a real binding and is kept verbatim; other values are trimmed and must be non-empty, else the default.
 - `merge` uses `pickPersistedKeys`: repair the blob, but **only override keys the blob actually carries**. A key absent from the blob must fall through to `current` (the legacy seed), not reset to default. Default shallow merge would replace whole nested objects (`keyboardShortcuts`) and bypass the legacy deep merge.
 
 ## Storage robustness (`createSafeStorage`)

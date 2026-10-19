@@ -21,6 +21,30 @@ const makeStorage = (): Storage => {
     };
 };
 
+describe('quantized-view shortcut', () => {
+    it('defaults to `q` and mirrors setToolShortcut storage', () => {
+        const storage = makeStorage();
+        const store = createAppStore(storage);
+        expect(store.getState().keyboardShortcuts.quantizedView).toBe('q');
+
+        store.getState().setQuantizedViewShortcut('v');
+        expect(store.getState().keyboardShortcuts.quantizedView).toBe('v');
+        // One field changes; the tools map is untouched.
+        expect(store.getState().keyboardShortcuts.tools.rectangle).toBe('r');
+
+        // Persisted with the rest, so a reload keeps it.
+        const reloaded = createAppStore(storage);
+        expect(reloaded.getState().keyboardShortcuts.quantizedView).toBe('v');
+    });
+
+    it('resetSettings restores the default key', () => {
+        const store = createAppStore(makeStorage());
+        store.getState().setQuantizedViewShortcut('v');
+        store.getState().resetSettings();
+        expect(store.getState().keyboardShortcuts.quantizedView).toBe('q');
+    });
+});
+
 describe('usePrinterDpi setting', () => {
     it('defaults ON and persists a change across a reload', () => {
         const storage = makeStorage();

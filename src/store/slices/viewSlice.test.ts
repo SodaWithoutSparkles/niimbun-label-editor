@@ -69,6 +69,37 @@ describe('viewSlice — default view orientation (must-fix #8)', () => {    it('
     });
 });
 
+describe('viewSlice — dithered-view render mode', () => {
+    it('defaults to normal', () => {
+        expect(store().getState().renderMode).toBe('normal');
+    });
+
+    it('sets the mode explicitly', () => {
+        const s = store();
+        s.getState().setRenderMode('quantized');
+        expect(s.getState().renderMode).toBe('quantized');
+        s.getState().setRenderMode('normal');
+        expect(s.getState().renderMode).toBe('normal');
+    });
+
+    it('toggles both ways', () => {
+        const s = store();
+        s.getState().toggleRenderMode();
+        expect(s.getState().renderMode).toBe('quantized');
+        s.getState().toggleRenderMode();
+        expect(s.getState().renderMode).toBe('normal');
+    });
+
+    it('is session-only: never written to the persisted settings blob', () => {
+        const storage = makeStorage();
+        const s = createAppStore(storage);
+        s.getState().toggleRenderMode();
+        const raw = storage.getItem('ui_settings');
+        expect(raw).not.toBeNull();
+        expect(raw).not.toContain('renderMode');
+    });
+});
+
 describe('viewSlice — gallery section', () => {
     it('rests on `recent` and lifts the sidebar pick into the store', () => {
         const s = store();

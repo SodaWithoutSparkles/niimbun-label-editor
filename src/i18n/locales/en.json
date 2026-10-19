@@ -169,6 +169,9 @@
       "star": "Star",
       "text": "Text",
       "dropper": "Color Dropper",
+      "viewShortcuts": "View",
+      "quantizedView": "Quantized view",
+      "quantizedViewDescription": "Tap to toggle the dithered view; hold to peek at the printed result while held. This is the same switch as the status-bar render mode button.",
       "editing": "Editing",
       "cancelKey": "Cancel (Esc)",
       "saveText": "Save Text"
@@ -759,6 +762,10 @@
     "status": {
       "zoom": "Zoom",
       "dpi": "DPI",
+      "renderMode": "Render",
+      "renderModeNormal": "Normal",
+      "renderModeQuantized": "Dithered",
+      "renderModeTitle": "{{key}} — click or tap to toggle, hold to peek",
       "row": "Row",
       "rowOf": "Row {{index}} / {{count}}",
       "rowNoRows": "No rows in this CSV.",

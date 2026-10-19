@@ -1,7 +1,7 @@
 import type { StateCreator } from 'zustand';
 import type { SupportedLanguage } from '../i18n/languages';
 import type { InsertAction } from './slices/toolsSlice';
-import type { GallerySection, ZoomMode } from './slices/viewSlice';
+import type { GallerySection, RenderMode, ZoomMode } from './slices/viewSlice';
 import type { hm } from '../core/hm';
 import type {
     FontRef,
@@ -104,6 +104,12 @@ export interface KeyboardShortcutConfig {
         line: string;
         text: string;
     };
+    /**
+     * The status-bar dithered-view shortcut: tap toggles `renderMode`, holding
+     * peeks the printed raster. Its branch runs before the tool shortcuts, so it
+     * always wins over a tool mapped to the same key.
+     */
+    quantizedView: string;
 }
 
 export interface AppState {
@@ -148,6 +154,8 @@ export interface AppState {
     setCancelKey: (key: string) => void;
     setTextSaveShortcut: (modifier: TextSaveModifier, key: string) => void;
     setToolShortcut: (tool: keyof KeyboardShortcutConfig['tools'], key: string) => void;
+    /** Set the dithered-view key (bare, no modifiers); persisted with the rest. */
+    setQuantizedViewShortcut: (key: string) => void;
 
     // Settings / Preferences
     language: SupportedLanguage;
@@ -431,6 +439,14 @@ export interface AppState {
     /** Resolved CSS px per hm, kept in sync by the Preview. */
     effectiveZoom: number;
     setEffectiveZoom: (zoom: number) => void;
+    /**
+     * What the preview paints: the colour canvas or the printed (dithered)
+     * raster. Session-only view state (never persisted, never doc data); the
+     * status-bar chip and the Q hotkey drive it.
+     */
+    renderMode: RenderMode;
+    setRenderMode: (mode: RenderMode) => void;
+    toggleRenderMode: () => void;
 }
 
 export type StoreSlice = StateCreator<AppState, [], [], Partial<AppState>>;

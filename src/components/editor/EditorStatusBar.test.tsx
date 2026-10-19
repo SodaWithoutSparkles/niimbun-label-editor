@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '../../i18n';
 import { useStore } from '../../store/useStore';
 import { createLabelDoc } from '../../core/doc/factory';
+import { defaultKeyboardShortcuts } from '../../store/storeDefaults';
 import { SampleRowContext } from './sampleRowContext';
 import type { SampleRowState } from './useSampleRow';
 import { EditorStatusBar } from './EditorStatusBar';
@@ -110,6 +111,44 @@ describe('EditorStatusBar — sample-row navigation (BLOCKER)', () => {
         expect((screen.getByText('Next row') as HTMLButtonElement).disabled).toBe(true);
         fireEvent.click(screen.getByText('Previous row'));
         expect(useStore.getState().currentDoc!.data.sampleRowIndex).toBe(1);
+    });
+});
+
+describe('EditorStatusBar — dithered-view toggle', () => {
+    afterEach(() => {
+        useStore.setState({ renderMode: 'normal' });
+    });
+
+    it('shows the current mode and flips the store on click', () => {
+        useStore.setState({ renderMode: 'normal' });
+        renderBar(3, 0);
+
+        const chip = screen.getByTestId('render-mode-toggle');
+        expect(chip).toHaveTextContent('Normal');
+        expect(chip.getAttribute('aria-pressed')).toBe('false');
+        expect(chip.getAttribute('title')).toBe('Q — click or tap to toggle, hold to peek');
+
+        fireEvent.click(chip);
+
+        expect(useStore.getState().renderMode).toBe('quantized');
+        expect(chip).toHaveTextContent('Dithered');
+        expect(chip.getAttribute('aria-pressed')).toBe('true');
+
+        fireEvent.click(chip);
+
+        expect(useStore.getState().renderMode).toBe('normal');
+        expect(chip).toHaveTextContent('Normal');
+        expect(chip.getAttribute('aria-pressed')).toBe('false');
+    });
+
+    it('interpolates the configured view key into the title', () => {
+        useStore.setState({
+            keyboardShortcuts: { ...defaultKeyboardShortcuts, quantizedView: 'v' },
+        });
+        renderBar(3, 0);
+
+        const chip = screen.getByTestId('render-mode-toggle');
+        expect(chip.getAttribute('title')).toBe('V — click or tap to toggle, hold to peek');
     });
 });
 

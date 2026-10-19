@@ -88,7 +88,7 @@ afterEach(() => {
     cleanup();
     vi.clearAllTimers();
     vi.useRealTimers();
-    useStore.setState({ currentDoc: null, selectedNodeIds: [], activeTool: 'select' });
+    useStore.setState({ currentDoc: null, selectedNodeIds: [], activeTool: 'select', renderMode: 'normal' });
 });
 
 describe('PreviewStage — live quantized preview', () => {
@@ -196,6 +196,31 @@ describe('PreviewStage — live quantized preview', () => {
         });
         expect(screen.queryByTestId('quantized-preview-chip')).toBeNull();
         expect(stage.getLayers().length).toBe(2);
+    });
+
+    it('paints the persistent dithered view with no selection in quantized mode', async () => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: makeDoc(),
+            selectedNodeIds: [],
+            activeTool: 'select',
+            snapEnabled: false,
+            renderMode: 'quantized',
+        });
+        render(<PreviewStage />);
+        const stage = Konva.stages[Konva.stages.length - 1]!;
+        const baseLayers = stage.getLayers().length;
+        expect(screen.queryByTestId('quantized-preview-chip')).toBeNull();
+
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 50);
+        expect(screen.getByTestId('quantized-preview-chip')).toBeTruthy();
+        expect(stage.getLayers().length).toBe(baseLayers + 1);
+
+        // Persistent: no idle revert, so it is still up long past the peek's
+        // 1.5 s timeout.
+        await flush(QUANTIZED_PREVIEW_IDLE_MS + 500);
+        expect(screen.getByTestId('quantized-preview-chip')).toBeTruthy();
+        expect(stage.getLayers().length).toBe(baseLayers + 1);
     });
 
     it('prints the sample row the canvas resolves, not the static fallback', async () => {

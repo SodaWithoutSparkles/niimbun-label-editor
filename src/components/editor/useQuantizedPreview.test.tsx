@@ -641,6 +641,164 @@ describe('useQuantizedPreview — degradation', () => {
     });
 });
 
+describe('useQuantizedPreview — persistent dithered view (mode: quantized)', () => {
+    const persistent = (
+        doc: LabelDoc | null,
+        over: Partial<UseQuantizedPreviewOptions> = {},
+    ): UseQuantizedPreviewOptions => props(doc, { mode: 'quantized', ...over });
+
+    it('renders with no selection and no inspector trigger', async () => {
+        const { result } = mount(persistent(makeDoc(), { selectedNodeIds: [] }));
+        expect(renderMock).not.toHaveBeenCalled();
+
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        expect(result.current.active).toBe(true);
+        expect(result.current.image).toBe(pages[0]!.canvas);
+    });
+
+    it('stays painted past the normal-mode idle window', async () => {
+        const { result } = mount(persistent(makeDoc()));
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(result.current.active).toBe(true);
+
+        await flush(QUANTIZED_PREVIEW_IDLE_MS * 3);
+        expect(result.current.active).toBe(true);
+        expect(result.current.image).toBe(pages[0]!.canvas);
+        // No idle timer was ever armed, and nothing re-rendered.
+        expect(renderMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-renders on a document change', async () => {
+        const doc = makeDoc();
+        const edited = moved(doc);
+        const { result, rerender } = mount(persistent(doc));
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            rerender(persistent(edited));
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(2);
+        expect(renderMock.mock.calls[1]![0]).toBe(edited);
+        expect(result.current.image).toBe(pages[1]!.canvas);
+    });
+
+    it('hides on a document switch until the new raster lands', async () => {
+        const first = makeDoc();
+        const { result, rerender } = mount(persistent(first));
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(result.current.active).toBe(true);
+
+        const second = makeDoc({ id: 'doc-2' });
+        await act(async () => {
+            rerender(persistent(second));
+        });
+        // The old document's raster must never stand in for the new one.
+        expect(result.current.active).toBe(false);
+
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(result.current.active).toBe(true);
+        expect(renderMock.mock.calls[1]![0]).toBe(second);
+        expect(result.current.image).toBe(pages[1]!.canvas);
+    });
+
+    it('does not dismiss on a tool change (revertOn)', async () => {
+        const doc = makeDoc();
+        const { result, rerender } = mount(persistent(doc));
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(result.current.active).toBe(true);
+
+        await act(async () => {
+            rerender(persistent(doc, { revertOn: 'shape:polygon' }));
+        });
+        expect(result.current.active).toBe(true);
+
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        // A tool change is not content: it neither dismisses nor re-renders.
+        expect(result.current.active).toBe(true);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the pixel-budget approximation flag', async () => {
+        // 200 × 100 mm is ~2.8 M px at 300 dpi — over the 1 M px budget.
+        const { result } = mount(persistent(makeDoc({ backingW: 20_000, backingH: 10_000 })));
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(result.current.active).toBe(true);
+        expect(result.current.approximate).toBe(true);
+    });
+
+    it('re-renders on a resolve-context change (the sample row moved)', async () => {
+        const doc = makeDoc();
+        const row = (text: string) => ({ overrides: new Map([['t1', { text, placeholder: false }]]) });
+        const { result, rerender } = mount(
+            persistent(doc, { selectedNodeIds: [], resolveContext: row('Ada') }),
+        );
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+
+        const next = row('Grace');
+        await act(async () => {
+            rerender(persistent(doc, { selectedNodeIds: [], resolveContext: next }));
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(2);
+        // The latest row is what the overlay rendered.
+        expect(renderMock.mock.calls[1]![1]).toBe(next);
+        expect(result.current.active).toBe(true);
+        expect(result.current.image).toBe(pages[1]!.canvas);
+    });
+
+    it('re-renders on a resolved base-dpi change (a printer connect)', async () => {
+        useStore.setState({ usePrinterDpi: true, printerStatus: { state: 'connected', dpi: 300 } });
+        const { result } = mount(persistent(makeDoc()));
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        const dpiOf = (call: number): number =>
+            (renderMock.mock.calls[call]![2] as Record<string, unknown>).dpi as number;
+        expect(dpiOf(0)).toBe(300);
+
+        await act(async () => {
+            useStore.setState({ printerStatus: { state: 'connected', dpi: 203 } });
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+
+        // The persistent view re-plans at the new base instead of just hiding.
+        expect(renderMock).toHaveBeenCalledTimes(2);
+        expect(dpiOf(1)).toBe(203);
+        expect(result.current.active).toBe(true);
+        expect(result.current.image).toBe(pages[1]!.canvas);
+    });
+
+    it('is StrictMode-idempotent (one render per scheduling pass)', async () => {
+        const { result } = renderHook(
+            (p: UseQuantizedPreviewOptions) => useQuantizedPreview(p),
+            { initialProps: persistent(makeDoc(), { selectedNodeIds: [] }), wrapper: StrictMode },
+        );
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        expect(result.current.active).toBe(true);
+    });
+
+    it('returns to normal-mode behaviour when the mode switches back', async () => {
+        const doc = makeDoc();
+        const { result, rerender } = mount(persistent(doc));
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(result.current.active).toBe(true);
+
+        // Normal mode with a tune trigger armed: the persistent raster is
+        // dropped, and no knob change means nothing re-opens it.
+        await act(async () => {
+            rerender(props(doc));
+        });
+        expect(result.current.active).toBe(false);
+        await flush(500);
+        expect(result.current.active).toBe(false);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('useQuantizedPreview — real pipeline wiring', () => {
     beforeAll(() => {
         installCanvasShim();

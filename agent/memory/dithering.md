@@ -314,3 +314,20 @@ Commits `2b0f70a` (W1 gamma), `f2d3bc9` (W2 Ostromoukhov), `8468b54` (W3 live pr
   periodicity, strength-inert, missing-dpi throw), `renderLabelPage.screentone.test.ts` (distinct
   slots per knob, the D-64 measurement, 6 px @300 vs 4 px @203 period, strength-inert end-to-end,
   never a default), doc round-trip + UI + print-warning suites. Full suite 2361 green; `tsc` clean.
+
+### Dithered-view mode (P5 follow-up, 2026-10-20)
+
+- `renderMode: 'normal' | 'quantized'` is **session state** (view slice, not persisted). The editor
+  status bar has a toggle chip (`data-testid="render-mode-toggle"`, `aria-pressed`) next to zoom/DPI.
+- In `quantized` mode the live preview becomes **persistent**: it renders without an inspector
+  trigger, re-renders on any doc/context/base-dpi change (60 ms debounce), has **no** idle revert,
+  and is not dismissed by a tool change. Normal mode keeps the P14 behaviour (trigger = inspector
+  knobs, 1.5 s idle revert, tool-change dismiss). The 1 M px budget fallback + `approximate` flag
+  still apply.
+- **Shortcut:** `keyboardShortcuts.quantizedView` (default `q`, editable in Settings → Shortcuts →
+  View). Tap = toggle; **hold ≥300 ms = dithered while held**, release restores the mode that was
+  active at press (a status-bar click during the hold wins). Bare key only, ignored while typing /
+  a dialog is open / on auto-repeat. It is matched **before** the configurable tool shortcuts, so it
+  beats a tool mapped to the same key.
+- The rectangle tool default moved `q` → `r`; persisted settings are migrated in
+  `normalizeKeyboardShortcuts` (see `settings-store.md`).

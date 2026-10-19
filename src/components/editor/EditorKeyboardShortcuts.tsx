@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../../store/useStore';
 import { normalizeInsertAction, type InsertAction } from '../../store/slices/toolsSlice';
+import type { RenderMode } from '../../store/slices/viewSlice';
 import { effectiveLockedMap, effectiveVisibleMap, rootNodes } from '../../editor/selectors';
 import { isTypingTarget } from '../../utils/keyboardTarget';
 
@@ -12,6 +13,37 @@ import { isTypingTarget } from '../../utils/keyboardTarget';
  *
  * Only active in the editor; gallery shortcuts are unaffected.
  */
+
+/** Time the bare `Q` key must stay down before it peeks instead of toggling. */
+export const RENDER_MODE_HOLD_MS = 300;
+
+/** A bare view-key press in flight: the timer, the key, the mode to restore, and the peek state. */
+interface RenderModeHold {
+    timer: ReturnType<typeof setTimeout>;
+    /** The lowercased configured key at press time; keyup must match it. */
+    key: string;
+    /** The mode before the press; restored only when the peek is still showing. */
+    previous: RenderMode;
+    /** Set once the press outlived the threshold, i.e. it is a hold, not a tap. */
+    peeked: boolean;
+    /**
+     * Set when the peek actually changed the mode. A hold that started in the
+     * dithered view changes nothing, so there is nothing for keyup to undo.
+     */
+    applied: boolean;
+}
+
+/**
+ * Undo a peek on release/blur/unmount — but only when the mode on screen is
+ * still the one the peek produced. The status-bar chip stays clickable during a
+ * hold, so an explicit change after the peek must win over the automatic
+ * restore.
+ */
+const undoPeek = (hold: RenderModeHold): void => {
+    if (!hold.peeked || !hold.applied) return;
+    const state = useStore.getState();
+    if (state.renderMode === 'quantized') state.setRenderMode(hold.previous);
+};
 
 /** Legacy tool-shortcut ids → the one-shot insert action they arm. */
 const SHORTCUT_TO_ACTION: Record<string, InsertAction> = {
@@ -34,6 +66,8 @@ export const EditorKeyboardShortcuts = () => {
     // Escalating step for a held arrow: 0.1 mm → 1 mm → 2 mm per repeat. Reset
     // on the arrow's keyup so a fresh press restarts at the smallest step.
     const arrowRepeatRef = useRef<{ key: string; count: number } | null>(null);
+    /** The bare dithered-view tap/hold gesture in flight, if any (see its branch below). */
+    const renderModeHoldRef = useRef<RenderModeHold | null>(null);
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
@@ -136,6 +170,39 @@ export const EditorKeyboardShortcuts = () => {
                 return;
             }
 
+            // Dithered-view toggle (P5). A bare press of the **configured** view
+            // key (Settings ▸ Shortcuts ▸ View; default `q`) only, and this
+            // branch runs **before** the configurable tool-shortcut loop below,
+            // so a tool mapped to the same key can never hijack it. Tap = toggle;
+            // hold ≥ RENDER_MODE_HOLD_MS = peek the printed raster, release = back
+            // to the previous mode.
+            const viewKey = state.keyboardShortcuts.quantizedView.toLowerCase();
+            if (!mod && !event.altKey && !event.shiftKey && key === viewKey) {
+                event.preventDefault();
+                // `event.repeat` is the OS auto-repeat of a press we already own;
+                // a second keydown without a keyup is the same press.
+                if (event.repeat || renderModeHoldRef.current !== null) return;
+                const hold: RenderModeHold = {
+                    key: viewKey,
+                    previous: state.renderMode,
+                    peeked: false,
+                    applied: false,
+                    timer: setTimeout(() => {
+                        // Outlived the threshold with the key still down: peek.
+                        hold.peeked = true;
+                        // The press started in the dithered view: the peek changes
+                        // nothing, so never write `quantized` here. `applied` stays
+                        // false, so an explicit chip click to normal during the hold
+                        // survives the release/blur/unmount.
+                        if (hold.previous === 'quantized') return;
+                        hold.applied = true;
+                        useStore.getState().setRenderMode('quantized');
+                    }, RENDER_MODE_HOLD_MS),
+                };
+                renderModeHoldRef.current = hold;
+                return;
+            }
+
             if (!mod && !event.altKey && !event.shiftKey) {
                 const shortcut = state.keyboardShortcuts.tools;
                 for (const [toolId, mapped] of Object.entries(SHORTCUT_TO_ACTION)) {
@@ -152,13 +219,29 @@ export const EditorKeyboardShortcuts = () => {
 
         const handleKeyUp = (event: KeyboardEvent) => {
             if (ARROW_DELTAS[event.key]) arrowRepeatRef.current = null;
+            // Match the key this press actually started with (a remap mid-hold
+            // must not strand the gesture). A keyup always closes the gesture,
+            // even if the keydown started in a context that has since changed (a
+            // dialog opened mid-hold): the mode must never stay stuck.
+            const hold = renderModeHoldRef.current;
+            if (hold === null || event.key.toLowerCase() !== hold.key) return;
+            renderModeHoldRef.current = null;
+            clearTimeout(hold.timer);
+            if (hold.peeked) undoPeek(hold);
+            else useStore.getState().toggleRenderMode();
         };
         window.addEventListener('keyup', handleKeyUp);
 
         // A missed keyup (alt-tab, devtools, released outside the window) would
-        // otherwise leave the escalation stuck; a focus loss resets it.
+        // otherwise leave the escalation or a view peek stuck; a focus loss resets
+        // both (a peek is undone only while it is still the mode on screen).
         const handleBlur = () => {
             arrowRepeatRef.current = null;
+            const hold = renderModeHoldRef.current;
+            if (hold === null) return;
+            renderModeHoldRef.current = null;
+            clearTimeout(hold.timer);
+            undoPeek(hold);
         };
         window.addEventListener('blur', handleBlur);
 
@@ -166,6 +249,13 @@ export const EditorKeyboardShortcuts = () => {
             window.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('keyup', handleKeyUp);
             window.removeEventListener('blur', handleBlur);
+            // An editor unmount mid-hold must not leave the timer running (it
+            // would flip the store after teardown) nor a peek applied.
+            const hold = renderModeHoldRef.current;
+            if (hold === null) return;
+            renderModeHoldRef.current = null;
+            clearTimeout(hold.timer);
+            undoPeek(hold);
         };
     }, []);
 

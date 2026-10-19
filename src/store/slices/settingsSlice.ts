@@ -61,6 +61,12 @@ export const createSettingsSlice: StoreSlice = (set) => ({
         };
         return { keyboardShortcuts: nextShortcuts };
     }),
+    // The dithered-view hotkey. Sits beside the tool shortcuts because it is the
+    // same kind of binding (a bare single key), but it wins over them at runtime.
+    setQuantizedViewShortcut: (key) => set((state) => {
+        const nextShortcuts = { ...state.keyboardShortcuts, quantizedView: key };
+        return { keyboardShortcuts: nextShortcuts };
+    }),
 
     toolSettings: defaultToolSettings,
     setToolSettings: (settings) => set((state) => {

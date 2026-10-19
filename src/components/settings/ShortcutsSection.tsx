@@ -9,6 +9,8 @@ interface ShortcutInputProps {
     value: string;
     onChange: (value: string) => void;
     label: string;
+    /** Optional help text under the label (e.g. what the binding does). */
+    description?: string;
 }
 
 const normalizeKey = (key: string) => {
@@ -57,11 +59,11 @@ const captureKey = (e: React.KeyboardEvent<HTMLInputElement>, onChange: (value: 
 };
 
 /** Read-only capture field: the next non-modifier keypress is persisted. */
-const ShortcutInput: React.FC<ShortcutInputProps> = ({ value, onChange, label }) => {
+const ShortcutInput: React.FC<ShortcutInputProps> = ({ value, onChange, label, description }) => {
     const { t } = useTranslation();
     const id = useId();
     return (
-        <SettingRow label={label} htmlFor={id}>
+        <SettingRow label={label} description={description} htmlFor={id}>
             <Input
                 id={id}
                 className="w-28 text-xs"
@@ -88,6 +90,7 @@ export const ShortcutsSection: React.FC = () => {
     const setCancelKey = useStore((state) => state.setCancelKey);
     const setTextSaveShortcut = useStore((state) => state.setTextSaveShortcut);
     const setToolShortcut = useStore((state) => state.setToolShortcut);
+    const setQuantizedViewShortcut = useStore((state) => state.setQuantizedViewShortcut);
 
     const modifierOptions = useMemo<Array<{ value: ModifierKey | 'none'; label: string }>>(
         () => [
@@ -143,6 +146,18 @@ export const ShortcutsSection: React.FC = () => {
                     label={t('settings.shortcuts.text')}
                     value={keyboardShortcuts.tools.text}
                     onChange={(value) => setToolShortcut('text', value)}
+                />
+            </div>
+
+            <div>
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-400 mb-3">
+                    {t('settings.shortcuts.viewShortcuts')}
+                </h3>
+                <ShortcutInput
+                    label={t('settings.shortcuts.quantizedView')}
+                    description={t('settings.shortcuts.quantizedViewDescription')}
+                    value={keyboardShortcuts.quantizedView}
+                    onChange={(value) => setQuantizedViewShortcut(value)}
                 />
             </div>
 
