@@ -6,7 +6,7 @@
 
 ## Sources (authoritative order)
 
-1. `docs/references/chat-export-1790619789248.json` — original design dialogue, plan v0→v0.3. v0.2 blueprint (node tree, RGBA pipeline, world coords, region clipping, trust boundary) + v0.3 verified printer flow are the architectural baseline.
+1. `docs/references/chat-export-1790619789248.json` — original design dialogue, plan v0→v0.3. v0.2 blueprint (node tree, RGBA pipeline, world coords, region clipping, trust boundary) + v0.3 verified printer flow are the architectural baseline. *(Not published — the transcript was removed from the public history; kept in the private archive.)*
 2. `docs/references/gpt-review.md` — external critique + owner resolutions. Resolves the chat's open conflicts (see Decisions).
 3. Existing skeleton survey (2026-09-29) — `src/` is a drawing-app template; reuse map below.
 4. Owner decisions 2026-09-29 — red/black post-v1 (mono dithering stays in v1); keep shell + strip; semantic commits per phase.
