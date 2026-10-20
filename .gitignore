@@ -28,3 +28,4 @@ dist-ssr
 
 # Agent runs
 agent/*/state.md
+agent/memory/public-release.md
