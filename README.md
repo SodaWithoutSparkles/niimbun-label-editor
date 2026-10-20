@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="src/assets/img/niimbun.png" width="128" alt="niimbun" />
+</p>
+
 # niimbun-label-editor
 
 A browser-based label editor for NIIMBOT thermal printers.
