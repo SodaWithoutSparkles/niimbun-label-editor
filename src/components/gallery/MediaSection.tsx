@@ -96,21 +96,29 @@ export const MediaSection: React.FC = () => {
     };
 
     /**
-     * Delete every resource no document references (W4). Confirmed once for the
-     * whole batch; each `remove` notifies on failure (never silent), and the
-     * sweep is reloaded so the badges/action reflect the new store.
+     * Delete every media record no document references (W4, hardened in the
+     * 2026-10-22 storage-safety run). Confirmed once for the whole batch; after
+     * the confirm the sweep is re-run and only the ids that are **still**
+     * orphans in that fresh, complete inventory are removed. A stale or
+     * unprovable inventory deletes nothing.
      */
     const handleDeleteUnused = async () => {
         if (orphanIds.length === 0) return;
+        const shown = orphanIds;
         const ok = await confirm({
             danger: true,
-            message: t('media.deleteUnusedConfirm', { count: orphanIds.length }),
+            message: t('media.deleteUnusedConfirm', { count: shown.length }),
         });
         if (!ok) return;
-        for (const id of orphanIds) {
+        const fresh = await orphans.reload();
+        if (!fresh || !fresh.complete) {
+            addNotification({ type: 'error', message: t('media.orphanReadError') });
+            return;
+        }
+        const deletable = shown.filter((id) => fresh.resourceIds.has(id));
+        for (const id of deletable) {
             await remove(id);
         }
-        await orphans.reload();
     };
 
     const handleRename = async (name: string): Promise<boolean> => {
@@ -140,7 +148,7 @@ export const MediaSection: React.FC = () => {
             }}
             status={status}
             actions={
-                orphans.error ? (
+                !orphans.complete ? (
                     <span role="alert" className="text-xs text-red-400">
                         {t('media.orphanReadError')}
                     </span>

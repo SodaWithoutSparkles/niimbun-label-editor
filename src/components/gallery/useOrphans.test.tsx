@@ -11,9 +11,10 @@ import { useStore } from '../../store/useStore';
 import { useOrphans } from './useOrphans';
 
 /**
- * `useOrphans` (phase 9, W4): the O(docs) `get()`-per-document sweep. A fake
- * `labelRepo` returns documents directly (no gzip), so the ref-collection and
- * the resilience rules are pinned without a real storage backend.
+ * `useOrphans` (phase 9, W4; hardened in the 2026-10-22 storage-safety run).
+ * The O(docs) `get()`-per-document sweep. A fake `labelRepo` returns documents
+ * directly (no gzip), so the ref-collection and the resilience rules are pinned
+ * without a real storage backend.
  */
 
 const localImage = (imageId: string, resourceId: string): ImageRef => ({
@@ -31,27 +32,35 @@ const doc = (id: string, build?: (next: LabelDoc) => void): LabelDoc => {
     return next;
 };
 
+const summaryOf = (label: LabelDoc): LabelSummary => ({
+    id: label.meta.id,
+    name: label.meta.name,
+    createdAt: label.meta.createdAt,
+    updatedAt: label.meta.updatedAt,
+    backingW: label.label.backingW,
+    backingH: label.label.backingH,
+});
+
 /** A fake repo exposing only what the sweep uses; extra methods are unused. */
 const fakeLabelRepo = (docs: readonly LabelDoc[], getOverride?: LabelRepo['get']): LabelRepo => {
-    const byId = new Map(docs.map((d) => [d.meta.id, d]));
+    const byId = new Map(docs.map((label) => [label.meta.id, label]));
     return {
-        list: vi.fn(async (): Promise<LabelSummary[]> =>
-            docs.map((d) => ({
-                id: d.meta.id,
-                name: d.meta.name,
-                createdAt: d.meta.createdAt,
-                updatedAt: d.meta.updatedAt,
-                backingW: d.label.backingW,
-                backingH: d.label.backingH,
-            })),
-        ),
+        listDetailed: vi.fn(async () => ({ ok: docs.map(summaryOf), errors: [] })),
         get: getOverride ?? vi.fn(async (id: string) => byId.get(id) ?? null),
     } as unknown as LabelRepo;
 };
 
 afterEach(() => {
     cleanup();
-    useStore.setState({ labelRepo: null, csvRepo: null, resourceRepo: null, notifications: [] });
+    useStore.setState({
+        labelRepo: null,
+        csvRepo: null,
+        resourceRepo: null,
+        currentDoc: null,
+        docPast: [],
+        docFuture: [],
+        notifications: [],
+    });
 });
 
 describe('useOrphans', () => {
@@ -61,7 +70,7 @@ describe('useOrphans', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
         expect(result.current.csvIds.size).toBe(0);
         expect(result.current.resourceIds.size).toBe(0);
-        expect(result.current.error).toBe(false);
+        expect(result.current.complete).toBe(true);
     });
 
     it('computes the orphan sets from the documents and the two stores', async () => {
@@ -112,12 +121,43 @@ describe('useOrphans', () => {
         const { result } = renderHook(() => useOrphans());
         await waitFor(() => expect(result.current.loading).toBe(false));
 
-        expect(result.current.error).toBe(false);
+        expect(result.current.complete).toBe(true);
         expect([...result.current.csvIds]).toEqual(['csv-b']);
         expect([...result.current.resourceIds]).toEqual(['res-b']);
     });
 
-    it('skips a document whose get() rejects and still resolves', async () => {
+    it('protects a CSV held only by the open (unsaved) document', async () => {
+        const csvRepo = createCsvRepo(createMemoryAdapter());
+        await csvRepo.put({ id: 'csv-live', name: 'Live', columns: ['x'], rows: [['1']] });
+        await csvRepo.put({ id: 'csv-old', name: 'Old', columns: ['y'], rows: [['2']] });
+
+        // Autosave off: the attached CSV exists only in `currentDoc`, never in
+        // the label store.
+        const live = doc('doc-live', (d) => {
+            d.data.csv = {
+                csvId: 'csv-live',
+                name: 'Live',
+                source: { kind: 'local', mediaType: 'text/csv', resourceId: 'csv-live' },
+            };
+        });
+        useStore.setState({
+            labelRepo: fakeLabelRepo([]),
+            csvRepo,
+            resourceRepo: createResourceRepo(createMemoryAdapter()),
+            currentDoc: live,
+            autoSave: false,
+        });
+
+        const { result } = renderHook(() => useOrphans());
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        expect(result.current.complete).toBe(true);
+        // The live doc's ref is protected; only the truly unused table is an
+        // orphan.
+        expect([...result.current.csvIds]).toEqual(['csv-old']);
+    });
+
+    it('marks the inventory incomplete when a get() rejects, but still resolves', async () => {
         const csvRepo = createCsvRepo(createMemoryAdapter());
         await csvRepo.put({ id: 'csv-keep', name: 'K', columns: ['x'], rows: [['1']] });
 
@@ -144,17 +184,18 @@ describe('useOrphans', () => {
         const { result } = renderHook(() => useOrphans());
         await waitFor(() => expect(result.current.loading).toBe(false));
 
-        // The good doc's csv is referenced; the throwing doc did not abort the
-        // sweep or mark it as an error.
-        expect(result.current.error).toBe(false);
+        // The good doc's csv is protected, the throwing doc did not abort the
+        // sweep — but the inventory cannot be proven complete.
+        expect(result.current.complete).toBe(false);
         expect(result.current.csvIds.size).toBe(0);
     });
 
-    it('flips error when labelRepo.list() rejects', async () => {
+    it('marks the inventory incomplete when listDetailed() reports errors', async () => {
         const repo = fakeLabelRepo([]);
-        repo.list = vi.fn(async () => {
-            throw new Error('idb read failed');
-        });
+        repo.listDetailed = vi.fn(async () => ({
+            ok: [],
+            errors: [{ id: '', error: 'idb read failed' }],
+        }));
         useStore.setState({
             labelRepo: repo,
             csvRepo: createCsvRepo(createMemoryAdapter()),
@@ -162,8 +203,9 @@ describe('useOrphans', () => {
         });
 
         const { result } = renderHook(() => useOrphans());
-        await waitFor(() => expect(result.current.error).toBe(true));
+        await waitFor(() => expect(result.current.complete).toBe(false));
         expect(result.current.loading).toBe(false);
+        // Nothing may be offered for deletion from an unproven inventory.
         expect(result.current.csvIds.size).toBe(0);
         expect(result.current.resourceIds.size).toBe(0);
     });

@@ -208,7 +208,7 @@ describe('CsvSection', () => {
             source: { kind: 'local', mediaType: 'text/csv', resourceId: 'c1' },
         };
         const labelRepo = {
-            list: vi.fn(async () => [{ id: 'd1' }]),
+            listDetailed: vi.fn(async () => ({ ok: [{ id: 'd1' }], errors: [] })),
             get: vi.fn(async () => doc),
         } as unknown as LabelRepo;
 
@@ -230,5 +230,27 @@ describe('CsvSection', () => {
         expect(screen.getByText('Products')).toBeInTheDocument();
         expect(await repo.has('c2')).toBe(false);
         expect(await repo.has('c1')).toBe(true);
+    });
+
+    it('hides the unused-cleanup action when the reference scan is incomplete (#4)', async () => {
+        const repo = createCsvRepo(createMemoryAdapter());
+        await repo.put(record('c1', 'Scratch', ['n'], [['1']]));
+
+        // The label store cannot be read: nothing may be offered for deletion.
+        const labelRepo = {
+            listDetailed: vi.fn(async () => ({
+                ok: [],
+                errors: [{ id: '', error: 'idb read failed' }],
+            })),
+            get: vi.fn(async () => null),
+        } as unknown as LabelRepo;
+
+        useStore.setState({ csvRepo: repo, labelRepo });
+        render(<CsvSection />);
+
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+            'Could not check for unused CSV tables.',
+        );
+        expect(screen.queryByRole('button', { name: /Delete unused/ })).not.toBeInTheDocument();
     });
 });

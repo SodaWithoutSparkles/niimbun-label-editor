@@ -177,7 +177,7 @@ describe('MediaSection', () => {
             },
         ];
         const labelRepo = {
-            list: vi.fn(async () => [{ id: 'd1' }]),
+            listDetailed: vi.fn(async () => ({ ok: [{ id: 'd1' }], errors: [] })),
             get: vi.fn(async () => doc),
         } as unknown as LabelRepo;
 
@@ -225,7 +225,7 @@ describe('MediaSection', () => {
 
         const docs: Record<string, LabelDoc> = { d1: docA, d2: docB };
         const labelRepo = {
-            list: vi.fn(async () => [{ id: 'd1' }, { id: 'd2' }]),
+            listDetailed: vi.fn(async () => ({ ok: [{ id: 'd1' }, { id: 'd2' }], errors: [] })),
             get: vi.fn(async (id: string) => docs[id]),
         } as unknown as LabelRepo;
 
@@ -247,5 +247,25 @@ describe('MediaSection', () => {
         expect(screen.getByText('Shared Logo')).toBeInTheDocument();
         expect(await repo.has('shared')).toBe(true);
         expect(await repo.has('orphan')).toBe(false);
+    });
+
+    it('hides the unused-cleanup action when the reference scan is incomplete (#4)', async () => {
+        const repo = createResourceRepo(createMemoryAdapter());
+        await repo.put(record('r1', 'image/png', 'Old Photo'));
+
+        // The label store cannot be read: nothing may be offered for deletion.
+        const labelRepo = {
+            listDetailed: vi.fn(async () => ({
+                ok: [],
+                errors: [{ id: '', error: 'idb read failed' }],
+            })),
+            get: vi.fn(async () => null),
+        } as unknown as LabelRepo;
+
+        useStore.setState({ resourceRepo: repo, labelRepo });
+        render(<MediaSection />);
+
+        expect(await screen.findByRole('alert')).toHaveTextContent('Could not check for unused media.');
+        expect(screen.queryByRole('button', { name: /Delete unused/ })).not.toBeInTheDocument();
     });
 });
