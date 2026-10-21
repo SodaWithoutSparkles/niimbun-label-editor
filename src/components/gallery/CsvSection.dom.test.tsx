@@ -232,6 +232,171 @@ describe('CsvSection', () => {
         expect(await repo.has('c1')).toBe(true);
     });
 
+    it('warns in-use before deleting a referenced table, and keeps it on dismiss (P2)', async () => {
+        const repo = createCsvRepo(createMemoryAdapter());
+        await repo.put(record('c1', 'Products', ['sku'], [['A']]));
+
+        // One document references `c1` through `data.csv`.
+        const doc = createFtagSpareDoc({ name: 'Label', now: 1 });
+        doc.meta.id = 'd1';
+        doc.data.csv = {
+            csvId: 'c1',
+            name: 'Products',
+            source: { kind: 'local', mediaType: 'text/csv', resourceId: 'c1' },
+        };
+        const labelRepo = {
+            listDetailed: vi.fn(async () => ({ ok: [{ id: 'd1' }], errors: [] })),
+            get: vi.fn(async () => doc),
+        } as unknown as LabelRepo;
+
+        useStore.setState({ csvRepo: repo, labelRepo });
+        vi.mocked(confirm).mockResolvedValue(false);
+        render(<CsvSection />);
+
+        await screen.findByText('Products');
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        await waitFor(() =>
+            expect(confirm).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    danger: true,
+                    message:
+                        '"Products" is used by a label. Deleting it will break that label. Delete anyway?',
+                }),
+            ),
+        );
+        // Dismissing keeps the record (override is opt-in, not automatic).
+        expect(screen.getByText('Products')).toBeInTheDocument();
+        expect(await repo.has('c1')).toBe(true);
+    });
+
+    it('deletes a referenced table when the user overrides the in-use warning (P2)', async () => {
+        const repo = createCsvRepo(createMemoryAdapter());
+        await repo.put(record('c1', 'Products', ['sku'], [['A']]));
+
+        const doc = createFtagSpareDoc({ name: 'Label', now: 1 });
+        doc.meta.id = 'd1';
+        doc.data.csv = {
+            csvId: 'c1',
+            name: 'Products',
+            source: { kind: 'local', mediaType: 'text/csv', resourceId: 'c1' },
+        };
+        const labelRepo = {
+            listDetailed: vi.fn(async () => ({ ok: [{ id: 'd1' }], errors: [] })),
+            get: vi.fn(async () => doc),
+        } as unknown as LabelRepo;
+
+        useStore.setState({ csvRepo: repo, labelRepo });
+        vi.mocked(confirm).mockResolvedValue(true);
+        render(<CsvSection />);
+
+        await screen.findByText('Products');
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        await waitFor(() => expect(screen.queryByText('Products')).not.toBeInTheDocument());
+        expect(await repo.has('c1')).toBe(false);
+    });
+
+    it('uses the plain delete confirm for a proven orphan (P2)', async () => {
+        const repo = createCsvRepo(createMemoryAdapter());
+        await repo.put(record('c1', 'Products', ['sku'], [['A']]));
+
+        // A complete inventory that references nothing: `c1` is a proven orphan.
+        const labelRepo = {
+            listDetailed: vi.fn(async () => ({ ok: [], errors: [] })),
+            get: vi.fn(async () => null),
+        } as unknown as LabelRepo;
+
+        useStore.setState({ csvRepo: repo, labelRepo });
+        vi.mocked(confirm).mockResolvedValue(false);
+        render(<CsvSection />);
+
+        await screen.findByText('Products');
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        await waitFor(() =>
+            expect(confirm).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    danger: true,
+                    message: 'Delete "Products"? This cannot be undone.',
+                }),
+            ),
+        );
+    });
+
+    it('warns unverified before deleting when the scan is incomplete (P2)', async () => {
+        const repo = createCsvRepo(createMemoryAdapter());
+        await repo.put(record('c1', 'Products', ['sku'], [['A']]));
+
+        // An unreadable label may reference the table.
+        const labelRepo = {
+            listDetailed: vi.fn(async () => ({
+                ok: [],
+                errors: [{ id: '', error: 'idb read failed' }],
+            })),
+            get: vi.fn(async () => null),
+        } as unknown as LabelRepo;
+
+        useStore.setState({ csvRepo: repo, labelRepo });
+        vi.mocked(confirm).mockResolvedValue(false);
+        render(<CsvSection />);
+
+        await screen.findByText('Products');
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        await waitFor(() =>
+            expect(confirm).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    danger: true,
+                    message:
+                        'Could not verify whether "Products" is used by a label. Delete anyway?',
+                }),
+            ),
+        );
+        expect(await repo.has('c1')).toBe(true);
+    });
+
+    it('re-scans after the batch confirm and spares a record now referenced (P2)', async () => {
+        const repo = createCsvRepo(createMemoryAdapter());
+        await repo.put(record('c1', 'Scratch', ['n'], [['1']]));
+
+        // Initially the label references nothing, so `c1` is offered as unused.
+        const unreferencing = createFtagSpareDoc({ name: 'Label', now: 1 });
+        unreferencing.meta.id = 'd1';
+
+        // Later the label starts referencing `c1` (another tab, or an autosave
+        // that just landed between render and confirm).
+        const referencing = createFtagSpareDoc({ name: 'Label', now: 1 });
+        referencing.meta.id = 'd1';
+        referencing.data.csv = {
+            csvId: 'c1',
+            name: 'Scratch',
+            source: { kind: 'local', mediaType: 'text/csv', resourceId: 'c1' },
+        };
+
+        const getDoc = vi.fn(async () => unreferencing);
+        const labelRepo = {
+            listDetailed: vi.fn(async () => ({ ok: [{ id: 'd1' }], errors: [] })),
+            get: getDoc,
+        } as unknown as LabelRepo;
+
+        useStore.setState({ csvRepo: repo, labelRepo });
+        vi.mocked(confirm).mockResolvedValue(true);
+        render(<CsvSection />);
+
+        await screen.findByText('Scratch');
+        expect(screen.getByText('Unused')).toBeInTheDocument();
+
+        getDoc.mockResolvedValue(referencing);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Delete unused (1)' }));
+
+        await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+        // The fresh scan proves it is referenced, so the batch deletes nothing.
+        expect(await repo.has('c1')).toBe(true);
+        expect(screen.getByText('Scratch')).toBeInTheDocument();
+    });
+
     it('hides the unused-cleanup action when the reference scan is incomplete (#4)', async () => {
         const repo = createCsvRepo(createMemoryAdapter());
         await repo.put(record('c1', 'Scratch', ['n'], [['1']]));

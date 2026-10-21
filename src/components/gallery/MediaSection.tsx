@@ -86,11 +86,24 @@ export const MediaSection: React.FC = () => {
         }
     };
 
+    /**
+     * Delete one media record. The reference inventory is re-scanned **before**
+     * the confirm so the message reflects the current truth (2026-10-22
+     * storage-safety run, P2): a record a label uses, or one whose references
+     * cannot be proven, still asks for an explicit override; only a proven
+     * orphan gets the plain delete confirm.
+     */
     const handleDelete = async (record: ResourceRecord) => {
-        const ok = await confirm({
-            danger: true,
-            message: t('media.deleteConfirm', { name: record.name ?? record.id }),
-        });
+        const name = record.name ?? record.id;
+        const fresh = await orphans.reload();
+        const verified = fresh !== null && fresh.complete;
+        const orphan = verified && fresh.resourceIds.has(record.id);
+        const message = !verified
+            ? t('media.deleteUnverifiedConfirm', { name })
+            : orphan
+              ? t('media.deleteConfirm', { name })
+              : t('media.deleteInUseConfirm', { name });
+        const ok = await confirm({ danger: true, message });
         if (!ok) return;
         await remove(record.id);
     };

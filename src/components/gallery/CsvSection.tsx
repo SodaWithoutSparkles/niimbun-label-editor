@@ -85,11 +85,23 @@ export const CsvSection: React.FC = () => {
         }
     };
 
+    /**
+     * Delete one table. The reference inventory is re-scanned **before** the
+     * confirm so the message reflects the current truth (2026-10-22
+     * storage-safety run, P2): a record a label uses, or one whose references
+     * cannot be proven, still asks for an explicit override; only a proven
+     * orphan gets the plain delete confirm.
+     */
     const handleDelete = async (record: CsvRecord) => {
-        const ok = await confirm({
-            danger: true,
-            message: t('csvs.deleteConfirm', { name: record.name }),
-        });
+        const fresh = await orphans.reload();
+        const verified = fresh !== null && fresh.complete;
+        const orphan = verified && fresh.csvIds.has(record.id);
+        const message = !verified
+            ? t('csvs.deleteUnverifiedConfirm', { name: record.name })
+            : orphan
+              ? t('csvs.deleteConfirm', { name: record.name })
+              : t('csvs.deleteInUseConfirm', { name: record.name });
+        const ok = await confirm({ danger: true, message });
         if (!ok) return;
         await remove(record.id);
     };

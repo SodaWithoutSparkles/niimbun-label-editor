@@ -249,6 +249,110 @@ describe('MediaSection', () => {
         expect(await repo.has('orphan')).toBe(false);
     });
 
+    it('warns in-use before deleting a referenced resource, and keeps it on dismiss (P2)', async () => {
+        const repo = createResourceRepo(createMemoryAdapter());
+        await repo.put(record('r1', 'image/png', 'Logo'));
+
+        // One document references `r1` through a local image ref.
+        const doc = createFtagSpareDoc({ name: 'Label', now: 1 });
+        doc.meta.id = 'd1';
+        doc.resources.images = [
+            {
+                imageId: 'r1',
+                name: 'Logo',
+                source: { kind: 'local', mediaType: 'image/png', resourceId: 'r1' },
+                widthPx: 1,
+                heightPx: 1,
+            },
+        ];
+        const labelRepo = {
+            listDetailed: vi.fn(async () => ({ ok: [{ id: 'd1' }], errors: [] })),
+            get: vi.fn(async () => doc),
+        } as unknown as LabelRepo;
+
+        useStore.setState({ resourceRepo: repo, labelRepo });
+        vi.mocked(confirm).mockResolvedValue(false);
+        render(<MediaSection />);
+
+        await screen.findByText('Logo');
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        await waitFor(() =>
+            expect(confirm).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    danger: true,
+                    message:
+                        '"Logo" is used by a label. Deleting it will break that label. Delete anyway?',
+                }),
+            ),
+        );
+        // Dismissing keeps the record (override is opt-in, not automatic).
+        expect(screen.getByText('Logo')).toBeInTheDocument();
+        expect(await repo.has('r1')).toBe(true);
+    });
+
+    it('deletes a referenced resource when the user overrides the in-use warning (P2)', async () => {
+        const repo = createResourceRepo(createMemoryAdapter());
+        await repo.put(record('r1', 'image/png', 'Logo'));
+
+        const doc = createFtagSpareDoc({ name: 'Label', now: 1 });
+        doc.meta.id = 'd1';
+        doc.resources.images = [
+            {
+                imageId: 'r1',
+                name: 'Logo',
+                source: { kind: 'local', mediaType: 'image/png', resourceId: 'r1' },
+                widthPx: 1,
+                heightPx: 1,
+            },
+        ];
+        const labelRepo = {
+            listDetailed: vi.fn(async () => ({ ok: [{ id: 'd1' }], errors: [] })),
+            get: vi.fn(async () => doc),
+        } as unknown as LabelRepo;
+
+        useStore.setState({ resourceRepo: repo, labelRepo });
+        vi.mocked(confirm).mockResolvedValue(true);
+        render(<MediaSection />);
+
+        await screen.findByText('Logo');
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        await waitFor(() => expect(screen.queryByText('Logo')).not.toBeInTheDocument());
+        expect(await repo.has('r1')).toBe(false);
+    });
+
+    it('warns unverified before deleting when the scan is incomplete (P2)', async () => {
+        const repo = createResourceRepo(createMemoryAdapter());
+        await repo.put(record('r1', 'image/png', 'Logo'));
+
+        // An unreadable label may reference the media file.
+        const labelRepo = {
+            listDetailed: vi.fn(async () => ({
+                ok: [],
+                errors: [{ id: '', error: 'idb read failed' }],
+            })),
+            get: vi.fn(async () => null),
+        } as unknown as LabelRepo;
+
+        useStore.setState({ resourceRepo: repo, labelRepo });
+        vi.mocked(confirm).mockResolvedValue(false);
+        render(<MediaSection />);
+
+        await screen.findByText('Logo');
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        await waitFor(() =>
+            expect(confirm).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    danger: true,
+                    message: 'Could not verify whether "Logo" is used by a label. Delete anyway?',
+                }),
+            ),
+        );
+        expect(await repo.has('r1')).toBe(true);
+    });
+
     it('hides the unused-cleanup action when the reference scan is incomplete (#4)', async () => {
         const repo = createResourceRepo(createMemoryAdapter());
         await repo.put(record('r1', 'image/png', 'Old Photo'));
