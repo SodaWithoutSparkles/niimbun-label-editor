@@ -19,3 +19,13 @@ When reorganising (e.g. relocating preferences out of `preferencesSlice`/`toolsS
 - Import style: `verbatimModuleSyntax` is on, so type-only imports use `import type`.
 - Prefer explicit per-slice files under `slices/`; a new concern (settings) gets its own file rather than growing an existing one.
 - `persist` wraps the whole store, not individual slices — see `settings-store.md`.
+
+## Autosave writes are chained, not fire-and-forget
+
+`editorSlice` keeps a per-store `autosaveWrites: Promise<void>` chain. Both the
+debounce fire path and `flushAutosave` **append** to it (`autosaveWrites =
+autosaveWrites.then(...)`); never replace the tail or a newer write is dropped.
+`flushAutosave` returns the chain even when `autoSave` is false / `labelRepo` is
+null — `setView`, `openLabel`, `saveCurrentLabel` and `deleteLabel` await it so
+an in-flight write cannot land after a newer save or after `repo.remove`
+(the label-delete resurrection race).

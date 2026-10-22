@@ -318,6 +318,8 @@
     "previewAlt": "Preview of {{name}}",
     "openFailed": "Could not open label — the saved data is invalid.",
     "readErrors": "{{count}} labels could not be read",
+    "delete": "Delete",
+    "deleteConfirm": "Delete \"{{name}}\"? This cannot be undone.",
     "deleteFailed": "Could not delete the label."
   },
   "connection": {

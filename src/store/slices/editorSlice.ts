@@ -37,6 +37,11 @@ import type { NodePatch, StoreSlice } from '../storeTypes';
  * timers. Switching the view or the doc flushes a pending save instead of
  * dropping it; a save scheduled for doc A can never fire against doc B.
  *
+ * Every write is tracked in a per-store promise chain (`autosaveWrites`),
+ * not just the debounce timer: once the timer fires the write is in flight and
+ * `flushAutosave` can no longer see it, so a delete could complete first and
+ * the late write would recreate the label. Flushing awaits that chain.
+ *
  * Transient gestures (drag/resize): `updateNodeTransient` mutates a private
  * working copy of `currentDoc` without touching history, `updatedAt` or
  * autosave. The committed doc the gesture started from is captured as the
@@ -225,6 +230,52 @@ export const createEditorSlice: StoreSlice = (set, get) => {
     // from `currentDoc` so a switch can flush exactly what was scheduled, and so
     // the timer never reads a *newer* doc than the edits it represents.
     let pendingAutosaveDoc: LabelDoc | null = null;
+    /**
+     * Every autosave write started so far, serialized. The debounce timer alone
+     * is not enough: once it fires, the write is in flight and `flushAutosave`
+     * could not see it, so a delete could complete first and the late write
+     * would recreate the label (must-fix: delete-before-save inversion).
+     */
+    let autosaveWrites: Promise<void> = Promise.resolve();
+
+    /**
+     * Newest snapshot waiting for the writer loop. Only one can be queued: while
+     * a write is stalled, later debounce ticks supersede it instead of growing
+     * the chain without bound (a full `LabelDoc` per queued write).
+     */
+    let queuedAutosave: {
+        doc: LabelDoc;
+        repo: NonNullable<ReturnType<typeof get>['labelRepo']>;
+    } | null = null;
+
+    /** True while the writer loop is draining `queuedAutosave`. */
+    let drainingAutosaves = false;
+
+    /**
+     * Queue one autosave write. Coalesces to the newest snapshot while a write
+     * is in flight; `autosaveWrites` always covers everything queued so far.
+     */
+    const enqueueAutosave = (
+        doc: LabelDoc,
+        repo: NonNullable<ReturnType<typeof get>['labelRepo']>,
+    ): void => {
+        queuedAutosave = { doc, repo };
+        if (drainingAutosaves) return;
+        drainingAutosaves = true;
+        autosaveWrites = (async () => {
+            try {
+                while (queuedAutosave) {
+                    const next = queuedAutosave;
+                    queuedAutosave = null;
+                    await saveDoc(next.doc, next.repo);
+                }
+            } finally {
+                // `saveDoc` never rejects today; the guard keeps a future change
+                // from stranding every later autosave behind a stuck flag.
+                drainingAutosaves = false;
+            }
+        })();
+    };
 
     // Baseline of an in-progress transient gesture. `null` when no gesture is
     // active; otherwise `currentDoc` is the working copy and this holds the
@@ -279,30 +330,32 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             if (state.view !== 'editor') return;
             const repo = state.labelRepo;
             if (!repo) return;
-            void saveDoc(pending, repo);
+            enqueueAutosave(pending, repo);
         }, get().docAutosaveDelayMs);
     };
-
     /**
      * Flush a pending autosave immediately (if one is scheduled), saving the doc
-     * captured at schedule time, and resolve once it has settled. Called on the
-     * view/doc boundary so leaving the editor cannot drop the last edit. The
-     * write is independent of `view` (a switch to the gallery must still
-     * persist), but still honours `autoSave` and the presence of a repo.
+     * captured at schedule time, and resolve once **every** write started up to
+     * this call has settled. Called on the view/doc boundary so leaving the
+     * editor cannot drop the last edit. The write is independent of `view` (a
+     * switch to the gallery must still persist), but still honours `autoSave`
+     * and the presence of a repo.
      *
-     * Returning a promise is load-bearing for `saveCurrentLabel`: it must
-     * **await** the older pending write before its own (newer) save, or the
-     * deferred autosave lands last and clobbers the explicit save (must-fix #8).
+     * Returning a promise is load-bearing for `saveCurrentLabel` and
+     * `deleteLabel`: they must **await** the older pending write before their
+     * own (newer) save/remove, or the deferred autosave lands last and clobbers
+     * the explicit save / recreates the deleted label (must-fix #8).
      */
     const flushAutosave = (): Promise<void> => {
         const pending = pendingAutosaveDoc;
         cancelAutosave();
-        if (!pending) return Promise.resolve();
         const state = get();
-        if (!state.autoSave) return Promise.resolve();
-        const repo = state.labelRepo;
-        if (!repo) return Promise.resolve();
-        return saveDoc(pending, repo);
+        if (pending && state.autoSave && state.labelRepo) {
+            enqueueAutosave(pending, state.labelRepo);
+        }
+        // Resolves once every write started up to this call has settled. Writes
+        // scheduled later chain after this snapshot.
+        return autosaveWrites.then(() => undefined);
     };
 
     /**

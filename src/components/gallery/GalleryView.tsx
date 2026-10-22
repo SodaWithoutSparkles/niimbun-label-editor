@@ -2,6 +2,7 @@ import React, { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ImageOff } from 'lucide-react';
 import { useStore } from '../../store/useStore';
+import { confirm } from '../common/dialogs/dialogService';
 import { LabelCard } from './LabelCard';
 import { useThumbBackfill } from './useThumbBackfill';
 
@@ -15,6 +16,7 @@ export const GalleryView: React.FC = () => {
     const galleryLoading = useStore((state) => state.galleryLoading);
     const storageError = useStore((state) => state.storageError);
     const openLabel = useStore((state) => state.openLabel);
+    const deleteLabel = useStore((state) => state.deleteLabel);
     const addNotification = useStore((state) => state.addNotification);
 
     // D-50: fill in cards whose label has no saved preview (bounded, once per
@@ -32,6 +34,17 @@ export const GalleryView: React.FC = () => {
             });
         },
         [openLabel, addNotification, t],
+    );
+
+    const handleDelete = useCallback(
+        async (id: string) => {
+            const summary = gallery.find((item) => item.id === id);
+            const name = summary?.name ? summary.name : t('nav.newLabel');
+            const ok = await confirm({ danger: true, message: t('gallery.deleteConfirm', { name }) });
+            if (!ok) return;
+            await deleteLabel(id);
+        },
+        [gallery, deleteLabel, t],
     );
 
     if (galleryLoading) {
@@ -71,7 +84,14 @@ export const GalleryView: React.FC = () => {
         <div className="min-w-0 flex-1 overflow-y-auto bg-gray-900 p-6">
             <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
                 {gallery.map((summary) => (
-                    <LabelCard key={summary.id} summary={summary} onOpen={handleOpen} />
+                    <LabelCard
+                        key={summary.id}
+                        summary={summary}
+                        onOpen={handleOpen}
+                        onDelete={(id) => {
+                            void handleDelete(id);
+                        }}
+                    />
                 ))}
             </div>
         </div>

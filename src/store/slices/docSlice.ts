@@ -48,6 +48,14 @@ export const createDocSlice: StoreSlice = (set, get) => {
      */
     let initPromise: Promise<void> | null = null;
 
+    /**
+     * Monotonic id of the newest `openLabel` request. Deleting a label bumps it
+     * so an open that was already reading the (now deleted) record cannot commit
+     * `currentDoc` afterwards — the app would otherwise sit in the editor with a
+     * document id that no longer exists.
+     */
+    let openRequestId = 0;
+
     return {
         // Shell view mode. `gallery` on reload — never persisted.
         view: 'gallery',
@@ -162,7 +170,10 @@ export const createDocSlice: StoreSlice = (set, get) => {
         openLabel: async (id) => {
             const repo = get().labelRepo;
             if (!repo) return null;
+            const request = ++openRequestId;
             const doc = await repo.get(id);
+            // A newer open, or a delete of this label, superseded this read.
+            if (request !== openRequestId) return null;
             if (!doc) return null;
             // Doc-switch boundary: flush any pending autosave for the doc we are
             // leaving (so its last edit is not dropped), then drop its undo
@@ -170,6 +181,8 @@ export const createDocSlice: StoreSlice = (set, get) => {
             // A's snapshots to doc B). Await the flush so the leaving doc's write
             // settles before the new doc becomes current (deterministic ordering).
             await get().flushAutosave();
+            // The await above can outlive a delete of this same label.
+            if (request !== openRequestId) return null;
             get().clearDocHistory();
             // Default view orientation for this document (view-only, §6). Done
             // here — the single doc-open boundary — so it never re-fires from a
@@ -231,16 +244,28 @@ export const createDocSlice: StoreSlice = (set, get) => {
                 await get().flushAutosave();
                 get().clearDocHistory();
             }
+            let removed = false;
             try {
                 await repo.remove(id);
+                // Invalidate an in-flight `openLabel(id)` that already read the
+                // record: it must not commit a document that no longer exists.
+                openRequestId++;
+                removed = true;
             } catch {
                 // A failed delete must still refresh and report, not silently
-                // leave the card on screen with no feedback.
+                // leave the card on screen with no feedback. It must also not
+                // close the document it failed to delete.
                 get().addNotification({ type: 'error', message: i18next.t('gallery.deleteFailed') });
             }
-            set((state) => ({
-                currentDoc: state.currentDoc?.meta.id === id ? null : state.currentDoc,
-            }));
+            if (removed) {
+                set((state) => ({
+                    currentDoc: state.currentDoc?.meta.id === id ? null : state.currentDoc,
+                }));
+                // The open document is gone: leaving `view: 'editor'` would render
+                // an empty editor while the URL still points at the deleted doc.
+                // This also closes the editor-only print dialog.
+                if (closingCurrent) get().setView('gallery');
+            }
             await get().refreshGallery();
         },
 

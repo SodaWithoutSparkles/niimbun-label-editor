@@ -1444,3 +1444,138 @@ describe('editorSlice — setDocThumb (P3 W2)', () => {
         expect(store.getState().docPast).toHaveLength(0);
     });
 });
+
+describe('editorSlice — autosave write tracking (P3)', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
+    it('flushAutosave does not resolve until the in-flight repo.save settles', async () => {
+        const store = createAppStore(makeStorage());
+        let releaseSave!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            releaseSave = resolve;
+        });
+        const save = vi.fn(async (_doc: LabelDoc): Promise<void> => {
+            await gate;
+        });
+        const repo: LabelRepo = { ...makeMemoryRepo().repo, save };
+        store.getState().setLabelRepo(repo);
+        store.getState().setDocAutosaveDelay(50);
+        store.setState({ currentDoc: makeDoc([textNode('a')]), view: 'editor', autoSave: true });
+
+        // Fire the debounce: the write is now in flight, not merely scheduled.
+        store.getState().addNode(textNode('b'));
+        await vi.advanceTimersByTimeAsync(50);
+        expect(save).toHaveBeenCalledTimes(1);
+
+        let settled = false;
+        const flushed = store.getState().flushAutosave().then(() => {
+            settled = true;
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        // Still pending: the debounce was already cleared, so only the chain
+        // can tell flush about this write.
+        expect(settled).toBe(false);
+
+        releaseSave();
+        await flushed;
+        expect(settled).toBe(true);
+    });
+
+    it('chains a newer write after an in-flight autosave instead of replacing the tail', async () => {
+        const store = createAppStore(makeStorage());
+        let releaseFirst!: () => void;
+        const firstGate = new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+        });
+        const completed: number[] = [];
+        let calls = 0;
+        const save = vi.fn(async (_doc: LabelDoc): Promise<void> => {
+            const call = (calls += 1);
+            if (call === 1) await firstGate;
+            completed.push(call);
+        });
+        const repo: LabelRepo = { ...makeMemoryRepo().repo, save };
+        store.getState().setLabelRepo(repo);
+        store.getState().setDocAutosaveDelay(50);
+        store.setState({ currentDoc: makeDoc([textNode('a')]), view: 'editor', autoSave: true });
+
+        store.getState().addNode(textNode('b'));
+        await vi.advanceTimersByTimeAsync(50); // write #1 starts, held open
+        expect(save).toHaveBeenCalledTimes(1);
+
+        store.getState().addNode(textNode('c')); // schedules write #2
+        const flushed = store.getState().flushAutosave(); // appends #2 to the chain
+        await vi.advanceTimersByTimeAsync(0);
+        // #2 must wait for #1: replacing the tail would drop it.
+        expect(save).toHaveBeenCalledTimes(1);
+
+        releaseFirst();
+        await flushed;
+
+        expect(save).toHaveBeenCalledTimes(2);
+        expect(completed).toEqual([1, 2]);
+    });
+
+    it('coalesces queued autosaves while a write is stalled', async () => {
+        const store = createAppStore(makeStorage());
+        let releaseFirst!: () => void;
+        const firstGate = new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+        });
+        let calls = 0;
+        const savedNodes: number[] = [];
+        const save = vi.fn(async (doc: LabelDoc): Promise<void> => {
+            const call = (calls += 1);
+            if (call === 1) await firstGate;
+            savedNodes.push(doc.nodes.length);
+        });
+        const repo: LabelRepo = { ...makeMemoryRepo().repo, save };
+        store.getState().setLabelRepo(repo);
+        store.getState().setDocAutosaveDelay(50);
+        store.setState({ currentDoc: makeDoc([textNode('a')]), view: 'editor', autoSave: true });
+
+        store.getState().addNode(textNode('b'));
+        await vi.advanceTimersByTimeAsync(50); // write #1 starts, held open
+        expect(save).toHaveBeenCalledTimes(1);
+
+        // Two more debounce ticks while #1 is stalled: only the newest snapshot
+        // may stay queued (an unbounded chain would keep both).
+        store.getState().addNode(textNode('c'));
+        await vi.advanceTimersByTimeAsync(50);
+        store.getState().addNode(textNode('d'));
+        await vi.advanceTimersByTimeAsync(50);
+
+        releaseFirst();
+        await store.getState().flushAutosave();
+
+        expect(save).toHaveBeenCalledTimes(2);
+        // The coalesced write must be the NEWEST snapshot, not the first queued.
+        expect(savedNodes).toEqual([2, 4]);
+
+        // A tick after the drain ended starts a fresh drain (the flag was
+        // cleared), so nothing is stranded.
+        store.getState().addNode(textNode('e'));
+        await vi.advanceTimersByTimeAsync(50);
+        await store.getState().flushAutosave();
+        expect(save).toHaveBeenCalledTimes(3);
+    });
+
+    it('flushAutosave returns the chain when autoSave is off or there is no repo', async () => {
+        const store = createAppStore(makeStorage());
+        store.getState().setDocAutosaveDelay(50);
+        store.setState({ currentDoc: makeDoc([textNode('a')]), view: 'editor', autoSave: false });
+        store.getState().addNode(textNode('b'));
+
+        await expect(store.getState().flushAutosave()).resolves.toBeUndefined();
+
+        store.setState({ autoSave: true, labelRepo: null });
+        store.getState().addNode(textNode('c'));
+        await expect(store.getState().flushAutosave()).resolves.toBeUndefined();
+    });
+});

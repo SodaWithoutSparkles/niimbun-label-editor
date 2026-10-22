@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '../../i18n';
 import type { LabelSummary } from '../../data/labelRepo';
 import { LabelCard } from './LabelCard';
@@ -31,6 +31,7 @@ describe('LabelCard', () => {
             <LabelCard
                 summary={summary({ thumb: 'data:image/png;base64,AAAA' })}
                 onOpen={noop}
+                onDelete={noop}
             />,
         );
 
@@ -44,11 +45,34 @@ describe('LabelCard', () => {
     });
 
     it('falls back to PlaceholderArt when there is no thumb', () => {
-        const { container } = render(<LabelCard summary={summary()} onOpen={noop} />);
+        const { container } = render(
+            <LabelCard summary={summary()} onOpen={noop} onDelete={noop} />,
+        );
 
         expect(container.querySelector('img')).toBeNull();
         const rect = container.querySelector('svg[role="img"] rect');
         expect(rect).not.toBeNull();
         expect(rect!.getAttribute('vector-effect')).toBe('non-scaling-stroke');
+    });
+
+    it('renders a delete button that calls onDelete with the label id', () => {
+        const onDelete = vi.fn();
+        render(<LabelCard summary={summary()} onOpen={noop} onDelete={onDelete} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        expect(onDelete).toHaveBeenCalledTimes(1);
+        expect(onDelete).toHaveBeenCalledWith('label-1');
+    });
+
+    it('renders the delete button outside the open button (no nested buttons)', () => {
+        render(<LabelCard summary={summary()} onOpen={noop} onDelete={noop} />);
+
+        const deleteButton = screen.getByRole('button', { name: 'Delete' });
+        // `closest('button')` is the delete button itself, not a wrapper.
+        expect(deleteButton.closest('button')).toBe(deleteButton);
+        // The open button contains no nested button.
+        const openButton = screen.getByRole('button', { name: 'Open My label' });
+        expect(openButton.querySelector('button')).toBeNull();
     });
 });

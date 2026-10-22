@@ -1,6 +1,6 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { Printer } from 'lucide-react';
+import { Printer, Trash2 } from 'lucide-react';
 import { hmToMm } from '../../core/hm';
 import { useStore } from '../../store/useStore';
 import type { LabelSummary } from '../../data/labelRepo';
@@ -60,9 +60,10 @@ const PlaceholderArt: React.FC<{ backingW: number; backingH: number }> = ({
 interface LabelCardProps {
     summary: LabelSummary;
     onOpen: (id: string) => void;
+    onDelete: (id: string) => void;
 }
 
-export const LabelCard: React.FC<LabelCardProps> = ({ summary, onOpen }) => {
+export const LabelCard: React.FC<LabelCardProps> = ({ summary, onOpen, onDelete }) => {
     const { t } = useTranslation();
     const language = useStore((state) => state.language);
 
@@ -100,16 +101,29 @@ export const LabelCard: React.FC<LabelCardProps> = ({ summary, onOpen }) => {
             </button>
             <div className="flex items-center justify-between px-3 pb-3 pt-1">
                 <span className="text-xs text-gray-400">{size}</span>
-                <button
-                    type="button"
-                    disabled
-                    title={t('gallery.quickPrintUnavailable')}
-                    aria-label={t('gallery.quickPrint')}
-                    className="flex cursor-not-allowed items-center gap-1 rounded border border-gray-600 px-2 py-1 text-xs text-gray-500"
-                >
-                    <Printer size={14} />
-                    <span>{t('gallery.quickPrint')}</span>
-                </button>
+                <div className="flex items-center gap-1">
+                    <button
+                        type="button"
+                        disabled
+                        title={t('gallery.quickPrintUnavailable')}
+                        aria-label={t('gallery.quickPrint')}
+                        className="flex cursor-not-allowed items-center gap-1 rounded border border-gray-600 px-2 py-1 text-xs text-gray-500"
+                    >
+                        <Printer size={14} />
+                        <span>{t('gallery.quickPrint')}</span>
+                    </button>
+                    {/* Sibling of the open button, never nested: nested buttons are
+                        invalid HTML and swallow the click. */}
+                    <button
+                        type="button"
+                        onClick={() => onDelete(summary.id)}
+                        title={t('gallery.delete')}
+                        aria-label={t('gallery.delete')}
+                        className="flex items-center rounded border border-gray-600 px-2 py-1 text-xs text-gray-400 transition-colors hover:border-red-500 hover:text-red-300"
+                    >
+                        <Trash2 size={14} />
+                    </button>
+                </div>
             </div>
         </div>
     );

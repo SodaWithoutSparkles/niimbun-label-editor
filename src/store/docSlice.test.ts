@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAppStore } from './useStore';
 import { createMemoryAdapter } from '../data/db';
-import { createLabelRepo } from '../data/labelRepo';
+import { createLabelRepo, type LabelRepo } from '../data/labelRepo';
 import { PAPER_TYPE_SEEDS } from '../core/doc/paper-types';
 import { createLabelDoc } from '../core/doc/factory';
 import type { LabelDoc, Node, Region } from '../core/doc/types';
@@ -375,5 +375,145 @@ describe('docSlice — saveCurrentLabel', () => {
         // recreate the just-deleted label.
         expect(save.mock.invocationCallOrder[0]!).toBeLessThan(remove.mock.invocationCallOrder[0]!);
         expect(store.getState().currentDoc).toBeNull();
+    });
+});
+
+/**
+ * In-memory repo whose `save` is held open by a gate. `save` writes to the same
+ * map `remove` deletes from, so a write that lands after the delete would
+ * resurrect the record — exactly the race P3 closes.
+ */
+const makeStoredRepo = () => {
+    const docs = new Map<string, LabelDoc>();
+    let releaseSave!: () => void;
+    const gate = new Promise<void>((resolve) => {
+        releaseSave = resolve;
+    });
+    const save = vi.fn(async (doc: LabelDoc): Promise<void> => {
+        await gate;
+        docs.set(doc.meta.id, doc);
+    });
+    const remove = vi.fn(async (id: string): Promise<void> => {
+        docs.delete(id);
+    });
+    const repo: LabelRepo = {
+        list: async () => [],
+        get: async (id: string) => docs.get(id) ?? null,
+        save,
+        saveAll: async () => ({ ok: [], errors: [] }),
+        remove,
+        putThumb: async () => undefined,
+        getThumb: async () => null,
+        removeThumb: async () => undefined,
+        listDetailed: async () => ({ ok: [], errors: [] }),
+    };
+    return { repo, save, remove, docs, releaseSave };
+};
+
+describe('docSlice — deleteLabel awaits in-flight autosave', () => {
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
+    it('settles a fired autosave before remove, so the label is not resurrected', async () => {
+        vi.useFakeTimers();
+        const doc = makeDoc([textNode('a')]);
+        const { repo, save, remove, docs, releaseSave } = makeStoredRepo();
+        docs.set('doc-1', doc);
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo(repo);
+        store.getState().setDocAutosaveDelay(50);
+        store.setState({ currentDoc: doc, view: 'editor', autoSave: true });
+
+        // Fire the debounce: the write starts and is held open by the gate.
+        store.getState().addNode(textNode('b'));
+        await vi.advanceTimersByTimeAsync(50);
+        expect(save).toHaveBeenCalledTimes(1);
+
+        const deleting = store.getState().deleteLabel('doc-1');
+        await vi.advanceTimersByTimeAsync(0);
+        // The in-flight write is still pending: remove must wait for it.
+        expect(remove).not.toHaveBeenCalled();
+
+        releaseSave();
+        await deleting;
+
+        expect(remove).toHaveBeenCalledTimes(1);
+        expect(save.mock.invocationCallOrder[0]!).toBeLessThan(remove.mock.invocationCallOrder[0]!);
+        // No late write recreated the record.
+        expect(await repo.get('doc-1')).toBeNull();
+    });
+
+    it('navigates to the gallery when the deleted label was the open document', async () => {
+        const doc = makeDoc([textNode('a')]);
+        const { repo, docs } = makeStoredRepo();
+        docs.set('doc-1', doc);
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo(repo);
+        store.setState({ currentDoc: doc, view: 'editor' });
+
+        await store.getState().deleteLabel('doc-1');
+
+        expect(store.getState().currentDoc).toBeNull();
+        expect(store.getState().view).toBe('gallery');
+    });
+
+    it('does not commit an open whose label was deleted mid-read', async () => {
+        const doc = makeDoc([textNode('a')]);
+        let releaseGet!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            releaseGet = resolve;
+        });
+        // The read captures the record and resolves **after** the delete; only
+        // the request-generation guard can prevent it from becoming current.
+        const get = vi.fn(async (): Promise<LabelDoc | null> => {
+            await gate;
+            return doc;
+        });
+        const remove = vi.fn(async (): Promise<void> => undefined);
+        const repo: LabelRepo = {
+            ...makeStoredRepo().repo,
+            get,
+            remove,
+        };
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo(repo);
+        store.setState({ view: 'gallery' });
+
+        const opening = store.getState().openLabel('doc-1');
+        await store.getState().deleteLabel('doc-1');
+        releaseGet();
+
+        expect(await opening).toBeNull();
+        expect(store.getState().currentDoc).toBeNull();
+        expect(store.getState().view).toBe('gallery');
+    });
+
+    it('a failed delete does not cancel an in-flight open', async () => {
+        const doc = makeDoc([textNode('a')]);
+        let releaseGet!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            releaseGet = resolve;
+        });
+        const get = vi.fn(async (): Promise<LabelDoc | null> => {
+            await gate;
+            return doc;
+        });
+        const remove = vi.fn(async (): Promise<void> => {
+            throw new Error('remove failed');
+        });
+        const repo: LabelRepo = { ...makeStoredRepo().repo, get, remove };
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo(repo);
+        store.setState({ view: 'gallery' });
+
+        const opening = store.getState().openLabel('doc-1');
+        await store.getState().deleteLabel('doc-1');
+        releaseGet();
+
+        // The record still exists, so the open must commit.
+        expect(await opening).toBe(doc);
+        expect(store.getState().currentDoc?.meta.id).toBe('doc-1');
     });
 });
