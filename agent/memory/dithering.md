@@ -293,11 +293,15 @@ Commits `2b0f70a` (W1 gamma), `f2d3bc9` (W2 Ostromoukhov), `8468b54` (W3 live pr
   `dots = step*|basis|`, `pitchMm = dots*25.4/dpi`. Verified: 300 dpi 0° → 5/6/8/12 dots =
   0.423/0.508/0.677/1.016 mm; 203 dpi → 4/6/8 = 0.500/0.751/1.001 mm.
 - **Params + precedence:** `screentoneLevels` (2–8), `screentonePitchMm` (0.3–2.0), `screentoneAngle`
-  (0|14|27|45) — document data (`quantizerParams`) with node → per-strategy setting →
-  `DEFAULT_SCREENTONE` (4 / 0.5 mm / 45°; gamma 1). `policyKeyOf` keys all three (pitch 2 dp);
-  every knob is set explicitly in the per-policy options (P13 trap). The inspector exposes them only
-  for an effective screentone and shows the live snap readout (`0.51 mm — 6 dots @ 300 dpi`) at the
-  **resolved print dpi**; `strength`/`serpentine` are hidden for it rather than silently dead.
+  (0|14|27|45), `screentoneBoldness` (−1…1, level bias, 2026-10-25) — document data
+  (`quantizerParams`) with node → per-strategy setting → `DEFAULT_SCREENTONE` (4 / 0.5 mm / 45° /
+  0; gamma 1). `policyKeyOf` keys all four (pitch + boldness 2 dp); every knob is set explicitly in
+  the per-policy options (P13 trap). The inspector exposes them only for an effective screentone and
+  shows the live snap readout (`0.51 mm — 6 dots @ 300 dpi`) at the **resolved print dpi**;
+  `strength`/`serpentine` are hidden for it rather than silently dead.
+- **Boldness semantics:** `level = clamp(round(tone·maxLevel + boldness), 0, maxLevel)` — positive
+  = fatter dots. It is expressed in *screen levels*, not a contrast band: a band would overlap
+  `gamma` and shift `levels` semantics. Default `0` is byte-identical to the pre-knob engine.
 - **Never a default for symbol/text types** — `DEFAULT_POLICY_BY_TYPE` is untouched; screentone is
   opt-in per node (or an explicit per-type setting). A screentoned QR does not scan (R10).
 - **Non-head dpi paths are accepted approximations:** queue thumbnails (fixed 100 dpi) and the live
