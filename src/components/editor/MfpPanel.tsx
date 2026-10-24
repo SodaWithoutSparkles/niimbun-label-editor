@@ -68,7 +68,7 @@ export const MfpPanel: React.FC = () => {
                     </button>
                 ))}
             </div>
-            <div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto">
+            <div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
                 {activeTab === 'object' && <ObjectTab selected={selected} />}
                 {activeTab === 'data' && doc && <DataSourceTab doc={doc} />}
                 {activeTab === 'globals' && doc && <GlobalDataTab doc={doc} />}

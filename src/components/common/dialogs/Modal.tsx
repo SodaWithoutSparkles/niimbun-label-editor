@@ -213,7 +213,7 @@ export const Modal: React.FC<ModalProps> = ({
                 </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-6">{children}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-6 [scrollbar-gutter:stable]">{children}</div>
 
             {footer && (
                 <div className="flex shrink-0 items-center justify-end gap-2 border-t border-gray-700 px-6 py-4">

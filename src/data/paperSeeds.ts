@@ -17,6 +17,17 @@ import type { PaperRecord, PaperRepo } from './paperRepo';
 
 export const PAPER_SEED_MARKER_KEY = 'labeleditor.paperTypes.seeded';
 
+/**
+ * Seed-set version. A `1` catalogue is implied by the legacy boolean marker;
+ * `2` adds the 48×30 stock. Existing installs receive only the ids introduced
+ * after their version, so a deleted v1 seed is never resurrected.
+ */
+export const PAPER_SEED_VERSION_KEY = 'labeleditor.paperTypes.seedVersion';
+const PAPER_SEED_VERSION = 2;
+
+/** Seed ids introduced after the v1 set; an existing catalogue gets these once. */
+const SEEDS_ADDED_IN_V2: readonly string[] = ['rounded48x30'];
+
 /** The subset of `Storage` the seeding needs; lets tests inject a fake. */
 export interface PaperSeedStorageLike {
     getItem(key: string): string | null;
@@ -63,22 +74,37 @@ export const paperSeedRecords = (): PaperRecord[] =>
     }));
 
 /**
- * Seeds the built-in catalogue once, guarded by `PAPER_SEED_MARKER_KEY`.
- * Idempotent: a second call sees the marker and does nothing, so a
- * user-deleted seed is never resurrected. When the marker is unset, each seed
- * is inserted only if `repo.has(id)` is false — a per-record fill, not an
- * all-or-nothing "seed only when the store is empty" write. The marker is set
- * only when every missing seed was written; a partial failure leaves it unset
- * so the next boot retries, and `has` skips the ids that already landed, so a
- * retry never duplicates. Never throws.
+ * Seeds the built-in catalogue once, guarded by `PAPER_SEED_MARKER_KEY` and the
+ * seed-set version. Idempotent: once the version is current a second call does
+ * nothing, so a user-deleted seed is never resurrected.
+ *
+ * A catalogue seeded before the version key existed (`legacySeeded`) only gets
+ * the ids in {@link SEEDS_ADDED_IN_V2} — the v1 set is left untouched, so a
+ * deleted v1 built-in still sticks. Each candidate is inserted only if
+ * `repo.has(id)` is false — a per-record fill, not an all-or-nothing "seed only
+ * when the store is empty" write. The markers are set only when every missing
+ * seed was written; a partial failure leaves them unset so the next boot
+ * retries, and `has` skips the ids that already landed, so a retry never
+ * duplicates. Never throws.
  */
 export const seedPaperTypesIfNeeded = async (
     repo: PaperRepo,
     storage: PaperSeedStorageLike,
 ): Promise<PaperSeedResult> => {
-    if (safeGet(storage, PAPER_SEED_MARKER_KEY) !== null) {
+    const legacySeeded = safeGet(storage, PAPER_SEED_MARKER_KEY) !== null;
+    const rawVersion = Number(safeGet(storage, PAPER_SEED_VERSION_KEY) ?? '0');
+    const version = Number.isFinite(rawVersion) ? rawVersion : 0;
+    if (version >= PAPER_SEED_VERSION) {
         return { seeded: false, count: 0 };
     }
+
+    // A catalogue seeded before the version key existed already has the v1 set.
+    // Only the ids added since then are candidates, so deleting a v1 built-in
+    // still sticks.
+    const records = paperSeedRecords();
+    const candidates = legacySeeded
+        ? records.filter((record) => SEEDS_ADDED_IN_V2.includes(record.id))
+        : records;
 
     let count = 0;
     let failed = false;
@@ -88,7 +114,7 @@ export const seedPaperTypesIfNeeded = async (
         // partially failed (the survivors made the store non-empty, so the next
         // boot skipped seeding and marked it settled). Insert only what is
         // missing and let each write report its own failure.
-        for (const record of paperSeedRecords()) {
+        for (const record of candidates) {
             try {
                 if (await repo.has(record.id)) continue;
                 await repo.put(record);
@@ -109,6 +135,7 @@ export const seedPaperTypesIfNeeded = async (
     if (failed) return { seeded: false, count };
 
     safeSet(storage, PAPER_SEED_MARKER_KEY, '1');
+    safeSet(storage, PAPER_SEED_VERSION_KEY, String(PAPER_SEED_VERSION));
     return { seeded: count > 0, count };
 };
 

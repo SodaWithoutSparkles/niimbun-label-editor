@@ -86,7 +86,7 @@ export const NavSidebar: React.FC = () => {
                 })}
             </nav>
 
-            <div className="min-h-0 flex-1 overflow-y-auto border-t border-gray-700 p-2">
+            <div className="min-h-0 flex-1 overflow-y-auto border-t border-gray-700 p-2 [scrollbar-gutter:stable]">
                 {gallerySection === 'recent' ? (
                     gallery.length === 0 ? (
                         <p className="px-2 py-3 text-xs text-gray-500">{t('nav.emptyRecent')}</p>

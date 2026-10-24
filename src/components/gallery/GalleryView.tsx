@@ -81,7 +81,7 @@ export const GalleryView: React.FC = () => {
     }
 
     return (
-        <div className="min-w-0 flex-1 overflow-y-auto bg-gray-900 p-6">
+        <div className="min-w-0 flex-1 overflow-y-auto bg-gray-900 p-6 [scrollbar-gutter:stable]">
             <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
                 {gallery.map((summary) => (
                     <LabelCard

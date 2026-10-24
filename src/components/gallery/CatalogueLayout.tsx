@@ -105,7 +105,7 @@ export const CatalogueLayout = ({
                 />
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-6">{body}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-6 [scrollbar-gutter:stable]">{body}</div>
 
             {dialog}
         </div>

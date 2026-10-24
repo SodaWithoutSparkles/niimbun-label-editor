@@ -108,7 +108,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) =
             }
         >
             <div className="flex h-full">
-                <nav className="w-1/5 max-[850px]:w-14 shrink-0 overflow-y-auto border-r border-gray-800 py-2">
+                <nav className="w-1/5 max-[850px]:w-14 shrink-0 overflow-y-auto border-r border-gray-800 py-2 [scrollbar-gutter:stable]">
                     {sections.map((s) => (
                         <button
                             key={s.id}
@@ -185,7 +185,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ open, onClose }) =
                             role="tabpanel"
                             id={`tabpanel-${section.id}-${tab.id}`}
                             aria-labelledby={`tab-${section.id}-${tab.id}`}
-                            className="flex-1 overflow-y-auto p-4"
+                            className="flex-1 overflow-y-auto p-4 [scrollbar-gutter:stable]"
                         >
                             {tab.content}
                         </div>
