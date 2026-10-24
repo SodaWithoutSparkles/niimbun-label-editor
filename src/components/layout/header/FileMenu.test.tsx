@@ -21,6 +21,12 @@ const renderMenu = (overrides: Partial<Props> = {}): Props => {
         saveDisabled: false,
         printDisabled: false,
         onHome: vi.fn(),
+        onImport: vi.fn(),
+        onExportCurrent: vi.fn(),
+        onExportAll: vi.fn(),
+        exportDisabled: false,
+        exportAllDisabled: false,
+        transferBusy: false,
         ...overrides,
     };
     render(<FileMenu {...props} />);
@@ -63,5 +69,63 @@ describe('FileMenu — Home item', () => {
 
         expect(props.onHome).toHaveBeenCalledTimes(1);
         expect(props.onCloseMenu).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('FileMenu — import/export items', () => {
+    it('renders the three transfer items between Save and Print', () => {
+        renderMenu();
+
+        const save = screen.getByText('Save Label');
+        const importItem = screen.getByText('Import labels…');
+        const exportCurrent = screen.getByText('Export this label…');
+        const exportAll = screen.getByText('Export all labels…');
+        const print = screen.getByText('Print…');
+
+        // Document order: Save → Import → Export this label → Export all → Print.
+        const order = [save, importItem, exportCurrent, exportAll, print];
+        for (let index = 1; index < order.length; index += 1) {
+            expect(
+                order[index - 1]!.compareDocumentPosition(order[index]!) &
+                    Node.DOCUMENT_POSITION_FOLLOWING,
+            ).toBeTruthy();
+        }
+    });
+
+    it('calls each handler and closes the menu', () => {
+        const props = renderMenu();
+
+        fireEvent.click(screen.getByText('Import labels…'));
+        expect(props.onImport).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByText('Export this label…'));
+        expect(props.onExportCurrent).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByText('Export all labels…'));
+        expect(props.onExportAll).toHaveBeenCalledTimes(1);
+
+        expect(props.onCloseMenu).toHaveBeenCalledTimes(3);
+    });
+
+    it('disables the two export items from their props', () => {
+        const props = renderMenu({ exportDisabled: true, exportAllDisabled: true });
+
+        fireEvent.click(screen.getByText('Export this label…'));
+        fireEvent.click(screen.getByText('Export all labels…'));
+
+        expect(props.onExportCurrent).not.toHaveBeenCalled();
+        expect(props.onExportAll).not.toHaveBeenCalled();
+    });
+
+    it('disables every transfer item while a transfer is busy', () => {
+        const props = renderMenu({ transferBusy: true });
+
+        fireEvent.click(screen.getByText('Import labels…'));
+        fireEvent.click(screen.getByText('Export this label…'));
+        fireEvent.click(screen.getByText('Export all labels…'));
+
+        expect(props.onImport).not.toHaveBeenCalled();
+        expect(props.onExportCurrent).not.toHaveBeenCalled();
+        expect(props.onExportAll).not.toHaveBeenCalled();
     });
 });

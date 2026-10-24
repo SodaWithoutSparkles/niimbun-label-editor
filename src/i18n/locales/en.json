@@ -3,8 +3,26 @@
     "home": "Home",
     "title": "File",
     "saveProject": "Save Label",
+    "importLabels": "Import labels…",
+    "exportCurrent": "Export this label…",
+    "exportAll": "Export all labels…",
     "print": "Print…",
     "autoSave": "Auto-save"
+  },
+  "importLabels": {
+    "done_one": "Imported {{count}} label.",
+    "done_other": "Imported {{count}} labels.",
+    "partial_one": "Imported {{count}} label; {{failed}} failed.",
+    "partial_other": "Imported {{count}} labels; {{failed}} failed.",
+    "failed": "Could not import the labels.",
+    "tooLarge": "The file is too large to import."
+  },
+  "exportLabels": {
+    "done_one": "Exported {{count}} label.",
+    "done_other": "Exported {{count}} labels.",
+    "partial_one": "Exported {{count}} label; {{failed}} could not be read.",
+    "partial_other": "Exported {{count}} labels; {{failed}} could not be read.",
+    "failed": "Could not export the labels."
   },
   "keyLabels": {
     "ctrl": "Ctrl",

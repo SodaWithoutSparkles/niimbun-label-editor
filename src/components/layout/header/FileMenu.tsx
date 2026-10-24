@@ -17,11 +17,24 @@ interface FileMenuProps {
     printDisabled: boolean;
     /** Returns to the gallery home surface. */
     onHome: () => void;
+    /** Opens the hidden file picker for a label bundle import. */
+    onImport: () => void;
+    /** Downloads the open document as a bundle. */
+    onExportCurrent: () => void;
+    /** Downloads every stored label as one bundle. */
+    onExportAll: () => void;
+    /** Export needs an open document (and no transfer already running). */
+    exportDisabled: boolean;
+    /** Export all needs at least one stored label. */
+    exportAllDisabled: boolean;
+    /** An import/export is running: every transfer item is disabled. */
+    transferBusy: boolean;
 }
 
 /**
- * File menu (ui-spec.md §3). Import/export is P8 scope; Save writes the live
- * document through `saveCurrentLabel`. The former "Save Project As" item was a
+ * File menu (ui-spec.md §3). Save writes the live document through
+ * `saveCurrentLabel`; import/export go through `useLabelTransfer` (P8b), whose
+ * work runs while the menu closes. The former "Save Project As" item was a
  * byte-identical duplicate of Save once the Save-As UI was stripped, so it was
  * removed rather than shipped as a second dead control.
  */
@@ -36,6 +49,12 @@ export const FileMenu: React.FC<FileMenuProps> = ({
     saveDisabled,
     printDisabled,
     onHome,
+    onImport,
+    onExportCurrent,
+    onExportAll,
+    exportDisabled,
+    exportAllDisabled,
+    transferBusy,
 }) => {
     const { t } = useTranslation();
     return (
@@ -59,6 +78,21 @@ export const FileMenu: React.FC<FileMenuProps> = ({
                         label={t('fileMenu.saveProject')}
                         disabled={saveDisabled}
                         onClick={() => { onSave(); onCloseMenu(); }}
+                    />
+                    <MenuItem
+                        label={t('fileMenu.importLabels')}
+                        disabled={transferBusy}
+                        onClick={() => { onImport(); onCloseMenu(); }}
+                    />
+                    <MenuItem
+                        label={t('fileMenu.exportCurrent')}
+                        disabled={exportDisabled || transferBusy}
+                        onClick={() => { onExportCurrent(); onCloseMenu(); }}
+                    />
+                    <MenuItem
+                        label={t('fileMenu.exportAll')}
+                        disabled={exportAllDisabled || transferBusy}
+                        onClick={() => { onExportAll(); onCloseMenu(); }}
                     />
                     <MenuItem
                         label={t('fileMenu.print')}

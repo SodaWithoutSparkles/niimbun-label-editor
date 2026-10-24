@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
 import { cn } from '../../utils/cn';
 import { FileMenu } from './header/FileMenu';
+import { useLabelTransfer } from './useLabelTransfer';
 import { EditMenu } from './header/EditMenu';
 import { ViewMenu } from './header/ViewMenu';
 import { OptionsMenu } from './header/OptionsMenu';
@@ -32,6 +33,12 @@ export const Header: React.FC = () => {
     const saveCurrentLabel = useStore(state => state.saveCurrentLabel);
     const autoSave = useStore(state => state.autoSave);
     const toggleAutoSave = useStore(state => state.toggleAutoSave);
+    const galleryLength = useStore(state => state.gallery.length);
+
+    // Import/export (P8b). The picker itself is a hidden input rendered once
+    // below; the hook owns the untrusted-file boundary and the notifications.
+    const transfer = useLabelTransfer();
+    const importRef = useRef<HTMLInputElement>(null);
 
     // Editor document selection + ops (ui-spec.md §3). Shortcuts in
     // `EditorKeyboardShortcuts` mirror these; both are no-ops in the gallery.
@@ -99,6 +106,15 @@ export const Header: React.FC = () => {
         await saveCurrentLabel();
     };
 
+    // Pick one file, hand it to the transfer hook, then clear the input's
+    // value: without the reset a second pick of the *same* file fires no
+    // `change` event and the import silently never happens.
+    const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0] ?? null;
+        event.target.value = '';
+        if (file) void transfer.importFile(file);
+    };
+
     const toggleMenu = (menu: string) => {
         setActiveMenu(activeMenu === menu ? null : menu);
     };
@@ -161,6 +177,22 @@ export const Header: React.FC = () => {
                 saveDisabled={!isEditor}
                 printDisabled={!isEditor || !hasDoc}
                 onHome={() => setView('gallery')}
+                onImport={() => importRef.current?.click()}
+                onExportCurrent={() => void transfer.exportCurrent()}
+                onExportAll={() => void transfer.exportAll()}
+                exportDisabled={!hasDoc || transfer.busy}
+                exportAllDisabled={galleryLength === 0 || transfer.busy}
+                transferBusy={transfer.busy}
+            />
+
+            {/* One hidden picker for the whole header. The bundle is validated
+                by the hook; this element only supplies the file. */}
+            <input
+                ref={importRef}
+                type="file"
+                accept=".json,.gz,application/json,application/gzip"
+                className="hidden"
+                onChange={handleImportFile}
             />
 
             <div className="absolute left-1/2 top-0 h-full -translate-x-1/2 flex items-center max-w-[480px] w-full justify-center px-4">
