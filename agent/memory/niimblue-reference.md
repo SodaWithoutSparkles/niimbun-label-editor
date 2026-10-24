@@ -82,3 +82,20 @@ The "over-scope to challenge" framing below was the reviewer's recommendation. *
 | QR / barcode drawing | `src/fabric-object/qrcode.ts`, `src/utils/barcode.ts` |
 | Undo/redo, editor keyboard/selection | `src/utils/undo_redo.ts`, `src/components/LabelDesigner.svelte` |
 | Default sizes / presets / thumb constants | `src/defaults.ts` |
+
+## Upstream dev survey — 2026-10-22 (tip `0c2dfa8`)
+
+Range `8a60a8e..0c2dfa8`; full report in
+[`agent/2026-10-22_storage-safety/upstream-dev-survey.md`](../2026-10-22_storage-safety/upstream-dev-survey.md).
+
+- **Their `screentone` is NOT a copy of our ScreenStyle demo.** Independent
+  analytic clustered dot (float angle, raw-px `dotSize`, binary output,
+  contrast band, whole-label print-time). Our engine is strictly richer
+  (K-levels, physical mm pitch, per-node masks, doc persistence). Only new
+  idea worth a decision is an explicit contrast/boldness knob.
+- Upstream added `beforeunload` unsaved guards and a dropdown→dialog refactor
+  **because it has no autosave / no dialog system**; we already have both.
+- Real gaps for us: `niimbluelib` pin (0.47.0 vs 0.47.1: protocol-4 print-task
+  fallback + unsigned packet parsing), no label import/export UI, print offset
+  not persisted per label, `letterSpacing` unwired.
+- `noScaleCache`, `scrollbar` padding, nested `{var}` tokens: not applicable.
