@@ -231,6 +231,11 @@ describe('integer hm invariant', () => {
             createLabelDoc({ nodes: [{ ...rect, quantizerParams: { screentoneBoldness: -9 } }] })
                 .nodes[0]?.quantizerParams,
         ).toEqual({ screentoneBoldness: -1 });
+        // Non-finite values are dropped, matching `validate`.
+        expect(
+            createLabelDoc({ nodes: [{ ...rect, quantizerParams: { screentoneBoldness: Number.NaN } }] })
+                .nodes[0]?.quantizerParams,
+        ).toBeUndefined();
     });
 
     it('drops an empty/invalid quantizerParams on a text node (early-return regression)', () => {

@@ -172,8 +172,10 @@ describe('renderLabelPage — screentone policy integration', () => {
     });
 
     it('routes a nonzero boldness into its policy options and changes ink end-to-end', async () => {
-        const light = screentoneRect('light', 0, 400, { screentoneBoldness: -1 });
-        const bold = screentoneRect('bold', 500, 400, { screentoneBoldness: 1 });
+        // Light grey (tone 0.4) keeps both ends away from a `.5` rounding
+        // boundary: −1 → level 0 (no ink), 0 → 1, +1 → 2.
+        const light = screentoneRect('light', 0, 400, { screentoneBoldness: -1 }, { fill: '#999999' });
+        const bold = screentoneRect('bold', 500, 400, { screentoneBoldness: 1 }, { fill: '#999999' });
         const doc = docOf([light, bold]);
 
         const built = await buildMask(doc);
@@ -200,8 +202,11 @@ describe('renderLabelPage — screentone policy integration', () => {
         };
         const lightInk = inkIn(0, 40);
         const boldInk = inkIn(50, 90);
-        expect(lightInk).toBeGreaterThanOrEqual(0);
-        expect(boldInk).toBeGreaterThan(lightInk);
+        // The same tone must ink strictly less at −1 than at +1. (An exact
+        // level count is not asserted: the raster grey is not the CSS hex value
+        // once the scene is composed, so only the ordering is stable.)
+        expect(lightInk).toBeLessThan(boldInk);
+        expect(boldInk).toBeGreaterThan(0);
     });
 
     it('two nodes differing only in screentoneAngle take distinct mask slots', async () => {
