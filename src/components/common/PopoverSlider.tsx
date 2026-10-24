@@ -85,6 +85,14 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
     const panelRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLInputElement | null>(null);
     const [tempValue, setTempValue] = useState(value);
+    /**
+     * Raw text while the field is being edited. `type="number"` cannot represent
+     * intermediate input (`-`, `` , `1.`), so the DOM silently rewrote it and the
+     * old per-keystroke `Number(...)` commit turned `-` into `0` — negative X/Y
+     * was untypeable. The draft keeps exactly what was typed; only a finite
+     * parse is committed live, and blur/Enter commits the final text.
+     */
+    const [draft, setDraft] = useState<string | null>(null);
     const [pos, setPos] = useState<PanelPosition | null>(null);
 
     const arrowStyle = useMemo(() => {
@@ -103,6 +111,12 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
     useEffect(() => {
         setTempValue(value);
     }, [value]);
+
+    // A panel dismissed by an outside click / Escape unmounts the input without
+    // a blur, so drop the draft explicitly; otherwise the next open shows it.
+    useEffect(() => {
+        if (!isOpen) setDraft(null);
+    }, [isOpen]);
 
     /**
      * Anchor the portalled panel to the trigger's live viewport rect. Runs on
@@ -287,8 +301,16 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
         setTempValue(clamped);
     };
 
-    const handleCommit = () => {
-        handleConfirm(tempValue);
+    /** Commit the raw draft on blur / Enter. An empty or partial entry is discarded. */
+    const commitDraft = () => {
+        if (draft === null) return;
+        const text = draft.trim();
+        // `Number('') === 0`, so empty must be rejected explicitly rather than
+        // written as zero; a lone `-` / `1e` is likewise not a value yet.
+        const parsed = text.length === 0 ? Number.NaN : Number(text);
+        setDraft(null);
+        if (!Number.isFinite(parsed)) return;
+        handleConfirm(parsed);
     };
 
     // Continuous Press Logic with acceleration
@@ -430,20 +452,33 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
                                 <div className="relative flex-1 min-w-[60px]">
                                     <input
                                         ref={inputRef}
-                                        type="number"
-                                        value={tempValue}
+                                        // `text` + an explicit spinbutton role: a number
+                                        // input cannot hold `-`/``/`1.` as a draft, which
+                                        // is what made negative values untypeable.
+                                        type="text"
+                                        role="spinbutton"
+                                        inputMode="decimal"
+                                        aria-valuemin={min}
+                                        aria-valuemax={max}
+                                        aria-valuenow={value}
+                                        value={draft ?? String(tempValue)}
                                         onChange={(e) => {
-                                            const v = Number(e.target.value);
-                                            setTempValue(v);
-                                            onChange(v);
+                                            const text = e.target.value;
+                                            setDraft(text);
+                                            // Commit a finite value live (keeps the existing
+                                            // live-update feel); leave a partial entry in the
+                                            // draft until blur/Enter.
+                                            const trimmed = text.trim();
+                                            const parsed = trimmed.length === 0 ? Number.NaN : Number(trimmed);
+                                            if (!Number.isFinite(parsed)) return;
+                                            setTempValue(parsed);
+                                            onChange(parsed);
                                         }}
+                                        onBlur={commitDraft}
                                         className="w-full bg-gray-950 border border-gray-800 rounded px-2 py-1 text-center font-mono text-sm focus:ring-1 focus:ring-blue-500 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                         onKeyDown={(e) => {
-                                            if (e.key === 'Enter') handleCommit();
+                                            if (e.key === 'Enter') commitDraft();
                                         }}
-                                        min={min}
-                                        max={max}
-                                        step={step}
                                     />
                                     {unit && <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs pointer-events-none">{unit}</span>}
                                 </div>

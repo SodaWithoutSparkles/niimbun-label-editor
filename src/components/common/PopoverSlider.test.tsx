@@ -180,3 +180,60 @@ describe('PopoverSlider portal', () => {
         expect(panel().style.maxHeight).toBe(`${vh - 200 - 8 - 8}px`);
     });
 });
+
+describe('PopoverSlider numeric entry', () => {
+    const input = () => screen.getByRole('spinbutton') as HTMLInputElement;
+
+    it('accepts a negative value typed one character at a time', () => {
+        const onChange = vi.fn();
+        render(<PopoverSlider value={5} onChange={onChange} min={-10} max={10} />);
+        fireEvent.click(screen.getByText('5'));
+
+        fireEvent.change(input(), { target: { value: '-' } });
+        // A lone minus is a draft, not a number: it must not become 0.
+        expect(onChange).not.toHaveBeenCalled();
+        expect(input().value).toBe('-');
+
+        fireEvent.change(input(), { target: { value: '-5' } });
+        expect(onChange).toHaveBeenCalledWith(-5);
+    });
+
+    it('does not write 0 when the field is cleared', () => {
+        const onChange = vi.fn();
+        render(<PopoverSlider value={5} onChange={onChange} />);
+        fireEvent.click(screen.getByText('5'));
+
+        fireEvent.change(input(), { target: { value: '' } });
+        fireEvent.blur(input());
+
+        expect(onChange).not.toHaveBeenCalled();
+        // Falls back to the last committed value.
+        expect(input().value).toBe('5');
+    });
+
+    it('keeps a leading zero as typed instead of rewriting the field', () => {
+        const onChange = vi.fn();
+        render(<PopoverSlider value={10} onChange={onChange} min={10} max={100} />);
+        fireEvent.click(screen.getByText('10'));
+
+        fireEvent.change(input(), { target: { value: '0' } });
+        expect(input().value).toBe('0');
+
+        fireEvent.change(input(), { target: { value: '05' } });
+        fireEvent.blur(input());
+        // The final commit still honours the field's floor.
+        expect(onChange).toHaveBeenLastCalledWith(10);
+    });
+
+    it('commits the typed draft on Enter', () => {
+        const onChange = vi.fn();
+        render(<PopoverSlider value={5} onChange={onChange} min={0} max={100} />);
+        fireEvent.click(screen.getByText('5'));
+
+        fireEvent.change(input(), { target: { value: '42' } });
+        expect(onChange).toHaveBeenCalledWith(42);
+        fireEvent.keyDown(input(), { key: 'Enter' });
+
+        expect(onChange).toHaveBeenLastCalledWith(42);
+    });
+});
