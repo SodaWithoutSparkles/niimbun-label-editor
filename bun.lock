@@ -5,7 +5,7 @@
     "": {
       "name": "ui-template",
       "dependencies": {
-        "@mmote/niimbluelib": "0.47.0",
+        "@mmote/niimbluelib": "0.47.1",
         "@tailwindcss/postcss": "^4.1.18",
         "@tailwindcss/vite": "^4.1.18",
         "bwip-js": "4.11.4",
@@ -110,7 +110,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@mmote/niimbluelib": ["@mmote/niimbluelib@0.47.0", "", { "dependencies": { "@capacitor-community/bluetooth-le": "^8.3.0", "@capacitor/core": "^8.5.2", "async-mutex": "^0.5.0", "crc-32": "^1.2.2", "eventemitter3": "^5.0.4" } }, "sha512-mcJco+GypEk7uCJWgqJYU73nAmMlpQ2fPD4pgvOdED9X1ypjTXizjuk5/EofThGcXrKZoTDGtThAqXEHh5BKLA=="],
+    "@mmote/niimbluelib": ["@mmote/niimbluelib@0.47.1", "", { "dependencies": { "@capacitor-community/bluetooth-le": "^8.3.0", "@capacitor/core": "^8.5.2", "async-mutex": "^0.5.0", "crc-32": "^1.2.2", "eventemitter3": "^5.0.4" } }, "sha512-fimKNas6YyTPh5GIVbPJ090+8ieszTBLdBIX8xwzsYqjrfdxCOEmE914gBc0knqqoA2EgBU0K34BLrheTu6GrQ=="],
 
     "@napi-rs/canvas": ["@napi-rs/canvas@1.0.10", "", { "optionalDependencies": { "@napi-rs/canvas-android-arm64": "1.0.10", "@napi-rs/canvas-darwin-arm64": "1.0.10", "@napi-rs/canvas-darwin-x64": "1.0.10", "@napi-rs/canvas-linux-arm-gnueabihf": "1.0.10", "@napi-rs/canvas-linux-arm64-gnu": "1.0.10", "@napi-rs/canvas-linux-arm64-musl": "1.0.10", "@napi-rs/canvas-linux-riscv64-gnu": "1.0.10", "@napi-rs/canvas-linux-x64-gnu": "1.0.10", "@napi-rs/canvas-linux-x64-musl": "1.0.10", "@napi-rs/canvas-win32-arm64-msvc": "1.0.10", "@napi-rs/canvas-win32-x64-msvc": "1.0.10" } }, "sha512-V+qptzsGnPMFxEbhwc6eDNMe5eDrfiBIp8qGpuRjAVIX4Kn2zxvwQ1Xco6Fwe+3tYIe3iLW8LM9D+SvjyJhqbQ=="],
 
