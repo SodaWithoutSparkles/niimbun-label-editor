@@ -61,14 +61,14 @@ describe('inspectorModel — field descriptors', () => {
         // The resolver ignores these text props, so advertising them as wired
         // would let a user edit a field nothing reads (should-fix #13). Their
         // reason is `style`, not the misleading CSV/template `content` message.
-        const unactionable = ['letterSpacing', 'direction'];
+        const unactionable = ['direction'];
         for (const key of unactionable) {
             const field = [...TEXT_FIELDS, ...SHAPE_FIELDS].find((f) => f.key === key);
             expect(field?.wired, key).toBe(false);
             expect(field?.reason, key).toBe('style');
         }
         // The ones the renderer *does* read stay wired.
-        for (const key of ['fontFamily', 'fontSize', 'closed', 'shape']) {
+        for (const key of ['fontFamily', 'fontSize', 'letterSpacing', 'closed', 'shape']) {
             const field = [...TEXT_FIELDS, ...SHAPE_FIELDS].find((f) => f.key === key);
             expect(field?.wired, key).toBe(true);
         }

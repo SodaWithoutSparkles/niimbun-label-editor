@@ -222,6 +222,8 @@ describe('ResolvedShape — text wrap preview (P5)', () => {
         expect(renderText({ wrap: 'char' }).wrap()).toBe('char');
         expect(renderText({ wrap: 'clip' }).wrap()).toBe('word');
         expect(renderText({ lineHeight: 1.5 }).lineHeight()).toBe(1.5);
+        expect(renderText({}).letterSpacing()).toBe(0);
+        expect(renderText({ letterSpacing: 1.5 }).letterSpacing()).toBe(1.5);
     });
 
     it('passes a combined bold+italic fontStyle through to the Konva Text', () => {

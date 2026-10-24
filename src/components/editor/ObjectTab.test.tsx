@@ -221,7 +221,7 @@ describe('ObjectTab — transform slider bounds follow the label size', () => {
         const row = screen.getByText(label).closest('.items-center.justify-between') as HTMLElement;
         const trigger = row.querySelector('.cursor-pointer') as HTMLElement;
         fireEvent.click(trigger);
-        const number = document.querySelector('input[type="number"]') as HTMLInputElement;
+        const number = document.querySelector('input[role="spinbutton"]') as HTMLInputElement;
         const range = document.querySelector('input[type="range"]') as HTMLInputElement;
         const bounds = {
             number: { min: number.min, max: number.max, step: number.step },
@@ -278,7 +278,7 @@ describe('ObjectTab — W/H can never be sized to 0', () => {
         render(<ObjectTab selected={[selected]} />);
         const row = screen.getByText(label).closest('.items-center.justify-between') as HTMLElement;
         fireEvent.click(row.querySelector('.cursor-pointer') as HTMLElement);
-        fireEvent.change(document.querySelector('input[type="number"]') as HTMLInputElement, {
+        fireEvent.change(document.querySelector('input[role="spinbutton"]') as HTMLInputElement, {
             target: { value: next },
         });
         return useStore.getState().currentDoc!.nodes.find((n) => n.id === 'a')!.size;
@@ -362,7 +362,7 @@ describe('per-node quantizer params', () => {
     const openQuantizerField = (label: string): HTMLInputElement => {
         const row = screen.getByText(label).closest('.items-center.justify-between') as HTMLElement;
         fireEvent.click(row.querySelector('.cursor-pointer') as HTMLElement);
-        return document.querySelector('input[type="number"]') as HTMLInputElement;
+        return document.querySelector('input[role="spinbutton"]') as HTMLInputElement;
     };
 
     it('edits a bounded threshold value on a threshold-strategy node', () => {
@@ -377,7 +377,7 @@ describe('per-node quantizer params', () => {
         expect(screen.queryByText('Serpentine scan')).toBeNull();
 
         fireEvent.click(screen.getByText('128'));
-        fireEvent.change(document.querySelector('input[type="number"]') as HTMLInputElement, {
+        fireEvent.change(document.querySelector('input[role="spinbutton"]') as HTMLInputElement, {
             target: { value: '200' },
         });
         fireEvent.pointerUp(document);
@@ -478,7 +478,7 @@ describe('per-node quantizer gamma', () => {
     /** Open the gamma slider row and return its number input. */
     const openGamma = (): HTMLInputElement => {
         fireEvent.click(gammaRow().querySelector('.cursor-pointer') as HTMLElement);
-        return document.querySelector('input[type="number"]') as HTMLInputElement;
+        return document.querySelector('input[role="spinbutton"]') as HTMLInputElement;
     };
 
     it('renders for a threshold node and an image node, hidden for a quantizerless shape', () => {
@@ -603,7 +603,7 @@ describe('per-node screentone params (P4)', () => {
     const openField = (label: string): HTMLInputElement => {
         const row = screen.getByText(label).closest('.items-center.justify-between') as HTMLElement;
         fireEvent.click(row.querySelector('.cursor-pointer') as HTMLElement);
-        return document.querySelector('input[type="number"]') as HTMLInputElement;
+        return document.querySelector('input[role="spinbutton"]') as HTMLInputElement;
     };
 
     /** Close the open PopoverSlider row so the next `openField` targets its own. */

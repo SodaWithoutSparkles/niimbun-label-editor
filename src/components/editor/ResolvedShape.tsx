@@ -106,6 +106,7 @@ export const ResolvedShape = React.memo(function ResolvedShape({
             fontStyle: node.fontStyle,
             wrap: 'word',
             lineHeight: node.lineHeight,
+            letterSpacing: node.letterSpacing,
         }).scale;
     }, [node]);
 
@@ -173,6 +174,7 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                     padding={node.paddingHm}
                     wrap={konvaTextWrap(node.wrap)}
                     lineHeight={node.lineHeight}
+                    letterSpacing={node.letterSpacing}
                     listening={false}
                     fill={node.placeholder ? '#9ca3af' : '#111827'}
                     stroke={stroke}

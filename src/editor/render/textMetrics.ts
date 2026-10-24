@@ -24,6 +24,8 @@ export interface TextMetricsInput {
     /** `shrink` measures with `'word'`; `char` is only a rendering choice. */
     wrap: Extract<TextWrap, 'word' | 'char'>;
     lineHeight: number;
+    /** Extra inter-character spacing in px; must match the rendered node. */
+    letterSpacing?: number;
 }
 
 export interface TextMetrics {
@@ -44,6 +46,7 @@ export const measureKonvaText = (input: TextMetricsInput): TextMetrics => {
         fontStyle: input.fontStyle,
         wrap: input.wrap,
         lineHeight: input.lineHeight,
+        letterSpacing: input.letterSpacing ?? 0,
         padding: 0,
     });
     // `getTextWidth()` is the widest wrapped line; `getHeight()` is the full

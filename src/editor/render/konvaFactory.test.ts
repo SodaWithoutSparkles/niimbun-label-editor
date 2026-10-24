@@ -427,6 +427,11 @@ describe('createKonvaNode — text wrap (P5 D1/D2a)', () => {
         expect(buildText({ lineHeight: 1.5 }).lineHeight()).toBe(1.5);
     });
 
+    it('defaults letterSpacing to 0 and passes an explicit value through', () => {
+        expect(buildText({}).letterSpacing()).toBe(0);
+        expect(buildText({ letterSpacing: 2 }).letterSpacing()).toBe(2);
+    });
+
     it('preserves a combined bold+italic fontStyle for the print/raster path', () => {
         // Print builds `new Konva.Text({ fontStyle })` from the resolved string;
         // Konva composes the canvas font as `fontStyle + size + family`, so
@@ -464,5 +469,21 @@ describe('createKonvaNode — text wrap (P5 D1/D2a)', () => {
         expect(text.scaleX()).toBeLessThanOrEqual(1);
         // The measured wrapped width, scaled, still fits the box.
         expect(text.getTextWidth() * text.scaleX()).toBeLessThanOrEqual(w + 1);
+    });
+
+    it('includes letterSpacing in the shrink-to-fit measurement', () => {
+        const overflow = {
+            text: { kind: 'static' as const, value: 'a'.repeat(26) },
+            size: { w: 100, h: 40 },
+            fontSize: 100,
+            lineHeight: 1,
+            wrap: 'shrink' as const,
+        };
+        const plain = buildText(overflow);
+        const spaced = buildText({ ...overflow, letterSpacing: 20 });
+        // Wider glyph run ⇒ a smaller uniform scale; missing this in
+        // `measureKonvaText` would overflow the box.
+        expect(spaced.scaleX()).toBeLessThan(plain.scaleX());
+        expect(spaced.getTextWidth() * spaced.scaleX()).toBeLessThanOrEqual(101);
     });
 });

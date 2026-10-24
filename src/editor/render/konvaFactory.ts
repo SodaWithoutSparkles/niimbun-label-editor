@@ -376,6 +376,7 @@ export const createKonvaNode = (
                 padding: node.paddingHm,
                 wrap: konvaTextWrap(node.wrap),
                 lineHeight: node.lineHeight,
+                letterSpacing: node.letterSpacing,
             });
             if (node.wrap === 'shrink') {
                 const metrics = measureKonvaText({
@@ -387,6 +388,7 @@ export const createKonvaNode = (
                     fontStyle: node.fontStyle,
                     wrap: 'word',
                     lineHeight: node.lineHeight,
+                    letterSpacing: node.letterSpacing,
                 });
                 // Shrink scale composes with the node's own transform scale
                 // (Konva scales a text from its top-left origin, offset 0).

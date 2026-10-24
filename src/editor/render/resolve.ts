@@ -128,6 +128,8 @@ export interface ResolvedText extends ResolvedBase {
     wrap: TextWrap;
     /** Line-height multiplier (already defaulted to `1`). */
     lineHeight: number;
+    /** Extra inter-character spacing in px (already defaulted to `0`). */
+    letterSpacing: number;
 }
 
 /**
@@ -478,6 +480,7 @@ export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[]
                     paddingHm: 0,
                     wrap: node.wrap ?? DEFAULT_TEXT_WRAP,
                     lineHeight: node.lineHeight ?? 1,
+                    letterSpacing: node.letterSpacing ?? 0,
                     bounds: transformedBounds(rectCorners(0, 0, w, h), base.transform),
                 };
             }

@@ -461,6 +461,11 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
                                         aria-valuemin={min}
                                         aria-valuemax={max}
                                         aria-valuenow={value}
+                                        // Read by ObjectTab's bounds test; inert on a
+                                        // text input, but it states the field's contract.
+                                        min={min}
+                                        max={max}
+                                        step={step}
                                         value={draft ?? String(tempValue)}
                                         onChange={(e) => {
                                             const text = e.target.value;
