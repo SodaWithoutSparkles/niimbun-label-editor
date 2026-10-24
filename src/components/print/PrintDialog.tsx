@@ -1,11 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { LabelType, PageColorType } from '@mmote/niimbluelib';
 import { Modal } from '../common/dialogs/Modal';
 import { Input, Select, SettingRow, Toggle } from '../common/forms';
 import { rasterDimensions } from '../../core/render';
 import { normalizeDpi } from '../../core/doc/validate';
-import type { LabelDoc } from '../../core/doc/types';
+import type { LabelDoc, PrintOffset } from '../../core/doc/types';
+import { hmToPx, pxToHm } from '../../core/hm';
 import type { CsvRecord } from '../../data/csvRepo';
 import {
     renderLabelPage,
@@ -83,6 +84,13 @@ export interface PrintDialogProps {
      * `setLabelDpi`. Omitted = the box still renders but a commit is a no-op.
      */
     onDpiChange?: (dpi: number) => void;
+    /**
+     * Store-agnostic print-offset persister (P9). The dialog reports the
+     * last-used offset in hm when it unmounts (i.e. when it closes), with the
+     * document id it belongs to. Omitted = the knobs still work for this job
+     * but nothing is persisted (dev harnesses).
+     */
+    onPrintOffsetChange?: (offset: PrintOffset | undefined, docId: string) => void;
 }
 
 type Outcome =
@@ -110,6 +118,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     printerStatus,
     onPrintDirectionChange,
     onDpiChange,
+    onPrintOffsetChange,
 }) => {
     const { t } = useTranslation();
     const setEditorWarnings = useStore((state) => state.setEditorWarnings);
@@ -158,9 +167,6 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         setLabelType(undefined);
         setInvert(false);
         setMirror(false);
-        setOffsetX('0');
-        setOffsetY('0');
-        setOffsetType('inner');
         setProgress(null);
         setOutcome(null);
         setBusy(false);
@@ -207,6 +213,95 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         printerDpi: printerStatus.dpi,
         docDpi: doc.label.dpi,
     });
+
+    // P9: the offset knobs are device dots at the *resolved* dpi, but the label
+    // stores the physical offset in hm, so it stays put across printers/sessions.
+    // These refs let the unmount-only commit read the latest values without
+    // re-running an effect on every keystroke.
+    const offsetRef = useRef({ x: offsetX, y: offsetY, type: offsetType });
+    offsetRef.current = { x: offsetX, y: offsetY, type: offsetType };
+    /**
+     * What the dialog opened with: the stored hm per axis (0 when absent), the
+     * px strings they seeded, the type, and the document they belong to. The
+     * hm is kept so an untouched axis never drifts when the resolved dpi
+     * changes while the dialog is open.
+     */
+    const seededOffsetRef = useRef<{
+        xHm: number;
+        yHm: number;
+        type: 'inner' | 'outer';
+        px: string;
+        py: string;
+        docId: string;
+        /** True when the doc actually carried an offset (see the cleanup guard). */
+        hadStored: boolean;
+    } | null>(null);
+    const commitOffsetRef = useRef(onPrintOffsetChange);
+    commitOffsetRef.current = onPrintOffsetChange;
+    const dpiRef = useRef(resolved.dpi);
+    dpiRef.current = resolved.dpi;
+
+    // Seed the knobs from `doc.label.printOffset` each time the dialog opens
+    // (absent ⇒ the printer default `0 / 0 / inner`). Deps are `open` only: a
+    // store update while the dialog is open must never overwrite what the user
+    // is typing.
+    useEffect(() => {
+        if (!open) return;
+        const stored = doc.label.printOffset;
+        const xHm = stored?.xHm ?? 0;
+        const yHm = stored?.yHm ?? 0;
+        const type = stored?.type ?? 'inner';
+        const px = String(hmToPx(xHm, resolved.dpi));
+        const py = String(hmToPx(yHm, resolved.dpi));
+        seededOffsetRef.current = {
+            xHm,
+            yHm,
+            type,
+            px,
+            py,
+            docId: doc.meta.id,
+            hadStored: stored !== undefined,
+        };
+        // Keep the ref the cleanup reads in sync even if the state updates below
+        // have not been applied yet (StrictMode runs the cleanup between them).
+        offsetRef.current = { x: px, y: py, type };
+        setOffsetX(px);
+        setOffsetY(py);
+        setOffsetType(type);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open]);
+
+    // Persist the offset exactly once, on unmount: the dialog is mounted only
+    // while `isPrintOpen`, so closing it is the commit point (one undo entry,
+    // never one per keystroke). The seeded docId lets the slice reject a stale
+    // unmount from another document.
+    useEffect(
+        () => () => {
+            const seed = seededOffsetRef.current;
+            if (!seed) return;
+            const { x, y, type } = offsetRef.current;
+            // StrictMode's simulated remount runs this cleanup before the seeded
+            // values have been rendered, and an untouched **stored** offset must
+            // not be re-derived through the px round-trip. With nothing stored,
+            // reporting `undefined` is a slice no-op, so it is safe either way.
+            if (seed.hadStored && seed.px === x && seed.py === y && seed.type === type) return;
+            const parse = (text: string): number => {
+                const value = Number.parseInt(text, 10);
+                // An emptied field is "no offset on this axis", not a lost commit.
+                return Number.isFinite(value) ? value : 0;
+            };
+            const px = parse(x);
+            const py = parse(y);
+            const xHm = x === seed.px ? seed.xHm : pxToHm(px, dpiRef.current);
+            const yHm = y === seed.py ? seed.yHm : pxToHm(py, dpiRef.current);
+            const offset: PrintOffset | undefined =
+                xHm === 0 && yHm === 0 && type === 'inner'
+                    ? undefined
+                    : { xHm, yHm, type };
+            commitOffsetRef.current?.(offset, seed.docId);
+        },
+        [],
+    );
 
     const dims = useMemo(
         () =>

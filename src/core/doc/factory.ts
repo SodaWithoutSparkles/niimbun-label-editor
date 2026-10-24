@@ -196,6 +196,7 @@ export interface CreateLabelDocOptions {
     guides?: Guide[];
     nodes?: Node[];
     printDirection?: LabelDoc['label']['printDirection'];
+    printOffset?: LabelDoc['label']['printOffset'];
     /** Epoch seconds; injectable so tests are deterministic. */
     now?: number;
 }
@@ -225,6 +226,15 @@ export const createLabelDoc = (options: CreateLabelDocOptions = {}): LabelDoc =>
                 roundGuide(guide),
             ),
             printDirection: options.printDirection ?? 'top',
+            ...(options.printOffset
+                ? {
+                      printOffset: {
+                          xHm: roundHm(options.printOffset.xHm),
+                          yHm: roundHm(options.printOffset.yHm),
+                          type: options.printOffset.type,
+                      },
+                  }
+                : {}),
         },
         nodes: (options.nodes ?? []).map(clone).map(roundNode),
         data: { sampleRowIndex: 0, globals: [] },

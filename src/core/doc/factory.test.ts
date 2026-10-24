@@ -174,6 +174,23 @@ describe('createLabelDoc', () => {
         assertIntegerGeometry(doc);
         expect(isLabelDoc(doc).ok).toBe(true);
     });
+
+    it('copies a print offset option (P9) and stays validator-clean', () => {
+        const doc = createLabelDoc({ printOffset: { xHm: 120, yHm: -85, type: 'outer' } });
+        expect(doc.label.printOffset).toEqual({ xHm: 120, yHm: -85, type: 'outer' });
+        const parsed = isLabelDoc(doc);
+        expect(parsed.ok).toBe(true);
+        if (!parsed.ok) return;
+        expect(parsed.doc.label.printOffset).toEqual({ xHm: 120, yHm: -85, type: 'outer' });
+
+        // Absent by default…
+        expect(createLabelDoc().label.printOffset).toBeUndefined();
+        // …and the copy is detached from the caller's object.
+        const source = { xHm: 5, yHm: 6, type: 'inner' as const };
+        const owned = createLabelDoc({ printOffset: source });
+        source.xHm = 999;
+        expect(owned.label.printOffset?.xHm).toBe(5);
+    });
 });
 
 describe('integer hm invariant', () => {

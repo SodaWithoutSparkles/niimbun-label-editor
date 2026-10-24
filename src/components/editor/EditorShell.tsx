@@ -37,6 +37,7 @@ export const EditorShell: React.FC = () => {
     const isPrintOpen = useStore((state) => state.isPrintOpen);
     const closePrint = useStore((state) => state.closePrint);
     const setPrintDirection = useStore((state) => state.setPrintDirection);
+    const setPrintOffset = useStore((state) => state.setPrintOffset);
     const setLabelDpi = useStore((state) => state.setLabelDpi);
 
     // One runner for the whole app (`createJobRunner` is memoised on the shared
@@ -116,6 +117,7 @@ export const EditorShell: React.FC = () => {
                         printerStatus={printerStatus}
                         onPrintDirectionChange={setPrintDirection}
                         onDpiChange={setLabelDpi}
+                        onPrintOffsetChange={setPrintOffset}
                     />
                 )}
             </div>

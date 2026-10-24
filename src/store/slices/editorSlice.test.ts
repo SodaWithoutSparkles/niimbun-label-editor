@@ -1579,3 +1579,77 @@ describe('editorSlice — autosave write tracking (P3)', () => {
         await expect(store.getState().flushAutosave()).resolves.toBeUndefined();
     });
 });
+
+describe('editorSlice — setPrintOffset (P9)', () => {
+    it('writes label.printOffset as exactly one undo entry, and undo restores absence', () => {
+        const store = setupStore();
+        const docId = store.getState().currentDoc!.meta.id;
+        expect(store.getState().docPast).toHaveLength(0);
+
+        store.getState().setPrintOffset({ xHm: 120, yHm: -85, type: 'outer' }, docId);
+
+        expect(store.getState().currentDoc!.label.printOffset).toEqual({
+            xHm: 120,
+            yHm: -85,
+            type: 'outer',
+        });
+        expect(store.getState().docPast).toHaveLength(1);
+
+        store.getState().undoDoc();
+        expect(store.getState().currentDoc!.label.printOffset).toBeUndefined();
+        expect(store.getState().docPast).toHaveLength(0);
+    });
+
+    it('creates no undo entry for equal values, and clears with undefined', () => {
+        const store = setupStore();
+        const docId = store.getState().currentDoc!.meta.id;
+        store.getState().setPrintOffset({ xHm: 120, yHm: -85, type: 'outer' }, docId);
+        const before = store.getState().docPast.length;
+
+        // Identical offset: no entry.
+        store.getState().setPrintOffset({ xHm: 120, yHm: -85, type: 'outer' }, docId);
+        expect(store.getState().docPast).toHaveLength(before);
+
+        // The type is part of the value: switching it IS a change.
+        store.getState().setPrintOffset({ xHm: 120, yHm: -85, type: 'inner' }, docId);
+        expect(store.getState().docPast).toHaveLength(before + 1);
+
+        // Clearing removes the field, and clearing again is a no-op.
+        store.getState().setPrintOffset(undefined, docId);
+        expect(store.getState().currentDoc!.label.printOffset).toBeUndefined();
+        expect(store.getState().docPast).toHaveLength(before + 2);
+        store.getState().setPrintOffset(undefined, docId);
+        expect(store.getState().docPast).toHaveLength(before + 2);
+    });
+
+    it('clamps an out-of-range offset to the validator bound', () => {
+        const store = setupStore();
+        const docId = store.getState().currentDoc!.meta.id;
+
+        store.getState().setPrintOffset({ xHm: 5000, yHm: -5000, type: 'inner' }, docId);
+
+        expect(store.getState().currentDoc!.label.printOffset).toEqual({
+            xHm: 1000,
+            yHm: -1000,
+            type: 'inner',
+        });
+    });
+
+    it('ignores a stale docId, so a late unmount cannot write onto another doc', () => {
+        const store = setupStore();
+        const docId = store.getState().currentDoc!.meta.id;
+
+        store.getState().setPrintOffset({ xHm: 50, yHm: 50, type: 'inner' }, 'other-doc');
+
+        expect(store.getState().currentDoc!.label.printOffset).toBeUndefined();
+        expect(store.getState().docPast).toHaveLength(0);
+
+        // The matching id still applies.
+        store.getState().setPrintOffset({ xHm: 50, yHm: 50, type: 'inner' }, docId);
+        expect(store.getState().currentDoc!.label.printOffset).toEqual({
+            xHm: 50,
+            yHm: 50,
+            type: 'inner',
+        });
+    });
+});

@@ -1,5 +1,5 @@
 import { newLabelId, roundNode } from '../../core/doc/factory';
-import { normalizeDpi } from '../../core/doc/validate';
+import { normalizeDpi, PRINT_OFFSET_LIMIT_HM } from '../../core/doc/validate';
 import { resizeNodeGeometry } from '../../core/doc/geometry';
 import { effectiveTransform, IDENTITY_MAT2D, nodeLookup, worldPreservingTransform, type Mat2D } from '../../core/doc/derive';
 import { roundHm } from '../../core/hm';
@@ -549,6 +549,44 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             if (doc.label.printDirection === direction) return;
             const next = cloneDoc(doc);
             next.label.printDirection = direction;
+            commit(next, doc);
+        },
+
+        setPrintOffset: (offset, docId) => {
+            const doc = get().currentDoc;
+            // A late dialog unmount must never write doc A's offset onto doc B.
+            if (!doc || doc.meta.id !== docId) return;
+            // Clamp/round exactly like the validator, so a write-back can never
+            // store a value that would be silently dropped on the next load.
+            const normalized =
+                offset === undefined
+                    ? undefined
+                    : {
+                          xHm: Math.max(
+                              -PRINT_OFFSET_LIMIT_HM,
+                              Math.min(PRINT_OFFSET_LIMIT_HM, Math.round(offset.xHm)),
+                          ),
+                          yHm: Math.max(
+                              -PRINT_OFFSET_LIMIT_HM,
+                              Math.min(PRINT_OFFSET_LIMIT_HM, Math.round(offset.yHm)),
+                          ),
+                          type: offset.type,
+                      };
+            // A no-op change must not create an undo entry (mirrors commitDoc).
+            const current = doc.label.printOffset;
+            if (normalized === undefined) {
+                if (current === undefined) return;
+            } else if (
+                current !== undefined &&
+                current.xHm === normalized.xHm &&
+                current.yHm === normalized.yHm &&
+                current.type === normalized.type
+            ) {
+                return;
+            }
+            const next = cloneDoc(doc);
+            if (normalized === undefined) delete next.label.printOffset;
+            else next.label.printOffset = normalized;
             commit(next, doc);
         },
 

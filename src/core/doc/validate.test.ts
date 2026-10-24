@@ -1031,6 +1031,74 @@ describe('isLabelDoc — acceptance and repair', () => {
     });
 });
 
+describe('isLabelDoc — label.printOffset (P9)', () => {
+    const withOffset = (printOffset: unknown) =>
+        isLabelDoc(
+            validRaw({
+                label: {
+                    backingW: 2500,
+                    backingH: 7800,
+                    dpi: 300,
+                    regions: [],
+                    printDirection: 'top',
+                    printOffset,
+                },
+            }),
+        );
+
+    it('round-trips a valid print offset', () => {
+        const result = withOffset({ xHm: 120, yHm: -85, type: 'outer' });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.label.printOffset).toEqual({ xHm: 120, yHm: -85, type: 'outer' });
+        // The parsed doc is valid input again (stable round-trip).
+        const again = isLabelDoc(result.doc);
+        expect(again.ok).toBe(true);
+        if (!again.ok) return;
+        expect(again.doc.label.printOffset).toEqual({ xHm: 120, yHm: -85, type: 'outer' });
+    });
+
+    it('accepts the limits themselves and the inner type', () => {
+        const result = withOffset({ xHm: 1000, yHm: -1000, type: 'inner' });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.label.printOffset).toEqual({ xHm: 1000, yHm: -1000, type: 'inner' });
+    });
+
+    it('drops an invalid offset instead of failing the document', () => {
+        const invalid: unknown[] = [
+            { xHm: 0, yHm: 1001, type: 'inner' },
+            { xHm: 0, yHm: -1001, type: 'inner' },
+            { xHm: 0, yHm: 0, type: 'sideways' },
+            { xHm: '5', yHm: 0, type: 'inner' },
+            'nope',
+            [1, 2],
+            null,
+        ];
+        for (const value of invalid) {
+            const result = withOffset(value);
+            expect(result.ok, JSON.stringify(value)).toBe(true);
+            if (!result.ok) return;
+            expect(result.doc.label.printOffset).toBeUndefined();
+        }
+    });
+
+    it('rounds a fractional offset like every other hm', () => {
+        const result = withOffset({ xHm: 1.5, yHm: -2.4, type: 'outer' });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.label.printOffset).toEqual({ xHm: 2, yHm: -2, type: 'outer' });
+    });
+
+    it('leaves an absent offset absent', () => {
+        const result = isLabelDoc(validRaw());
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.label.printOffset).toBeUndefined();
+        expect('printOffset' in result.doc.label).toBe(false);
+    });
+});
+
 describe('isGlobalSpec — remote/static union (P6)', () => {
     it('hydrates a legacy spec without `kind` to a remote spec (round-trip)', () => {
         const parsed = isGlobalSpec({ name: 'g', url: 'https://x', extract: '$.v', expiresAt: 1.9 });

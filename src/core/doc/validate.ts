@@ -29,6 +29,7 @@ import type {
     LabelDoc,
     Node,
     NodeType,
+    PrintOffset,
     QrNode,
     BarcodeNode,
     CodeNode,
@@ -86,6 +87,28 @@ const PRINT_DIRECTIONS: readonly LabelDoc['label']['printDirection'][] = [
     'bottom',
     'left',
 ];
+
+/** ±100 mm: far beyond any real correction, and keeps the raster finite. */
+export const PRINT_OFFSET_LIMIT_HM = 1000;
+
+/**
+ * The label's last-used print offset (hm), or `undefined` when absent/invalid.
+ * An invalid optional field is **dropped** rather than failing the document: it
+ * is a print convenience, and a rejected doc would be a worse outcome than a
+ * reset offset. Floats are rounded like every other hm (see `isHm`).
+ */
+const normalizePrintOffset = (value: unknown): PrintOffset | undefined => {
+    if (!isRecord(value)) return undefined;
+    const { xHm, yHm, type } = value;
+    const x = isHm(xHm);
+    const y = isHm(yHm);
+    if (x === undefined || y === undefined) return undefined;
+    if (Math.abs(x) > PRINT_OFFSET_LIMIT_HM || Math.abs(y) > PRINT_OFFSET_LIMIT_HM) {
+        return undefined;
+    }
+    if (type !== 'inner' && type !== 'outer') return undefined;
+    return { xHm: x, yHm: y, type };
+};
 
 // Bounds/default for the label's dpi **hint** (`doc.label.dpi`). The print
 // raster may resolve to the printer's reported dpi instead, so these only
@@ -993,6 +1016,7 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
     const printDirection = isOneOf(labelRaw.printDirection, PRINT_DIRECTIONS)
         ? labelRaw.printDirection
         : 'top';
+    const printOffset = normalizePrintOffset(labelRaw.printOffset);
 
     const nodes = toArray(raw.nodes, isNode, 'nodes', errors, repairs);
     const seenNodeIds = new Set<string>();
@@ -1050,6 +1074,7 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
                 regions,
                 guides,
                 printDirection,
+                ...(printOffset ? { printOffset } : {}),
             },
             nodes,
             data: { ...(csv ? { csv } : {}), sampleRowIndex, globals },

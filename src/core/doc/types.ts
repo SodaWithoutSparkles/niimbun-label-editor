@@ -282,6 +282,14 @@ export interface CsvRef {
     source: AssetRef;
 }
 
+/** Last-used print offset, device-independent (hm). */
+export interface PrintOffset {
+    xHm: hm;
+    yHm: hm;
+    /** `outer` grows the raster; `inner` shifts within it. */
+    type: 'inner' | 'outer';
+}
+
 export interface LabelDoc {
     version: 1;
     meta: {
@@ -310,6 +318,11 @@ export interface LabelDoc {
         /** Non-printable editor guides (never clip, print, or join the union). */
         guides: Guide[];
         printDirection: 'top' | 'right' | 'bottom' | 'left';
+        /**
+         * Last-used print offset. Optional: absent means no offset (the printer
+         * default). Stored in hm, converted to device px at the resolved print dpi.
+         */
+        printOffset?: PrintOffset;
     };
     nodes: Node[];
     data: { csv?: CsvRef; sampleRowIndex: number; globals: GlobalSpec[] };

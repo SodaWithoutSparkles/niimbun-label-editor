@@ -1005,3 +1005,135 @@ describe('PrintDialog — D-28 thumbnail asset scope', () => {
         expect(options.assets).not.toBe(printAssets);
     });
 });
+
+describe('PrintDialog — persisted print offset (P9)', () => {
+    /** 850 hm ≈ 8.5 mm, -423 hm ≈ -4.23 mm at the 300 dpi hint. */
+    const storedOffsetDoc = () =>
+        createLabelDoc({
+            backingW: 2500,
+            backingH: 7800,
+            dpi: 300,
+            printOffset: { xHm: 850, yHm: -423, type: 'outer' },
+        });
+
+    it('shows a stored offset converted to dots at the resolved dpi', () => {
+        // The printer reports no dpi, so the resolved basis is the 300 dpi hint.
+        renderDialog({ doc: storedOffsetDoc(), runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+
+        expect(screen.getByLabelText('Offset X')).toHaveValue('100');
+        expect(screen.getByLabelText('Offset Y')).toHaveValue('-50');
+        expect(screen.getByLabelText('Offset type')).toHaveValue('outer');
+    });
+
+    it('converts at the printer-reported dpi when that is the resolved basis', () => {
+        renderDialog({
+            doc: storedOffsetDoc(),
+            runner: new FakeRunner(),
+            printerStatus: { ...statusOf(B1_PRO), dpi: 203 },
+        });
+
+        // 850 hm at 203 dpi = 67.9 dots, not the 100 the 300 dpi hint gives.
+        expect(screen.getByLabelText('Offset X')).toHaveValue('68');
+    });
+
+    it('reports the hm offset once on unmount, never per keystroke', () => {
+        const onPrintOffsetChange = vi.fn();
+        const doc = narrowDoc();
+        const view = render(
+            <PrintDialog
+                open
+                onClose={vi.fn()}
+                doc={doc}
+                csv={null}
+                runner={new FakeRunner()}
+                printerStatus={statusOf(B1_PRO)}
+                onPrintOffsetChange={onPrintOffsetChange}
+            />,
+        );
+
+        fireEvent.change(screen.getByLabelText('Offset X'), { target: { value: '100' } });
+        fireEvent.change(screen.getByLabelText('Offset Y'), { target: { value: '-50' } });
+        fireEvent.change(screen.getByLabelText('Offset type'), { target: { value: 'outer' } });
+        expect(onPrintOffsetChange).not.toHaveBeenCalled();
+
+        view.unmount();
+
+        expect(onPrintOffsetChange).toHaveBeenCalledTimes(1);
+        expect(onPrintOffsetChange).toHaveBeenCalledWith(
+            {
+                xHm: Math.round((100 * 2540) / 300),
+                yHm: Math.round((-50 * 2540) / 300),
+                type: 'outer',
+            },
+            doc.meta.id,
+        );
+    });
+
+    it('reports undefined for 0/0 (the printer default)', () => {
+        const onPrintOffsetChange = vi.fn();
+        const doc = narrowDoc();
+        const view = render(
+            <PrintDialog
+                open
+                onClose={vi.fn()}
+                doc={doc}
+                csv={null}
+                runner={new FakeRunner()}
+                printerStatus={statusOf(B1_PRO)}
+                onPrintOffsetChange={onPrintOffsetChange}
+            />,
+        );
+
+        view.unmount();
+
+        expect(onPrintOffsetChange).toHaveBeenCalledTimes(1);
+        expect(onPrintOffsetChange).toHaveBeenCalledWith(undefined, doc.meta.id);
+    });
+
+    it('persists a type-only change at 0/0 (outer is not the printer default)', () => {
+        const onPrintOffsetChange = vi.fn();
+        const doc = narrowDoc();
+        const view = render(
+            <PrintDialog
+                open
+                onClose={vi.fn()}
+                doc={doc}
+                csv={null}
+                runner={new FakeRunner()}
+                printerStatus={statusOf(B1_PRO)}
+                onPrintOffsetChange={onPrintOffsetChange}
+            />,
+        );
+
+        fireEvent.change(screen.getByLabelText('Offset type'), { target: { value: 'outer' } });
+        view.unmount();
+
+        expect(onPrintOffsetChange).toHaveBeenCalledWith(
+            { xHm: 0, yHm: 0, type: 'outer' },
+            doc.meta.id,
+        );
+    });
+
+    it('keeps a stored offset through a StrictMode mount (no spurious commit)', () => {
+        const onPrintOffsetChange = vi.fn();
+        const doc = storedOffsetDoc();
+        render(
+            <StrictMode>
+                <PrintDialog
+                    open
+                    onClose={vi.fn()}
+                    doc={doc}
+                    csv={null}
+                    runner={new FakeRunner()}
+                    printerStatus={statusOf(B1_PRO)}
+                    onPrintOffsetChange={onPrintOffsetChange}
+                />
+            </StrictMode>,
+        );
+
+        // StrictMode's simulated unmount must not re-report (and round-drift)
+        // the untouched stored offset.
+        expect(onPrintOffsetChange).not.toHaveBeenCalled();
+        expect(screen.getByLabelText('Offset X')).toHaveValue('100');
+    });
+});

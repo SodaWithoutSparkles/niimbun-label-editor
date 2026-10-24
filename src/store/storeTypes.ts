@@ -10,6 +10,7 @@ import type {
     LabelDoc,
     Node,
     NodeType,
+    PrintOffset,
     Region,
     GlobalSpec,
 } from '../core/doc/types';
@@ -320,6 +321,12 @@ export interface AppState {
      * entry. A no-op write (same direction) creates no history entry.
      */
     setPrintDirection: (direction: LabelDoc['label']['printDirection']) => void;
+    /**
+     * Persist the print offset on the named document as one undo entry. `docId`
+     * guards a late dialog unmount from writing doc A's offset onto doc B.
+     * `undefined` clears it. An unchanged offset creates no history entry.
+     */
+    setPrintOffset: (offset: PrintOffset | undefined, docId: string) => void;
     /**
      * Set the document's dpi **hint** (`doc.label.dpi`) as one undo entry,
      * clamped like `normalizeDpi` (100–1200, rounded). A no-op write creates no
