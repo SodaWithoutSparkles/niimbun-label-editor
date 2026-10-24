@@ -126,7 +126,7 @@ describe('inspectorModel — field descriptors', () => {
         expect(keys(RESERVED_FIELDS)).toEqual([
             'contentSource', 'quantizerHint', 'quantizerThreshold', 'quantizerStrength',
             'quantizerSerpentine', 'quantizerGamma',
-            'screentoneLevels', 'screentonePitchMm', 'screentoneAngle', 'templateTrust',
+            'screentoneLevels', 'screentoneBoldness', 'screentonePitchMm', 'screentoneAngle', 'templateTrust',
         ]);
         expect(RESERVED_FIELDS.find((field) => field.key === 'quantizerThreshold')).toMatchObject({
             kind: 'number',
@@ -235,7 +235,7 @@ describe('inspectorModel — field descriptors', () => {
     });
 
     it('wires contentSource and templateTrust (P6)', () => {
-        expect(keys(RESERVED_FIELDS)).toEqual(['contentSource', 'quantizerHint', 'quantizerThreshold', 'quantizerStrength', 'quantizerSerpentine', 'quantizerGamma', 'screentoneLevels', 'screentonePitchMm', 'screentoneAngle', 'templateTrust']);
+        expect(keys(RESERVED_FIELDS)).toEqual(['contentSource', 'quantizerHint', 'quantizerThreshold', 'quantizerStrength', 'quantizerSerpentine', 'quantizerGamma', 'screentoneLevels', 'screentoneBoldness', 'screentonePitchMm', 'screentoneAngle', 'templateTrust']);
         const contentSource = RESERVED_FIELDS.find((f) => f.key === 'contentSource');
         expect(contentSource?.wired).toBe(true);
         expect(contentSource?.kind).toBe('contentSource');

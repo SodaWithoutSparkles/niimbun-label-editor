@@ -102,7 +102,8 @@ export const DEFAULT_SCREENTONE: {
     levels: number;
     pitchMm: number;
     angle: ScreentoneAngle;
-} = { levels: 4, pitchMm: 0.5, angle: 45 };
+    boldness: number;
+} = { levels: 4, pitchMm: 0.5, angle: 45, boldness: 0 };
 
 /** A node's explicit quantizer params (structural, mirrors `Node['quantizerParams']`). */
 export interface PolicyParams {
@@ -113,6 +114,7 @@ export interface PolicyParams {
     screentoneLevels?: number;
     screentonePitchMm?: number;
     screentoneAngle?: ScreentoneAngle;
+    screentoneBoldness?: number;
 }
 
 /** A policy's fully-resolved params: every knob has a value. */
@@ -124,6 +126,7 @@ export interface ResolvedPolicyParams {
     screentoneLevels: number;
     screentonePitchMm: number;
     screentoneAngle: ScreentoneAngle;
+    screentoneBoldness: number;
 }
 
 /**
@@ -136,7 +139,7 @@ export interface ResolvedPolicyParams {
  * resolves through the same chain: a node with no `serpentine` inherits the
  * strategy's settings default rather than pinning `true`. `gamma`'s engine
  * default is per strategy (`DEFAULT_GAMMA_BY_STRATEGY`); the screentone knobs
- * fall back to `DEFAULT_SCREENTONE` (4 levels / 0.5 mm / 45°).
+ * fall back to `DEFAULT_SCREENTONE` (4 levels / 0.5 mm / 45° / boldness 0).
  */
 export const resolveQuantizerParams = (
     nodeParams: PolicyParams | undefined,
@@ -172,6 +175,11 @@ export const resolveQuantizerParams = (
             strategy?.screentoneAngle ??
             fallback?.screentoneAngle ??
             DEFAULT_SCREENTONE.angle,
+        screentoneBoldness:
+            nodeParams?.screentoneBoldness ??
+            strategy?.screentoneBoldness ??
+            fallback?.screentoneBoldness ??
+            DEFAULT_SCREENTONE.boldness,
     };
 };
 
@@ -185,14 +193,16 @@ export const resolveQuantizerParams = (
  * instead of over-splitting the 8-entry palette.
  *
  * The screentone knobs are all keyed (levels, pitch at 2 dp, angle by its
- * numeric id), so two nodes that differ only in one of them get distinct slots
- * (D-57(b)). `dpi` is **not** keyed: it is a render-level constant shared by
- * every policy in a pass, not a per-policy knob.
+ * numeric id, boldness at 2 dp), so two nodes that differ only in one of them
+ * get distinct slots (D-57(b)). `dpi` is **not** keyed: it is a render-level
+ * constant shared by every policy in a pass, not a per-policy knob.
  */
 export const policyKeyOf = (id: QuantizerId, params: ResolvedPolicyParams): string =>
     `${id}:${params.threshold}:${params.strength}:${params.serpentine}:${normalizeGamma(
         params.gamma,
-    )}:${params.screentoneLevels}:${params.screentonePitchMm.toFixed(2)}:${params.screentoneAngle}`;
+    )}:${params.screentoneLevels}:${params.screentonePitchMm.toFixed(2)}:${
+        params.screentoneAngle
+    }:${params.screentoneBoldness.toFixed(2)}`;
 
 /**
  * Deterministic content key for the dither settings maps. Pure and headless,

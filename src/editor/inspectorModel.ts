@@ -238,6 +238,7 @@ export const RESERVED_FIELDS: readonly FieldDescriptor[] = [
     // Screentone knobs (screentone only). `strength`/`serpentine` are inert for a
     // point screen, so they stay hidden by the `'screentone'` visibility class.
     { key: 'screentoneLevels', scope: 'reserved', kind: 'number', wired: true },
+    { key: 'screentoneBoldness', scope: 'reserved', kind: 'number', wired: true },
     { key: 'screentonePitchMm', scope: 'reserved', kind: 'number', wired: true },
     {
         key: 'screentoneAngle',

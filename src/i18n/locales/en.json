@@ -148,6 +148,9 @@
       "screentoneLevels": "Levels",
       "screentoneLevelsDescription": "Number of tone steps, 2 to 8. Default 4.",
       "screentoneLevelsAria": "{{strategy}} levels",
+      "screentoneBoldness": "Screen boldness",
+      "screentoneBoldnessDescription": "Fatter (+) or thinner (−) dots. 0 is neutral.",
+      "screentoneBoldnessAria": "{{strategy}} screen boldness",
       "screentonePitch": "Screen pitch",
       "screentonePitchDescription": "Requested cell size in mm, 0.3 to 2.0. Snapped to whole printer dots at the effective print dpi; the screen is locked to the dot grid only when printing at the printer's reported dpi. Default 0.5.",
       "screentonePitchAria": "{{strategy}} screen pitch",
@@ -778,6 +781,7 @@
         "quantizerSerpentine": "Serpentine scan",
         "quantizerGamma": "Tone curve (gamma)",
         "screentoneLevels": "Screen levels",
+        "screentoneBoldness": "Screen boldness",
         "screentonePitch": "Screen pitch",
         "screentoneAngle": "Screen angle",
         "templateTrust": "Template trust"

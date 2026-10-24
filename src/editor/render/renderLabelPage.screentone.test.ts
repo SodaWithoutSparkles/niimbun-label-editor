@@ -171,6 +171,39 @@ describe('renderLabelPage — screentone policy integration', () => {
         expect(levelsAt(b)).toBe(6);
     });
 
+    it('routes a nonzero boldness into its policy options and changes ink end-to-end', async () => {
+        const light = screentoneRect('light', 0, 400, { screentoneBoldness: -1 });
+        const bold = screentoneRect('bold', 500, 400, { screentoneBoldness: 1 });
+        const doc = docOf([light, bold]);
+
+        const built = await buildMask(doc);
+        expect(built).toBeDefined();
+        if (!built) return;
+
+        const boldnessAt = (index: number): number | undefined => {
+            const entry = built.policies.get(index);
+            return entry && typeof entry !== 'function' ? entry.options?.screentoneBoldness : undefined;
+        };
+        expect(boldnessAt(maskByteAt(built.mask, 20, 25))).toBe(-1);
+        expect(boldnessAt(maskByteAt(built.mask, 70, 25))).toBe(1);
+
+        // The value must survive to the pixels, not just the policy table.
+        const page = await renderLabelPage(doc);
+        const inkIn = (x0: number, x1: number): number => {
+            let ink = 0;
+            for (let y = 0; y < page.heightPx; y++) {
+                for (let x = x0; x < x1; x++) {
+                    if (page.rgba.data[(y * page.widthPx + x) * 4] === 0) ink++;
+                }
+            }
+            return ink;
+        };
+        const lightInk = inkIn(0, 40);
+        const boldInk = inkIn(50, 90);
+        expect(lightInk).toBeGreaterThanOrEqual(0);
+        expect(boldInk).toBeGreaterThan(lightInk);
+    });
+
     it('two nodes differing only in screentoneAngle take distinct mask slots', async () => {
         const doc = docOf([
             screentoneRect('a', 0, 400, { screentoneAngle: 0 }),

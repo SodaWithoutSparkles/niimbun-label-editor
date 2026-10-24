@@ -108,6 +108,12 @@ export interface RenderLabelPageOptions {
     screentonePitchMm?: number;
     /** Screentone angle forwarded underneath the per-strategy and per-node values. */
     screentoneAngle?: ScreentoneAngle;
+    /**
+     * Screentone dot-gain bias in screen levels (-1..1) forwarded **underneath**
+     * the per-strategy and per-node values. Absent, it resolves to
+     * `DEFAULT_SCREENTONE.boldness` (0, neutral).
+     */
+    screentoneBoldness?: number;
     /** Per-pixel projection. Defaults to Mono (the only v1 color space). */
     colorSpace?: ColorSpace;
     /**
@@ -290,6 +296,7 @@ export interface PolicyParamDefaults {
     screentoneLevels?: number;
     screentonePitchMm?: number;
     screentoneAngle?: ScreentoneAngle;
+    screentoneBoldness?: number;
     /** Per-strategy settings defaults (see `RenderLabelPageOptions`). */
     quantizerDefaults?: QuantizerDefaults;
     /** Per-object-type default-quantizer override map (see `RenderLabelPageOptions`). */
@@ -333,6 +340,7 @@ export const buildPolicyMask = async (
                 screentoneLevels: number;
                 screentonePitchMm: number;
                 screentoneAngle: ScreentoneAngle;
+                screentoneBoldness: number;
             };
             index: number;
         }
@@ -384,6 +392,7 @@ export const buildPolicyMask = async (
                 screentoneLevels: defaults?.screentoneLevels,
                 screentonePitchMm: defaults?.screentonePitchMm,
                 screentoneAngle: defaults?.screentoneAngle,
+                screentoneBoldness: defaults?.screentoneBoldness,
             },
         );
         const key = policyKeyOf(policy, resolved);
@@ -415,6 +424,7 @@ export const buildPolicyMask = async (
                     screentoneLevels: resolved.screentoneLevels,
                     screentonePitchMm: resolved.screentonePitchMm,
                     screentoneAngle: resolved.screentoneAngle,
+                    screentoneBoldness: resolved.screentoneBoldness,
                 },
                 index: policiesByKey.size + 1,
             };
@@ -589,6 +599,10 @@ const buildQuantizeOptions = (
         DEFAULT_SCREENTONE.pitchMm;
     out.screentoneAngle =
         strategyDefaults?.screentoneAngle ?? opts.screentoneAngle ?? DEFAULT_SCREENTONE.angle;
+    out.screentoneBoldness =
+        strategyDefaults?.screentoneBoldness ??
+        opts.screentoneBoldness ??
+        DEFAULT_SCREENTONE.boldness;
     return out;
 };
 
@@ -747,6 +761,7 @@ export const renderLabelPage = async (
         screentoneLevels: opts.screentoneLevels,
         screentonePitchMm: opts.screentonePitchMm,
         screentoneAngle: opts.screentoneAngle,
+        screentoneBoldness: opts.screentoneBoldness,
         quantizerDefaults: opts.quantizerDefaults,
         defaultQuantizerByType: opts.defaultQuantizerByType,
     });

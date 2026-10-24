@@ -40,9 +40,10 @@ import type { Quantizer, QuantizeOptions } from './quantize';
  * ink at `level = levels - 1`.
  *
  * **Engine fallbacks vs policy defaults.** Called with no screentone knobs the
- * engine uses its neutral fallbacks — `2` levels, `0.5 mm`, `45°` — the binary
- * case. The render path does not rely on them: `core/render/policy.ts` resolves
- * every knob and normally supplies `4 / 0.5 mm / 45°` (`DEFAULT_SCREENTONE`).
+ * engine uses its neutral fallbacks — `2` levels, `0.5 mm`, `45°`, boldness `0`
+ * — the binary case. The render path does not rely on them: `core/render/policy.ts`
+ * resolves every knob and normally supplies `4 / 0.5 mm / 45° / 0`
+ * (`DEFAULT_SCREENTONE`).
  */
 
 export type ScreentoneAngle = 0 | 14 | 27 | 45;
@@ -55,6 +56,14 @@ export const SCREENTONE_LEVELS_MAX = 8;
 
 export const SCREENTONE_PITCH_MM_MIN = 0.3;
 export const SCREENTONE_PITCH_MM_MAX = 2.0;
+
+/**
+ * Dot-gain bias in **screen levels**: `+1` is one screen step bolder (fatter
+ * dots) at every `levels` value, `-1` one step thinner. `0` is neutral and
+ * byte-identical to the unbiased screen.
+ */
+export const SCREENTONE_BOLDNESS_MIN = -1;
+export const SCREENTONE_BOLDNESS_MAX = 1;
 
 /**
  * Rank-table depth. The table's bucket edges come from this maximum, so one
@@ -104,6 +113,16 @@ const clampPitchMm = (value: number | undefined): number => {
     const finite =
         value === undefined || !Number.isFinite(value) ? SCREENTONE_PITCH_MM_MIN : value;
     return Math.min(SCREENTONE_PITCH_MM_MAX, Math.max(SCREENTONE_PITCH_MM_MIN, finite));
+};
+
+/**
+ * Clamp the boldness bias to `[-1, 1]`. An absent/non-finite value is the
+ * neutral `0`. Deliberately **not** rounded: 0.05 steps are meaningful (unlike
+ * `levels`, which is an integer count).
+ */
+export const clampBoldness = (value: number | undefined): number => {
+    if (value === undefined || !Number.isFinite(value)) return 0;
+    return Math.min(SCREENTONE_BOLDNESS_MAX, Math.max(SCREENTONE_BOLDNESS_MIN, value));
 };
 
 /** A pitch snapped to an integer number of raster dots at a given dpi. */
@@ -193,15 +212,20 @@ export const SCREENTONE_RANK_TABLE: Uint8Array = buildRankTable();
  * Clustered-dot screentone quantizer.
  *
  * `projectGrey` → `preprocessGrey({ gamma })` (the P1 seam) → per pixel a
- * `levels`-step tone index `level = round((1 - grey/255) · (levels - 1))` and a
- * rank from the lattice cell, rescaled from the max-K table into this `levels`
- * domain → `ink = rank < level` → exact `0`/`255`.
+ * `levels`-step tone index
+ * `level = clamp(round((1 - grey/255) · (levels - 1) + boldness), 0, levels - 1)`
+ * and a rank from the lattice cell, rescaled from the max-K table into this
+ * `levels` domain → `ink = rank < level` → exact `0`/`255`.
  *
  * - `levels` clamps to `[2, 8]` (integer); an absent/non-finite value is the
  *   engine minimum `2`.
  * - `screentonePitchMm` clamps to `[0.3, 2.0]` mm, then snaps physically at
  *   `dpi` (see {@link screentoneSnap}).
  * - `screentoneAngle` must be one of the four; anything else falls back to 45°.
+ * - `screentoneBoldness` clamps to `[-1, 1]` (see {@link clampBoldness}); it is a
+ *   bias in **screen levels**, so `0` is neutral and `+1` inks one step more.
+ *   At `±1` a 2-level screen saturates to solid black/white — an explicit user
+ *   choice, not a bug.
  * - `dpi` is **required** (finite, `> 0`) — a pitch cannot be head-locked
  *   without it. Missing/invalid throws a `RangeError`.
  * - `threshold`/`strength`/`serpentine` are ignored (a point op has no error to
@@ -221,6 +245,7 @@ export const screentone: Quantizer = (
     const levels = clampLevels(options.screentoneLevels);
     const pitchMm = clampPitchMm(options.screentonePitchMm);
     const angle = normalizeAngle(options.screentoneAngle);
+    const boldness = clampBoldness(options.screentoneBoldness);
     const { step } = screentoneSnap(pitchMm, angle, dpi);
     const [a, b] = BASES[angle];
     // Cell coordinates divide by the full lattice area, so a translation by one
@@ -256,7 +281,10 @@ export const screentone: Quantizer = (
                 ];
             const rank = Math.min(maxRank, Math.floor(rawRank * rankScale));
             const p = row + x;
-            const level = Math.round((1 - grey[p] / 255) * maxLevel);
+            const level = Math.min(
+                maxLevel,
+                Math.max(0, Math.round((1 - grey[p] / 255) * maxLevel + boldness)),
+            );
             const value = rank < level ? 0 : 255;
             const i = p * 4;
             data[i] = value;

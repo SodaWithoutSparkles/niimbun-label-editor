@@ -211,6 +211,28 @@ describe('integer hm invariant', () => {
         expect(invalid.nodes[0]?.quantizerParams).toBeUndefined();
     });
 
+    it('keeps screentoneBoldness through roundNode and clamps it to [-1, 1]', () => {
+        const rect = {
+            id: 's', parentId: null, type: 'shape' as const, shape: 'rectangle' as const,
+            visible: true, locked: false,
+            transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        };
+        // A node update runs through `roundNode`; dropping the key here made the
+        // inspector's value vanish on the next commit.
+        expect(
+            createLabelDoc({ nodes: [{ ...rect, quantizerParams: { screentoneBoldness: 0.456 } }] })
+                .nodes[0]?.quantizerParams,
+        ).toEqual({ screentoneBoldness: 0.46 });
+        expect(
+            createLabelDoc({ nodes: [{ ...rect, quantizerParams: { screentoneBoldness: 9 } }] })
+                .nodes[0]?.quantizerParams,
+        ).toEqual({ screentoneBoldness: 1 });
+        expect(
+            createLabelDoc({ nodes: [{ ...rect, quantizerParams: { screentoneBoldness: -9 } }] })
+                .nodes[0]?.quantizerParams,
+        ).toEqual({ screentoneBoldness: -1 });
+    });
+
     it('drops an empty/invalid quantizerParams on a text node (early-return regression)', () => {
         const textNode = {
             id: 't', parentId: null, type: 'text' as const, visible: true, locked: false,

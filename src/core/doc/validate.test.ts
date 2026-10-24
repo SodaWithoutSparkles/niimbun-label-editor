@@ -535,6 +535,46 @@ describe('isNode — screentone params (P4)', () => {
         ).toEqual({ screentoneLevels: 6, screentonePitchMm: 0.75, screentoneAngle: 27 });
     });
 
+    it('round-trips screentoneBoldness and clamps/drops bad values', () => {
+        // A valid value round-trips (2 dp at most).
+        expect(
+            isNode(
+                baseNode({
+                    quantizerParams: { screentoneBoldness: 0.25 },
+                }),
+            )?.quantizerParams,
+        ).toEqual({ screentoneBoldness: 0.25 });
+        expect(
+            isNode(
+                baseNode({ quantizerParams: { screentoneBoldness: 0 } }),
+            )?.quantizerParams,
+        ).toEqual({ screentoneBoldness: 0 });
+
+        // Out of range clamps to the bound with a repair.
+        const repairs: string[] = [];
+        expect(
+            isNode(baseNode({ quantizerParams: { screentoneBoldness: 9 } }), repairs)
+                ?.quantizerParams,
+        ).toEqual({ screentoneBoldness: 1 });
+        expect(repairs).toContain('node.quantizerParams.screentoneBoldness: clamped to -1–1');
+        const lowRepairs: string[] = [];
+        expect(
+            isNode(baseNode({ quantizerParams: { screentoneBoldness: -9 } }), lowRepairs)
+                ?.quantizerParams,
+        ).toEqual({ screentoneBoldness: -1 });
+        expect(lowRepairs).toContain('node.quantizerParams.screentoneBoldness: clamped to -1–1');
+
+        // Non-finite values are dropped, with a repair.
+        const dropped: string[] = [];
+        expect(
+            isNode(
+                baseNode({ quantizerParams: { screentoneBoldness: Number.NaN } }),
+                dropped,
+            )?.quantizerParams,
+        ).toBeUndefined();
+        expect(dropped).toContain('node.quantizerParams.screentoneBoldness: invalid value dropped');
+    });
+
     it('clamps levels to 2–8 and pitch to 0.3–2 mm, with repairs', () => {
         const repairs: string[] = [];
         const low = isNode(

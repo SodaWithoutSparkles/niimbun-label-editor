@@ -287,6 +287,7 @@ describe('renderLabelPage — shared preview/print path', () => {
             screentoneLevels: 4,
             screentonePitchMm: 0.5,
             screentoneAngle: 45,
+            screentoneBoldness: 0,
         });
     });
 

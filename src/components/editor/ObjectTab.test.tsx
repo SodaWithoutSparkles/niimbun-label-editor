@@ -415,6 +415,8 @@ describe('per-node quantizer params', () => {
         expect(screen.getByText('Serpentine scan')).toBeTruthy();
         // A diffuser hides the threshold knob.
         expect(screen.queryByText('128')).toBeNull();
+        // ... and the screentone knobs (including boldness).
+        expect(screen.queryByText('Screen boldness')).toBeNull();
     });
 
     it('edits error diffusion through the Object tab', () => {
@@ -621,6 +623,7 @@ describe('per-node screentone params (P4)', () => {
         renderNode(screentoneNode());
 
         expect(screen.getByText('Screen levels')).toBeTruthy();
+        expect(screen.getByText('Screen boldness')).toBeTruthy();
         expect(screen.getByText('Screen pitch')).toBeTruthy();
         expect(screen.getByText('Screen angle')).toBeTruthy();
         expect(screen.getByText('Tone curve (gamma)')).toBeTruthy();
@@ -677,6 +680,22 @@ describe('per-node screentone params (P4)', () => {
         fireEvent.change(pitch, { target: { value: '0.5' } });
         fireEvent.pointerUp(document);
         expect(paramsOf('s')).toBeUndefined();
+    });
+
+    it('writes the boldness bias and deletes it at the inherited 0', () => {
+        renderNode(screentoneNode());
+
+        const boldness = openField('Screen boldness');
+        expect(boldness.value).toBe('0');
+        fireEvent.change(boldness, { target: { value: '1.5' } });
+        expect(paramsOf('s')).toEqual({ screentoneBoldness: 1 });
+        fireEvent.change(boldness, { target: { value: '0.4' } });
+        expect(paramsOf('s')).toEqual({ screentoneBoldness: 0.4 });
+        // 0 is the inherited default, so the key stays implicit.
+        fireEvent.change(boldness, { target: { value: '0' } });
+        fireEvent.pointerUp(document);
+        expect(paramsOf('s')).toBeUndefined();
+        closeField('Screen boldness');
     });
 
     it('writes the numeric angle and deletes it at the inherited angle', () => {

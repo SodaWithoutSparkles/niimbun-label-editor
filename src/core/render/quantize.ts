@@ -62,6 +62,14 @@ export interface QuantizeOptions {
     /** Screentone screen angle (`0 | 14 | 27 | 45`). Ignored by every other quantizer. */
     screentoneAngle?: ScreentoneAngle;
     /**
+     * Screentone dot-gain bias in **screen levels**, clamped to `[-1, 1]`.
+     * Positive inks fatter dots (`+1` = one step bolder at every `levels`
+     * value), negative thinner; `0` is neutral. Ignored by every other
+     * quantizer. The render default (`0`) lives in the policy layer
+     * (`core/render/policy.ts`), never here.
+     */
+    screentoneBoldness?: number;
+    /**
      * Effective raster dpi for this pass. **Required by `screentone`** (the
      * pitch can only be snapped to the printer's dot grid at a known
      * resolution); ignored by every other quantizer. Deliberately **not** a
@@ -100,6 +108,7 @@ export type QuantizerDefaultParams = Pick<
     | 'screentoneLevels'
     | 'screentonePitchMm'
     | 'screentoneAngle'
+    | 'screentoneBoldness'
 >;
 
 /**

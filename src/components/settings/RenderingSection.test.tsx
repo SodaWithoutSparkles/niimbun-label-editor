@@ -155,6 +155,7 @@ describe('RenderingSection — screentone strategy', () => {
         render(<RenderingSection />);
 
         expect(spinbutton(/screentone levels/i).value).toBe('4');
+        expect(spinbutton(/screentone screen boldness/i).value).toBe('0');
         expect(spinbutton(/screentone screen pitch/i).value).toBe('0.5');
         expect(spinbutton(/screentone tone curve gamma/i).value).toBe('1');
         expect(screen.getByRole('combobox', { name: 'Screen angle' })).toHaveValue('45');
@@ -196,6 +197,25 @@ describe('RenderingSection — screentone strategy', () => {
             screentoneLevels: 8,
             screentonePitchMm: 0.3,
             screentoneAngle: 27,
+        });
+
+        const boldness = spinbutton(/screentone screen boldness/i);
+        fireEvent.change(boldness, { target: { value: '1.5' } });
+        fireEvent.blur(boldness);
+        expect(useStore.getState().quantizerDefaults.screentone).toEqual({
+            screentoneLevels: 8,
+            screentonePitchMm: 0.3,
+            screentoneAngle: 27,
+            screentoneBoldness: 1,
+        });
+
+        fireEvent.change(boldness, { target: { value: '-0.4' } });
+        fireEvent.blur(boldness);
+        expect(useStore.getState().quantizerDefaults.screentone).toEqual({
+            screentoneLevels: 8,
+            screentonePitchMm: 0.3,
+            screentoneAngle: 27,
+            screentoneBoldness: -0.4,
         });
     });
 });

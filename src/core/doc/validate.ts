@@ -2,6 +2,8 @@ import type { hm } from '../hm';
 import { GAMMA_MAX, GAMMA_MIN, QUANTIZERS, type QuantizerId } from '../render/quantize';
 import {
     isScreentoneAngle,
+    SCREENTONE_BOLDNESS_MAX,
+    SCREENTONE_BOLDNESS_MIN,
     SCREENTONE_LEVELS_MAX,
     SCREENTONE_LEVELS_MIN,
     SCREENTONE_PITCH_MM_MAX,
@@ -531,6 +533,22 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
                     params.screentoneAngle = raw.screentoneAngle;
                 } else {
                     repairs?.push('node.quantizerParams.screentoneAngle: unknown angle dropped');
+                }
+            }
+            if (raw.screentoneBoldness !== undefined) {
+                if (isFiniteNumber(raw.screentoneBoldness)) {
+                    const rounded = Math.round(raw.screentoneBoldness * 100) / 100;
+                    params.screentoneBoldness = Math.max(
+                        SCREENTONE_BOLDNESS_MIN,
+                        Math.min(SCREENTONE_BOLDNESS_MAX, rounded),
+                    );
+                    if (params.screentoneBoldness !== rounded) {
+                        repairs?.push(
+                            'node.quantizerParams.screentoneBoldness: clamped to -1–1',
+                        );
+                    }
+                } else {
+                    repairs?.push('node.quantizerParams.screentoneBoldness: invalid value dropped');
                 }
             }
             if (Object.keys(params).length) base.quantizerParams = params;

@@ -314,6 +314,52 @@ describe('screentone — pinned 1-bit planes (dpi 300, pitch 0.5 mm, K=4)', () =
     });
 });
 
+describe('screentone — boldness bias (P11)', () => {
+    const midGrey = () => greyPlane(24, 24, 128);
+
+    /** Ink pixel count for a mid-grey screen at 4 levels (a real cluster, not solid). */
+    const inkAt = (boldness: number | undefined): number => {
+        const redsOut = run(midGrey(), {
+            dpi: 300,
+            screentoneLevels: 4,
+            screentonePitchMm: 0.5,
+            screentoneAngle: 45,
+            ...(boldness === undefined ? {} : { screentoneBoldness: boldness }),
+        });
+        return redsOut.filter((red) => red === 0).length;
+    };
+
+    it('boldness 0 and undefined produce identical buffers', () => {
+        expect(run(midGrey(), { dpi: 300, screentoneBoldness: 0 })).toEqual(
+            run(midGrey(), { dpi: 300 }),
+        );
+        expect(inkAt(0)).toBe(inkAt(undefined));
+    });
+
+    it('+1 inks strictly more pixels and -1 strictly fewer (mid-grey)', () => {
+        expect(inkAt(1)).toBeGreaterThan(inkAt(0));
+        expect(inkAt(-1)).toBeLessThan(inkAt(0));
+    });
+
+    it('clamps out-of-range values to the bounds', () => {
+        expect(inkAt(-9)).toBe(inkAt(-1));
+        expect(inkAt(9)).toBe(inkAt(1));
+    });
+
+    it('saturates a 2-level screen to solid ink at +1 (documented)', () => {
+        // With 2 levels every mid-grey tone already rounds to level 0 or 1; a
+        // +1 bias pushes the whole raster to `level = maxLevel` → solid black.
+        const redsOut = run(midGrey(), {
+            dpi: 300,
+            screentoneLevels: 2,
+            screentonePitchMm: 0.5,
+            screentoneAngle: 45,
+            screentoneBoldness: 1,
+        });
+        expect(redsOut.every((red) => red === 0)).toBe(true);
+    });
+});
+
 describe('screentone — contract', () => {
     it('ignores strength (a point op has no diffusion)', () => {
         const plane = () => greyPlane(24, 24, 128);

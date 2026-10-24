@@ -92,6 +92,8 @@ export interface BaseNode {
         screentonePitchMm?: number;
         /** Screentone screen angle (one of `SCREENTONE_ANGLES`). */
         screentoneAngle?: ScreentoneAngle;
+        /** Screentone dot-gain bias in screen levels, `[-1, 1]`; `0` is neutral. */
+        screentoneBoldness?: number;
     };
 } // + type-specific fields (text props, shape kind, image resource ref, qr payload…)
 

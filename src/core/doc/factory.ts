@@ -2,6 +2,8 @@ import { roundHm, type hm } from '../hm';
 import { GAMMA_MAX, GAMMA_MIN } from '../render/quantize';
 import {
     isScreentoneAngle,
+    SCREENTONE_BOLDNESS_MAX,
+    SCREENTONE_BOLDNESS_MIN,
     SCREENTONE_LEVELS_MAX,
     SCREENTONE_LEVELS_MIN,
     SCREENTONE_PITCH_MM_MAX,
@@ -161,6 +163,21 @@ export const roundNode = (node: Node): Node => {
                 : {}),
             ...(isScreentoneAngle(node.quantizerParams.screentoneAngle)
                 ? { screentoneAngle: node.quantizerParams.screentoneAngle }
+                : {}),
+            ...(node.quantizerParams.screentoneBoldness !== undefined &&
+            Number.isFinite(node.quantizerParams.screentoneBoldness)
+                ? {
+                      screentoneBoldness:
+                          Math.round(
+                              Math.max(
+                                  SCREENTONE_BOLDNESS_MIN,
+                                  Math.min(
+                                      SCREENTONE_BOLDNESS_MAX,
+                                      node.quantizerParams.screentoneBoldness,
+                                  ),
+                              ) * 100,
+                          ) / 100,
+                  }
                 : {}),
         };
     }

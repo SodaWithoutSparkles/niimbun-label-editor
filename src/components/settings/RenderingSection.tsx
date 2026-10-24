@@ -10,6 +10,8 @@ import {
     GAMMA_MAX,
     GAMMA_MIN,
     SCREENTONE_ANGLES,
+    SCREENTONE_BOLDNESS_MAX,
+    SCREENTONE_BOLDNESS_MIN,
     SCREENTONE_LEVELS_MAX,
     SCREENTONE_LEVELS_MIN,
     SCREENTONE_PITCH_MM_MAX,
@@ -274,28 +276,38 @@ const clampLevels = (value: number): number =>
 const clampPitch = (value: number): number =>
     Math.round(Math.min(SCREENTONE_PITCH_MM_MAX, Math.max(SCREENTONE_PITCH_MM_MIN, value)) * 100) / 100;
 
+/** Boldness clamped to `[-1,1]` and rounded to 2 dp (matches `validate`). */
+const clampBoldness = (value: number): number =>
+    Math.round(Math.min(SCREENTONE_BOLDNESS_MAX, Math.max(SCREENTONE_BOLDNESS_MIN, value)) * 100) /
+    100;
+
 interface ScreentoneSettingsProps {
     levels: number | undefined;
+    boldness: number | undefined;
     pitchMm: number | undefined;
     angle: ScreentoneAngle | undefined;
     gamma: number | undefined;
     onLevels: (value: number) => void;
+    onBoldness: (value: number) => void;
     onPitchMm: (value: number) => void;
     onAngle: (value: ScreentoneAngle) => void;
     onGamma: (value: number) => void;
 }
 
 /**
- * The screentone strategy: tones / pitch / angle plus a neutral-by-default tone
- * curve. Deliberately **no** Error diffusion or Serpentine controls — a
- * clustered-dot screen is a point op, so those knobs are inert.
+ * The screentone strategy: tones / boldness / pitch / angle plus a
+ * neutral-by-default tone curve. Deliberately **no** Error diffusion or
+ * Serpentine controls — a clustered-dot screen is a point op, so those knobs
+ * are inert.
  */
 const ScreentoneSettings: React.FC<ScreentoneSettingsProps> = ({
     levels,
+    boldness,
     pitchMm,
     angle,
     gamma,
     onLevels,
+    onBoldness,
     onPitchMm,
     onAngle,
     onGamma,
@@ -303,6 +315,7 @@ const ScreentoneSettings: React.FC<ScreentoneSettingsProps> = ({
     const { t } = useTranslation();
     const name = t(STRATEGY_LABEL_KEYS.screentone);
     const levelsId = useId();
+    const boldnessId = useId();
     const pitchId = useId();
     const angleId = useId();
     const gammaId = useId();
@@ -324,6 +337,19 @@ const ScreentoneSettings: React.FC<ScreentoneSettingsProps> = ({
                 step={1}
                 normalize={clampLevels}
                 onCommit={onLevels}
+            />
+            <QuantizerNumberField
+                id={boldnessId}
+                label={t('settings.rendering.screentoneBoldness')}
+                description={t('settings.rendering.screentoneBoldnessDescription')}
+                ariaLabel={t('settings.rendering.screentoneBoldnessAria', { strategy: name })}
+                value={boldness}
+                fallback={DEFAULT_SCREENTONE.boldness}
+                min={SCREENTONE_BOLDNESS_MIN}
+                max={SCREENTONE_BOLDNESS_MAX}
+                step={0.1}
+                normalize={clampBoldness}
+                onCommit={onBoldness}
             />
             <QuantizerNumberField
                 id={pitchId}
@@ -491,10 +517,14 @@ export const RenderingSection: React.FC = () => {
                 ))}
                 <ScreentoneSettings
                     levels={quantizerDefaults.screentone?.screentoneLevels}
+                    boldness={quantizerDefaults.screentone?.screentoneBoldness}
                     pitchMm={quantizerDefaults.screentone?.screentonePitchMm}
                     angle={quantizerDefaults.screentone?.screentoneAngle}
                     gamma={quantizerDefaults.screentone?.gamma}
                     onLevels={(value) => setStrategyParam('screentone', { screentoneLevels: value })}
+                    onBoldness={(value) =>
+                        setStrategyParam('screentone', { screentoneBoldness: value })
+                    }
                     onPitchMm={(value) => setStrategyParam('screentone', { screentonePitchMm: value })}
                     onAngle={(value) => setStrategyParam('screentone', { screentoneAngle: value })}
                     onGamma={(value) => setStrategyParam('screentone', { gamma: value })}

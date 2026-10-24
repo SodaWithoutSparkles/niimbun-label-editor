@@ -3,6 +3,8 @@ import { GAMMA_MAX, GAMMA_MIN, QUANTIZERS, type QuantizerId } from '../core/rend
 import type { QuantizerDefaultParams, QuantizerDefaults } from '../core/render/quantize';
 import {
     isScreentoneAngle,
+    SCREENTONE_BOLDNESS_MAX,
+    SCREENTONE_BOLDNESS_MIN,
     SCREENTONE_LEVELS_MAX,
     SCREENTONE_LEVELS_MIN,
     SCREENTONE_PITCH_MM_MAX,
@@ -242,9 +244,10 @@ export const normalizeDefaultPaperTypeId = (value: unknown): string | undefined 
  * to `[0,255]` as an integer; `strength` to `[0,4]` rounded to 2 dp (matching
  * `core/doc/validate`); `gamma` to `[0.1,4]` rounded to 2 dp (the `quantize.ts`
  * clamp); `serpentine` must be a boolean. The screentone knobs clamp like the
- * engine: `levels` to an integer `[2,8]`, `pitchMm` to `[0.3,2.0]` at 2 dp, and
- * `angle` must be one of the four supported values (a bad angle is dropped, not
- * defaulted, so the render default still applies downstream).
+ * engine: `levels` to an integer `[2,8]`, `pitchMm` to `[0.3,2.0]` at 2 dp,
+ * `boldness` to `[-1,1]` at 2 dp, and `angle` must be one of the four supported
+ * values (a bad angle is dropped, not defaulted, so the render default still
+ * applies downstream).
  */
 const normalizeQuantizerDefaultParams = (value: unknown): QuantizerDefaultParams | undefined => {
     if (!isRecord(value)) return undefined;
@@ -282,6 +285,15 @@ const normalizeQuantizerDefaultParams = (value: unknown): QuantizerDefaultParams
     }
     if (isScreentoneAngle(value.screentoneAngle)) {
         params.screentoneAngle = value.screentoneAngle;
+    }
+    if (isFiniteNumber(value.screentoneBoldness)) {
+        params.screentoneBoldness =
+            Math.round(
+                Math.min(
+                    SCREENTONE_BOLDNESS_MAX,
+                    Math.max(SCREENTONE_BOLDNESS_MIN, value.screentoneBoldness),
+                ) * 100,
+            ) / 100;
     }
     if (typeof value.serpentine === 'boolean') params.serpentine = value.serpentine;
     return Object.keys(params).length > 0 ? params : undefined;

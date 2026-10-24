@@ -150,6 +150,29 @@ describe('normalizeQuantizerDefaults', () => {
         ).toEqual({ screentone: { screentoneLevels: 2, screentonePitchMm: 0.3 } });
     });
 
+    it('clamps screentoneBoldness to [-1, 1] and drops non-finite values', () => {
+        expect(
+            normalizeQuantizerDefaults({ screentone: { screentoneBoldness: 0.25 } }),
+        ).toEqual({ screentone: { screentoneBoldness: 0.25 } });
+        expect(
+            normalizeQuantizerDefaults({ screentone: { screentoneBoldness: 9 } }),
+        ).toEqual({ screentone: { screentoneBoldness: 1 } });
+        expect(
+            normalizeQuantizerDefaults({ screentone: { screentoneBoldness: -9 } }),
+        ).toEqual({ screentone: { screentoneBoldness: -1 } });
+        expect(
+            normalizeQuantizerDefaults({ screentone: { screentoneBoldness: Number.NaN } }),
+        ).toEqual({});
+        expect(
+            normalizeQuantizerDefaults({ screentone: { screentoneBoldness: Infinity } }),
+        ).toEqual({});
+        expect(
+            normalizeQuantizerDefaults({
+                screentone: { screentoneBoldness: 'bold' as never, screentoneLevels: 6 },
+            }),
+        ).toEqual({ screentone: { screentoneLevels: 6 } });
+    });
+
     it('drops a screentone angle that is not one of the four', () => {
         expect(
             normalizeQuantizerDefaults({

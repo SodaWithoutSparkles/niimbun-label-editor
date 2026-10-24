@@ -31,6 +31,8 @@ import type { ContentSource, ImageRef, Node, ShapeKind, ShapeNode } from '../../
 import {
     DEFAULT_GAMMA_BY_STRATEGY,
     DEFAULT_SCREENTONE,
+    SCREENTONE_BOLDNESS_MAX,
+    SCREENTONE_BOLDNESS_MIN,
     SCREENTONE_LEVELS_MAX,
     SCREENTONE_LEVELS_MIN,
     SCREENTONE_PITCH_MM_MAX,
@@ -113,6 +115,7 @@ const FIELD_LABEL_KEYS = {
     quantizerSerpentine: 'editor.mfp.field.quantizerSerpentine',
     quantizerGamma: 'editor.mfp.field.quantizerGamma',
     screentoneLevels: 'editor.mfp.field.screentoneLevels',
+    screentoneBoldness: 'editor.mfp.field.screentoneBoldness',
     screentonePitchMm: 'editor.mfp.field.screentonePitch',
     screentoneAngle: 'editor.mfp.field.screentoneAngle',
     templateTrust: 'editor.mfp.field.templateTrust',
@@ -193,6 +196,7 @@ const QUANTIZER_PARAM_VISIBILITY: Partial<Record<string, QuantizerParamVisibilit
     quantizerStrength: 'diffusion',
     quantizerSerpentine: 'diffusion',
     screentoneLevels: 'screentone',
+    screentoneBoldness: 'screentone',
     screentonePitchMm: 'screentone',
     screentoneAngle: 'screentone',
 };
@@ -278,7 +282,11 @@ const numberValue = (
     if (key === 'strokeWidth') return node.strokeWidth ?? DEFAULT_SHAPE_STROKE_WIDTH;
     if (key === 'quantizerThreshold') return node.quantizerParams?.threshold ?? 128;
     if (key === 'quantizerStrength') return node.quantizerParams?.strength ?? 1;
-    if (key === 'screentoneLevels' || key === 'screentonePitchMm') {
+    if (
+        key === 'screentoneLevels' ||
+        key === 'screentoneBoldness' ||
+        key === 'screentonePitchMm'
+    ) {
         return (
             node.quantizerParams?.[key] ??
             inheritedScreentone(context.id, context.quantizerDefaults, key)
@@ -298,6 +306,7 @@ const numberValue = (
 /** Screentone knob → the render default it inherits when nothing is stored. */
 const SCREENTONE_DEFAULT_BY_KNOB = {
     screentoneLevels: DEFAULT_SCREENTONE.levels,
+    screentoneBoldness: DEFAULT_SCREENTONE.boldness,
     screentonePitchMm: DEFAULT_SCREENTONE.pitchMm,
     screentoneAngle: DEFAULT_SCREENTONE.angle,
 } as const;
@@ -438,6 +447,8 @@ export const numberRange = (
             return { min: 0.1, max: 4, step: 0.05 };
         case 'screentoneLevels':
             return { min: SCREENTONE_LEVELS_MIN, max: SCREENTONE_LEVELS_MAX, step: 1 };
+        case 'screentoneBoldness':
+            return { min: SCREENTONE_BOLDNESS_MIN, max: SCREENTONE_BOLDNESS_MAX, step: 0.1 };
         case 'screentonePitchMm':
             return { min: SCREENTONE_PITCH_MM_MIN, max: SCREENTONE_PITCH_MM_MAX, step: 0.01 };
         case 'quietZone':
@@ -707,6 +718,7 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                 key === 'quantizerStrength' ||
                 key === 'quantizerGamma' ||
                 key === 'screentoneLevels' ||
+                key === 'screentoneBoldness' ||
                 key === 'screentonePitchMm'
             ) {
                 const current = useStore.getState().currentDoc?.nodes.find((entry) => entry.id === node.id) ?? node;
@@ -759,6 +771,27 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                     const inherited = inheritedScreentone(id, quantizerDefaults, key);
                     if (bounded === inherited) delete params[key];
                     else params[key] = bounded;
+                } else if (key === 'screentoneBoldness') {
+                    // A bias in screen levels: clamp to [-1, 1], 2 dp (matches
+                    // `validate`). Stored only when it differs from the inherited
+                    // value, so the neutral 0 stays implicit.
+                    const bounded =
+                        Math.round(
+                            Math.max(
+                                SCREENTONE_BOLDNESS_MIN,
+                                Math.min(
+                                    SCREENTONE_BOLDNESS_MAX,
+                                    Number.isFinite(value) ? value : SCREENTONE_BOLDNESS_MIN,
+                                ),
+                            ) * 100,
+                        ) / 100;
+                    const id = resolveQuantizer(
+                        { type: current.type, quantizerHint: current.quantizerHint },
+                        defaultQuantizerByType,
+                    );
+                    const inherited = inheritedScreentone(id, quantizerDefaults, key);
+                    if (bounded === inherited) delete params.screentoneBoldness;
+                    else params.screentoneBoldness = bounded;
                 } else {
                     const option = key === 'quantizerThreshold' ? 'threshold' : 'strength';
                     const range = option === 'threshold' ? [0, 255] : [0, 4];

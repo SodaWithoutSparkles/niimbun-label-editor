@@ -193,8 +193,9 @@ Source: [`upstream-dev-survey.md`](upstream-dev-survey.md) (niimblue
 | **P7** | Wire `letterSpacing` | **DONE** — inspector, both renderers, shrink measure | `58870e7` |
 | **P8** | Label import/export UI | **DONE** — self-contained bundle (P8a) + File menu (P8b), gzip import | `0f65414`, `c0a12c5` |
 | **P9** | Persist print offset per label | **DONE** — `label.printOffset` in hm, dialog converts at resolved dpi | `da25d8d` |
-| **P10** | Optional polish (owner pick) | **PENDING** — `scrollbar-gutter: stable`; a **new** 48×30 paper seed; `multiline` prompt option | — |
-| — | Screentone contrast/boldness knob | **Blocked on owner decision** — parametric contrast/S-curve was deliberately dropped 2026‑10‑17. | — |
+| **P10** | Optional polish (owner pick) | **PENDING** — `scrollbar-gutter: stable` (MFP/Layers/gallery scroll panes); a **new** 48×30 paper seed; `multiline` prompt option — **note:** `promptText()` has **no production caller** (only `PromptDialog`/tests), so multiline would be dead capability unless we adopt it for an existing flow. | — |
+| **P11** | Screentone **boldness** knob | **IN PROGRESS (owner unblocked 2026-10-25)** — a level bias on the screen (`level + boldness`), not the upstream px/float-angle algorithm. Default 0 is byte-identical. Per-node + per-strategy default, in `policyKeyOf`. | — |
+| — | Screentone **contrast band** (upstream `contrast` 0–127) | Not adopted: overlaps `gamma` and shifts `levels` semantics. The boldness knob covers the dot-gain use case. | — |
 
 Do **not** adopt from upstream: screentone replacement or its px/float-angle
 parameters, `beforeunload` dirty guard (we autosave), `noScaleCache` (Konva does

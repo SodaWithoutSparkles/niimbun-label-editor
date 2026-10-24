@@ -149,6 +149,7 @@ describe('policyKeyOf (D-57(b))', () => {
             screentoneLevels: 4,
             screentonePitchMm: 0.5,
             screentoneAngle: 45,
+            screentoneBoldness: 0,
         });
         // A node param overrides the setting; the render fallback only fills gaps.
         expect(
@@ -163,6 +164,7 @@ describe('policyKeyOf (D-57(b))', () => {
             screentoneLevels: 4,
             screentonePitchMm: 0.5,
             screentoneAngle: 45,
+            screentoneBoldness: 0,
         });
     });
 });
@@ -199,6 +201,7 @@ describe('gamma — tone curve per strategy (P14 W1)', () => {
             screentoneLevels: 4,
             screentonePitchMm: 0.5,
             screentoneAngle: 45,
+            screentoneBoldness: 0,
         });
         expect(policyKeyOf('ostromoukhov', resolved)).not.toBe(
             policyKeyOf('floydSteinberg', resolveQuantizerParams(undefined, 'floydSteinberg')),
@@ -288,7 +291,7 @@ describe('gamma — tone curve per strategy (P14 W1)', () => {
 
 describe('screentone params (P4)', () => {
     it('keeps the render defaults in the policy layer', () => {
-        expect(DEFAULT_SCREENTONE).toEqual({ levels: 4, pitchMm: 0.5, angle: 45 });
+        expect(DEFAULT_SCREENTONE).toEqual({ levels: 4, pitchMm: 0.5, angle: 45, boldness: 0 });
         expect(DEFAULT_GAMMA_BY_STRATEGY.screentone).toBe(1);
         // Never a default policy for a node type (a screentoned symbol will not scan).
         expect(Object.values(DEFAULT_POLICY_BY_TYPE)).not.toContain('screentone');
@@ -351,6 +354,42 @@ describe('screentone params (P4)', () => {
         expect(key({ screentonePitchMm: 0.8 })).not.toBe(baseKey);
         expect(key({ screentoneAngle: 0 })).not.toBe(baseKey);
         expect(key({ screentoneAngle: 14 })).not.toBe(baseKey);
+        expect(key({ screentoneBoldness: 0.5 })).not.toBe(baseKey);
+        expect(key({ screentoneBoldness: -0.5 })).not.toBe(baseKey);
+    });
+
+    it('resolves boldness node → strategy setting → render fallback → 0', () => {
+        expect(resolveQuantizerParams(undefined, 'screentone').screentoneBoldness).toBe(0);
+        expect(
+            resolveQuantizerParams(undefined, 'screentone', undefined, {
+                screentoneBoldness: 0.5,
+            }).screentoneBoldness,
+        ).toBe(0.5);
+        expect(
+            resolveQuantizerParams(
+                undefined,
+                'screentone',
+                { screentone: { screentoneBoldness: -0.5 } },
+                { screentoneBoldness: 0.5 },
+            ).screentoneBoldness,
+        ).toBe(-0.5);
+        expect(
+            resolveQuantizerParams(
+                { screentoneBoldness: 0.25 },
+                'screentone',
+                { screentone: { screentoneBoldness: -0.5 } },
+                { screentoneBoldness: 0.5 },
+            ).screentoneBoldness,
+        ).toBe(0.25);
+    });
+
+    it('keys boldness at 2 dp, so float noise shares a slot', () => {
+        const base = resolveQuantizerParams(undefined, 'screentone');
+        const keyFor = (boldness: number) =>
+            policyKeyOf('screentone', { ...base, screentoneBoldness: boldness });
+        expect(keyFor(0.5)).toBe(keyFor(0.501));
+        expect(keyFor(0.5)).not.toBe(keyFor(0.51));
+        expect(keyFor(0)).toBe(keyFor(0.001));
     });
 
     it('keys the pitch at 2 dp, so sub-0.01 mm differences share a slot', () => {
