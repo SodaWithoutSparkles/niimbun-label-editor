@@ -182,18 +182,19 @@ No `git stash`, no destructive git commands, no push.
 ## Wave 2 — upstream dev survey actions (folded in 2026-10-22)
 
 Source: [`upstream-dev-survey.md`](upstream-dev-survey.md) (niimblue
-`8a60a8e..0c2dfa8`). Folded into this run by owner instruction. **Not started.** Wave 1 (P1–P4) is
-complete; no wave 2 coding until the owner says go.
+`8a60a8e..0c2dfa8`). Folded into this run by owner instruction.
 
-| Phase | Work | Effort | Notes |
+**Status (2026-10-25): P5–P9 complete; P10 awaits an owner pick.**
+
+| Phase | Work | Status | Commit |
 | --- | --- | --- | --- |
-| **P5** | Bump `@mmote/niimbluelib` 0.47.0 → 0.47.1 | 2 files | Highest value: adds `findPrintTask` protocol‑4 fallback (our `niimbotAdapter.ts:223-226` currently throws) + unsigned packet parsing. Owner decision 2026‑10‑22: **skip verification**. Watch the advisory `rollHeightHm` change (`niimbotAdapter.ts:421`). |
-| **P6** | Fix `PopoverSlider` number-field typing | small | `PopoverSlider.tsx:435-439` commits `Number(value)` per keystroke and `:103-105` re-syncs, so negative X/Y is untypeable and clearing injects 0. Draft-string while focused; commit on blur/Enter. |
-| **P7** | Wire `letterSpacing` | small | Model + validator already exist (`core/doc/types.ts:122`, `validate.ts:532`); `wired:false` (`inspectorModel.ts:127`) and not read by `konvaFactory.ts:368-379`. Needs shrink-measure parity + inspector test update. |
-| **P8** | Label import/export UI | large | Serializer already exists (`core/doc/serialize.ts` + version gate); no UI. Needs single-or-list import, id re-mint/duplicate handling (our id is inside the payload), export current/all. |
-| **P9** | Persist print offset per label | small-medium | Offset knobs exist but are dialog-local (`PrintDialog.tsx:136-138`); add `label.offset` to `LabelDoc` + validator + factory. |
-| **P10** | Optional polish (owner pick) | trivial | `scrollbar-gutter: stable`; a **new** 48×30 paper seed (never edit `rounded50x30`); `multiline` prompt option. |
-| — | Screentone contrast/boldness knob | medium | **Blocked on owner decision** — parametric contrast/S-curve was deliberately dropped 2026‑10‑17. Do not plan until re-decided. |
+| **P5** | Bump `@mmote/niimbluelib` 0.47.0 → 0.47.1 | **DONE** — 287 print tests pass | `ba1da4c` |
+| **P6** | Fix `PopoverSlider` number-field typing | **DONE** — text draft + `role="spinbutton"`, negative values typeable | `a3dabbd` |
+| **P7** | Wire `letterSpacing` | **DONE** — inspector, both renderers, shrink measure | `58870e7` |
+| **P8** | Label import/export UI | **DONE** — self-contained bundle (P8a) + File menu (P8b), gzip import | `0f65414`, `c0a12c5` |
+| **P9** | Persist print offset per label | **DONE** — `label.printOffset` in hm, dialog converts at resolved dpi | `da25d8d` |
+| **P10** | Optional polish (owner pick) | **PENDING** — `scrollbar-gutter: stable`; a **new** 48×30 paper seed; `multiline` prompt option | — |
+| — | Screentone contrast/boldness knob | **Blocked on owner decision** — parametric contrast/S-curve was deliberately dropped 2026‑10‑17. | — |
 
 Do **not** adopt from upstream: screentone replacement or its px/float-angle
 parameters, `beforeunload` dirty guard (we autosave), `noScaleCache` (Konva does

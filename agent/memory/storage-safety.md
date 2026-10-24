@@ -60,3 +60,23 @@ write must not queue one full `LabelDoc` per debounce tick).
 A failed remove must not close the open document. It also bumps a monotonic
 `openRequestId` so an `openLabel(id)` already reading the deleted record cannot
 commit it afterwards.
+
+## Label transfer (P8, 2026-10-22)
+
+- `src/data/bundle.ts` is the format: `{ kind: 'niimbun-label-bundle', version: 1,
+  exportedAt, docs, csvs }`. `buildBundle` clones the docs, rewrites every
+  `local` image / imported-font ref to `inline` (base64 data URL) and embeds each
+  referenced CSV **once**. `importBundle` accepts a bundle, a `LabelDoc[]` or a
+  single doc; it **mints a fresh doc id** (trust is keyed by id, so an import
+  resolves to `ask` — never carry trust), stores inline bytes as `local`
+  resources, remaps CSV ids (including `CsvRef.source.resourceId`) and saves.
+- Invalid docs are skipped one by one; a missing embedded CSV is a warning, not a
+  failure. `MAX_IMPORT_BYTES` (64 MB) bounds the file; the hook also caps the
+  decompressed JSON before parsing.
+- UI: `src/components/layout/useLabelTransfer.ts` (File ▸ Import / Export this
+  label / Export all). The picker accepts `.json` and `.gz`; gzip magic is
+  decompressed with `utils/compress`. Exports download a Blob (object URL revoked
+  in `finally`).
+- Imported docs keep `createdAt`, get `updatedAt = now`, and land in the gallery
+  after `refreshGallery()`. `paperTypeId` is provenance only — a missing paper
+  type does not block the import.

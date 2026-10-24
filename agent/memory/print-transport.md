@@ -9,7 +9,13 @@ Foundation for talking to NIIMBOT printers. Added in P1 (commit `380be10`).
 - `src/print/mockTransport.ts` — offline/dev transport + reference impl. No runtime import of `@mmote/niimbluelib` (type-only). Validates quantities/over-total, reports the **actual** printed count, records quantities not payloads.
 - `src/print/niimbotAdapter.ts` — `NiimbotTransport implements PrinterTransport`, wraps `@mmote/niimbluelib`. Injectable `createClient` for tests.
 
-## Verified print flow (niimbluelib 0.47.0)
+## Verified print flow (niimbluelib 0.47.1)
+
+**2026-10-25: bumped 0.47.0 → 0.47.1** (upstream survey). 0.47.1 adds the
+`findPrintTask` protocol-4 fallback (our adapter previously threw "printer model
+not identified" on protocol ≥ 4) and unsigned U16/U8 packet parsing. It also
+stops subtracting the gap from `paperHeight` except model 785 — that changes only
+our advisory `rollHeightHm`, never a print packet.
 
 `client.protocol.newPrintTask(taskType, options)` → `printInit()` → loop `printPage(encoded, quantity)` + `waitForPageFinished()` → `waitForFinished()` → **`client.protocol.printEnd()` in `finally`** (resets state, cuts paper). `taskType` comes from `client.getPrintTaskType()`.
 
@@ -183,5 +189,5 @@ Printing a **25 mm** label on the **567-dot (~48 mm)** printhead left-aligns con
 
 ## Conventions
 
-- Deps are added with `bun add` in the phase that needs them (`@mmote/niimbluelib@0.47.0` was P1). Never npm.
+- Deps are added with `bun add` in the phase that needs them (`@mmote/niimbluelib` was P1; now pinned at 0.47.1). Never npm.
 - Transport status is the P3 connection chip's source; a mid-job `disconnect` must not be overwritten by a bogus `connected`.

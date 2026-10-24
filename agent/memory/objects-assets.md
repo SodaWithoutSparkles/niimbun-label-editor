@@ -170,3 +170,7 @@ keeps tests offline.
   copy under a new id, `imageId === source.resourceId`). CSV equivalent via `CsvPickDialog`/`DataSourceTab`.
 - Async pickers use a per-operation **generation token** (not a shared boolean), so a close/reopen
   mid-flight cannot fire a stale continuation against a later session.
+- **`letterSpacing` is wired (2026-10-25):** `resolve.ts` defaults it to `0` on every `ResolvedText`;
+  `konvaFactory` (print) and `ResolvedShape` (preview) pass it to `Konva.Text`, and
+  `measureKonvaText` includes it so `shrink` does not overflow the box. The inspector field is
+  `wired: true`. If you add another text renderer, pass it or preview ≠ print.
