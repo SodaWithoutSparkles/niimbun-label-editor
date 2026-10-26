@@ -838,6 +838,8 @@
     "zoomFactor": "×{{zoom}}",
     "previewTooLarge": "This label is too large to preview at {{dpi}} dpi.",
     "previewRenderError": "The page preview could not be rendered.",
+    "csvLoading": "Loading the attached CSV…",
+    "csvUnavailable": "The attached CSV could not be loaded. Reopen this dialog to retry.",
     "rasterCapExceeded": "This label is too large to print at {{dpi}} dpi ({{widthPx}}×{{heightPx}} px). Lower the DPI hint or use a smaller label.",
     "overridesTitle": "Overrides",
     "copies": "Copies",

@@ -13,6 +13,7 @@ import type { JobProgress, JobRunResult, JobRunner } from '../../print/jobRunner
 import type { PrintJob, PrinterCapabilities, PrinterStatus } from '../../print/transport';
 import { useStore } from '../../store/useStore';
 import { PrintDialog } from './PrintDialog';
+import type { PrintCsvStatus } from './usePrintJob';
 import { THUMBNAIL_DPI } from './usePrintThumbnails';
 
 const { buildCsvPrintJobMock, renderLabelPageMock, usePrintThumbnailsMock } = vi.hoisted(() => ({
@@ -179,6 +180,8 @@ const csvOf = (rowCount: number): CsvRecord => ({
 const renderDialog = (overrides: {
     doc?: ReturnType<typeof narrowDoc>;
     csv?: CsvRecord | null;
+    csvStatus?: PrintCsvStatus;
+    csvRevision?: number;
     runner: FakeRunner;
     printerStatus: PrinterStatus;
     assets?: AssetDeps;
@@ -190,6 +193,8 @@ const renderDialog = (overrides: {
             onClose={onClose}
             doc={overrides.doc ?? narrowDoc()}
             csv={overrides.csv ?? null}
+            csvStatus={overrides.csvStatus}
+            csvRevision={overrides.csvRevision}
             runner={overrides.runner}
             printerStatus={overrides.printerStatus}
             assets={overrides.assets}
@@ -430,6 +435,113 @@ describe('PrintDialog — screentone print-time honesty', () => {
             printerStatus: { ...statusOf(B1_PRO), dpi: 203 },
         });
         expect(screen.queryByTestId('print-warning-screentone-unlocked')).not.toBeInTheDocument();
+    });
+});
+
+describe('PrintDialog — CSV readiness (P12)', () => {
+    const printButton = () => screen.getByRole('button', { name: 'Print' });
+
+    it('keeps Print disabled and builds no job while an attached CSV is unread', () => {
+        const runner = new FakeRunner();
+        renderDialog({ csvStatus: 'loading', runner, printerStatus: statusOf(B1_PRO) });
+
+        expect(screen.getByTestId('print-csv-status')).toHaveTextContent(
+            'Loading the attached CSV…',
+        );
+        // No page list/preview while the table is not there to show.
+        expect(screen.queryByTestId('print-page-preview')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('print-page-list')).not.toBeInTheDocument();
+        expect(printButton()).toBeDisabled();
+
+        // A click on a disabled button is a no-op in happy-dom, so this only
+        // proves the UI surface cannot start a job in the not-ready state.
+        fireEvent.click(printButton());
+        expect(buildCsvPrintJobMock).not.toHaveBeenCalled();
+        expect(runner.lastJob).toBeUndefined();
+    });
+
+    it('blocks printing and explains the failure when the CSV could not be loaded', () => {
+        renderDialog({ csvStatus: 'error', runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+
+        expect(screen.getByTestId('print-csv-status')).toHaveTextContent(
+            'The attached CSV could not be loaded. Reopen this dialog to retry.',
+        );
+        expect(printButton()).toBeDisabled();
+    });
+
+    it('keeps the single-page job printable when nothing is attached', () => {
+        renderDialog({
+            csvStatus: 'none',
+            runner: new FakeRunner(),
+            printerStatus: statusOf(B1_PRO),
+        });
+
+        expect(screen.queryByTestId('print-csv-status')).not.toBeInTheDocument();
+        expect(screen.getByText('1 pages total')).toBeInTheDocument();
+        expect(printButton()).toBeEnabled();
+    });
+
+    it('enables Print and renders the page once the read settles', async () => {
+        const doc = narrowDoc();
+        const runner = new FakeRunner();
+        const onClose = vi.fn();
+        const view = render(
+            <PrintDialog
+                open
+                onClose={onClose}
+                doc={doc}
+                csv={null}
+                csvStatus="loading"
+                csvRevision={0}
+                runner={runner}
+                printerStatus={statusOf(B1_PRO)}
+            />,
+        );
+
+        expect(printButton()).toBeDisabled();
+        renderLabelPageMock.mockClear();
+
+        view.rerender(
+            <PrintDialog
+                open
+                onClose={onClose}
+                doc={doc}
+                csv={csvOf(2)}
+                csvStatus="ready"
+                csvRevision={1}
+                runner={runner}
+                printerStatus={statusOf(B1_PRO)}
+            />,
+        );
+
+        expect(printButton()).toBeEnabled();
+        expect(await screen.findByTestId('print-page-image')).toBeInTheDocument();
+        expect(renderLabelPageMock).toHaveBeenCalled();
+    });
+
+    it('re-renders the page when the CSV content revision changes', async () => {
+        const doc = narrowDoc();
+        const runner = new FakeRunner();
+        const onClose = vi.fn();
+        const shared = {
+            doc,
+            csvStatus: 'ready' as const,
+            runner,
+            printerStatus: statusOf(B1_PRO),
+        };
+        const view = render(
+            <PrintDialog open onClose={onClose} {...shared} csv={csvOf(2)} csvRevision={1} />,
+        );
+        await screen.findByTestId('print-page-image');
+        renderLabelPageMock.mockClear();
+
+        // Same doc, same row index, same resolved options: only the content
+        // behind the row changed. `contentRevision` is what re-runs the pass.
+        view.rerender(
+            <PrintDialog open onClose={onClose} {...shared} csv={csvOf(2)} csvRevision={2} />,
+        );
+
+        await waitFor(() => expect(renderLabelPageMock).toHaveBeenCalledTimes(1));
     });
 });
 

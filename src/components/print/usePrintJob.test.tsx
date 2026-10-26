@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { useStore } from '../../store/useStore';
 import { createLabelDoc } from '../../core/doc/factory';
 import { createMemoryAdapter } from '../../data/db';
@@ -83,6 +83,42 @@ const csvNode = (): Node => ({
 
 const makeDoc = (nodes: Node[]): LabelDoc =>
     createLabelDoc({ id: 'doc-1', now: 1_700_000_000, backingW: 3000, backingH: 2000, nodes });
+
+/** Bind the document to an attachment without going through the store slice. */
+const attachCsv = (doc: LabelDoc, csvId: string): LabelDoc => {
+    doc.data.csv = {
+        csvId,
+        name: `${csvId}.csv`,
+        source: { kind: 'local', mediaType: 'text/csv', resourceId: csvId },
+    };
+    return doc;
+};
+
+const recordOf = (id: string, value: string): CsvRecord => ({
+    id,
+    name: `${id}.csv`,
+    columns: ['name'],
+    rows: [[value]],
+});
+
+/** A repo whose reads settle only when the test says so, per `csvId`. */
+const deferredRepo = () => {
+    const pending = new Map<string, (record: CsvRecord | null) => void>();
+    const get = vi.fn(
+        (id: string) =>
+            new Promise<CsvRecord | null>((resolve) => {
+                pending.set(id, resolve);
+            }),
+    );
+    return {
+        repo: { get },
+        resolve: (id: string, record: CsvRecord | null): void => {
+            const settle = pending.get(id);
+            if (!settle) throw new Error(`no pending read for ${id}`);
+            settle(record);
+        },
+    };
+};
 
 const makeTrustRepo = (initial: Record<string, TrustDecision> = {}): TrustRepo => {
     const map = new Map(Object.entries(initial));
@@ -323,7 +359,7 @@ describe('usePrintJob — csv', () => {
         expect(textAt(doc, ctx)).toBe('Ada');
     });
 
-    it('degrades to null (no throw) when the repo read rejects', async () => {
+    it('reports `error` (never throws) when the repo read rejects', async () => {
         const doc = makeDoc([csvNode()]);
         doc.data.csv = {
             csvId: 'missing',
@@ -338,7 +374,10 @@ describe('usePrintJob — csv', () => {
         useStore.setState({ currentDoc: doc, csvRepo: repo as never, trustRepo: makeTrustRepo() });
 
         const { result } = renderHook(() => usePrintJob({ open: true }));
-        await waitFor(() => expect(result.current.csv).toBeNull());
+        // P12: a failed read is a *visible* failure, not "no CSV attached".
+        // `csv` still stays null and `prepareRow` still falls back (no crash).
+        await waitFor(() => expect(result.current.csvStatus).toBe('error'));
+        expect(result.current.csv).toBeNull();
         const ctx = await result.current.prepareRow(0);
         expect(textAt(doc, ctx)).toBe('FB');
     });
@@ -363,5 +402,101 @@ describe('usePrintJob — csv', () => {
         await new Promise((resolve) => setTimeout(resolve, 10));
 
         expect(getSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports `none` and a null table when nothing is attached', () => {
+        // No attachment is not a failure: one static page is the right job.
+        const doc = makeDoc([textStaticNode()]);
+        useStore.setState({ currentDoc: doc, csvRepo: null, trustRepo: makeTrustRepo() });
+
+        const { result } = renderHook(() => usePrintJob({ open: true }));
+
+        expect(result.current.csvStatus).toBe('none');
+        expect(result.current.csv).toBeNull();
+        expect(result.current.csvRevision).toBe(0);
+    });
+
+    it('is already `loading` on the first frame and settles to `ready` with a new revision', async () => {
+        const deferred = deferredRepo();
+        const record = recordOf('csv-1', 'Ada');
+        const doc = attachCsv(makeDoc([csvNode()]), 'csv-1');
+        useStore.setState({
+            currentDoc: doc,
+            csvRepo: deferred.repo as never,
+            trustRepo: makeTrustRepo(),
+        });
+
+        const { result } = renderHook(() => usePrintJob({ open: true }));
+        // P12: derived from the settle key, so there is no frame where an
+        // attached-but-unread CSV reports `ready` (Print would be enabled).
+        expect(result.current.csvStatus).toBe('loading');
+        expect(result.current.csv).toBeNull();
+        const revisionBefore = result.current.csvRevision;
+
+        await act(async () => {
+            deferred.resolve('csv-1', record);
+            await Promise.resolve();
+        });
+
+        await waitFor(() => expect(result.current.csvStatus).toBe('ready'));
+        expect(result.current.csv).toEqual(record);
+        expect(result.current.csvRevision).toBeGreaterThan(revisionBefore);
+    });
+
+    it('reports `error` when the read resolves to a missing record', async () => {
+        const doc = attachCsv(makeDoc([csvNode()]), 'gone');
+        const repo = { get: async (): Promise<CsvRecord | null> => null };
+        useStore.setState({ currentDoc: doc, csvRepo: repo as never, trustRepo: makeTrustRepo() });
+
+        const { result } = renderHook(() => usePrintJob({ open: true }));
+
+        await waitFor(() => expect(result.current.csvStatus).toBe('error'));
+        expect(result.current.csv).toBeNull();
+    });
+
+    it('reports `error` when a CSV is attached but no repo is available', async () => {
+        const doc = attachCsv(makeDoc([csvNode()]), 'csv-1');
+        useStore.setState({ currentDoc: doc, csvRepo: null, trustRepo: makeTrustRepo() });
+
+        const { result } = renderHook(() => usePrintJob({ open: true }));
+
+        await waitFor(() => expect(result.current.csvStatus).toBe('error'));
+        expect(result.current.csv).toBeNull();
+    });
+
+    it('never adopts a stale settle from a previous attachment', async () => {
+        const deferred = deferredRepo();
+        const docA = attachCsv(makeDoc([csvNode()]), 'csv-a');
+        useStore.setState({
+            currentDoc: docA,
+            csvRepo: deferred.repo as never,
+            trustRepo: makeTrustRepo(),
+        });
+
+        const { result } = renderHook(() => usePrintJob({ open: true }));
+        expect(result.current.csvStatus).toBe('loading');
+
+        // Switch to B while A's read is still in flight.
+        const docB = attachCsv(makeDoc([csvNode()]), 'csv-b');
+        act(() => useStore.setState({ currentDoc: docB }));
+        expect(result.current.csvStatus).toBe('loading');
+
+        // B settles first and becomes the visible table.
+        await act(async () => {
+            deferred.resolve('csv-b', recordOf('csv-b', 'Bee'));
+            await Promise.resolve();
+        });
+        await waitFor(() => expect(result.current.csvStatus).toBe('ready'));
+        expect(result.current.csv?.rows).toEqual([['Bee']]);
+
+        // A's older read resolves late: neither `cancelled` nor the `csvId`
+        // key may let it overwrite B's content or report it as B's.
+        await act(async () => {
+            deferred.resolve('csv-a', recordOf('csv-a', 'Ay'));
+            await Promise.resolve();
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(result.current.csvStatus).toBe('ready');
+        expect(result.current.csv?.rows).toEqual([['Bee']]);
     });
 });

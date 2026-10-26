@@ -111,6 +111,8 @@ export const EditorShell: React.FC = () => {
                         onClose={closePrint}
                         doc={currentDoc}
                         csv={printJob.csv}
+                        csvStatus={printJob.csvStatus}
+                        csvRevision={printJob.csvRevision}
                         prepareRow={printJob.prepareRow}
                         assets={printJob.assets}
                         runner={runner}

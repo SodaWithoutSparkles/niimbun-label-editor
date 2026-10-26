@@ -94,6 +94,14 @@ export interface PrintPagePreviewProps {
     onReport?: (report: PrintPreviewReport) => void;
     /** `false` = hold no render (a closed dialog); children stay mounted in `Modal`. */
     enabled?: boolean;
+    /**
+     * Content revision (P12). Deliberately **not** read by the render: its only
+     * job is to re-run the pass when the content behind a stable
+     * `(doc, rowIndex, optionsKey)` changes identity — e.g. re-attaching a
+     * different CSV with the same row count. `prepareRow` and `assets` are read
+     * through refs, so neither would trigger the effect on its own.
+     */
+    contentRevision?: number;
     /** Viewport height in px. Invalid/`<= 0` falls back to 320. */
     height?: number;
     className?: string;
@@ -136,6 +144,7 @@ export const PrintPagePreview = ({
     onNext,
     onReport,
     enabled = true,
+    contentRevision = 0,
     height,
     className,
 }: PrintPagePreviewProps) => {
@@ -206,7 +215,9 @@ export const PrintPagePreview = ({
         return () => {
             cancelled = true;
         };
-    }, [enabled, doc, rowIndex, optionsKey]);
+        // `contentRevision` is not read inside: it is a dependency-only key so
+        // a content-identity change re-runs the pass (see the prop doc).
+    }, [enabled, doc, rowIndex, optionsKey, contentRevision]);
 
     const zoomLabel = t('print.zoomFactor', { zoom });
 

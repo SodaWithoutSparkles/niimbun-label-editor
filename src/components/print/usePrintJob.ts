@@ -53,14 +53,38 @@ import type { AssetDeps, ResolveContext } from '../../editor/render';
  * two passes never call `evaluate` concurrently. Each caller still awaits its
  * own row (no supersession, unlike `useSampleRow`).
  *
- * The CSV read is memoised per (doc, open) — a rerender never re-reads IDB —
- * and a failed read degrades to `null` (the dialog then prints
- * static/fallback content).
+ * ## CSV readiness (P12)
+ *
+ * The CSV read is memoised per (doc, open) — a rerender never re-reads IDB.
+ * `csvStatus` is **derived** from a settle record keyed by `csvId`, never from
+ * an effect-set flag, so:
+ *
+ * - the first frame after the dialog opens already reads `loading` (there is
+ *   no window in which an attached-but-unread CSV looks printable);
+ * - a stale settle for a previous `csvId` cannot report `ready`;
+ * - `none` means *nothing attached* (a 1-page static job is correct), while a
+ *   missing record, a throw or a missing repo on an **attached** CSV is
+ *   `error` — never the old silent "print one fallback page".
+ *
+ * `csv` is non-null only while the status is `ready`, so `buildCsvPrintJob`
+ * can never see a half-loaded table. Re-opening the dialog re-reads (the
+ * effect re-runs on `open`); there is no retry/backoff.
  */
+
+/** Readiness of the document's attached CSV table (P12). */
+export type PrintCsvStatus = 'none' | 'loading' | 'ready' | 'error';
 
 /** The subset of `PrintDialog`'s props this hook supplies. */
 export interface PrintJobDeps {
     csv: CsvRecord | null;
+    /** `none` = nothing attached (a 1-page job is correct). */
+    csvStatus: PrintCsvStatus;
+    /**
+     * Monotonic counter bumped on every settled read (across sessions); `0`
+     * when no settle exists for the current attachment (still loading, nothing
+     * attached, or the dialog is closed).
+     */
+    csvRevision: number;
     prepareRow: (rowIndex: number) => Promise<ResolveContext>;
     assets: AssetDeps;
 }
@@ -70,7 +94,7 @@ export interface UsePrintJobOptions {
     open: boolean;
 }
 
-/** Read the attached CSV table, or `null` when none / the read fails. */
+/** Read the attached CSV table; `null` on failure (gone, throw or no repo). */
 const readCsv = async (
     repo: { get(id: string): Promise<CsvRecord | null> } | null,
     csvId: string | undefined,
@@ -82,6 +106,21 @@ const readCsv = async (
         return null;
     }
 };
+
+/**
+ * A settled read, keyed by the attachment it belongs to.
+ *
+ * The `csvId` key is what makes `ready` honest: the effect's `cancelled` guard
+ * already drops a read superseded by a dependency change, but the key means a
+ * settle that somehow outlives its attachment can still never satisfy a newer
+ * one. `csv: null` is a **failure**, not "no attachment" — `none` is derived
+ * from the document, never from a missing record.
+ */
+interface CsvSettle {
+    readonly csvId: string;
+    readonly csv: CsvRecord | null;
+    readonly revision: number;
+}
 
 export const usePrintJob = ({ open }: UsePrintJobOptions): PrintJobDeps => {
     const doc = useStore((state) => state.currentDoc);
@@ -138,21 +177,55 @@ export const usePrintJob = ({ open }: UsePrintJobOptions): PrintJobDeps => {
     }, [trustRevision]);
 
     const csvId = doc?.data.csv?.csvId;
-    const [csv, setCsv] = useState<CsvRecord | null>(null);
+    /**
+     * Settled read for the current attachment. `null` while a read is in
+     * flight (or none was started): the status is then `loading` when a CSV is
+     * attached, `none` when one is not — never `ready`, because `ready` must
+     * mean a record for **this** `csvId` actually arrived.
+     */
+    const [settled, setSettled] = useState<CsvSettle | null>(null);
+    // Revision source, kept in a ref so the effect can bump it without adding
+    // itself as a dependency. Only meaningful once a read for this attachment
+    // settles; the preview uses it to re-render on a content-identity change.
+    const csvRevisionRef = useRef(0);
 
     useEffect(() => {
-        if (!open) {
-            setCsv(null);
+        // Closed/removed: drop the record so no content survives the session
+        // (and a re-open starts at `loading` on its first frame).
+        if (!open || csvId === undefined) {
+            setSettled(null);
             return;
         }
         let cancelled = false;
         void readCsv(csvRepo, csvId).then((record) => {
-            if (!cancelled) setCsv(record);
+            if (cancelled) return;
+            csvRevisionRef.current += 1;
+            setSettled({ csvId, csv: record, revision: csvRevisionRef.current });
         });
         return () => {
             cancelled = true;
         };
     }, [open, csvId, csvRepo]);
+
+    // Derived, not stored: `settled` only counts for the attachment it was
+    // read for, so switching CSV A→B reads `loading` immediately, not A's ready.
+    // It is also gated on `open`: the clearing effect runs a frame after the
+    // close, and without this gate that frame would report the previous
+    // session's table as `ready`, leaking it past the close. A closed dialog
+    // therefore can never report `ready`.
+    const currentSettle = open && settled !== null && settled.csvId === csvId ? settled : null;
+    const csvStatus: PrintCsvStatus =
+        csvId === undefined
+            ? 'none'
+            : currentSettle === null
+              ? 'loading'
+              : currentSettle.csv !== null
+                ? 'ready'
+                : 'error';
+    // Non-null only while the status is `ready`: `currentSettle` already excludes
+    // a closed dialog, so no extra `open` gate is needed here.
+    const csv = currentSettle?.csv ?? null;
+    const csvRevision = currentSettle?.revision ?? 0;
 
     const csvRef = useRef(csv);
     csvRef.current = csv;
@@ -247,5 +320,5 @@ export const usePrintJob = ({ open }: UsePrintJobOptions): PrintJobDeps => {
         return task;
     }, [runPrepare]);
 
-    return { csv, prepareRow, assets };
+    return { csv, csvStatus, csvRevision, prepareRow, assets };
 };

@@ -36,6 +36,7 @@ import {
     usePrintThumbnails,
     type PrintThumbnailOverrides,
 } from './usePrintThumbnails';
+import type { PrintCsvStatus } from './usePrintJob';
 import { PrintPageList } from './PrintPageList';
 import { PrintPagePreview, type PrintPreviewReport } from './PrintPagePreview';
 import { previewOptionsKey } from '../../editor/render/previewKeys';
@@ -66,6 +67,20 @@ export interface PrintDialogProps {
     onClose: () => void;
     doc: LabelDoc;
     csv: CsvRecord | null;
+    /**
+     * Readiness of the attached CSV (P12). `loading`/`error` block printing: a
+     * not-ready table must never reach `buildCsvPrintJob`, which would build a
+     * 1-page **fallback** job instead of the document's records. Omitted =
+     * derived from `csv` (`csv !== null ? 'ready' : 'none'`), so the dev
+     * harness keeps working and a document with no CSV keeps its single page.
+     */
+    csvStatus?: PrintCsvStatus;
+    /**
+     * Bumped whenever the CSV read settles. Threaded into `PrintPagePreview`
+     * so re-attaching a table with the same row count still re-renders the
+     * page (the options key cannot see CSV content).
+     */
+    csvRevision?: number;
     prepareRow?: (rowIndex: number) => Promise<ResolveContext>;
     assets?: AssetDeps;
     /** `createJobRunner(transport)` — one active job (W5 wires it). */
@@ -112,6 +127,8 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     onClose,
     doc,
     csv,
+    csvStatus: providedCsvStatus,
+    csvRevision = 0,
     prepareRow,
     assets,
     runner,
@@ -182,6 +199,12 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         if (!open) return;
         setDpiInput(String(doc.label.dpi));
     }, [open, doc.label.dpi]);
+
+    // P12: the CSV is optional. `none` = nothing attached, and one static page
+    // is the correct job; `loading`/`error` mean an **attached** table could
+    // not be read yet, and printing it would silently emit one fallback page.
+    const csvStatus = providedCsvStatus ?? (csv !== null ? 'ready' : 'none');
+    const csvNotReady = csvStatus === 'loading' || csvStatus === 'error';
 
     const rows = rowCountOf(csv);
     const timesFor = useMemo(() => timesForCsv(csv), [csv]);
@@ -578,7 +601,10 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     };
 
     const handlePrint = async (): Promise<void> => {
-        if (busy || runner.isBusy()) return;
+        // Unreachable through the disabled Print button: this early return exists
+        // only for programmatic/future callers, which must never build a job
+        // from a not-ready CSV.
+        if (csvNotReady || busy || runner.isBusy()) return;
         setBusy(true);
         setOutcome(null);
         setProgress({
@@ -617,7 +643,12 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     });
 
     const printDisabled =
-        busy || runner.isBusy() || plan === null || plan.totalPages === 0 || rasterCapExceeded;
+        busy ||
+        runner.isBusy() ||
+        plan === null ||
+        plan.totalPages === 0 ||
+        rasterCapExceeded ||
+        csvNotReady;
     const hasWarnings =
         showOverflow ||
         plan?.warning !== undefined ||
@@ -712,11 +743,16 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                             <h3 className="text-sm font-semibold text-gray-200">
                                 {t('print.pagesTitle')}
                             </h3>
-                            <span className="text-xs text-gray-400">
-                                {plan === null
-                                    ? t('print.planError')
-                                    : t('print.totalPages', { pages: plan.totalPages })}
-                            </span>
+                            {/* No total while the CSV is unread: the plan is
+                                built from a null-CSV row count (1 page), which
+                                would contradict the loading message below. */}
+                            {!csvNotReady && (
+                                <span className="text-xs text-gray-400">
+                                    {plan === null
+                                        ? t('print.planError')
+                                        : t('print.totalPages', { pages: plan.totalPages })}
+                                </span>
+                            )}
                         </div>
                         <SettingRow label={t('print.order')}>
                             <Select
@@ -749,7 +785,17 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                 aria-label={t('print.viewAs')}
                             />
                         </SettingRow>
-                        {viewMode === 'queue' ? (
+                        {csvNotReady ? (
+                            <p
+                                data-testid="print-csv-status"
+                                role="status"
+                                className="rounded border border-gray-700 bg-gray-900 px-2 py-3 text-center text-xs text-gray-400"
+                            >
+                                {csvStatus === 'loading'
+                                    ? t('print.csvLoading')
+                                    : t('print.csvUnavailable')}
+                            </p>
+                        ) : viewMode === 'queue' ? (
                             <PrintPageList
                                 rows={activeRows}
                                 copiesFor={(rowIndex) => timesFor(rowIndex) * copies}
@@ -777,6 +823,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                 }
                                 onReport={handlePreviewReport}
                                 enabled={open}
+                                contentRevision={csvRevision}
                                 height={320}
                             />
                         )}
