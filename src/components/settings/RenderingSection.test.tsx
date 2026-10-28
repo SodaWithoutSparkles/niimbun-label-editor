@@ -187,7 +187,7 @@ describe('RenderingSection — screentone strategy', () => {
         fireEvent.blur(pitch);
         expect(useStore.getState().quantizerDefaults.screentone).toEqual({
             screentoneLevels: 8,
-            screentonePitchMm: 0.3,
+            screentonePitchMm: 0.2,
         });
 
         fireEvent.change(screen.getByRole('combobox', { name: 'Screen angle' }), {
@@ -195,7 +195,7 @@ describe('RenderingSection — screentone strategy', () => {
         });
         expect(useStore.getState().quantizerDefaults.screentone).toEqual({
             screentoneLevels: 8,
-            screentonePitchMm: 0.3,
+            screentonePitchMm: 0.2,
             screentoneAngle: 27,
         });
 
@@ -204,7 +204,7 @@ describe('RenderingSection — screentone strategy', () => {
         fireEvent.blur(boldness);
         expect(useStore.getState().quantizerDefaults.screentone).toEqual({
             screentoneLevels: 8,
-            screentonePitchMm: 0.3,
+            screentonePitchMm: 0.2,
             screentoneAngle: 27,
             screentoneBoldness: 1,
         });
@@ -213,7 +213,7 @@ describe('RenderingSection — screentone strategy', () => {
         fireEvent.blur(boldness);
         expect(useStore.getState().quantizerDefaults.screentone).toEqual({
             screentoneLevels: 8,
-            screentonePitchMm: 0.3,
+            screentonePitchMm: 0.2,
             screentoneAngle: 27,
             screentoneBoldness: -0.4,
         });

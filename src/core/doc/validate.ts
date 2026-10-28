@@ -521,7 +521,7 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
                     );
                     if (params.screentonePitchMm !== rounded) {
                         repairs?.push(
-                            'node.quantizerParams.screentonePitchMm: clamped to 0.3–2',
+                            'node.quantizerParams.screentonePitchMm: clamped to 0.2–2',
                         );
                     }
                 } else {

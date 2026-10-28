@@ -101,7 +101,7 @@ export interface RenderLabelPageOptions {
      */
     screentoneLevels?: number;
     /**
-     * Screentone pitch in mm (0.3..2.0) forwarded **underneath** the
+     * Screentone pitch in mm (0.2..2.0) forwarded **underneath** the
      * per-strategy and per-node values. Absent, it resolves to
      * `DEFAULT_SCREENTONE.pitchMm`. Snapped at the effective render dpi.
      */

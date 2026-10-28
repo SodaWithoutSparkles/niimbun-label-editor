@@ -289,10 +289,10 @@ Commits `2b0f70a` (W1 gamma), `f2d3bc9` (W2 Ostromoukhov), `8468b54` (W3 live pr
   (`min(levels-2, floor(raw*(levels-1)/7))`) — without that, `level = levels-1` is not solid for K < 8.
 - **Pitch is physical, never raw px.** `dpi` is a **required** `QuantizeOptions` input (missing ⇒
   `RangeError`: head-locked or nothing) because the raster is encoded 1:1 in printer dots.
-  `step = max(1, round(pitchMm * dpi/25.4 / |basis|))`, snapped **up** while the period is < 0.4 mm;
+  `step = max(1, round(pitchMm * dpi/25.4 / |basis|))`, snapped **up** while the period is < 0.2 mm;
   `dots = step*|basis|`, `pitchMm = dots*25.4/dpi`. Verified: 300 dpi 0° → 5/6/8/12 dots =
   0.423/0.508/0.677/1.016 mm; 203 dpi → 4/6/8 = 0.500/0.751/1.001 mm.
-- **Params + precedence:** `screentoneLevels` (2–8), `screentonePitchMm` (0.3–2.0), `screentoneAngle`
+- **Params + precedence:** `screentoneLevels` (2–8), `screentonePitchMm` (0.2–2.0), `screentoneAngle`
   (0|14|27|45), `screentoneBoldness` (−1…1, level bias, 2026-10-25) — document data
   (`quantizerParams`) with node → per-strategy setting → `DEFAULT_SCREENTONE` (4 / 0.5 mm / 45° /
   0; gamma 1). `policyKeyOf` keys all four (pitch + boldness 2 dp); every knob is set explicitly in

@@ -19,7 +19,7 @@ import type { Quantizer, QuantizeOptions } from './quantize';
  * property of the print grid: it must be an integer number of printer dots.
  * {@link screentoneSnap} takes the requested pitch in mm, converts it to dots at
  * the effective `dpi`, rounds it to the nearest integer lattice step, and snaps
- * **up** until the resulting physical pitch clears the advisory 0.4 mm floor.
+ * **up** until the resulting physical pitch clears the advisory 0.2 mm floor.
  * The engine therefore renders at whatever dpi the caller supplies (the print
  * path uses the effective print dpi; thumbnails and the preview budget fallback
  * snap at their own dpi — accepted approximations, never head-locked).
@@ -54,7 +54,7 @@ export const SCREENTONE_ANGLES: readonly ScreentoneAngle[] = [0, 14, 27, 45];
 export const SCREENTONE_LEVELS_MIN = 2;
 export const SCREENTONE_LEVELS_MAX = 8;
 
-export const SCREENTONE_PITCH_MM_MIN = 0.3;
+export const SCREENTONE_PITCH_MM_MIN = 0.2;
 export const SCREENTONE_PITCH_MM_MAX = 2.0;
 
 /**
@@ -71,8 +71,12 @@ export const SCREENTONE_BOLDNESS_MAX = 1;
  */
 export const SCREENTONE_MAX_LEVELS = 8;
 
-/** Advisory physical floor for a printable screen: never snap below this. */
-const SCREENTONE_ADVISORY_PITCH_MM = 0.4;
+/**
+ * Advisory physical floor for a printable screen: never snap below this.
+ * Intentionally equal to {@link SCREENTONE_PITCH_MM_MIN} — the clamp and the
+ * snap must agree, so single-sourcing them stops the two drifting apart.
+ */
+const SCREENTONE_ADVISORY_PITCH_MM = SCREENTONE_PITCH_MM_MIN;
 
 /** Primitive integer basis per angle: `(a, b)` and its perpendicular `(-b, a)`. */
 const BASES: Record<ScreentoneAngle, readonly [number, number]> = {
@@ -144,7 +148,7 @@ export interface ScreentoneSnap {
  *   `step = max(1, round(pitchMm · dotsPerMm / |basis|))`
  *
  * then step **up** while the resulting physical pitch is below the advisory
- * 0.4 mm floor — the snap never lands under it. `dots` is `step · |basis|` and
+ * 0.2 mm floor — the snap never lands under it. `dots` is `step · |basis|` and
  * the returned `pitchMm` is `dots · 25.4 / dpi`.
  *
  * Throws a `RangeError` for a missing/non-finite/non-positive `dpi`: the pitch
@@ -219,7 +223,7 @@ export const SCREENTONE_RANK_TABLE: Uint8Array = buildRankTable();
  *
  * - `levels` clamps to `[2, 8]` (integer); an absent/non-finite value is the
  *   engine minimum `2`.
- * - `screentonePitchMm` clamps to `[0.3, 2.0]` mm, then snaps physically at
+ * - `screentonePitchMm` clamps to `[0.2, 2.0]` mm, then snaps physically at
  *   `dpi` (see {@link screentoneSnap}).
  * - `screentoneAngle` must be one of the four; anything else falls back to 45°.
  * - `screentoneBoldness` clamps to `[-1, 1]` (see {@link clampBoldness}); it is a

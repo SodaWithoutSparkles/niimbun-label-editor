@@ -272,7 +272,7 @@ const DiffuserSettings: React.FC<DiffuserSettingsProps> = ({
 const clampLevels = (value: number): number =>
     Math.min(SCREENTONE_LEVELS_MAX, Math.max(SCREENTONE_LEVELS_MIN, Math.round(value)));
 
-/** Screentone pitch clamped to `[0.3,2]` mm and rounded to 2 dp (matches `validate`). */
+/** Screentone pitch clamped to `[0.2,2]` mm and rounded to 2 dp (matches `validate`). */
 const clampPitch = (value: number): number =>
     Math.round(Math.min(SCREENTONE_PITCH_MM_MAX, Math.max(SCREENTONE_PITCH_MM_MIN, value)) * 100) / 100;
 

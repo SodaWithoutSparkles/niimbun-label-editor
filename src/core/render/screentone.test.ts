@@ -78,21 +78,25 @@ describe('screentoneSnap — physical pitch snapping', () => {
         }
     });
 
-    it('never snaps below the 0.4 mm advisory floor', () => {
-        // 0.3 mm at 300 dpi rounds to 4 dots (0.339 mm) — the snap steps up.
-        const floored = screentoneSnap(0.3, 0, 300);
-        expect(floored.step).toBe(5);
-        expect(floored.pitchMm).toBeGreaterThanOrEqual(0.4);
+    it('never snaps below the 0.2 mm advisory floor', () => {
+        // 0.2 mm at 300 dpi rounds to 2 dots (0.169 mm) — the snap steps up.
+        const floored = screentoneSnap(0.2, 0, 300);
+        expect(floored.step).toBe(3);
+        expect(floored.pitchMm).toBeGreaterThanOrEqual(0.2);
         for (const angle of SCREENTONE_ANGLES) {
             for (const dpi of [100, 203, 300, 600]) {
                 for (let pitch = SCREENTONE_PITCH_MM_MIN; pitch <= SCREENTONE_PITCH_MM_MAX; pitch += 0.05) {
                     expect(
                         screentoneSnap(pitch, angle, dpi).pitchMm,
                         `${pitch} mm at ${angle}° / ${dpi} dpi`,
-                    ).toBeGreaterThanOrEqual(0.4);
+                    ).toBeGreaterThanOrEqual(0.2);
                 }
             }
         }
+        // The finer floor is genuinely reachable: previously these requests
+        // were floored up to 4 dots at 203 and 600 dpi.
+        expect(screentoneSnap(0.2, 0, 203).step).toBe(2); // 0.250 mm
+        expect(screentoneSnap(0.2, 0, 600).step).toBe(5); // 0.212 mm
     });
 
     it('rotated bases snap by whole lattice steps', () => {
@@ -107,8 +111,8 @@ describe('screentoneSnap — physical pitch snapping', () => {
         expect(screentoneSnap(0.5, 27, 300).basis).toEqual([2, 1]);
     });
 
-    it('clamps the requested pitch into [0.3, 2.0] before snapping', () => {
-        expect(screentoneSnap(0.01, 0, 300)).toEqual(screentoneSnap(0.3, 0, 300));
+    it('clamps the requested pitch into [0.2, 2.0] before snapping', () => {
+        expect(screentoneSnap(0.01, 0, 300)).toEqual(screentoneSnap(0.2, 0, 300));
         expect(screentoneSnap(99, 0, 300)).toEqual(screentoneSnap(2.0, 0, 300));
     });
 

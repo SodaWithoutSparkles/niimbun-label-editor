@@ -244,7 +244,7 @@ export const normalizeDefaultPaperTypeId = (value: unknown): string | undefined 
  * to `[0,255]` as an integer; `strength` to `[0,4]` rounded to 2 dp (matching
  * `core/doc/validate`); `gamma` to `[0.1,4]` rounded to 2 dp (the `quantize.ts`
  * clamp); `serpentine` must be a boolean. The screentone knobs clamp like the
- * engine: `levels` to an integer `[2,8]`, `pitchMm` to `[0.3,2.0]` at 2 dp,
+ * engine: `levels` to an integer `[2,8]`, `pitchMm` to `[0.2,2.0]` at 2 dp,
  * `boldness` to `[-1,1]` at 2 dp, and `angle` must be one of the four supported
  * values (a bad angle is dropped, not defaulted, so the render default still
  * applies downstream).

@@ -575,15 +575,15 @@ describe('isNode — screentone params (P4)', () => {
         expect(dropped).toContain('node.quantizerParams.screentoneBoldness: invalid value dropped');
     });
 
-    it('clamps levels to 2–8 and pitch to 0.3–2 mm, with repairs', () => {
+    it('clamps levels to 2–8 and pitch to 0.2–2 mm, with repairs', () => {
         const repairs: string[] = [];
         const low = isNode(
             baseNode({ quantizerParams: { screentoneLevels: 1, screentonePitchMm: 0.1 } }),
             repairs,
         );
-        expect(low?.quantizerParams).toEqual({ screentoneLevels: 2, screentonePitchMm: 0.3 });
+        expect(low?.quantizerParams).toEqual({ screentoneLevels: 2, screentonePitchMm: 0.2 });
         expect(repairs).toContain('node.quantizerParams.screentoneLevels: clamped to 2–8');
-        expect(repairs).toContain('node.quantizerParams.screentonePitchMm: clamped to 0.3–2');
+        expect(repairs).toContain('node.quantizerParams.screentonePitchMm: clamped to 0.2–2');
 
         const highRepairs: string[] = [];
         const high = isNode(
@@ -592,7 +592,7 @@ describe('isNode — screentone params (P4)', () => {
         );
         expect(high?.quantizerParams).toEqual({ screentoneLevels: 8, screentonePitchMm: 2 });
         expect(highRepairs).toContain('node.quantizerParams.screentoneLevels: clamped to 2–8');
-        expect(highRepairs).toContain('node.quantizerParams.screentonePitchMm: clamped to 0.3–2');
+        expect(highRepairs).toContain('node.quantizerParams.screentonePitchMm: clamped to 0.2–2');
     });
 
     it('rounds levels to an integer and pitch to 2 dp without a false clamp repair', () => {

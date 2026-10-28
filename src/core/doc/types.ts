@@ -88,7 +88,7 @@ export interface BaseNode {
         gamma?: number;
         /** Screentone tone levels, integer `[2, 8]` (screentone only). */
         screentoneLevels?: number;
-        /** Screentone cell pitch in mm, `[0.3, 2.0]`, snapped to dots at render dpi. */
+        /** Screentone cell pitch in mm, `[0.2, 2.0]`, snapped to dots at render dpi. */
         screentonePitchMm?: number;
         /** Screentone screen angle (one of `SCREENTONE_ANGLES`). */
         screentoneAngle?: ScreentoneAngle;

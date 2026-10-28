@@ -152,7 +152,7 @@
       "screentoneBoldnessDescription": "Fatter (+) or thinner (−) dots. 0 is neutral.",
       "screentoneBoldnessAria": "{{strategy}} screen boldness",
       "screentonePitch": "Screen pitch",
-      "screentonePitchDescription": "Requested cell size in mm, 0.3 to 2.0. Snapped to whole printer dots at the effective print dpi; the screen is locked to the dot grid only when printing at the printer's reported dpi. Default 0.5.",
+      "screentonePitchDescription": "Requested cell size in mm, 0.2 to 2.0. Snapped to whole printer dots at the effective print dpi; the screen is locked to the dot grid only when printing at the printer's reported dpi. Default 0.5.",
       "screentonePitchAria": "{{strategy}} screen pitch",
       "screentoneAngle": "Screen angle",
       "screentoneAngleDescription": "Screen angle. Rotated screens land on the nearest whole-dot lattice. Default 45°.",

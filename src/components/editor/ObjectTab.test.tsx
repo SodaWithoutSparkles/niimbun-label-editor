@@ -674,7 +674,7 @@ describe('per-node screentone params (P4)', () => {
 
         const pitch = openField('Screen pitch');
         fireEvent.change(pitch, { target: { value: '0.1' } });
-        expect(paramsOf('s')).toEqual({ screentonePitchMm: 0.3 });
+        expect(paramsOf('s')).toEqual({ screentonePitchMm: 0.2 });
         fireEvent.change(pitch, { target: { value: '0.75' } });
         expect(paramsOf('s')).toEqual({ screentonePitchMm: 0.75 });
         fireEvent.change(pitch, { target: { value: '0.5' } });

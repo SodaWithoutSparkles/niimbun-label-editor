@@ -54,7 +54,7 @@ export interface QuantizeOptions {
      */
     screentoneLevels?: number;
     /**
-     * Screentone cell pitch in mm, clamped to `[0.3, 2.0]` and then snapped to
+     * Screentone cell pitch in mm, clamped to `[0.2, 2.0]` and then snapped to
      * an integer lattice step at `dpi` (see `screentoneSnap`). Ignored by every
      * other quantizer.
      */

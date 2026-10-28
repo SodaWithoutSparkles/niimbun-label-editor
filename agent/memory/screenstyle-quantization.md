@@ -171,11 +171,12 @@ k vs rank[(u,v) mod P]     --> ink
   debt **D-69** ([`tech-debt.md`](tech-debt.md)).
 - **Not observable in-repo:** whether the printer firmware internally rescales a raster whose width
   is not the head's dot count. Unknown — do not speculate.
-- **Legal pitch table** (pitch = an integer number of head dots; ≥0.4 mm advisory floor, ≥0.5 mm
+- **Legal pitch table** (pitch = an integer number of head dots; ≥0.2 mm advisory floor, ≥0.5 mm
   preferred; dot pitch = `headDpi/25.4` dots/mm — B1_PRO 567 dots ≈ 48.006 mm ⇒ 300 dpi ⇒ 11.811
   dots/mm):
-  - 300 dpi head: 5 dots = 0.423 mm · 6 = 0.508 · 8 = 0.677 · 10 = 0.847 · 12 = 1.016
-  - 203 dpi head: 4 dots = 0.500 mm · 5 = 0.626 · 6 = 0.751 · 8 = 1.001
+  - 300 dpi head: 3 dots = 0.254 mm · 5 = 0.423 · 6 = 0.508 · 8 = 0.677 · 10 = 0.847 · 12 = 1.016
+  - 203 dpi head: 2 dots = 0.250 mm · 4 = 0.500 · 5 = 0.626 · 6 = 0.751 · 8 = 1.001
+  - 600 dpi head: 5 dots = 0.212 mm
 - **The dpi of each render path** — a head-locked screen reproduces only at the head dpi and looks
   different on the others: print = **document dpi**; single-page print preview = document dpi; the
   live quantized preview = document dpi when it fits its 1 M px budget (`tech-debt.md` D-60), else

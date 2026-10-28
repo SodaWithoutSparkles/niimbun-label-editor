@@ -130,7 +130,7 @@ describe('normalizeQuantizerDefaults', () => {
         });
     });
 
-    it('clamps the screentone knobs (levels int 2..8, pitch 0.3..2.0 at 2 dp)', () => {
+    it('clamps the screentone knobs (levels int 2..8, pitch 0.2..2.0 at 2 dp)', () => {
         expect(
             normalizeQuantizerDefaults({
                 screentone: { screentoneLevels: 4.6, screentonePitchMm: 0.5049, screentoneAngle: 27 },
@@ -147,7 +147,7 @@ describe('normalizeQuantizerDefaults', () => {
             normalizeQuantizerDefaults({
                 screentone: { screentoneLevels: 1, screentonePitchMm: 0.01 },
             }),
-        ).toEqual({ screentone: { screentoneLevels: 2, screentonePitchMm: 0.3 } });
+        ).toEqual({ screentone: { screentoneLevels: 2, screentonePitchMm: 0.2 } });
     });
 
     it('clamps screentoneBoldness to [-1, 1] and drops non-finite values', () => {
