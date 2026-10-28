@@ -362,6 +362,10 @@ describe('useQuantizedPreview — only quantization-relevant changes trigger', (
     });
 
     it('does not render when the per-strategy settings change (the modal case)', async () => {
+        // D-59: the Rendering settings live behind a modal that covers the canvas,
+        // so a settings edit must never *arm* a peek. The trigger key excludes the
+        // settings, and a settings-only change leaves it unchanged — nothing is
+        // painted here, so the changed dep only makes the non-trigger branch run.
         const doc = makeDoc();
         const { rerender } = mount(props(doc));
         await act(async () => {
@@ -369,6 +373,29 @@ describe('useQuantizedPreview — only quantization-relevant changes trigger', (
         });
         await flush(500);
         expect(renderMock).not.toHaveBeenCalled();
+    });
+
+    it('hides a painted peek when the dither settings change, without re-rendering (D-59)', async () => {
+        // A raster already on screen was planned from the previous defaults: it is
+        // stale once they change. Hide it, but never start a new render (the modal
+        // still covers the canvas — D-59).
+        const doc = makeDoc();
+        const tuned = withThreshold(doc, 90);
+        const { result, rerender } = mount(props(doc));
+        await act(async () => {
+            rerender(props(tuned));
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(result.current.active).toBe(true);
+
+        await act(async () => {
+            rerender(props(tuned, { quantizerDefaults: { threshold: { gamma: 2 } } }));
+        });
+        expect(result.current.active).toBe(false);
+        expect(result.current.image).toBeUndefined();
+        await flush(500);
+        expect(result.current.active).toBe(false);
+        expect(renderMock).toHaveBeenCalledTimes(1);
     });
 
     it('re-renders for each screentone knob (levels / pitch / angle)', async () => {
@@ -567,6 +594,42 @@ describe('useQuantizedPreview — cancellation', () => {
         expect(renderMock).toHaveBeenCalledTimes(1);
     });
 
+    it('does not paint a render whose dither settings changed in flight (options-key guard)', async () => {
+        // The settings moved between plan and paint: the raster is from the old
+        // defaults and must never replace what the canvas shows. This cannot
+        // isolate `sameContent`'s `settingsKey` term — `previewOptionsKey` already
+        // folds the settings in, so `latest.key !== plan.key` rejects first; the
+        // term is a second line of defence (see `sameContent`).
+        const doc = makeDoc();
+        const tuned = withThreshold(doc, 90);
+        let release: ((page: RenderedLabelPage) => void) | undefined;
+        renderMock.mockImplementationOnce(
+            () => new Promise<RenderedLabelPage>((resolve) => {
+                release = resolve;
+            }),
+        );
+        const { result, rerender } = mount(
+            props(doc, { quantizerDefaults: { threshold: { gamma: 1 } } }),
+        );
+        await act(async () => {
+            rerender(props(tuned, { quantizerDefaults: { threshold: { gamma: 1 } } }));
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            rerender(props(tuned, { quantizerDefaults: { threshold: { gamma: 2 } } }));
+        });
+        const stale = makePage();
+        await act(async () => {
+            release?.(stale);
+            await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        expect(result.current.active).toBe(false);
+        expect(result.current.image).not.toBe(stale.canvas);
+    });
+
     it('reverts on a tool change', async () => {
         const doc = makeDoc();
         const { result, rerender } = mount(props(doc));
@@ -704,6 +767,92 @@ describe('useQuantizedPreview — persistent dithered view (mode: quantized)', (
         expect(renderMock).toHaveBeenCalledTimes(2);
         expect(renderMock.mock.calls[1]![0]).toBe(edited);
         expect(result.current.image).toBe(pages[1]!.canvas);
+    });
+
+    it('re-renders when the dither settings change', async () => {
+        // The persistent view paints at all times, so a Rendering-settings edit
+        // must repaint (debounced) instead of leaving the old dither up.
+        const doc = makeDoc();
+        const { result, rerender } = mount(
+            persistent(doc, { quantizerDefaults: { threshold: { gamma: 1 } } }),
+        );
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        const optionsOf = (call: number): Record<string, unknown> =>
+            renderMock.mock.calls[call]![2] as Record<string, unknown>;
+        expect(optionsOf(0).quantizerDefaults).toEqual({ threshold: { gamma: 1 } });
+
+        await act(async () => {
+            rerender(persistent(doc, { quantizerDefaults: { threshold: { gamma: 2 } } }));
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(2);
+        expect(optionsOf(1).quantizerDefaults).toEqual({ threshold: { gamma: 2 } });
+        expect(result.current.active).toBe(true);
+        expect(result.current.image).toBe(pages[1]!.canvas);
+    });
+
+    it('supersedes an in-flight render when the dither settings change, then repaints once', async () => {
+        // The settings change bumps the generation, so the raster planned from the
+        // old defaults can never land; exactly one debounced repaint follows at the
+        // new settings.
+        const doc = makeDoc();
+        let release: ((page: RenderedLabelPage) => void) | undefined;
+        renderMock.mockImplementationOnce(
+            () => new Promise<RenderedLabelPage>((resolve) => {
+                release = resolve;
+            }),
+        );
+        const { result, rerender } = mount(
+            persistent(doc, { quantizerDefaults: { threshold: { gamma: 1 } } }),
+        );
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        expect(result.current.active).toBe(false);
+
+        await act(async () => {
+            rerender(persistent(doc, { quantizerDefaults: { threshold: { gamma: 2 } } }));
+        });
+        const stale = makePage();
+        await act(async () => {
+            release?.(stale);
+            await vi.advanceTimersByTimeAsync(0);
+        });
+        // Superseded mid-flight: the old raster is dropped.
+        expect(result.current.image).not.toBe(stale.canvas);
+        expect(result.current.active).toBe(false);
+
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(2);
+        const options = renderMock.mock.calls[1]![2] as Record<string, unknown>;
+        expect(options.quantizerDefaults).toEqual({ threshold: { gamma: 2 } });
+        expect(result.current.active).toBe(true);
+        expect(result.current.image).toBe(pages[0]!.canvas);
+    });
+
+    it('does not re-render for a fresh-but-equal settings object', async () => {
+        // `settingsKey` is a value: a new map literal with the same content must
+        // not churn the effect (the store can re-commit an equal object).
+        const doc = makeDoc();
+        const { rerender } = mount(
+            persistent(doc, {
+                quantizerDefaults: { threshold: { gamma: 1.5 } },
+                defaultQuantizerByType: { image: 'atkinson' },
+            }),
+        );
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            rerender(
+                persistent(doc, {
+                    quantizerDefaults: { threshold: { gamma: 1.5 } },
+                    defaultQuantizerByType: { image: 'atkinson' },
+                }),
+            );
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(1);
     });
 
     it('hides on a document switch until the new raster lands', async () => {

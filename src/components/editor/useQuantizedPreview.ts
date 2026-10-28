@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LabelDoc } from '../../core/doc/types';
-import type { QuantizerByType, QuantizerDefaults } from '../../core/render';
+import { quantizerSettingsKey, type QuantizerByType, type QuantizerDefaults } from '../../core/render';
 import type { AssetDeps } from '../../editor/render/assets';
 import {
     renderLabelPage,
@@ -35,9 +35,9 @@ import type { RenderMode } from '../../store/slices/viewSlice';
  *   knob change, reverted after `QUANTIZED_PREVIEW_IDLE_MS`, dismissed on a
  *   `revertOn` (tool) change.
  * - **`quantized`** — the persistent dithered view: no trigger and no selection
- *   needed, a debounced render on every `doc`/`ctxKey`/`baseDpi` change, no
- *   idle revert and no `revertOn` dismiss. Only a document switch hides it,
- *   until the new document's raster lands.
+ *   needed, a debounced render on every `doc`/`ctxKey`/`baseDpi`/`settingsKey`
+ *   change, no idle revert and no `revertOn` dismiss. Only a document switch
+ *   hides it, until the new document's raster lands.
  *
  * Lifecycle rules (all tested):
  * - **Seeded from the print dpi.** The plan's base is
@@ -58,10 +58,11 @@ import type { RenderMode } from '../../store/slices/viewSlice';
  * - **Matches the canvas.** The render gets the caller's `resolveContext` (the
  *   sample-row override map the editor canvas resolves with), and a result is
  *   only painted while **both** its options and the content it was rendered from
- *   (document + override *values*) are still current.
+ *   (document + override *values* + base dpi + dither settings) are still current.
  * - **Auto-revert (normal mode only).** The overlay lives
  *   `QUANTIZED_PREVIEW_IDLE_MS` after the last painted raster, and a non-trigger
- *   content change hides it immediately rather than leaving a stale page up.
+ *   content change (including a Rendering-settings edit) hides it immediately
+ *   rather than leaving a stale page up.
  * - **Never mutates the document.** The hook only reads `doc` and renders; it
  *   pushes no undo entry and never touches the print path's thumbnail cache
  *   (which is keyed at a different dpi).
@@ -145,6 +146,8 @@ interface PreviewPlan {
     key: string;
     /** The base dpi (resolved print dpi) this plan's rendered dpi was derived from. */
     baseDpi: number;
+    /** The dither settings this plan was built with (`quantizerSettingsKey`). */
+    settingsKey: string;
 }
 
 /** The content a raster was rendered from: the document plus the override values. */
@@ -153,6 +156,12 @@ interface RenderedContent {
     ctxKey: string;
     /** The resolved base dpi this raster was planned from. */
     baseDpi: number;
+    /**
+     * The dither settings this raster was planned with. Compared by **value**
+     * (`quantizerSettingsKey` is order-independent), so only a real settings
+     * change marks a painted raster stale.
+     */
+    settingsKey: string;
 }
 
 /** The raster currently painted, plus the dpi policy it was rendered with. */
@@ -167,7 +176,15 @@ interface PaintedPreview {
  * **value** (`previewOverridesKey`), because the sample-row pass re-commits an
  * equal map every second on a ticking document. The base dpi is compared by
  * value too: a printer connect / `usePrinterDpi` toggle moves it without touching
- * the document, and a raster rendered from the old base is stale.
+ * the document, and a raster rendered from the old base is stale. The dither
+ * settings are compared by value (`quantizerSettingsKey`): a settings edit must
+ * never paint a raster planned from the previous defaults.
+ *
+ * The `settingsKey` term is normally unreachable as a **paint** guard: `runRender`
+ * rejects a changed options key first (`latest.key !== plan.key`), and
+ * `previewOptionsKey` already folds `quantizerSettingsKey` in. It is kept as a
+ * second line of defence — do not delete the options-key check believing this
+ * term covers it.
  */
 const sameContent = (
     content: RenderedContent,
@@ -176,10 +193,21 @@ const sameContent = (
 ): boolean =>
     inputs.doc === content.doc &&
     previewOverridesKey(inputs.resolveContext) === content.ctxKey &&
-    baseDpi === content.baseDpi;
+    baseDpi === content.baseDpi &&
+    quantizerSettingsKey(inputs.quantizerDefaults, inputs.defaultQuantizerByType) ===
+        content.settingsKey;
 
 export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): QuantizedPreview => {
-    const { doc, selectedNodeIds, enabled = true, revertOn, resolveContext, mode = 'normal' } = options;
+    const {
+        doc,
+        selectedNodeIds,
+        enabled = true,
+        revertOn,
+        resolveContext,
+        mode = 'normal',
+        quantizerDefaults,
+        defaultQuantizerByType,
+    } = options;
 
     const [painted, setPainted] = useState<PaintedPreview | null>(null);
 
@@ -214,6 +242,15 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
     // identity — is what the effects compare, so a fresh-but-equal context cannot
     // mark a live raster stale.
     const ctxKey = useMemo(() => previewOverridesKey(resolveContext), [resolveContext]);
+
+    // The dither settings by **value** (`quantizerSettingsKey` is order-independent):
+    // the effects depend on this string, never on the maps' identities, so a
+    // fresh-but-equal object cannot churn a render. A real settings edit must
+    // invalidate a raster already planned from the previous defaults.
+    const settingsKey = useMemo(
+        () => quantizerSettingsKey(quantizerDefaults, defaultQuantizerByType),
+        [quantizerDefaults, defaultQuantizerByType],
+    );
 
     const generationRef = useRef(0);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -255,7 +292,15 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
             current.defaultQuantizerByType,
         );
         if (planned === null) return null;
-        return { options: planned, key: previewOptionsKey(planned), baseDpi };
+        return {
+            options: planned,
+            key: previewOptionsKey(planned),
+            baseDpi,
+            settingsKey: quantizerSettingsKey(
+                current.quantizerDefaults,
+                current.defaultQuantizerByType,
+            ),
+        };
     }, []);
 
     const runRender = useCallback(
@@ -277,6 +322,7 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
                 doc: target,
                 ctxKey: previewOverridesKey(ctx),
                 baseDpi: plan.baseDpi,
+                settingsKey: plan.settingsKey,
             };
             try {
                 const page = await (inputs.renderPage ?? renderLabelPage)(target, ctx, plan.options);
@@ -346,10 +392,10 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
 
     // The persistent dithered view (`mode === 'quantized'`). No trigger and no
     // selection are needed: the mode's arrival, and every content / resolve
-    // context / base-dpi change after it, arms one debounced render. There is no
-    // idle revert (the raster stays painted until replaced) and no `revertOn`
-    // dismiss; the dismiss effect above still hides it on a document switch until
-    // the new document's raster lands.
+    // context / base-dpi / dither-settings change after it, arms one debounced
+    // render. There is no idle revert (the raster stays painted until replaced)
+    // and no `revertOn` dismiss; the dismiss effect above still hides it on a
+    // document switch until the new document's raster lands.
     useEffect(() => {
         if (!enabled) {
             revert();
@@ -368,7 +414,7 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
         // No cleanup: a StrictMode setup → cleanup → setup replay must not drop
         // the debounce the first setup armed; every dependency change either
         // cancels or reschedules through `clearTimers`.
-    }, [enabled, mode, doc, ctxKey, baseDpi, revert, clearTimers, runRender]);
+    }, [enabled, mode, doc, ctxKey, baseDpi, settingsKey, revert, clearTimers, runRender]);
 
     // The trigger (normal mode only). Only a change to the selected node's
     // quantization-relevant key arms a render; a selection change baselines the
@@ -397,12 +443,20 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
             // No tune in this commit. A non-trigger change never *starts* a
             // render, but a raster that is already up may no longer match the
             // canvas (an unrelated edit, a sample-row switch, a printer
-            // connect / `usePrinterDpi` toggle that moved the resolved base dpi):
-            // hide it instead of leaving a stale page on screen.
+            // connect / `usePrinterDpi` toggle that moved the resolved base dpi,
+            // or a Rendering-settings edit): hide it instead of leaving a stale
+            // page on screen. D-59: a settings change must never *arm* a peek.
+            // Reverting bumps the generation and clears the debounce, so a
+            // settings change that lands between a tune's arm and its paint drops
+            // that peek instead of repainting it under the new settings —
+            // harmless, because the settings modal covers the canvas.
             const painted = paintedRef.current;
             if (
                 painted !== null &&
-                (painted.doc !== doc || painted.ctxKey !== ctxKey || painted.baseDpi !== baseDpi)
+                (painted.doc !== doc ||
+                    painted.ctxKey !== ctxKey ||
+                    painted.baseDpi !== baseDpi ||
+                    painted.settingsKey !== settingsKey)
             ) {
                 revert();
             }
@@ -424,7 +478,7 @@ export const useQuantizedPreview = (options: UseQuantizedPreviewOptions): Quanti
         // so a printer connect / `usePrinterDpi` toggle re-runs this body: it hides
         // an overlay rendered at the old base, and a tune in flight re-plans at the
         // new one (the 60 ms debounce / 1.5 s idle semantics are unchanged).
-    }, [enabled, mode, trigger?.nodeId, trigger?.key, doc, ctxKey, baseDpi, revert, clearTimers, runRender]);
+    }, [enabled, mode, trigger?.nodeId, trigger?.key, doc, ctxKey, baseDpi, settingsKey, revert, clearTimers, runRender]);
 
     // Unmount: supersede in flight (a late resolve must not paint) and drop the
     // timers. Setup re-derives everything, so a StrictMode replay is harmless.
