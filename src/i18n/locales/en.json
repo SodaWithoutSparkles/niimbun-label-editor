@@ -889,6 +889,7 @@
       "mismatch": "Printer reports a different roll or DPI than this label (label {{labelW}}×{{labelH}} hm @ {{labelDpi}} dpi). Printing will use {{resolvedDpi}} dpi {{source}}.",
       "mismatchSourcePrinter": "(from the printer)",
       "mismatchSourceHint": "(from the label's DPI hint)",
+      "labelTypeMismatch": "The printer reports {{reported}}; this job uses {{selected}}.",
       "mirrorClipped": "Mirroring discarded {{pixels}} ink pixels outside the printable area.",
       "policyOverflow_one": "{{count}} object fell back to the default dither policy (per-node policy limit reached).",
       "policyOverflow_other": "{{count}} objects fell back to the default dither policy (per-node policy limit reached).",

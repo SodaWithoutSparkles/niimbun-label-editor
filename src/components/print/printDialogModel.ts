@@ -1,6 +1,8 @@
+import type { LabelType } from '@mmote/niimbluelib';
 import type { hm } from '../../core/hm';
 import type { LabelDoc } from '../../core/doc/types';
 import type { CsvRecord } from '../../data/csvRepo';
+import { labelTypeNameKey } from '../../print/labelTypeNames';
 import { snapshotTimes, timesForSnapshot } from '../../print/printTimes';
 import type { ResolvedPrintDpi } from '../../print/resolvedDpi';
 import type { PrinterStatus } from '../../print/transport';
@@ -92,3 +94,20 @@ export const rollDpiMismatch = (
         printerDpiInUse: resolved.source === 'printer',
     };
 };
+
+/**
+ * Compare the roll type the printer reports with the type this job will send.
+ * Returns the **reported** type only on a real difference, `undefined` when
+ * they agree or the printer reported nothing (mock transport, an RFID-less
+ * printer, or `Invalid`). A reported value that is not a real paper type
+ * (`Invalid`, or anything absent from `LABEL_TYPE_OPTIONS`) is treated as no
+ * information — it must never raise a bogus warning. Non-blocking, like
+ * {@link rollDpiMismatch} (dec 18).
+ */
+export const labelTypeMismatch = (
+    reported: LabelType | undefined,
+    selected: LabelType,
+): LabelType | undefined =>
+    reported !== undefined && labelTypeNameKey(reported) !== undefined && reported !== selected
+        ? reported
+        : undefined;

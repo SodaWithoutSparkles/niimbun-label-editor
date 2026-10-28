@@ -24,7 +24,7 @@ import {
 import { planSequence, type PrintOrder } from '../../print/sequence';
 import { buildCsvPrintJob, renderOptionsOf, type PrintOverrides } from '../../print/printLabel';
 import { resolvePrintDpi } from '../../print/resolvedDpi';
-import { LABEL_TYPE_OPTIONS } from '../../print/labelTypeNames';
+import { LABEL_TYPE_OPTIONS, labelTypeEnumName, labelTypeNameKey } from '../../print/labelTypeNames';
 import type { JobProgress, JobRunner } from '../../print/jobRunner';
 import type { PrinterStatus } from '../../print/transport';
 import { useStore } from '../../store/useStore';
@@ -42,6 +42,7 @@ import { PrintPagePreview, type PrintPreviewReport } from './PrintPagePreview';
 import { previewOptionsKey } from '../../editor/render/previewKeys';
 import {
     activeRecords,
+    labelTypeMismatch,
     rollDpiMismatch,
     rowCountOf,
     timesForCsv,
@@ -355,7 +356,15 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     const speedEnabled = capabilities?.supportsSpeed === true;
     const labelTypeEnabled = capabilities !== undefined;
     const paperTypes = capabilities?.paperTypes;
-    const effectiveLabelType = labelType ?? LabelType.WithGaps;
+    // P19: seed from the roll the printer reports (P18 keeps it fresh); the
+    // user's pick for this dialog session always wins, and `WithGaps` survives
+    // only as the no-information fallback (mock, RFID-less, `Invalid`). The
+    // open-reset above (`setLabelType(undefined)`) makes every open re-seed.
+    const reportedLabelType = printerStatus.labelType;
+    const effectiveLabelType = labelType ?? reportedLabelType ?? LabelType.WithGaps;
+    // Advisory only (dec 18): never gates printing; silent when nothing was
+    // reported.
+    const labelTypeDiff = labelTypeMismatch(reportedLabelType, effectiveLabelType);
 
     const parsedOffset = useMemo(() => {
         const x = Number.parseInt(offsetX, 10);
@@ -641,6 +650,11 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             label: supported ? name : t('print.labelTypeUnsupported', { name }),
         };
     });
+    /** Display name for a `LabelType` in the mismatch notice (same wording as the select). */
+    const labelTypeName = (type: LabelType): string => {
+        const key = labelTypeNameKey(type);
+        return key ? t(key) : labelTypeEnumName(type);
+    };
 
     const printDisabled =
         busy ||
@@ -653,6 +667,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         showOverflow ||
         plan?.warning !== undefined ||
         mismatch !== undefined ||
+        labelTypeDiff !== undefined ||
         notices.length > 0 ||
         policyOverflowCount > 0 ||
         screentoneUnlocked;
@@ -1069,6 +1084,18 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                             ? 'print.warnings.mismatchSourcePrinter'
                                             : 'print.warnings.mismatchSourceHint',
                                     ),
+                                })}
+                            </p>
+                        )}
+                        {labelTypeDiff !== undefined && (
+                            <p
+                                data-testid="print-warning-label-type"
+                                role="status"
+                                className="rounded border border-amber-700 bg-amber-900/30 px-2 py-1 text-xs text-amber-200"
+                            >
+                                {t('print.warnings.labelTypeMismatch', {
+                                    reported: labelTypeName(labelTypeDiff),
+                                    selected: labelTypeName(effectiveLabelType),
                                 })}
                             </p>
                         )}

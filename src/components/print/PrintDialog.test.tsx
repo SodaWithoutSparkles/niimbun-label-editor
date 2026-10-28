@@ -1249,3 +1249,156 @@ describe('PrintDialog — persisted print offset (P9)', () => {
         expect(screen.getByLabelText('Offset X')).toHaveValue('100');
     });
 });
+
+describe('PrintDialog — label type defaults to the reported roll (P19)', () => {
+    const labelTypeSelect = () => screen.getByLabelText('Label type');
+    const printButton = () => screen.getByRole('button', { name: 'Print' });
+    /** The `printOverrides` the dialog handed to `buildCsvPrintJob`. */
+    const jobOverrides = (callIndex = 0): { labelType?: LabelType } | undefined =>
+        (
+            buildCsvPrintJobMock.mock.calls[callIndex]![2] as {
+                overrides?: { labelType?: LabelType };
+            }
+        ).overrides;
+
+    it('seeds the select from the reported type and sends it with the job', async () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: { ...statusOf(B1_PRO), labelType: LabelType.Continuous },
+        });
+
+        // The regression this fixes: no user pick, yet not the WithGaps default.
+        expect(labelTypeSelect()).toHaveValue(String(LabelType.Continuous));
+        expect(screen.queryByTestId('print-warning-label-type')).not.toBeInTheDocument();
+
+        fireEvent.click(printButton());
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobOverrides()?.labelType).toBe(LabelType.Continuous);
+    });
+
+    it('falls back to WithGaps when the printer reports no type', async () => {
+        renderDialog({ runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+
+        expect(labelTypeSelect()).toHaveValue(String(LabelType.WithGaps));
+
+        fireEvent.click(printButton());
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobOverrides()?.labelType).toBe(LabelType.WithGaps);
+        expect(screen.queryByTestId('print-warning-label-type')).not.toBeInTheDocument();
+    });
+
+    it('keeps the user pick for the session and re-seeds on the next open', async () => {
+        const runner = new FakeRunner();
+        const doc = narrowDoc();
+        const onClose = vi.fn();
+        const printerStatus: PrinterStatus = {
+            ...statusOf(B1_PRO),
+            labelType: LabelType.Continuous,
+        };
+        const view = render(
+            <PrintDialog
+                open
+                onClose={onClose}
+                doc={doc}
+                csv={null}
+                runner={runner}
+                printerStatus={printerStatus}
+            />,
+        );
+
+        fireEvent.change(labelTypeSelect(), {
+            target: { value: String(LabelType.Perforated) },
+        });
+        expect(labelTypeSelect()).toHaveValue(String(LabelType.Perforated));
+        // A real difference (reported Continuous) raises the notice…
+        expect(screen.getByTestId('print-warning-label-type')).toBeInTheDocument();
+
+        // The user's pick wins for this job…
+        fireEvent.click(printButton());
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobOverrides()?.labelType).toBe(LabelType.Perforated);
+
+        // …and the fresh form re-seeds from the roll on the next open.
+        view.rerender(
+            <PrintDialog
+                open={false}
+                onClose={onClose}
+                doc={doc}
+                csv={null}
+                runner={runner}
+                printerStatus={printerStatus}
+            />,
+        );
+        view.rerender(
+            <PrintDialog
+                open
+                onClose={onClose}
+                doc={doc}
+                csv={null}
+                runner={runner}
+                printerStatus={printerStatus}
+            />,
+        );
+        expect(labelTypeSelect()).toHaveValue(String(LabelType.Continuous));
+        // Re-seeded selection equals the reported type: the stale notice is gone.
+        expect(screen.queryByTestId('print-warning-label-type')).not.toBeInTheDocument();
+    });
+
+    it('clears the notice when the user re-picks the reported type', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: { ...statusOf(B1_PRO), labelType: LabelType.Continuous },
+        });
+
+        fireEvent.change(labelTypeSelect(), {
+            target: { value: String(LabelType.Perforated) },
+        });
+        expect(screen.getByTestId('print-warning-label-type')).toBeInTheDocument();
+
+        fireEvent.change(labelTypeSelect(), {
+            target: { value: String(LabelType.Continuous) },
+        });
+        expect(labelTypeSelect()).toHaveValue(String(LabelType.Continuous));
+        expect(screen.queryByTestId('print-warning-label-type')).not.toBeInTheDocument();
+    });
+
+    it('warns on a reported-vs-selected mismatch without disabling Print', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: { ...statusOf(B1_PRO), labelType: LabelType.Continuous },
+        });
+
+        expect(screen.queryByTestId('print-warning-label-type')).not.toBeInTheDocument();
+
+        fireEvent.change(labelTypeSelect(), {
+            target: { value: String(LabelType.Perforated) },
+        });
+
+        const notice = screen.getByTestId('print-warning-label-type');
+        expect(notice).toHaveTextContent(
+            'The printer reports Continuous; this job uses Perforated.',
+        );
+        // Advisory only (dec 18): the user may be about to swap the roll.
+        expect(printButton()).toBeEnabled();
+    });
+
+    it('stays silent when the printer reports nothing, whatever the selection', () => {
+        renderDialog({ runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+
+        fireEvent.change(labelTypeSelect(), {
+            target: { value: String(LabelType.Transparent) },
+        });
+
+        expect(labelTypeSelect()).toHaveValue(String(LabelType.Transparent));
+        expect(screen.queryByTestId('print-warning-label-type')).not.toBeInTheDocument();
+    });
+
+    it('keeps the capability gate: no reported capabilities sends no label type', async () => {
+        renderDialog({ runner: new FakeRunner(), printerStatus: statusOf(undefined) });
+
+        expect(labelTypeSelect()).toBeDisabled();
+        fireEvent.click(printButton());
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobOverrides()?.labelType).toBeUndefined();
+    });
+});
