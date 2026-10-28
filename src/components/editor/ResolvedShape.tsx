@@ -8,7 +8,7 @@ import {
     shapeStyleAttrs,
     symbolSceneFunc,
 } from '../../editor/render/konvaFactory';
-import { measureKonvaText } from '../../editor/render/textMetrics';
+import { shrinkScaleOf } from '../../editor/render/textMetrics';
 import type { AssetWarning, PreparedAsset } from '../../editor/render/assets';
 import type { ResolvedNode } from '../../editor/render/resolve';
 
@@ -97,18 +97,22 @@ export const ResolvedShape = React.memo(function ResolvedShape({
     // never change the hook order.
     const shrinkScale = React.useMemo(() => {
         if (node.type !== 'text' || node.wrap !== 'shrink') return 1;
-        return measureKonvaText({
+        return shrinkScaleOf({
             text: node.text,
             width: node.w,
             height: node.h,
             fontSize: node.fontSize,
             fontFamily: node.fontFamily,
             fontStyle: node.fontStyle,
-            wrap: 'word',
             lineHeight: node.lineHeight,
             letterSpacing: node.letterSpacing,
-        }).scale;
+        });
     }, [node]);
+
+    // A degenerate box (zero width/height) measures to `scale === 0`; laying
+    // out at `node.h / 0` would emit `Infinity`/`NaN`. Guard the **layout** box
+    // only — the scale below stays exactly as it was.
+    const layoutShrink = shrinkScale > 0 ? shrinkScale : 1;
 
     if (node.type === 'group') {
         const attrs = matrixToKonvaAttrs(node.localTransform);
@@ -166,7 +170,11 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                     offsetY={0}
                     text={node.text}
                     width={node.w}
-                    height={node.h}
+                    // Lay out in the **unscaled** box (see `shrinkScaleOf`): the
+                    // measurement had no fixed height, so scaling a box of
+                    // `node.h` would make Konva drop lines past it pre-scale.
+                    // Non-shrink wraps keep `node.h` exactly.
+                    height={node.wrap === 'shrink' ? node.h / layoutShrink : node.h}
                     fontSize={node.fontSize}
                     fontFamily={node.fontFamily}
                     fontStyle={node.fontStyle}

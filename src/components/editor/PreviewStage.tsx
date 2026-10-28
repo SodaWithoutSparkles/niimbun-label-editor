@@ -12,6 +12,7 @@ import type { EditorWarning } from '../../editor/warnings';
 import { buildFontWarnings, buildPreviewWarnings } from '../../editor/previewWarnings';
 import type { LabelDoc, Node, TextNode } from '../../core/doc/types';
 import { matrixToKonvaAttrs } from '../../editor/render/konvaFactory';
+import { shrinkScaleOf } from '../../editor/render/textMetrics';
 import { movePatch, transformEndPatch, commitPreservesAspect, transformerTargetSize, dragOriginOf, type DragOrigin } from '../../editor/transformGesture';
 import { nodeSize, pointsExtent, preservesAspectByDefault, DEFAULT_CONTENT_SIZE, DEFAULT_FONT_SIZE, type Size } from '../../core/doc/geometry';
 import { type Mat2D } from '../../core/doc/derive';
@@ -955,8 +956,34 @@ export const PreviewStage: React.FC = () => {
         const size = node.size ?? { w: DEFAULT_CONTENT_SIZE, h: DEFAULT_CONTENT_SIZE };
         const gutter = rulersVisible ? RULER_GUTTER : 0;
         const { screenX, screenY, rotation } = computeScreenPlacement(nodeM, gutter, gutter);
-        const scaleX = Math.hypot(nodeM[0], nodeM[1]) || 1;
-        const scaleY = Math.hypot(nodeM[2], nodeM[3]) || 1;
+        const fontSize = node.fontSize ?? DEFAULT_FONT_SIZE;
+        const fontFamily = node.fontFamily ?? DEFAULT_FONT_FAMILY;
+        const fontStyle = node.fontStyle ?? 'normal';
+        const lineHeight = node.lineHeight ?? 1;
+        // The live node's matrix already carries the `shrink` factor that
+        // `ResolvedShape` applies. The overlay owns the shrink from here on (it
+        // recomputes it live from the session text and scales the content), so
+        // divide the captured scale by the same factor instead of
+        // double-applying it.
+        const shrink =
+            node.wrap === 'shrink'
+                ? shrinkScaleOf({
+                      text: node.text.kind === 'static' ? node.text.value : '',
+                      width: size.w,
+                      height: size.h,
+                      fontSize,
+                      fontFamily,
+                      fontStyle,
+                      lineHeight,
+                      letterSpacing: node.letterSpacing,
+                  })
+                : 1;
+        // A zero-size box measures `scale === 0`; dividing by it would emit
+        // `Infinity`/`NaN`, which the overlay inherits in its `deviceScale` and
+        // caret width. Same guard as the two renderers and the overlay.
+        const layoutShrink = shrink > 0 ? shrink : 1;
+        const scaleX = (Math.hypot(nodeM[0], nodeM[1]) || 1) / layoutShrink;
+        const scaleY = (Math.hypot(nodeM[2], nodeM[3]) || 1) / layoutShrink;
         // The double-click point, mapped into the node's own (unscaled) space so
         // the caret lands under the pointer even when the node is rotated/scaled.
         const pointer = stage.getPointerPosition() ?? { x: screenX, y: screenY };
@@ -972,10 +999,11 @@ export const PreviewStage: React.FC = () => {
             scaleY,
             clickLocalX: clickLocal.x,
             clickLocalY: clickLocal.y,
-            fontSize: node.fontSize ?? DEFAULT_FONT_SIZE,
-            fontFamily: node.fontFamily ?? DEFAULT_FONT_FAMILY,
-            fontStyle: node.fontStyle ?? 'normal',
-            lineHeight: node.lineHeight ?? 1,
+            fontSize,
+            fontFamily,
+            fontStyle,
+            lineHeight,
+            letterSpacing: node.letterSpacing,
             align: node.align ?? 'left',
         });
     }, [activeTool, finishPolygon, pointerWorld, targets, doc, beginTextEdit, rulersVisible]);

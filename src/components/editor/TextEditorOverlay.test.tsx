@@ -5,6 +5,7 @@ import type { ComponentProps } from 'react';
 import { useStore } from '../../store/useStore';
 import { createLabelDoc } from '../../core/doc/factory';
 import { installCanvasShim } from '../../test/canvasHarness';
+import { measureKonvaText } from '../../editor/render/textMetrics';
 import type { LabelDoc, Node } from '../../core/doc/types';
 import {
     CARET_WIDTH_RATIO,
@@ -396,5 +397,128 @@ describe('TextEditorOverlay', () => {
         } finally {
             window.devicePixelRatio = original;
         }
+    });
+
+    // `session` is 200x100 with a 300px font and 'hello': it cannot fit, so
+    // `shrink` is well below 1 in every real measurement of this box.
+    it('scales an overflowing shrink text inside an inner box', () => {
+        render(overlay({ wrap: 'shrink' }));
+        const inner = screen.getByTestId('text-editor-inner') as HTMLElement;
+        const match = /scale\(([^)]+)\)/.exec(inner.style.transform);
+        expect(match).not.toBeNull();
+        const shrink = Number(match![1]);
+        expect(shrink).toBeGreaterThan(0);
+        expect(shrink).toBeLessThan(1);
+        expect(inner.style.transformOrigin).toBe('top left');
+        // Width is the **node box** — the natural wrap width Konva measured.
+        // Height is `node.h / shrink`, so every natural line exists before the
+        // single scale is applied (a `node.h` box would clip them first).
+        expect(parseFloat(inner.style.width)).toBeCloseTo(session.unscaledWidth, 6);
+        expect(parseFloat(inner.style.height)).toBeCloseTo(session.unscaledHeight / shrink, 6);
+        // Visible block: `node.w × shrink` wide, up to `node.h` tall.
+        expect(parseFloat(inner.style.width) * shrink).toBeCloseTo(session.unscaledWidth * shrink, 6);
+        expect(parseFloat(inner.style.width) * shrink).toBeLessThan(session.unscaledWidth);
+        expect(parseFloat(inner.style.height) * shrink).toBeCloseTo(session.unscaledHeight, 6);
+        // The textarea keeps its natural font size and no transform of its own.
+        const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+        expect(textarea.style.fontSize).toBe('300px');
+        expect(textarea.style.transform).toBe('');
+        expect(textarea.style.width).toBe('100%');
+        // The wrapper is still the node's true box (no scale baked into it).
+        const wrapper = screen.getByTestId('text-editor-wrapper') as HTMLElement;
+        expect(wrapper.style.width).toBe('200px');
+        expect(wrapper.style.height).toBe('100px');
+    });
+
+    it('keeps the caret bar on whole device pixels at a shrink < 1', () => {
+        // A shorter box overflows harder (shrink < 1) but keeps the same font.
+        const dpr = window.devicePixelRatio || 1;
+        const plain = render(overlay());
+        const plainWidth = parseFloat((screen.getByTestId('text-editor-caret') as HTMLElement).style.width);
+        plain.unmount();
+
+        render(overlay({ session: { ...session, unscaledHeight: 40 }, wrap: 'shrink' }));
+        const inner = screen.getByTestId('text-editor-inner') as HTMLElement;
+        const shrink = Number(/scale\(([^)]+)\)/.exec(inner.style.transform)![1]);
+        expect(shrink).toBeGreaterThan(0);
+        expect(shrink).toBeLessThan(1);
+        const layoutWidth = parseFloat((screen.getByTestId('text-editor-caret') as HTMLElement).style.width);
+        // The inner box scales the bar too, so the pre-fix formula (which
+        // ignored `shrink`) gives a different layout width for this session.
+        expect(layoutWidth).not.toBe(plainWidth);
+        // The painted width in device px is `layout × shrink × scaleX × dpr`:
+        // a whole number of pixels and never below one.
+        const devicePx = layoutWidth * shrink * session.scaleX * dpr;
+        expect(devicePx).toBeCloseTo(Math.round(devicePx), 6);
+        expect(devicePx).toBeGreaterThanOrEqual(1);
+    });
+
+    it('applies the node letterSpacing to the textarea (and omits it at 0)', () => {
+        const spaced = render(overlay({ session: { ...session, letterSpacing: 2 } }));
+        expect((screen.getByRole('textbox') as HTMLTextAreaElement).style.letterSpacing).toBe('2px');
+        spaced.unmount();
+
+        render(overlay());
+        // Unset at 0/undefined: the pre-fix DOM is byte-identical.
+        expect((screen.getByRole('textbox') as HTMLTextAreaElement).style.letterSpacing).toBe('');
+    });
+
+    it('wraps the shrink text at the natural node width (Konva parity)', () => {
+        // `shrinkScaleOf` measures Konva at `width = node.w` with the natural
+        // font; the textarea must wrap in that same space. `contentWidth` is
+        // `ta.clientWidth` (the full-width textarea = the inner box = node.w),
+        // and `wrappedLineStarts` is the overlay's own layout model, so the two
+        // line counts must agree. A `box / shrink` inner box would wrap less.
+        const ctx2d = document.createElement('canvas').getContext('2d');
+        expect(ctx2d).not.toBeNull();
+        const caretFont: CaretFont = {
+            fontSize: session.fontSize,
+            fontFamily: session.fontFamily,
+            fontStyle: session.fontStyle,
+            lineHeight: session.lineHeight,
+        };
+        const konvaLines =
+            measureKonvaText({
+                text: session.text,
+                width: session.unscaledWidth,
+                height: session.unscaledHeight,
+                fontSize: session.fontSize,
+                fontFamily: session.fontFamily,
+                fontStyle: session.fontStyle,
+                wrap: 'word',
+                lineHeight: session.lineHeight,
+            }).height /
+            (session.fontSize * session.lineHeight);
+        expect(konvaLines).toBeGreaterThan(1);
+        expect(wrappedLineStarts(ctx2d!, session.text, session.unscaledWidth, caretFont, 'word')).toHaveLength(
+            Math.round(konvaLines),
+        );
+
+        render(overlay({ wrap: 'shrink' }));
+        const inner = screen.getByTestId('text-editor-inner') as HTMLElement;
+        const shrink = Number(/scale\(([^)]+)\)/.exec(inner.style.transform)![1]);
+        // The renderer's box is the wrap width `wrappedLineStarts` just used
+        // (textarea is `width: 100%` of it).
+        expect(parseFloat(inner.style.width)).toBeCloseTo(session.unscaledWidth, 6);
+        // Dividing it by the shrink (the old, wrong geometry) would wrap wider.
+        expect(
+            wrappedLineStarts(ctx2d!, session.text, session.unscaledWidth / shrink, caretFont, 'word').length,
+        ).toBeLessThan(Math.round(konvaLines));
+    });
+
+    it('leaves a fitting shrink text at its natural layout (no inner box)', () => {
+        // 10px font in a 200x100 box: it fits, so shrink === 1 and the DOM is
+        // the pre-fix one — no inner box, no transform, natural layout px.
+        render(overlay({ session: { ...session, text: 'hi', fontSize: 10 }, wrap: 'shrink' }));
+        expect(screen.queryByTestId('text-editor-inner')).toBeNull();
+        const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+        expect(textarea.style.transform).toBe('');
+        expect(textarea.style.fontSize).toBe('10px');
+        // Caret geometry is unchanged in layout px: the seed click is the node
+        // origin, so the bar sits at the top-left and is one line tall.
+        const caret = screen.getByTestId('text-editor-caret') as HTMLElement;
+        expect(caret.style.left).toBe('0px');
+        expect(caret.style.top).toBe('0px');
+        expect(caret.style.height).toBe('10px');
     });
 });

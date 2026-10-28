@@ -548,4 +548,84 @@ describe('createKonvaNode — text wrap (P5 D1/D2a)', () => {
         expect(spaced.scaleX()).toBeLessThan(plain.scaleX());
         expect(spaced.getTextWidth() * spaced.scaleX()).toBeLessThanOrEqual(101);
     });
+
+    it('keeps every wrapped line when shrink scales the box', () => {
+        // At the fake context's 10px per glyph, 26 chars in a 100px box wrap to
+        // 3 natural lines (10 + 10 + 6), i.e. a 300px natural height. The 40px
+        // box only fits them *after* the ~0.133 uniform scale.
+        const value = 'a'.repeat(26);
+        const text = buildText({
+            text: { kind: 'static', value },
+            size: { w: 100, h: 40 },
+            fontSize: 100,
+            lineHeight: 1,
+            wrap: 'shrink',
+        });
+        const scale = text.scaleX();
+        expect(scale).toBeLessThan(1);
+        // Laying the node out at `height: node.h` (the pre-fix order) makes
+        // Konva's fixed-height break drop 2 of the 3 lines before the scale is
+        // ever applied — the printed text loss this phase fixes.
+        expect(text.textArr).toHaveLength(3);
+        expect(text.textArr.map((line) => line.text).join('')).toBe(value);
+        // The layout box is the **unscaled** one (`node.h / scale`), so the
+        // scaled height is exactly the node box.
+        expect(text.height()).toBeCloseTo(40 / scale, 6);
+        expect(text.height() * scale).toBeCloseTo(40, 6);
+    });
+
+    it('still drops lines past the box height for a non-shrink wrap', () => {
+        // The fixed-height behaviour is unchanged for every other wrap: only
+        // `shrink` gets the relaxed box.
+        const text = buildText({
+            text: { kind: 'static', value: 'a'.repeat(26) },
+            size: { w: 100, h: 40 },
+            fontSize: 100,
+            lineHeight: 1,
+            wrap: 'word',
+        });
+        expect(text.height()).toBe(40);
+        expect(text.textArr).toHaveLength(1);
+    });
+
+    it('never divides by a zero shrink (degenerate box) and still builds the node', () => {
+        // A zero-height box measures to `scale === 0` (zero-width lays out no
+        // glyphs, so Konva reports a 0×0 measurement and `measureKonvaText`'s own
+        // guard keeps scale 1). The relaxed height must never divide by zero for
+        // either: no `NaN`, no `Infinity`, and the node must still be built.
+        for (const size of [
+            { w: 0, h: 40 },
+            { w: 100, h: 0 },
+        ]) {
+            const text = buildText({
+                text: { kind: 'static', value: 'a'.repeat(26) },
+                size,
+                fontSize: 100,
+                lineHeight: 1,
+                wrap: 'shrink',
+            });
+            expect(text, JSON.stringify(size)).toBeInstanceOf(Konva.Text);
+            expect(Number.isFinite(text.scaleX()), `scaleX for ${JSON.stringify(size)}`).toBe(true);
+            expect(Number.isFinite(text.scaleY()), `scaleY for ${JSON.stringify(size)}`).toBe(true);
+            expect(Number.isFinite(text.height()), `height for ${JSON.stringify(size)}`).toBe(true);
+            expect(Number.isFinite(text.width()), `width for ${JSON.stringify(size)}`).toBe(true);
+            // The fallback is the real box (`node.h`), not `node.h / 0`.
+            expect(text.height()).toBe(size.h);
+            // Built and laid out: a drawable node, not a throwing one.
+            expect(Array.isArray(text.textArr)).toBe(true);
+        }
+
+        // The exact zero-scale case: a zero-height box. The scale math is
+        // untouched (0 stays 0), only the layout height falls back.
+        const zeroHeight = buildText({
+            text: { kind: 'static', value: 'a'.repeat(26) },
+            size: { w: 100, h: 0 },
+            fontSize: 100,
+            lineHeight: 1,
+            wrap: 'shrink',
+        });
+        expect(zeroHeight.scaleX()).toBe(0);
+        expect(zeroHeight.scaleY()).toBe(0);
+        expect(zeroHeight.height()).toBe(0);
+    });
 });

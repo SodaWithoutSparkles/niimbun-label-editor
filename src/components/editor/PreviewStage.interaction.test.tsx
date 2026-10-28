@@ -10,6 +10,8 @@ import { createLabelDoc } from '../../core/doc/factory';
 import type { Node, TextNode } from '../../core/doc/types';
 import { PreviewStage } from './PreviewStage';
 import { centeredViewport, ZOOM_MAX } from '../../editor/viewportController';
+import { resolve } from '../../editor/render/resolve';
+import { shrinkScaleOf } from '../../editor/render/textMetrics';
 import type { InsertAction } from '../../store/slices/toolsSlice';
 
 /**
@@ -1267,6 +1269,79 @@ describe('PreviewStage inline text editing (P5)', () => {
         expect(screen.queryByRole('textbox')).toBeNull();
         expect(docText('t')).toBe('committed');
         expect(useStore.getState().docPast).toHaveLength(1);
+    });
+
+    /** A text node whose natural layout overflows its box on the Y axis. */
+    const overflowShrinkTextNode = (id: string): TextNode => ({
+        ...textNode(id),
+        size: { w: 400, h: 120 },
+        wrap: 'shrink',
+        text: { kind: 'static', value: 'hello shrinking world' },
+    });
+
+    it('opens the editor with the shrink factor divided out of the overlay scale', () => {
+        const stage = mountSelect([overflowShrinkTextNode('t')]);
+        const resolved = resolve(useStore.getState().currentDoc!)[0]!;
+        if (resolved.type !== 'text') throw new Error('expected a resolved text node');
+        const shrink = shrinkScaleOf({
+            text: resolved.text,
+            width: resolved.w,
+            height: resolved.h,
+            fontSize: resolved.fontSize,
+            fontFamily: resolved.fontFamily,
+            fontStyle: resolved.fontStyle,
+            lineHeight: resolved.lineHeight,
+            letterSpacing: resolved.letterSpacing,
+        });
+        expect(shrink).toBeGreaterThan(0);
+        expect(shrink).toBeLessThan(1);
+
+        dblClick(stage, 200, 60);
+
+        const wrapper = screen.getByTestId('text-editor-wrapper') as HTMLElement;
+        // The node's own transform is 1:1, so the canvas scale is the content
+        // layer's scale. Pre-fix the session captured `canvasScale × shrink`
+        // (the shrink baked into the live Konva node); post-fix the overlay owns
+        // the shrink, so the wrapper carries the true canvas scale only.
+        const canvasScale = stage.getLayers().at(-1)!.scaleX();
+        expect(canvasScale * shrink).toBeLessThan(canvasScale);
+        const match = /scale\(([^,]+), ([^)]+)\)/.exec(wrapper.style.transform);
+        expect(match).not.toBeNull();
+        expect(Number(match![1])).toBeCloseTo(canvasScale, 6);
+        expect(Number(match![2])).toBeCloseTo(canvasScale, 6);
+        // The wrapper is the node's true box; the overlay scales its content.
+        expect(wrapper.style.width).toBe('400px');
+        expect(wrapper.style.height).toBe('120px');
+    });
+
+    it('keeps the session scale and caret finite for a zero-height shrink text', () => {
+        // A zero-height box measures `scale 0`; an unguarded `/ shrink` made the
+        // session scale `Infinity`, which poisoned the overlay's `deviceScale`
+        // and the synthetic caret width.
+        const stage = mountSelect([
+            {
+                ...textNode('t'),
+                size: { w: 1000, h: 0 },
+                wrap: 'shrink',
+                text: { kind: 'static', value: 'hello shrinking world' },
+            },
+        ]);
+        dblClick(stage, 500, 0);
+
+        const wrapper = screen.getByTestId('text-editor-wrapper') as HTMLElement;
+        const match = /scale\(([^,]+), ([^)]+)\)/.exec(wrapper.style.transform);
+        expect(match).not.toBeNull();
+        expect(Number.isFinite(Number(match![1]))).toBe(true);
+        expect(Number.isFinite(Number(match![2]))).toBe(true);
+        // The session box is still the node's real (zero-height) box.
+        expect(wrapper.style.width).toBe('1000px');
+        expect(wrapper.style.height).toBe('0px');
+
+        // The overlay's caret width is derived from that scale: it must be a
+        // real number too (pre-fix it was `NaN` via `Infinity / Infinity`).
+        const caret = screen.getByTestId('text-editor-caret') as HTMLElement;
+        expect(Number.isFinite(parseFloat(caret.style.width))).toBe(true);
+        expect(parseFloat(caret.style.width)).toBeGreaterThan(0);
     });
 
     it('detaches the Transformer from the edited node and reattaches it on Escape', () => {

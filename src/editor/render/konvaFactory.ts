@@ -2,7 +2,7 @@ import Konva from 'konva';
 import type { Mat2D } from '../../core/doc/derive';
 import type { ImageFit, TextWrap } from '../../core/doc/objects';
 import type { PreparedAsset } from './assets';
-import { measureKonvaText } from './textMetrics';
+import { shrinkScaleOf } from './textMetrics';
 import type {
     ResolvedEllipse,
     ResolvedLine,
@@ -370,10 +370,35 @@ export const createKonvaNode = (
         }
         case 'text': {
             const attrs = matrixToKonvaAttrs(node.localTransform);
+            // `shrink` is measured in a box with **no fixed height** (see
+            // `measureKonvaText`), so the node must be laid out in that same
+            // unscaled box before the scale is applied: `measuredH × scale ≤ h`
+            // means `h / scale ≥ measuredH`, so no wrapped line can hit Konva's
+            // fixed-height break. Passing the scaled `h` here instead made Konva
+            // drop every line past it *before* the scale — a print that lost text.
+            // Non-shrink wraps keep `height: node.h` byte-identically.
+            const shrink =
+                node.wrap === 'shrink'
+                    ? shrinkScaleOf({
+                          text: node.text,
+                          width: node.w,
+                          height: node.h,
+                          fontSize: node.fontSize,
+                          fontFamily: node.fontFamily,
+                          fontStyle: node.fontStyle,
+                          lineHeight: node.lineHeight,
+                          letterSpacing: node.letterSpacing,
+                      })
+                    : 1;
+            // A degenerate box (zero width/height) measures to `scale === 0`;
+            // `node.h / 0` would be `Infinity`/`NaN`. The guard is on the
+            // **layout** box only — the scale math below stays exactly as it
+            // was (a 0 factor is "never upscale", not an error).
+            const layoutShrink = shrink > 0 ? shrink : 1;
             const text = new Konva.Text({
                 text: node.text,
                 width: node.w,
-                height: node.h,
+                height: node.wrap === 'shrink' ? node.h / layoutShrink : node.h,
                 fontSize: node.fontSize,
                 fontFamily: node.fontFamily,
                 fontStyle: node.fontStyle,
@@ -384,21 +409,10 @@ export const createKonvaNode = (
                 letterSpacing: node.letterSpacing,
             });
             if (node.wrap === 'shrink') {
-                const metrics = measureKonvaText({
-                    text: node.text,
-                    width: node.w,
-                    height: node.h,
-                    fontSize: node.fontSize,
-                    fontFamily: node.fontFamily,
-                    fontStyle: node.fontStyle,
-                    wrap: 'word',
-                    lineHeight: node.lineHeight,
-                    letterSpacing: node.letterSpacing,
-                });
                 // Shrink scale composes with the node's own transform scale
                 // (Konva scales a text from its top-left origin, offset 0).
-                attrs.scaleX *= metrics.scale;
-                attrs.scaleY *= metrics.scale;
+                attrs.scaleX *= shrink;
+                attrs.scaleY *= shrink;
             }
             text.setAttrs(attrs);
             return text;

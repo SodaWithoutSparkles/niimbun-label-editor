@@ -8,6 +8,7 @@ import { createLabelDoc } from '../../core/doc/factory';
 import type { Node } from '../../core/doc/types';
 import { resolve } from '../../editor/render/resolve';
 import { createKonvaNode, shapeStyleAttrs, type ResolvedShapeNode } from '../../editor/render/konvaFactory';
+import { measureKonvaText } from '../../editor/render/textMetrics';
 import { ResolvedShape } from './ResolvedShape';
 
 /**
@@ -244,5 +245,79 @@ describe('ResolvedShape — text wrap preview (P5)', () => {
         expect(shrink.scaleX()).toBe(shrink.scaleY());
         expect(shrink.scaleX()).toBeGreaterThan(0);
         expect(shrink.scaleX()).toBeLessThanOrEqual(1);
+    });
+
+    it('lays shrink text out in the unscaled box, then scales it to fit', () => {
+        // Same node as above, but the height assertion: the preview must pass
+        // `node.h / shrink` to Konva so no wrapped line hits the fixed-height
+        // break before the scale is applied (print and preview share the fix).
+        const value = 'a'.repeat(26);
+        const text = { kind: 'static' as const, value };
+        const shrink = renderText({
+            text,
+            size: { w: 100, h: 40 },
+            fontSize: 100,
+            wrap: 'shrink',
+        });
+        expect(shrink.scaleX()).toBe(shrink.scaleY());
+        expect(shrink.scaleX()).toBeGreaterThan(0);
+        expect(shrink.scaleX()).toBeLessThan(1);
+        expect(shrink.height()).toBeCloseTo(40 / shrink.scaleX(), 6);
+        expect(shrink.height() * shrink.scaleX()).toBeCloseTo(40, 6);
+        // ... and every natural line survived. This file runs on the real canvas
+        // shim, so the count is font-dependent (unlike the fake 10px-per-glyph
+        // context in `konvaFactory.test.ts`, where it is exactly 3): take it from
+        // the same full-height measurement the renderers use, then prove the
+        // rendered node kept them all.
+        const naturalLines =
+            measureKonvaText({
+                text: value,
+                width: 100,
+                height: 40,
+                fontSize: 100,
+                fontFamily: shrink.fontFamily(),
+                fontStyle: shrink.fontStyle(),
+                wrap: 'word',
+                lineHeight: shrink.lineHeight(),
+            }).height /
+            (shrink.fontSize() * shrink.lineHeight());
+        expect(naturalLines).toBeGreaterThan(1);
+        expect(shrink.textArr).toHaveLength(Math.round(naturalLines));
+        expect(shrink.textArr.map((line) => line.text).join('')).toBe(value);
+    });
+
+    it('never divides by a zero shrink (degenerate box)', () => {
+        // A zero-height box measures to `scale === 0`; the relaxed layout height
+        // must fall back to `node.h` and the node must still mount. (A zero-width
+        // box lays out no glyphs, so Konva's 0×0 measurement keeps scale 1 — the
+        // guard still has to keep both finite.)
+        for (const size of [
+            { w: 0, h: 40 },
+            { w: 100, h: 0 },
+        ]) {
+            const text = renderText({
+                text: { kind: 'static', value: 'a'.repeat(26) },
+                size,
+                fontSize: 100,
+                wrap: 'shrink',
+            });
+            expect(text, JSON.stringify(size)).toBeTruthy();
+            expect(Number.isFinite(text.scaleX()), `scaleX for ${JSON.stringify(size)}`).toBe(true);
+            expect(Number.isFinite(text.scaleY()), `scaleY for ${JSON.stringify(size)}`).toBe(true);
+            expect(Number.isFinite(text.height()), `height for ${JSON.stringify(size)}`).toBe(true);
+            expect(Number.isFinite(text.width()), `width for ${JSON.stringify(size)}`).toBe(true);
+            expect(text.height()).toBe(size.h);
+        }
+
+        // The exact zero-scale case: a zero-height box (scale stays 0, layout
+        // height falls back to the real box).
+        const zeroHeight = renderText({
+            text: { kind: 'static', value: 'a'.repeat(26) },
+            size: { w: 100, h: 0 },
+            fontSize: 100,
+            wrap: 'shrink',
+        });
+        expect(zeroHeight.scaleX()).toBe(0);
+        expect(zeroHeight.height()).toBe(0);
     });
 });

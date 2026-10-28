@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { TextWrap } from '../../core/doc/objects';
 import type { LabelDoc, TextAlign } from '../../core/doc/types';
 import { fontStyleOf, fontWeightOf } from '../../editor/textStyle';
+import { shrinkScaleOf } from '../../editor/render/textMetrics';
 import { useStore } from '../../store/useStore';
 
 /**
@@ -38,6 +39,12 @@ export interface TextEditorSession {
     fontFamily: string;
     fontStyle: string;
     lineHeight: number;
+    /**
+     * Extra inter-character spacing in px, mirroring the rendered node. The live
+     * `shrink` measurement must include it or the overlay drifts from Konva.
+     * Defaults to `0`.
+     */
+    letterSpacing?: number;
     align: TextAlign;
     text: string;
     /**
@@ -288,20 +295,72 @@ export const TextEditorOverlay: React.FC<TextEditorOverlayProps> = ({
         [session.fontSize, session.fontFamily, session.fontStyle, session.lineHeight],
     );
 
+    /**
+     * The live `shrink` factor, recomputed from the session text so every
+     * keystroke gets the factor the canvas will render. `1` for any other wrap.
+     * The overlay owns the shrink (the captured session scale has it divided
+     * out by the parent), so the box is laid out at its true size and only the
+     * *content* is scaled below.
+     */
+    const shrink = useMemo(() => {
+        if (wrap !== 'shrink') return 1;
+        return shrinkScaleOf({
+            text: session.text,
+            width: session.unscaledWidth,
+            height: session.unscaledHeight,
+            fontSize: session.fontSize,
+            fontFamily: session.fontFamily,
+            fontStyle: session.fontStyle,
+            lineHeight: session.lineHeight,
+            letterSpacing: session.letterSpacing,
+        });
+    }, [
+        wrap,
+        session.text,
+        session.unscaledWidth,
+        session.unscaledHeight,
+        session.fontSize,
+        session.fontFamily,
+        session.fontStyle,
+        session.lineHeight,
+        session.letterSpacing,
+    ]);
+
     // Layout px per CSS px: the wrapper transform scales, but the textarea's
     // `clientWidth` is in CSS px (transform does not change CSS pixel sizes), so
     // the layout width equals `clientWidth` — no scale division needed here.
     const contentWidth = useCallback((): number => taRef.current?.clientWidth || session.unscaledWidth, [session.unscaledWidth]);
+
+    // A degenerate box (zero width/height) measures to `scale === 0`: `h / 0`
+    // and a `scale(0)` inner box would emit `Infinity`/`NaN` and hide the
+    // editor. Fall back to 1 for **layout** purposes; the measured factor is
+    // used nowhere else. Deliberate consequence: at a zero measure the canvas
+    // draws nothing, while the editor stays editable at the natural scale — the
+    // only useful behaviour for a zero-size node.
+    const layoutShrink = shrink > 0 ? shrink : 1;
 
     // Caret thickness, in **layout px**. The bar is CARET_WIDTH_RATIO (5%) of the
     // font size — owner-verified as the right visual weight — but the wrapper
     // transform then multiplies it by `scaleX`, which drops it sub-pixel when
     // zoomed out (a faint smeared line) and lets it drift off whole pixels when
     // zoomed in. Round in device space, then convert back, so the painted bar is
-    // always whole device pixels wide and never thinner than one.
-    const deviceScale = session.scaleX * (typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1);
+    // always whole device pixels wide and never thinner than one. The inner
+    // `scale(layoutShrink)` box scales the bar too, so the device scale must
+    // include it — otherwise the bar is sub-pixel at a shrink < 1 and too thick
+    // at a shrink > 1.
+    const deviceScale =
+        session.scaleX * layoutShrink * (typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1);
     const caretWidth = Math.max(1, Math.round(session.fontSize * CARET_WIDTH_RATIO * deviceScale)) / deviceScale;
 
+    // NOTE (P14): the textarea carries the node's `letterSpacing` as CSS, but the
+    // caret paths do not: the re-measure below (`caretRectForOffset` →
+    // `wrappedLineStarts`) and the open-time **seed** (`caretFromPoint`) both use
+    // a plain `measureText` and never add `letterSpacing × length`, which is how
+    // Konva measures. With a non-zero spacing the caret can therefore open under
+    // the wrong glyph and then drift by up to `letterSpacing × line length` (and a
+    // wrap point can shift). Mirroring it here would mean changing
+    // `wrappedLineStarts`/`caretFromPoint`, which is out of scope for P14, so the
+    // divergence is documented instead of silently ignored.
     const measure = useCallback(
         (offset: number) => {
             const ta = taRef.current;
@@ -370,22 +429,10 @@ export const TextEditorOverlay: React.FC<TextEditorOverlayProps> = ({
         // A plain Enter falls through and inserts a newline (native behaviour).
     };
 
-    return (
-        <div
-            data-testid="text-editor-wrapper"
-            style={{
-                position: 'absolute',
-                left: `${session.screenX}px`,
-                top: `${session.screenY}px`,
-                // The wrapper carries the node transform, so the textarea and the
-                // synthetic caret both lay out in unscaled px and transform once.
-                transform: `rotate(${session.rotation}deg) scale(${session.scaleX}, ${session.scaleY})`,
-                transformOrigin: 'top left',
-                width: `${session.unscaledWidth}px`,
-                height: `${session.unscaledHeight}px`,
-                zIndex: 20,
-            }}
-        >
+    // The textarea and the synthetic caret are one layout unit: both stay in
+    // natural layout px so the caret math is untouched.
+    const content = (
+        <>
             <textarea
                 ref={taRef}
                 value={session.text}
@@ -423,6 +470,10 @@ export const TextEditorOverlay: React.FC<TextEditorOverlayProps> = ({
                     caretColor: 'transparent',
                     color: '#111827',
                     whiteSpace: 'pre-wrap',
+                    // Match Konva's `letterSpacing` so the editor's glyph
+                    // spacing and wrap points are the rendered ones. Omitted
+                    // entirely at 0, keeping the pre-fix DOM byte-identical.
+                    ...(session.letterSpacing ? { letterSpacing: `${session.letterSpacing}px` } : {}),
                     ...wrapStyle(wrap),
                 }}
             />
@@ -438,13 +489,59 @@ export const TextEditorOverlay: React.FC<TextEditorOverlayProps> = ({
                         width: `${caretWidth}px`,
                         height: `${caret.height}px`,
                         background: '#0ea5e9',
-                        // The wrapper's transform scales this bar too, so its
+                        // The enclosing transform scales this bar too, so its
                         // width follows the text at every zoom level.
                         pointerEvents: 'none',
                         transition: 'left 80ms cubic-bezier(0.2, 0, 0, 1), top 80ms ease-out',
                         animation: 'text-editor-caret-blink 1s steps(1, end) infinite',
                     }}
                 />
+            )}
+        </>
+    );
+
+    return (
+        <div
+            data-testid="text-editor-wrapper"
+            style={{
+                position: 'absolute',
+                left: `${session.screenX}px`,
+                top: `${session.screenY}px`,
+                // The wrapper carries the node transform, so the textarea and the
+                // synthetic caret both lay out in unscaled px and transform once.
+                // It is the node's **true** box: the parent divided the captured
+                // shrink out, and the content is scaled inside instead.
+                transform: `rotate(${session.rotation}deg) scale(${session.scaleX}, ${session.scaleY})`,
+                transformOrigin: 'top left',
+                width: `${session.unscaledWidth}px`,
+                height: `${session.unscaledHeight}px`,
+                zIndex: 20,
+            }}
+        >
+            {layoutShrink !== 1 ? (
+                // Shrink the content, not the box. Width stays the **node box**
+                // (`node.w`) so the textarea's wrap is the layout Konva measured;
+                // height is `node.h / shrink` so every natural line exists
+                // *before* the single `scale(shrink)`. The visible block is then
+                // `node.w × shrink` wide and up to `node.h` tall — inside the box,
+                // like the canvas. `layoutShrink === 1` keeps the exact pre-fix
+                // DOM (no inner box at all).
+                <div
+                    data-testid="text-editor-inner"
+                    style={{
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        width: `${session.unscaledWidth}px`,
+                        height: `${session.unscaledHeight / layoutShrink}px`,
+                        transform: `scale(${layoutShrink})`,
+                        transformOrigin: 'top left',
+                    }}
+                >
+                    {content}
+                </div>
+            ) : (
+                content
             )}
         </div>
     );

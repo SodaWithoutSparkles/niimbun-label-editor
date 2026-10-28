@@ -37,6 +37,21 @@ export interface TextMetrics {
     scale: number;
 }
 
+/**
+ * The fields a text node's live layout depends on. `width`/`height` are the
+ * node box (hm); the rest must be the rendered values, never a default.
+ */
+export interface ShrinkableText {
+    text: string;
+    width: number;
+    height: number;
+    fontSize: number;
+    fontFamily: string;
+    fontStyle: string;
+    lineHeight: number;
+    letterSpacing?: number;
+}
+
 export const measureKonvaText = (input: TextMetricsInput): TextMetrics => {
     const measured = new Konva.Text({
         text: input.text,
@@ -60,3 +75,15 @@ export const measureKonvaText = (input: TextMetricsInput): TextMetrics => {
     const scale = Math.min(1, sx, sy);
     return { width, height, scale };
 };
+
+/**
+ * The `shrink`-only uniform factor: `1` for any text that already fits.
+ *
+ * `shrink` always measures with `'word'` wrapping (`measureKonvaText`), which is
+ * what both renderers use for the `Konva.Text` wrap prop, so the measured scale
+ * is the factor the rendered node must be multiplied by. The preview, the print
+ * factory, the inline editor and the overlay placement all read this one helper
+ * so the four can never drift.
+ */
+export const shrinkScaleOf = (text: ShrinkableText): number =>
+    measureKonvaText({ ...text, wrap: 'word' }).scale;

@@ -209,11 +209,13 @@ through review before commit.
 | Phase | Item | Failure mode | Approach | Status |
 | --- | --- | --- | --- | --- |
 | **P12** | Print CSV readiness (#6/#7) | attached-but-loading/failed CSV = "no CSV" ⇒ Print builds a 1-record fallback; preview never invalidates on arrival | `usePrintJob` status + revision; gate button **and** builder; preview re-runs on the revision — [`phase12_action-plan.md`](phase12_action-plan.md) | **DONE** `51495c2` |
-| **P13** | Barcode fit coherence | raster + preview draw 1D barcodes `cover`; verdict and policy mask assume `contain` ⇒ quiet zone / end bars cropped, "too small" over-warns | pick **one** fit and align raster, preview, verdict (`drawnPitchBelowMinModule`), mask (`renderLabelPage`) and keep-out (`resolve.nodeDrawnLocalPoints`) | next |
-| **P14** | `shrink` text loss (D-42) | `Konva.Text` is built with `height: node.h` before the shrink scale, so lines past the unscaled box are dropped; the inline overlay never downscales | fix both, keep `wrappedLineStarts` in sync | — |
+| **P13** | Barcode fit coherence | raster + preview draw 1D barcodes `cover`; verdict and policy mask assume `contain` ⇒ quiet zone / end bars cropped, "too small" over-warns | **stretch, no crop** everywhere (owner 2026-10-27); verdict scores the X pitch; 2D stays `contain` — [`phase13_action-plan.md`](phase13_action-plan.md) | **DONE** `06416ac` |
+| **P14** | `shrink` text loss (D-42) | `Konva.Text` is built with `height: node.h` before the shrink scale, so lines past the unscaled box are dropped; the inline overlay never downscales | fix both, keep `wrappedLineStarts` in sync | next |
 | **P15** | Gamma preview trigger (#3) | `quantizedPreviewTrigger` omits `gamma` ⇒ a gamma-only edit shows no preview | add `gamma` to the trigger | — |
 | **P16** | Persistent dither invalidation (#2) | `useQuantizedPreview` omits `quantizerDefaults` / `defaultQuantizerByType` | wire `quantizerSettingsKey` into the effect deps (not the peek trigger — D-59) | — |
 | **P17** | `clip` semantics (D-42) | `clip` renders word-wrap + truncation instead of "no wrap, hard clip" | settle the `types.ts` vs `objects.ts` contradiction first, then align renderers | — |
+| **P18** | Printer metadata refresh (owner, 2026-10-28) | info/RFID are read once at connect; the adapter drops `rfidinfofetched` / `printerinfofetched`, so a roll swap (which the library *does* detect) never reaches `printerStatus` | subscribe the two events, rebuild + emit, add `PrinterStatus.labelType`, one-shot `refreshInfo()` on print-dialog open — [`phase18_action-plan.md`](phase18_action-plan.md) | next |
+| **P19** | Label type defaults to gap paper (owner, 2026-10-28) | `effectiveLabelType = labelType ?? WithGaps`, never reads the reported roll type; no mismatch notice | seed from `printerStatus.labelType`, keep the user override for the session, advisory mismatch notice — [`phase19_action-plan.md`](phase19_action-plan.md) | after P18 |
 
 Explicit non-goals for wave 3: PNG export, PDF export, preset marketplace,
 `promptText` (dead code — delete or adopt later), D-70 cross-tab atomicity
