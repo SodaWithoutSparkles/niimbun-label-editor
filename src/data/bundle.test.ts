@@ -2,7 +2,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { StreamReadingResponse } from '../test/streamResponse';
 import { createFtagSpareDoc } from '../core/doc/factory';
-import type { AssetRef, CsvRef, FontRef, ImageRef, LabelDoc } from '../core/doc/types';
+import type {
+    AssetRef,
+    CsvRef,
+    FontRef,
+    ImageNode,
+    ImageRef,
+    LabelDoc,
+    TextNode,
+} from '../core/doc/types';
 import {
     BUNDLE_KIND,
     BUNDLE_VERSION,
@@ -11,6 +19,7 @@ import {
     dataUrlToBytes,
     importBundle,
     isLabelBundle,
+    referencedAssetIds,
     type LabelBundle,
 } from './bundle';
 import type { CsvRecord } from './csvRepo';
@@ -54,8 +63,16 @@ const NOW = 1_700_000_000;
 
 const IMAGE_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x7f, 0x80]);
 const FONT_BYTES = new Uint8Array([0x77, 0x4f, 0x46, 0x32, 0x00, 0xff]);
+/** Bytes of assets no node references — must never reach the bundle JSON. */
+const UNUSED_IMAGE_BYTES = Uint8Array.from({ length: 64 }, (_, index) => (index * 3) % 256);
+const UNUSED_FONT_BYTES = Uint8Array.from({ length: 48 }, (_, index) => (index * 7 + 1) % 256);
+/** Bytes of a registry entry shadowed by a duplicate id — must not ship either. */
+const SHADOWED_BYTES = Uint8Array.from({ length: 32 }, (_, index) => (index * 11 + 5) % 256);
 /** Every byte value, so the data-URL round trip cannot lose `0x00`/`0xFF`. */
 const ALL_BYTES = Uint8Array.from({ length: 256 }, (_, index) => index);
+
+/** base64 body of a data URL (what a leaked asset would leave in the JSON). */
+const payloadOf = (dataUrl: string): string => dataUrl.slice(dataUrl.indexOf(',') + 1);
 
 const setup = () => {
     const adapter = createMemoryAdapter();
@@ -72,23 +89,63 @@ type Fixture = ReturnType<typeof setup>;
 const makeDoc = (id: string, now = NOW): LabelDoc =>
     createFtagSpareDoc({ id, name: `Label ${id}`, now });
 
-const localImage = (resourceId: string): ImageRef => ({
-    imageId: 'img-1',
+const DEG = { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 };
+
+const imageNode = (imageId: string, id = `node-${imageId}`): ImageNode => ({
+    id,
+    parentId: null,
+    type: 'image',
+    imageId,
+    visible: true,
+    locked: false,
+    transform: { ...DEG },
+    size: { w: 800, h: 600 },
+});
+
+const textNode = (
+    over: Partial<Pick<TextNode, 'fontId' | 'fontFamily'>> = {},
+    id = 'text-node',
+): TextNode => ({
+    id,
+    parentId: null,
+    type: 'text',
+    text: { kind: 'static', value: 'hello' },
+    visible: true,
+    locked: false,
+    transform: { ...DEG },
+    size: { w: 1000, h: 400 },
+    fontSize: 300,
+    ...over,
+});
+
+const localImage = (resourceId: string, imageId = 'img-1'): ImageRef => ({
+    imageId,
     name: 'photo.png',
     source: { kind: 'local', mediaType: 'image/png', resourceId },
     widthPx: 8,
     heightPx: 6,
 });
 
-const remoteImage = (url: string): ImageRef => ({
-    imageId: 'img-remote',
+const remoteImage = (url: string, imageId = 'img-remote'): ImageRef => ({
+    imageId,
     name: 'remote.png',
     source: { kind: 'remote', mediaType: 'image/png', url },
     widthPx: 8,
     heightPx: 6,
 });
 
-const localFont = (resourceId: string): FontRef => ({
+const inlineImage = (dataUrl: string, imageId = 'img-inline'): ImageRef => ({
+    imageId,
+    name: 'inline.png',
+    source: { kind: 'inline', mediaType: 'image/png', dataUrl },
+    widthPx: 8,
+    heightPx: 6,
+});
+
+const localFont = (
+    resourceId: string,
+    over: Partial<Pick<FontRef, 'fontId' | 'familyName' | 'name'>> = {},
+): FontRef => ({
     fontId: 'font-1',
     familyName: 'Inter',
     name: 'Inter Bold',
@@ -96,6 +153,7 @@ const localFont = (resourceId: string): FontRef => ({
         kind: 'imported',
         asset: { kind: 'local', mediaType: 'font/woff2', resourceId },
     },
+    ...over,
 });
 
 const csvRecord = (id: string): CsvRecord => ({
@@ -118,6 +176,7 @@ const localCsvRef = (csvId: string): CsvRef => ({
 const withLocalAssets = (doc: LabelDoc, resourceId = 'img-res', csvId = 'csv-1'): LabelDoc => {
     doc.resources.images.push(localImage(resourceId));
     doc.resources.fonts.push(localFont('font-res'));
+    doc.nodes.push(imageNode('img-1'), textNode({ fontId: 'font-1', fontFamily: 'Inter' }));
     doc.data.csv = localCsvRef(csvId);
     return doc;
 };
@@ -209,9 +268,10 @@ describe('buildBundle', () => {
         expect(first.resources.fonts[0].source).toEqual(localFont('font-res').source);
     });
 
-    it('counts unreadable local refs and leaves them local', async () => {
+    it('counts referenced unreadable local refs and leaves them local', async () => {
         const fixture = setup();
         const doc = makeDoc('doc-missing');
+        doc.nodes.push(imageNode('img-1'), textNode({ fontId: 'font-1' }));
         doc.resources.images.push(localImage('gone-image'));
         doc.resources.fonts.push(localFont('gone-font'));
 
@@ -231,8 +291,291 @@ describe('buildBundle', () => {
         expect(result.bundle.csvs).toEqual([]);
     });
 
-    it('leaves remote refs untouched', async () => {
+    it('prunes an unreferenced unreadable ref and does not report it missing', async () => {
+        const fixture = setup();
+        const doc = makeDoc('doc-unreferenced-missing');
+        doc.resources.images.push(localImage('gone-image'));
+        doc.resources.fonts.push(localFont('gone-font'));
+
+        const result = await buildBundle([doc], {
+            resourceRepo: fixture.resourceRepo,
+            csvRepo: fixture.csvRepo,
+            now: NOW,
+        });
+
+        // Nothing needs those bytes, so nothing is missing from the bundle.
+        expect(result.missing).toBe(0);
+        expect(result.bundle.docs[0].resources).toEqual({ fonts: [], images: [] });
+    });
+
+    it('drops an unreferenced image and never writes its bytes', async () => {
+        const fixture = setup();
+        await seedAssets(fixture);
+        await fixture.resourceRepo.put({
+            id: 'img-unused',
+            mediaType: 'image/png',
+            bytes: UNUSED_IMAGE_BYTES,
+            name: 'unused.png',
+            widthPx: 8,
+            heightPx: 6,
+        });
+
+        const doc = withLocalAssets(makeDoc('doc-prune-image'));
+        // The registry keeps every image ever inserted; the node was deleted.
+        doc.resources.images.push(localImage('img-unused', 'img-unused'));
+
+        const result = await buildBundle([doc], {
+            resourceRepo: fixture.resourceRepo,
+            csvRepo: fixture.csvRepo,
+            now: NOW,
+        });
+
+        expect(result.missing).toBe(0);
+        expect(result.bundle.docs[0].resources.images.map((ref) => ref.imageId)).toEqual([
+            'img-1',
+        ]);
+        // The kept ref is inlined; the unused one leaves no bytes behind.
+        expect(result.bundle.docs[0].resources.images[0].source.kind).toBe('inline');
+        const unusedDataUrl = bytesToDataUrl(UNUSED_IMAGE_BYTES, 'image/png');
+        const json = JSON.stringify(result.bundle);
+        expect(json).not.toContain(unusedDataUrl);
+        expect(json).not.toContain(payloadOf(unusedDataUrl));
+
+        // The caller's document still carries both refs.
+        expect(doc.resources.images).toHaveLength(2);
+    });
+
+    it('keeps fonts referenced by id or by legacy family and drops the unused one', async () => {
+        const fixture = setup();
+        await seedAssets(fixture);
+        await fixture.resourceRepo.put({
+            id: 'font-legacy-res',
+            mediaType: 'font/woff2',
+            bytes: ALL_BYTES,
+            name: 'Legacy',
+        });
+        await fixture.resourceRepo.put({
+            id: 'font-unused-res',
+            mediaType: 'font/woff2',
+            bytes: UNUSED_FONT_BYTES,
+            name: 'Unused',
+        });
+
+        const doc = makeDoc('doc-prune-fonts');
+        doc.nodes.push(
+            imageNode('img-1', 'image-node'),
+            textNode({ fontId: 'font-1', fontFamily: 'Inter' }, 'text-by-id'),
+            // A legacy node: family name only, no `fontId`.
+            textNode({ fontFamily: 'Legacy Sans' }, 'text-by-family'),
+        );
+        doc.resources.images.push(localImage('img-res'));
+        doc.resources.fonts.push(
+            localFont('font-res'),
+            localFont('font-legacy-res', {
+                fontId: 'font-legacy',
+                familyName: 'Legacy Sans',
+                name: 'Legacy',
+            }),
+            localFont('font-unused-res', {
+                fontId: 'font-unused',
+                familyName: 'Unused',
+                name: 'Unused',
+            }),
+        );
+
+        const result = await buildBundle([doc], {
+            resourceRepo: fixture.resourceRepo,
+            csvRepo: null,
+            now: NOW,
+        });
+
+        expect(result.missing).toBe(0);
+        const fonts = result.bundle.docs[0].resources.fonts;
+        expect(fonts.map((ref) => ref.fontId)).toEqual(['font-1', 'font-legacy']);
+        for (const font of fonts) {
+            expect(font.source.kind).toBe('imported');
+            if (font.source.kind !== 'imported') continue;
+            expect(font.source.asset.kind).toBe('inline');
+        }
+        expect(JSON.stringify(result.bundle)).not.toContain(
+            payloadOf(bytesToDataUrl(UNUSED_FONT_BYTES, 'font/woff2')),
+        );
+    });
+
+    it('keeps the font a node names by family even when it also has a fontId', async () => {
+        const fixture = setup();
+        await fixture.resourceRepo.put({
+            id: 'font-a-res',
+            mediaType: 'font/woff2',
+            bytes: FONT_BYTES,
+            name: 'A',
+        });
+        await fixture.resourceRepo.put({
+            id: 'font-b-res',
+            mediaType: 'font/woff2',
+            bytes: ALL_BYTES,
+            name: 'B',
+        });
+
+        const doc = makeDoc('doc-font-id-and-family');
+        // The render path resolves `fontFamily`; `ensureFonts` registers by
+        // `familyName`, so both registry entries are usable and must ship.
+        // NOTE: a `fontId` plus a *mismatched* `fontFamily` is only reachable
+        // through an import / a legacy document — the inspector detaches the
+        // link when they disagree, so this is not a normal editor state.
+        doc.nodes.push(textNode({ fontId: 'a', fontFamily: 'B Family' }));
+        doc.resources.fonts.push(
+            localFont('font-a-res', { fontId: 'a', familyName: 'A Family', name: 'A' }),
+            localFont('font-b-res', { fontId: 'b', familyName: 'B Family', name: 'B' }),
+        );
+
+        const result = await buildBundle([doc], {
+            resourceRepo: fixture.resourceRepo,
+            csvRepo: null,
+            now: NOW,
+        });
+
+        expect(result.missing).toBe(0);
+        expect(result.bundle.docs[0].resources.fonts.map((ref) => ref.fontId)).toEqual([
+            'a',
+            'b',
+        ]);
+    });
+
+    it('collapses a duplicate imageId to the entry the renderer picks (the last)', async () => {
+        const fixture = setup();
+        await fixture.resourceRepo.put({
+            id: 'img-res',
+            mediaType: 'image/png',
+            bytes: IMAGE_BYTES,
+            name: 'photo.png',
+        });
+        await fixture.resourceRepo.put({
+            id: 'img-first',
+            mediaType: 'image/png',
+            bytes: SHADOWED_BYTES,
+            name: 'first.png',
+        });
+        await fixture.resourceRepo.put({
+            id: 'img-second',
+            mediaType: 'image/png',
+            bytes: UNUSED_IMAGE_BYTES,
+            name: 'second.png',
+        });
+
+        const doc = makeDoc('doc-duplicate-image');
+        doc.nodes.push(imageNode('img-1'), imageNode('img-shared'));
+        doc.resources.images.push(
+            localImage('img-res', 'img-1'),
+            localImage('img-first', 'img-shared'),
+            localImage('img-second', 'img-shared'),
+        );
+
+        const result = await buildBundle([doc], {
+            resourceRepo: fixture.resourceRepo,
+            csvRepo: null,
+            now: NOW,
+        });
+
+        const images = result.bundle.docs[0].resources.images;
+        // Registry order is preserved for the refs that survive, and the
+        // duplicate collapses to its last entry (the renderer's pick).
+        expect(images.map((ref) => ref.imageId)).toEqual(['img-1', 'img-shared']);
+        expect(images[1].source).toEqual({
+            kind: 'inline',
+            mediaType: 'image/png',
+            dataUrl: bytesToDataUrl(UNUSED_IMAGE_BYTES, 'image/png'),
+        });
+        // The shadowed first entry's bytes never reach the bundle.
+        expect(JSON.stringify(result.bundle)).not.toContain(
+            payloadOf(bytesToDataUrl(SHADOWED_BYTES, 'image/png')),
+        );
+    });
+
+    it('collapses a duplicate fontId to the last entry and keeps registry order', async () => {
+        const fixture = setup();
+        await fixture.resourceRepo.put({
+            id: 'font-res',
+            mediaType: 'font/woff2',
+            bytes: FONT_BYTES,
+            name: 'Inter',
+        });
+        await fixture.resourceRepo.put({
+            id: 'font-shadowed-res',
+            mediaType: 'font/woff2',
+            bytes: SHADOWED_BYTES,
+            name: 'shadowed',
+        });
+        await fixture.resourceRepo.put({
+            id: 'font-last-res',
+            mediaType: 'font/woff2',
+            bytes: UNUSED_FONT_BYTES,
+            name: 'last',
+        });
+
+        const doc = makeDoc('doc-duplicate-font');
+        doc.nodes.push(
+            textNode({ fontId: 'font-1' }, 'text-id'),
+            textNode({ fontId: 'font-shared' }, 'text-shared'),
+        );
+        doc.resources.fonts.push(
+            localFont('font-res'),
+            localFont('font-shadowed-res', {
+                fontId: 'font-shared',
+                familyName: 'Shadowed',
+                name: 'shadowed',
+            }),
+            localFont('font-last-res', {
+                fontId: 'font-shared',
+                familyName: 'Shadowed',
+                name: 'last',
+            }),
+        );
+
+        const result = await buildBundle([doc], {
+            resourceRepo: fixture.resourceRepo,
+            csvRepo: null,
+            now: NOW,
+        });
+
+        const fonts = result.bundle.docs[0].resources.fonts;
+        expect(fonts.map((ref) => ref.fontId)).toEqual(['font-1', 'font-shared']);
+        expect(fonts[1].source).toEqual({
+            kind: 'imported',
+            asset: {
+                kind: 'inline',
+                mediaType: 'font/woff2',
+                dataUrl: bytesToDataUrl(UNUSED_FONT_BYTES, 'font/woff2'),
+            },
+        });
+        expect(JSON.stringify(result.bundle)).not.toContain(
+            payloadOf(bytesToDataUrl(SHADOWED_BYTES, 'font/woff2')),
+        );
+    });
+
+    it('drops unreferenced inline and remote refs', async () => {
+        const doc = makeDoc('doc-unreferenced-kinds');
+        const inlineDataUrl = bytesToDataUrl(UNUSED_IMAGE_BYTES, 'image/png');
+        doc.resources.images.push(
+            inlineImage(inlineDataUrl),
+            remoteImage('https://example.test/unused.png'),
+        );
+
+        const result = await buildBundle([doc], {
+            resourceRepo: null,
+            csvRepo: null,
+            now: NOW,
+        });
+
+        expect(result.missing).toBe(0);
+        expect(result.bundle.docs[0].resources.images).toEqual([]);
+        // An unreferenced inline image would otherwise ship its base64 body.
+        expect(JSON.stringify(result.bundle)).not.toContain(payloadOf(inlineDataUrl));
+    });
+
+    it('leaves a referenced remote ref untouched', async () => {
         const doc = makeDoc('doc-remote');
+        doc.nodes.push(imageNode('img-remote'));
         doc.resources.images.push(remoteImage('https://example.test/a.png'));
 
         const result = await buildBundle([doc], {
@@ -245,6 +588,25 @@ describe('buildBundle', () => {
         expect(result.bundle.docs[0].resources.images[0].source).toEqual(
             remoteImage('https://example.test/a.png').source,
         );
+    });
+});
+
+describe('referencedAssetIds', () => {
+    it('collects image ids, font ids, and legacy family-only names', () => {
+        const doc = makeDoc('doc-refs');
+        doc.nodes.push(
+            imageNode('img-a', 'image-a'),
+            imageNode('img-a', 'image-b'),
+            textNode({ fontId: 'font-1', fontFamily: 'Inter' }, 'text-by-id'),
+            textNode({ fontFamily: 'Legacy Sans' }, 'text-by-family'),
+        );
+
+        const ids = referencedAssetIds(doc);
+        expect([...ids.imageIds]).toEqual(['img-a']);
+        expect([...ids.fontIds]).toEqual(['font-1']);
+        // Every non-empty family is collected, including from a node that also
+        // has a `fontId` (the render path may resolve through either).
+        expect([...ids.fontFamilies]).toEqual(['Inter', 'Legacy Sans']);
     });
 });
 
@@ -381,6 +743,64 @@ describe('importBundle', () => {
             ...csvRecord('csv-1'),
             id: csv.csvId,
         });
+    });
+
+    it('round-trips a pruned registry and every node still resolves', async () => {
+        const source = setup();
+        await seedAssets(source);
+        await source.resourceRepo.put({
+            id: 'img-unused',
+            mediaType: 'image/png',
+            bytes: UNUSED_IMAGE_BYTES,
+            name: 'unused.png',
+            widthPx: 8,
+            heightPx: 6,
+        });
+
+        const doc = withLocalAssets(makeDoc('doc-pruned', 1_650_000_000));
+        doc.resources.images.push(localImage('img-unused', 'img-unused'));
+
+        const { bundle, missing } = await buildBundle([doc], {
+            resourceRepo: source.resourceRepo,
+            csvRepo: source.csvRepo,
+            now: NOW,
+        });
+        expect(missing).toBe(0);
+        expect(bundle.docs[0].resources.images).toHaveLength(1);
+        expect(JSON.stringify(bundle)).not.toContain(
+            payloadOf(bytesToDataUrl(UNUSED_IMAGE_BYTES, 'image/png')),
+        );
+
+        const destination = setup();
+        const result = await importBundle(bundle, {
+            labelRepo: destination.labelRepo,
+            resourceRepo: destination.resourceRepo,
+            csvRepo: destination.csvRepo,
+            now: NOW + 60,
+        });
+        expect(result).toEqual({ imported: 1, errors: [], warnings: 0 });
+
+        const imported = await onlyDoc(destination.labelRepo);
+        // The pruned registry arrived intact: one image, one font.
+        expect(imported.resources.images).toHaveLength(1);
+        expect(imported.resources.fonts).toHaveLength(1);
+
+        // Every node reference resolves against the imported registry.
+        for (const node of imported.nodes) {
+            if (node.type === 'image') {
+                const ref = imported.resources.images.find((image) => image.imageId === node.imageId);
+                expect(ref).toBeDefined();
+                if (!ref) continue;
+                const local = localSource(ref.source);
+                expect((await destination.resourceRepo.get(local.resourceId))?.bytes).toEqual(
+                    IMAGE_BYTES,
+                );
+            } else if (node.type === 'text' && node.fontId) {
+                expect(
+                    imported.resources.fonts.some((font) => font.fontId === node.fontId),
+                ).toBe(true);
+            }
+        }
     });
 
     it('accepts a single doc, an array, and a bundle envelope', async () => {

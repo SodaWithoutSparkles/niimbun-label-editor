@@ -16,6 +16,9 @@ import { useStore } from '../../store/useStore';
  *   - **never trust a picked file** — `file.size` guard first, then
  *     `JSON.parse`, then `importBundle`'s per-document validation,
  *   - every failure becomes a notification; nothing here throws at the caller,
+ *   - an export whose referenced resources could not all be read still
+ *     downloads, then warns with the count (the missing bytes are not in the
+ *     bundle),
  *   - one operation at a time: a second call while one is running is ignored,
  *     so the menu items stay honest even if a dialog is double-triggered,
  *   - the imported documents arrive under fresh ids (P8a), so importing can
@@ -216,18 +219,28 @@ export const useLabelTransfer = (): LabelTransfer => {
             run(async () => {
                 if (!currentDoc) return;
                 try {
-                    const { bundle } = await buildBundle([currentDoc], {
+                    const { bundle, missing } = await buildBundle([currentDoc], {
                         resourceRepo,
                         csvRepo,
                     });
                     if (!downloadJson(bundle, labelFileName(currentDoc.meta.name))) {
                         notifyError(t('exportLabels.failed'));
+                        return;
+                    }
+                    // The bundle is still valid: a referenced asset or CSV whose
+                    // bytes were unreadable stays `local` and will not resolve
+                    // on the other device. Say so instead of a silent download.
+                    if (missing > 0) {
+                        addNotification({
+                            type: 'warning',
+                            message: t('exportLabels.missingResources', { count: missing }),
+                        });
                     }
                 } catch {
                     notifyError(t('exportLabels.failed'));
                 }
             }),
-        [run, currentDoc, resourceRepo, csvRepo, notifyError, t],
+        [run, currentDoc, resourceRepo, csvRepo, addNotification, notifyError, t],
     );
 
     const exportAll = useCallback(
@@ -257,7 +270,7 @@ export const useLabelTransfer = (): LabelTransfer => {
                         return;
                     }
 
-                    const { bundle } = await buildBundle(docs, { resourceRepo, csvRepo });
+                    const { bundle, missing } = await buildBundle(docs, { resourceRepo, csvRepo });
                     if (!downloadJson(bundle, `niimbun-labels-${isoDate()}.json`)) {
                         notifyError(failedMessage);
                         return;
@@ -272,6 +285,14 @@ export const useLabelTransfer = (): LabelTransfer => {
                                   })
                                 : t('exportLabels.done', { count: docs.length }),
                     });
+                    // Separate line: the export succeeded, but referenced asset
+                    // bytes were unreadable and their nodes travel unresolved.
+                    if (missing > 0) {
+                        addNotification({
+                            type: 'warning',
+                            message: t('exportLabels.missingResources', { count: missing }),
+                        });
+                    }
                 } catch {
                     notifyError(failedMessage);
                 }

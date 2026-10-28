@@ -54,6 +54,32 @@ const NOW = 1_700_000_000;
 const makeDoc = (name: string, now = NOW): LabelDoc =>
     createFtagSpareDoc({ name, now });
 
+/**
+ * Add an image node whose `local` ref points at a resource that is not in the
+ * store: the export prunes nothing but cannot inline the bytes, so it reports
+ * the asset as missing.
+ */
+const withMissingImage = (doc: LabelDoc, imageId: string): LabelDoc => {
+    doc.nodes.push({
+        id: `node-${imageId}`,
+        parentId: null,
+        type: 'image',
+        imageId,
+        visible: true,
+        locked: false,
+        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        size: { w: 800, h: 600 },
+    });
+    doc.resources.images.push({
+        imageId,
+        name: `${imageId}.png`,
+        source: { kind: 'local', mediaType: 'image/png', resourceId: `${imageId}-res` },
+        widthPx: 8,
+        heightPx: 6,
+    });
+    return doc;
+};
+
 /** Inject real repos (over one memory adapter) into the app store. */
 const fixture = () => {
     const adapter = createMemoryAdapter();
@@ -271,6 +297,58 @@ describe('useLabelTransfer — export', () => {
         expect(download.revokeObjectURL).toHaveBeenCalledWith('blob:1');
         // An export is not announced; only failures are.
         expect(notifications()).toHaveLength(0);
+    });
+
+    it('still exports but warns when a referenced item could not be included', async () => {
+        fixture();
+        const doc = withMissingImage(makeDoc('Spare part'), 'img-gone');
+        useStore.setState({ currentDoc: doc });
+        const download = spyDownload();
+
+        const { result } = renderHook(() => useLabelTransfer());
+        await act(async () => {
+            await result.current.exportCurrent();
+        });
+
+        // The export is not blocked: the bundle still downloads, the ref stays
+        // `local`, and the user is told how many items were left out.
+        expect(download.anchors).toHaveLength(1);
+        const bundle = await download.bundle();
+        expect(bundle.docs[0]!.resources.images[0]!.source).toEqual({
+            kind: 'local',
+            mediaType: 'image/png',
+            resourceId: 'img-gone-res',
+        });
+        expect(notifications()).toMatchObject([
+            {
+                type: 'warning',
+                message: '1 item could not be included: its stored data could not be read.',
+            },
+        ]);
+    });
+
+    it('warns with a plural count from exportAll for unreadable referenced items', async () => {
+        const { labelRepo } = fixture();
+        await labelRepo.save(withMissingImage(makeDoc('First'), 'img-gone-a'));
+        await labelRepo.save(withMissingImage(makeDoc('Second', NOW + 100), 'img-gone-b'));
+        const download = spyDownload();
+
+        const { result } = renderHook(() => useLabelTransfer());
+        await act(async () => {
+            await result.current.exportAll();
+        });
+
+        // Both labels export; the warning names both unreadable items.
+        expect(download.anchors).toHaveLength(1);
+        const bundle = await download.bundle();
+        expect(bundle.docs.map((doc) => doc.meta.name).sort()).toEqual(['First', 'Second']);
+        expect(notifications()).toMatchObject([
+            { type: 'success', message: 'Exported 2 labels.' },
+            {
+                type: 'warning',
+                message: '2 items could not be included: their stored data could not be read.',
+            },
+        ]);
     });
 
     it('is a no-op when no document is open', async () => {

@@ -14,6 +14,12 @@ import type { ResourceRepo } from './resourceRepo';
  * A bundle carries whole documents plus every binary/table asset they reference,
  * so a label can move between devices without the original IDB stores:
  *
+ *   - only the assets a document's nodes actually use are carried
+ *     ({@link referencedAssetIds}); `doc.resources.*` is append-only — deleting a
+ *     node never prunes it — so the export prunes its cloned copy to the node
+ *     references before inlining. The in-memory document is left untouched, and
+ *     an unreferenced ref is dropped whether it is `local`, `inline`, `remote`
+ *     or `external` (an unused inline image bloats the file just as much),
  *   - `local` image/font refs are rewritten to `inline` data URLs on export and
  *     back to fresh `local` refs on import (bytes stored in `resources`),
  *   - the CSV table a doc is attached to is embedded once and re-minted on
@@ -63,7 +69,10 @@ export interface BundleWriteDeps {
 
 export interface ExportBundleResult {
     bundle: LabelBundle;
-    /** Local refs that could not be read (left `local` in the export). */
+    /**
+     * **Referenced** local refs that could not be read (left `local` in the
+     * export). An unreferenced unreadable ref is pruned, not counted.
+     */
     missing: number;
 }
 
@@ -157,9 +166,45 @@ const inlineLocalRef = async (
 };
 
 /**
+ * Asset refs a document's nodes actually use. The exported registry is derived
+ * from this, not from `doc.resources`, which is append-only (see `orphans.ts`).
+ *
+ *   - `imageIds` — `node.type === 'image'` → `node.imageId`,
+ *   - `fontIds` — `node.type === 'text'` → `node.fontId` (when set),
+ *   - `fontFamilies` — every non-empty `node.fontFamily`. It is collected even
+ *     when `fontId` is set: the render path resolves text through
+ *     `node.fontFamily` (`resolve.ts`) and `ensureFonts(doc)` registers a font
+ *     by its `familyName`, so a font the node names by family is still usable
+ *     even if its `fontId` differs. Legacy docs that carry no `fontId` rely on
+ *     this clause exclusively.
+ */
+export const referencedAssetIds = (
+    doc: LabelDoc,
+): { imageIds: Set<string>; fontIds: Set<string>; fontFamilies: Set<string> } => {
+    const imageIds = new Set<string>();
+    const fontIds = new Set<string>();
+    const fontFamilies = new Set<string>();
+
+    for (const node of doc.nodes) {
+        if (node.type === 'image') {
+            imageIds.add(node.imageId);
+        } else if (node.type === 'text') {
+            if (node.fontId) fontIds.add(node.fontId);
+            if (node.fontFamily) fontFamilies.add(node.fontFamily);
+        }
+    }
+
+    return { imageIds, fontIds, fontFamilies };
+};
+
+/**
  * Build a self-contained bundle. Each document is cloned first, so the caller's
- * docs are never mutated. Unreadable local refs stay `local` and are counted in
- * `missing` — the export is still produced.
+ * docs are never mutated. The clone's registries are pruned to the assets the
+ * nodes reference (a duplicate `imageId`/`fontId` collapses to its **last**
+ * entry, matching the renderer's map) before anything is inlined: a document
+ * with deleted nodes does not ship their bytes. A **referenced** local ref that
+ * cannot be read stays `local` and is counted in `missing` — the export is
+ * still produced.
  */
 export const buildBundle = async (
     docs: readonly LabelDoc[],
@@ -172,6 +217,36 @@ export const buildBundle = async (
 
     for (const doc of docs) {
         const copy = structuredClone(doc);
+
+        // Prune before inlining: unreferenced refs must not contribute bytes
+        // (they are also not "missing" — the bundle needs nothing from them).
+        const { imageIds, fontIds, fontFamilies } = referencedAssetIds(copy);
+        // A registry can hold duplicate `imageId`s; the renderer's map
+        // (`prepareAssets`) keeps the **last** entry, so the bundle must too —
+        // keeping both would ship bytes no renderer ever picks. Walk backwards
+        // and reverse to preserve registry order for the refs that survive.
+        const keptImages: ImageRef[] = [];
+        const seenImageIds = new Set<string>();
+        for (let index = copy.resources.images.length - 1; index >= 0; index -= 1) {
+            const ref = copy.resources.images[index];
+            if (!imageIds.has(ref.imageId) || seenImageIds.has(ref.imageId)) continue;
+            seenImageIds.add(ref.imageId);
+            keptImages.push(ref);
+        }
+        copy.resources.images = keptImages.reverse();
+        // Same rule for fonts: a hand-edited registry can duplicate a `fontId`,
+        // and only the last entry is reachable, so shipping both would repeat
+        // the same bytes in the bundle.
+        const keptFonts: FontRef[] = [];
+        const seenFontIds = new Set<string>();
+        for (let index = copy.resources.fonts.length - 1; index >= 0; index -= 1) {
+            const ref = copy.resources.fonts[index];
+            const referenced = fontIds.has(ref.fontId) || fontFamilies.has(ref.familyName);
+            if (!referenced || seenFontIds.has(ref.fontId)) continue;
+            seenFontIds.add(ref.fontId);
+            keptFonts.push(ref);
+        }
+        copy.resources.fonts = keptFonts.reverse();
 
         for (const image of copy.resources.images) {
             if (image.source.kind !== 'local') continue;

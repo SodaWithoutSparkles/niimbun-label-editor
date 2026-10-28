@@ -22,6 +22,8 @@
     "done_other": "Exported {{count}} labels.",
     "partial_one": "Exported {{count}} label; {{failed}} could not be read.",
     "partial_other": "Exported {{count}} labels; {{failed}} could not be read.",
+    "missingResources_one": "1 item could not be included: its stored data could not be read.",
+    "missingResources_other": "{{count}} items could not be included: their stored data could not be read.",
     "failed": "Could not export the labels."
   },
   "keyLabels": {
