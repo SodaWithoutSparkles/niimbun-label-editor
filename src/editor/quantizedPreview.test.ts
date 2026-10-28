@@ -174,6 +174,29 @@ describe('quantizedPreviewTrigger — what counts as tuning', () => {
         expect(quantizedPreviewTrigger(textNode({ quantizerParams: { screentoneLevels: 6 } }))?.key).not.toBe(base?.key);
         expect(quantizedPreviewTrigger(textNode({ quantizerParams: { screentonePitchMm: 0.75 } }))?.key).not.toBe(base?.key);
         expect(quantizedPreviewTrigger(textNode({ quantizerParams: { screentoneAngle: 27 } }))?.key).not.toBe(base?.key);
+        // Gamma and boldness are pixel-changing inspector knobs too.
+        expect(quantizedPreviewTrigger(textNode({ quantizerParams: { gamma: 1.5 } }))?.key).not.toBe(base?.key);
+        expect(quantizedPreviewTrigger(textNode({ quantizerParams: { screentoneBoldness: 0.5 } }))?.key).not.toBe(base?.key);
+    });
+
+    it('flips the key on a gamma-only change, including undefined → 1.5', () => {
+        // GitHub #3: gamma changes pixels, so it must re-plan. A node that stores
+        // no gamma keys as '' (it inherits the strategy default), so
+        // `undefined → 1.5` is a real change while `1.5 → 1.5` must be stable.
+        const absent = quantizedPreviewTrigger(textNode())?.key;
+        const set = quantizedPreviewTrigger(textNode({ quantizerParams: { gamma: 1.5 } }))?.key;
+        const same = quantizedPreviewTrigger(textNode({ quantizerParams: { gamma: 1.5 } }))?.key;
+        expect(set).not.toBe(absent);
+        expect(set).toBe(same);
+    });
+
+    it('flips the key on a screentoneBoldness-only change', () => {
+        // Same class of omission as gamma: boldness redraws the screen.
+        const absent = quantizedPreviewTrigger(textNode({ quantizerParams: { screentoneLevels: 6 } }))?.key;
+        const bold = quantizedPreviewTrigger(
+            textNode({ quantizerParams: { screentoneLevels: 6, screentoneBoldness: -0.5 } }),
+        )?.key;
+        expect(bold).not.toBe(absent);
     });
 
     it('keys each screentone knob independently', () => {

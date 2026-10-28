@@ -115,7 +115,8 @@ export interface QuantizedPreviewTrigger {
     readonly nodeId: string;
     /**
      * `hint | threshold | strength | serpentine | screentoneLevels |
-     * screentonePitchMm | screentoneAngle` — the fields the inspector knobs write.
+     * screentonePitchMm | screentoneAngle | gamma | screentoneBoldness` — the
+     * fields the inspector knobs write.
      */
     readonly key: string;
 }
@@ -129,9 +130,11 @@ export interface QuantizedPreviewTrigger {
  * behind it and a preview there is pointless.
  *
  * The key names exactly the fields the per-node knobs write — `quantizerHint`
- * and `quantizerParams.threshold|strength|serpentine` plus the three screentone
- * knobs `quantizerParams.screentoneLevels|screentonePitchMm|screentoneAngle`
- * (`ObjectTab.tsx` `setNumber`/`setString`). It deliberately **excludes**:
+ * and `quantizerParams.threshold|strength|serpentine|gamma` plus the screentone
+ * knobs `quantizerParams.screentoneLevels|screentonePitchMm|screentoneAngle|
+ * screentoneBoldness` (`ObjectTab.tsx` `setNumber`/`setString`). Gamma and
+ * boldness are in: both are inspector knobs that change pixels, so leaving them
+ * out showed a stale dithered preview. It deliberately **excludes**:
  *   - the node's *effective* quantizer id, which also changes when the per-type
  *     settings change (a settings-only edit must not trigger — the canvas is
  *     behind the modal);
@@ -150,11 +153,16 @@ export const quantizedPreviewTrigger = (node: Node | undefined): QuantizedPrevie
             params?.strength ?? '',
             params?.serpentine ?? '',
             // A screentone's knobs change pixels just like the threshold ones: a
-            // pitch/angle/levels edit must re-plan instead of showing the stale
-            // screen.
+            // levels/pitch/angle/boldness edit must re-plan instead of showing
+            // the stale screen.
             params?.screentoneLevels ?? '',
             params?.screentonePitchMm ?? '',
             params?.screentoneAngle ?? '',
+            // Gamma and boldness are inspector knobs that change pixels too; a
+            // gamma-only edit used to leave this key unchanged (GitHub #3), so
+            // the preview kept showing the previous dither.
+            params?.gamma ?? '',
+            params?.screentoneBoldness ?? '',
         ].join('|'),
     };
 };

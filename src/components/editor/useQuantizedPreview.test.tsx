@@ -69,6 +69,13 @@ const withScreentone = (
     return next;
 };
 
+/** A fresh doc with the node's per-node gamma changed — what the gamma knob writes. */
+const withGamma = (base: LabelDoc, gamma: number): LabelDoc => {
+    const next = structuredClone(base);
+    next.nodes[0]!.quantizerParams = { gamma };
+    return next;
+};
+
 /** A fresh doc with an unrelated node field changed (a move). */
 const moved = (base: LabelDoc): LabelDoc => {
     const next = structuredClone(base);
@@ -382,6 +389,20 @@ describe('useQuantizedPreview — only quantization-relevant changes trigger', (
             expect(renderMock, JSON.stringify(knob)).toHaveBeenCalledTimes(1);
             cleanup();
         }
+    });
+
+    it('re-renders for a gamma-only inspector edit', async () => {
+        // GitHub #3: a gamma edit leaves every other per-node field alone, so the
+        // trigger key used to be unchanged and the hook took its "no tuning"
+        // branch — the preview kept showing the previous dither.
+        const doc = makeDoc();
+        const { result, rerender } = mount(props(doc));
+        await act(async () => {
+            rerender(props(withGamma(doc, 1.5)));
+        });
+        await flush(QUANTIZED_PREVIEW_DEBOUNCE_MS + 10);
+        expect(renderMock).toHaveBeenCalledTimes(1);
+        expect(result.current.active).toBe(true);
     });
 
     it('baselines a newly selected node without opening a preview', async () => {
