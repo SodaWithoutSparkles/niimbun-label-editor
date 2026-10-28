@@ -98,11 +98,16 @@ export const padSymbol = (
 };
 
 /**
- * Verdict for the **drawn** module pitch: the node draws the whole raster with a
- * uniform `contain` fit, so the printed pitch is `modulePx` shrunk by
- * `min(targetW/canvasW, targetH/canvasH)`. True when that falls below
- * `minModulePx` (a height-constrained box shrinks the whole raster, matrix codes
- * included).
+ * Verdict for the **drawn** module pitch, in device px, under the node's fit.
+ *
+ * - `contain` (default, 2D `code`/`qr`): the whole raster is scaled uniformly by
+ *   `min(targetW/canvasW, targetH/canvasH)`, so a height-constrained box shrinks
+ *   the module pitch too.
+ * - `stretch` (1D barcodes): the raster fills the box on both axes, so the X
+ *   scale is `targetW / canvasW` alone. The bar pitch is an X measurement, so
+ *   the box height is irrelevant to a 1D symbol.
+ *
+ * True when the drawn pitch falls below `minModulePx`.
  */
 export const drawnPitchBelowMinModule = (
     modulePx: number,
@@ -111,8 +116,14 @@ export const drawnPitchBelowMinModule = (
     canvasW: number,
     canvasH: number,
     minModulePx: number,
+    fit: 'contain' | 'stretch' = 'contain',
 ): boolean => {
+    const xScale = canvasW > 0 ? targetW / canvasW : 1;
     const drawScale =
-        canvasW > 0 && canvasH > 0 ? Math.min(targetW / canvasW, targetH / canvasH) : 1;
+        fit === 'stretch'
+            ? xScale
+            : canvasW > 0 && canvasH > 0
+              ? Math.min(xScale, targetH / canvasH)
+              : 1;
     return modulePx * drawScale < minModulePx;
 };

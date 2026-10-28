@@ -17,7 +17,7 @@ import { codeBwipOptions, drawnPitchBelowMinModule, integerPx, padSymbol } from 
  * (never resampled — a nearest-neighbour downscale corrupts the module matrix).
  * One uniform `scale` on both axes keeps modules square; a non-square format
  * (pdf417, and payload-dependent codeone/ultracode) letterboxes under the node's
- * `contain` fit, exactly like a barcode.
+ * `contain` fit — the QR path; 1D barcodes stretch instead.
  *
  * Device px per module is per-format (`CODE_FORMAT_PX_PER_MODULE`: the matrix
  * codes draw 2 px/module at scale 1, `pdf417` draws 1), so the measured symbol

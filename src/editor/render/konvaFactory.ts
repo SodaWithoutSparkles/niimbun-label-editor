@@ -113,7 +113,11 @@ const flattenPoints = (points: readonly [number, number][]): number[] => {
 export const konvaTextWrap = (wrap: TextWrap): 'word' | 'char' =>
     wrap === 'char' ? 'char' : 'word';
 
-/** The box + fit an image leaf uses; barcodes cover to prioritize full width. */
+/**
+ * The box + fit an image leaf uses. Barcodes stretch: their raster is generated
+ * at the box size with the quiet zone baked in, so the drawn rect must be the
+ * whole box (no crop, no letterbox).
+ */
 interface FitBox {
     w: number;
     h: number;
@@ -352,7 +356,8 @@ export const createKonvaNode = (
                 // labelled placeholder; the print path stays blank-white).
                 return withTransform(new Konva.Group(), node.localTransform);
             }
-            const fit: ImageFit = node.type === 'image' ? node.fit : node.type === 'barcode' ? 'cover' : 'contain';
+            const fit: ImageFit =
+                node.type === 'image' ? node.fit : node.type === 'barcode' ? 'stretch' : 'contain';
             // The node transform lives on a group so the fitted image keeps its
             // local fit offset (`contain` centring / `cover` crop origin). Setting
             // the transform on the image itself would overwrite that x/y with the

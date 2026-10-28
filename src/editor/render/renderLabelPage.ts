@@ -477,7 +477,12 @@ export const buildPolicyMask = async (
                 // rect opaque and it legitimately claims all of it.
                 const asset = assets?.get(leaf.id);
                 if (!asset) continue;
-                const fit = leaf.type === 'image' ? leaf.fit : 'contain';
+                const fit =
+                    leaf.type === 'image'
+                        ? leaf.fit
+                        : leaf.type === 'barcode'
+                          ? 'stretch'
+                          : 'contain';
                 // Group carries the absolute transform; the stencil keeps the
                 // local drawn-rect offset as a child so the two compose (setting
                 // both on one node would let the transform's x/y overwrite the

@@ -348,7 +348,7 @@ describe('nodesIntersectNonPrintable — contain-fit (keep-out false positive)',
         );
         // Resolved synchronously from the recorded ref — NO `assetSizes` entry.
         expect(nodesIntersectNonPrintable(doc)).toEqual([]);
-        // A stray `assetSizes` entry is ignored for images (qr/barcode use it).
+        // A stray `assetSizes` entry is ignored for images (qr/code use it).
         expect(nodesIntersectNonPrintable(doc, new Map([['img', { widthPx: 1, heightPx: 1 }]]))).toEqual([]);
     });
 
@@ -382,12 +382,16 @@ describe('nodesIntersectNonPrintable — contain-fit (keep-out false positive)',
         expect(nodesIntersectNonPrintable(doc, new Map([['qr', { widthPx: 128, heightPx: 0 }]]))).toEqual([]);
     });
 
-    it('barcode without a known size keeps the raw-box behaviour', () => {
-        // 1000×4000 box at y=-1500: a square fit would sit at world y 0..1000
-        // (inside), but without an asset size the raw box is used and pokes out.
+    it('always samples the raw box for a barcode (it stretches to fill it)', () => {
+        // 1000×4000 box at y=-1500: the barcode draws `stretch`, so the whole box
+        // is ink regardless of the raster aspect — it pokes outside the printable
+        // region and must be flagged. (The old `[]` expectation here was the
+        // `contain` letterbox assumption: a square fit sat inside.)
         const doc = docWith(square, [node({ id: 'bc', parentId: null, ...symbol('barcode', 0, -1500, 1000, 4000) })]);
         expect(nodesIntersectNonPrintable(doc)).toEqual(['bc']);
-        // Supplying the size proves it was the fallback, not the geometry, that flagged it.
-        expect(nodesIntersectNonPrintable(doc, new Map([['bc', { widthPx: 100, heightPx: 100 }]]))).toEqual([]);
+        // A supplied size no longer changes the answer — barcodes never letterbox.
+        expect(
+            nodesIntersectNonPrintable(doc, new Map([['bc', { widthPx: 100, heightPx: 100 }]])),
+        ).toEqual(['bc']);
     });
 });

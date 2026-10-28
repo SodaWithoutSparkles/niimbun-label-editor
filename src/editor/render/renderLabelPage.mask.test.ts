@@ -6,6 +6,7 @@ import { nodeLookup } from '../../core/doc/derive';
 import type { LabelDoc, Node, Region } from '../../core/doc/types';
 import { floydSteinberg, rasterDimensions, stucki, type RgbaBuffer } from '../../core/render';
 import type { PreparedAsset } from './assets';
+import { renderBarcode } from './barcodeImage';
 import { clearAssetCache } from './prepareAssets';
 import { renderQr } from './qrImage';
 import { buildPolicyMask, renderLabelPage } from './renderLabelPage';
@@ -80,6 +81,19 @@ const qrNode = (
         data: { kind: 'static', value: QR_PAYLOAD },
         size: { w: sizeHm, h: sizeHm },
         ...extra,
+    });
+
+/** A 1D barcode leaf; `w`/`h` are the node box (hm). */
+const barcodeNode = (id: string, x: number, y: number, w: number, h: number): Node =>
+    node({
+        id,
+        parentId: null,
+        type: 'barcode',
+        visible: true,
+        locked: false,
+        transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        data: { kind: 'static', value: '123456789012' },
+        size: { w, h },
     });
 
 /** A doc with a single inline image resource `i1` (decoded via `resolveImage`). */
@@ -426,6 +440,74 @@ describe('renderLabelPage — R8 stacking / ink-aware policy mask', () => {
             page.rgba.data[(y * page.widthPx + x) * 4]!;
         expect(at(160, 30), 'raster ink on the left').toBe(0);
         expect(at(225, 30), 'raster clear on the right').toBe(255);
+    });
+
+    it('barcode fit: the mask claims the whole box — stretch, no crop and no letterbox', async () => {
+        // A real 1D raster with the quiet zone baked in, generated for a 200×40
+        // target, placed in a 200×100 px node box: `contain` would letterbox the
+        // bars into their own shorter strip; `cover` would crop the source's
+        // left/right ends (quiet zone + end bars). 1D barcodes draw `stretch`, so
+        // the mask must claim the full box and follow the plain per-axis scales.
+        const generated = renderBarcode('123456789012', 'code128', 200, 40, 1, {
+            fill: 'transparent',
+        });
+        if (!generated) throw new Error('renderBarcode returned null');
+        const raster = assetOf(generated.canvas);
+        const boxW = 200;
+        const boxH = 100;
+        expect(raster.heightPx, 'the raster is much shorter than the node box').toBeLessThan(boxH);
+        expect(raster.widthPx, 'the raster does not fill 200 px exactly').toBeLessThanOrEqual(boxW);
+
+        const doc = imageDoc([
+            imageNode('img', 0, 0, 4000, 2000),
+            barcodeNode('bc', 1000, 200, boxW * 10, boxH * 10),
+        ]);
+        const gray = grayAsset();
+
+        const page = await renderLabelPage(doc, {}, { assets: { resolveImage: () => gray } });
+        const built = await buildMask(
+            doc,
+            new Map<string, PreparedAsset>([
+                ['img', gray],
+                ['bc', raster],
+            ]),
+        );
+        expect(built).toBeDefined();
+        if (!built) return;
+        const w = built.mask.width;
+        const maskAt = (x: number, y: number): number => built.mask.data[y * w + x]!;
+
+        // Box px: x 100..300, y 20..120 (stage scale 0.1 px/hm).
+        const xScale = boxW / raster.widthPx;
+        const [du, dv] = darkPixelOf(generated.canvas);
+        const col = 100 + Math.min(boxW - 1, Math.floor(du * xScale) + 1);
+        expect(maskAt(col, 20 + dv), 'a bar claims the barcode policy (index 2)').toBe(2);
+
+        // No letterbox: X and Y stretch independently, so the bars span the whole
+        // box height. `contain` would leave the top and bottom rows unclaimed.
+        expect(maskAt(col, 20), 'the bars reach the top edge of the box').toBe(2);
+        expect(maskAt(col, 119), 'and the bottom edge').toBe(2);
+
+        // No crop: the X mapping is the plain width scale, so the quiet zone keeps
+        // its columns and the **last** bar column still lands inside the box.
+        const quiet = quietPxOf(generated.canvas);
+        expect(quiet, 'the raster has a horizontal quiet zone').toBeGreaterThan(2);
+        expect(maskAt(100, 20), 'the left quiet zone claims no bar ink').toBe(1);
+
+        const pixels = pixelsOf(generated.canvas);
+        const isDark = (u: number): boolean => {
+            const i = u * 4; // row 0
+            return pixels[i + 3]! > 0 && pixels[i]! < 128;
+        };
+        let lastBar = raster.widthPx - 1;
+        while (lastBar > 0 && !isDark(lastBar)) lastBar--;
+        expect(maskAt(100 + Math.floor(lastBar * xScale), 20), 'the end bar survives').toBe(2);
+        expect(100 + Math.floor(lastBar * xScale), 'the last bar is near the box right edge').toBeGreaterThan(250);
+
+        // Raster parity: the page paints the same ink in the same places.
+        const inkAt = (x: number, y: number): number => page.rgba.data[(y * page.widthPx + x) * 4]!;
+        expect(inkAt(col, 20), 'raster ink at the top of the stretched bar').toBe(0);
+        expect(inkAt(100, 20), 'raster clear in the quiet zone').toBe(255);
     });
 
     it('symbol-over-symbol z-order: top ink wins where opaque, bottom policy shows through transparent parts', async () => {

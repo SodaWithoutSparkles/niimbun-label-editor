@@ -240,9 +240,9 @@ const samplePoints = (b: Bounds): [number, number][] => {
  * (matching `node.imageId` → `ImageRef.widthPx/heightPx`), so a keep-out stays
  * stable while the async prepared-asset map is momentarily empty (e.g. during a
  * `updateNodeTransient` frame) — no letterbox flicker. `assetSizes` (keyed by
- * node id) supplies the natural pixel size only for `qr`/`barcode`: a `qr` fits
- * a square regardless (a `1×1` default), while a `barcode` without a supplied
- * size falls back to its raw box. A `stretch`/`cover` image draws the full box,
+ * node id) supplies the natural pixel size only for `qr`/`code`: a `qr` fits a
+ * square regardless (a `1×1` default), while a `barcode` always samples its raw
+ * box (it stretches to the box). A `stretch`/`cover` image draws the full box,
  * so its raw box is sampled either way (see `nodeDrawnLocalPoints`).
  *
  * A document whose regions yield no **drawable** union declares no printable

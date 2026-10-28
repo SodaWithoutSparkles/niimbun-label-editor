@@ -196,23 +196,24 @@ const barcodeLayout = (
 };
 
 /**
- * The **drawn** X-module pitch of a returned barcode: the integer narrow-module
- * scale `scaleX` (recovered from the padded canvas width) shrunk by the node's
- * uniform `contain` fit into the `targetW`×`targetH` box. Mirrors the P2 fix so a
- * test can score the verdict without re-deriving the engine internals.
+ * The **drawn** X-module pitch of a returned 1D barcode: the integer
+ * narrow-module scale `scaleX` (recovered from the padded canvas width) times
+ * the node's stretch X draw scale `targetW / canvasW`. Mirror of
+ * `drawnPitchBelowMinModule(…, 'stretch')` so a test can score the verdict
+ * without re-deriving the engine internals. The box **height** deliberately does
+ * not enter it: a 1D bar pitch is an X measurement and stretch never shrinks the
+ * width to fit the height.
  */
 const drawnPitch = (
     symbol: { canvas: HTMLCanvasElement } | null,
     paddedModules: number,
     targetW: number,
-    targetH: number,
 ): number | null => {
     if (!symbol) return null;
     const { canvas } = symbol;
     if (!canvas.width || !canvas.height) return null;
     const scaleX = Math.round(canvas.width / paddedModules);
-    const drawScale = Math.min(targetW / canvas.width, targetH / canvas.height);
-    return scaleX * drawScale;
+    return scaleX * (targetW / canvas.width);
 };
 
 describe('resolve — image / qr / barcode leaves', () => {
@@ -504,7 +505,7 @@ describe('qr / barcode engines', () => {
         expect(countDark(generated.canvas)).toBeGreaterThan(0);
     });
 
-    it('scores the barcode verdict on the contain-scaled X pitch, not the raw scaleX (P2)', () => {
+    it('scores the barcode verdict on the stretch X pitch, not the raw scaleX (P2/P13)', () => {
         const text = '123456789012';
         const base = baseSymbol({
             bcid: 'code128',
@@ -518,25 +519,26 @@ describe('qr / barcode engines', () => {
         const minModulePx = 3;
 
         // A large box: the integer scaleX is comfortably over the minimum and the
-        // box is taller than the raster, so the contain fit does not shrink it.
+        // padded raster already spans the box width, so the stretch X scale is ~1
+        // and the drawn pitch stays `scaleX`.
         const large = renderBarcode(text, 'code128', 1500, 500, minModulePx);
         expect(large?.belowMinModule).toBe(false);
         expect(large?.belowMinModule).toBe(
-            (drawnPitch(large, paddedModules, 1500, 500) ?? 0) < minModulePx,
+            (drawnPitch(large, paddedModules, 1500) ?? 0) < minModulePx,
         );
 
-        // A tiny target forces scaleX 1 and a uniform contain shrink → the drawn
-        // pitch (scaleX · drawScale) is below the minimum.
+        // A tiny target forces scaleX 1 but is narrower than the padded raster, so
+        // the stretch X scale (`targetW / canvasW`) is below 1 and drags the
+        // printed pitch under the minimum.
         const tinyTargetW = Math.max(8, base.w - 1);
-        const tinyTargetH = 20;
-        const tiny = renderBarcode(text, 'code128', tinyTargetW, tinyTargetH, minModulePx);
+        const tiny = renderBarcode(text, 'code128', tinyTargetW, 20, minModulePx);
         expect(tiny?.belowMinModule).toBe(true);
         expect(tiny?.belowMinModule).toBe(
-            (drawnPitch(tiny, paddedModules, tinyTargetW, tinyTargetH) ?? 0) < minModulePx,
+            (drawnPitch(tiny, paddedModules, tinyTargetW) ?? 0) < minModulePx,
         );
     });
 
-    it('flags a height-constrained barcode: contain shrinks the X pitch below the minimum (P2 fix)', () => {
+    it('a height-constrained box no longer shrinks the barcode X pitch (stretch, P13)', () => {
         const text = '123456789012';
         const base = baseSymbol({
             bcid: 'code128',
@@ -549,9 +551,11 @@ describe('qr / barcode engines', () => {
         const paddedModules = base.w + 2 * barcodeQuietModules('code128');
         const minModulePx = 3;
 
-        // Width forces scaleX 4 (≥ the minimum), but the box is half the raster
-        // high, so the node's uniform `contain` fit shrinks the bars: the raw
-        // `scaleX` verdict would miss it, the drawn-pitch verdict must not.
+        // Width forces scaleX 4 (≥ the minimum) while the box is half the raster
+        // high. 1D barcodes draw `stretch`, so a short box only shortens the bars:
+        // the X pitch is `scaleX · targetW / canvasW` and never sees `targetH`.
+        // The old `contain` verdict scored a uniform shrink the printer never
+        // applied, which is why this case used to (wrongly) warn.
         const targetW = paddedModules * 4;
         const targetH = Math.max(1, Math.floor(base.h / 2));
         const generated = renderBarcode(text, 'code128', targetW, targetH, minModulePx);
@@ -559,18 +563,18 @@ describe('qr / barcode engines', () => {
         if (!generated) return;
 
         const scaleX = Math.round(generated.canvas.width / paddedModules);
-        const drawScale = Math.min(
-            targetW / generated.canvas.width,
-            targetH / generated.canvas.height,
+        expect(generated.canvas.width, 'the padded raster spans the box width').toBe(targetW);
+        expect(generated.canvas.height, 'the raster is taller than the box').toBeGreaterThan(
+            targetH,
         );
         expect(scaleX, 'the integer narrow-module scale meets the minimum').toBeGreaterThanOrEqual(
             minModulePx,
         );
         expect(
-            scaleX * drawScale,
-            'the contain-shrunk printed pitch is below the minimum',
-        ).toBeLessThan(minModulePx);
-        expect(generated.belowMinModule, 'the verdict reflects the drawn pitch').toBe(true);
+            drawnPitch(generated, paddedModules, targetW),
+            'the stretched printed pitch is the width pitch, independent of box height',
+        ).toBe(scaleX);
+        expect(generated.belowMinModule, 'a short box does not shrink a 1D bar').toBe(false);
     });
 
     it('returns a scale-1 barcode with belowMinModule when the target is too small', () => {
@@ -742,7 +746,7 @@ describe('qr / barcode engines', () => {
         expect(small?.belowMinModule).toBe(90 / totalModules < minModulePx);
     });
 
-    it('scores the barcode verdict on the contain-scaled padded X-module pitch (P2)', () => {
+    it('scores the barcode verdict on the stretch-scaled padded X-module pitch (P2/P13)', () => {
         const text = '123456789012';
         const base = baseSymbol({
             bcid: 'code128',
@@ -762,13 +766,13 @@ describe('qr / barcode engines', () => {
         const ok = renderBarcode(text, 'code128', atMin, 500, minModulePx);
         expect(ok?.belowMinModule).toBe(false);
         expect(ok?.belowMinModule).toBe(
-            (drawnPitch(ok, totalModules, atMin, 500) ?? 0) < minModulePx,
+            (drawnPitch(ok, totalModules, atMin) ?? 0) < minModulePx,
         );
 
         const small = renderBarcode(text, 'code128', belowMin, 500, minModulePx);
         expect(small?.belowMinModule).toBe(true);
         expect(small?.belowMinModule).toBe(
-            (drawnPitch(small, totalModules, belowMin, 500) ?? 0) < minModulePx,
+            (drawnPitch(small, totalModules, belowMin) ?? 0) < minModulePx,
         );
         // The bare-bar budget (ignoring the quiet zone) would call it scannable,
         // which is why the padded budget is the correct verdict.

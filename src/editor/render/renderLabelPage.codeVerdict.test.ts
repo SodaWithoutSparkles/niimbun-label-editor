@@ -193,9 +193,10 @@ describe('renderLabelPage — code module verdict per unit class (P11 W5)', () =
     });
 
     it('ultracode (payload-dependent non-square): contain-fit letterboxes, never stretches to the box', async () => {
-        // `code` uses the barcode **contain** fit, so a non-square symbol keeps
-        // its own aspect inside the box instead of QR's square-fill stretch. At
-        // this payload ultracode measures 20×13 modules, quiet 1.
+        // `code` fits **contain** (unlike a 1D barcode, which stretches to its
+        // box), so a non-square symbol keeps its own aspect inside the box
+        // instead of QR's square-fill stretch. At this payload ultracode
+        // measures 20×13 modules, quiet 1.
         const px = CODE_FORMAT_PX_PER_MODULE.ultracode; // 2
         const quiet = codeQuietModules('ultracode'); // 1
         const { w: baseW, h: baseH } = baseSymbol('ultracode');

@@ -245,7 +245,8 @@ export const ResolvedShape = React.memo(function ResolvedShape({
             const asset = assets?.get(node.id);
             const assetWarning = warnings?.has(node.id) ?? false;
             if (asset) {
-                const fit = node.type === 'image' ? node.fit : node.type === 'barcode' ? 'cover' : 'contain';
+                const fit =
+                    node.type === 'image' ? node.fit : node.type === 'barcode' ? 'stretch' : 'contain';
                 const { crop, ...rect } = fitImageAttrs(
                     node.w,
                     node.h,

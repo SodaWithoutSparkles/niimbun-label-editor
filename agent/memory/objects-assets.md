@@ -86,7 +86,7 @@ a fitted leaf), a per-type case in `prepareResolvedAssets` (`prepareAssets.ts`),
   quietPxY, fill)` (fills the whole canvas when `hasFill`, then
   `imageSmoothingEnabled = false` + 1:1 `drawImage`), and
   `drawnPitchBelowMinModule(modulePx, targetW, targetH, canvasW, canvasH,
-  minModulePx)`. `renderCode(text, format, targetWpx, targetHpx, minModulePx = 1,
+  minModulePx, fit = 'contain')`. `renderCode(text, format, targetWpx, targetHpx, minModulePx = 1,
   options) → GeneratedSymbol | null` is the 2D entry point; QR/barcodes were
   rewritten onto the core with **byte-identical behaviour**.
 - `toCanvas` **writes `scaleX`/`scaleY` back onto the options object**
@@ -102,8 +102,19 @@ a fitted leaf), a per-type case in `prepareResolvedAssets` (`prepareAssets.ts`),
   pitch after the node's uniform `contain` fit).
 - QR: `bcid:'qrcode'` + `eclevel`. Barcodes: `bcid` = a `BARCODE_SYMBOLOGIES`
   value, `includetext:false`, `paddingwidth/height:0`. **`code` uses `contain`
-  fit (the barcode path), NOT QR's square-fill**: `codeone`/`ultracode` are
+  fit (the QR path), NOT QR's square-fill**: `codeone`/`ultracode` are
   payload-dependent and non-square, so the whole raster is letterboxed uniformly.
+- **1D barcodes draw `stretch` everywhere (P13, 2026-10-27), never `contain` and
+  never `cover`.** The raster is generated at the node's box size with the quiet
+  zone baked in, so stretch is ~identity and the drawn rect is the whole box
+  (cover used to crop the quiet zone/end bars; contain letterboxed the mask and
+  keep-out). The same `'stretch'` must appear in `konvaFactory` (print),
+  `ResolvedShape` (preview), `renderLabelPage`'s policy mask
+  (`leaf.type === 'barcode' ? 'stretch' : 'contain'`) and implicitly in
+  `resolve.nodeDrawnLocalPoints` (barcode → raw box). The verdict passes
+  `'stretch'`, so the X pitch is `scaleX · targetW / canvasW` — box **height**
+  never shrinks a 1D bar. `fit` stays an image-only doc field; do not add one to
+  `BarcodeNode`.
 - **px/module is per-format** (`CODE_FORMAT_PX_PER_MODULE`): every matrix code
   draws 2 px/module at scale 1 (the QR `baseW / 2 = moduleCount` rule, `/modunit
   2`) **except `pdf417` = 1** (`/modunit 1`) — the `/2` rule does **not**

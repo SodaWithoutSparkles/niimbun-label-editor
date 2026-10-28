@@ -14,9 +14,12 @@ import { barcodeBwipOptions, drawnPitchBelowMinModule, integerPx, padSymbol } fr
  * columns and makes the code unscannable. Text is disabled and the horizontal
  * padding removed so the bars fill the box. `belowMinModule` reports an
  * X-module below the 0.25 mm print minimum; an oversized symbol is still
- * returned and the node's fit helper shrinks it. The verdict is on the **drawn**
- * module pitch after the node's `contain` fit (the whole raster is scaled
- * uniformly into the box), not on the integer narrow-module `scaleX`.
+ * returned and the node's fit helper **stretches** it to the box (1D barcodes
+ * never letterbox and never crop — the raster is generated at the box size, so
+ * stretch is ~identity). The verdict is on the **drawn** X-module pitch: the
+ * integer `scaleX` times the node's X draw scale `targetW / canvasW`, not the
+ * bare integer `scaleX`. The box height does not enter it, because a 1D bar
+ * pitch is an X measurement.
  *
  * A **horizontal quiet zone** (default per symbology, P2) is composited around
  * the bars ourselves. `scaleX` is chosen against the **padded** width and stays
@@ -73,9 +76,10 @@ export const renderBarcode = (
 
         // `scaleX` was chosen against the padded width, so it is the integer
         // narrow-module scale of the raster we return. The node draws the whole
-        // canvas with `fit: 'contain'`, so the **printed** X-module pitch is
-        // `scaleX` shrunk by the contain scale (see `fitImageAttrs`): when the
-        // box is shorter than the raster the uniform fit shrinks the bars too.
+        // canvas with `fit: 'stretch'` (1D barcodes fill their box; no crop, no
+        // letterbox), so the **printed** X-module pitch is `scaleX` times
+        // `targetW / canvas.width` — the width scale only. The box height never
+        // shrinks a bar; it only rescales their length.
         return {
             canvas,
             belowMinModule: drawnPitchBelowMinModule(
@@ -85,6 +89,7 @@ export const renderBarcode = (
                 canvas.width,
                 canvas.height,
                 minModulePx,
+                'stretch',
             ),
         };
     } catch {

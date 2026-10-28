@@ -188,6 +188,68 @@ describe('createKonvaNode — plain Konva, no react-konva', () => {
         expect(img.width()).toBe(1000);
         expect(img.height()).toBe(1000);
     });
+
+    it('stretches a barcode across the whole box with no crop; qr stays contain', () => {
+        const fitDoc = createLabelDoc({
+            backingW: 3000,
+            backingH: 2000,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 3000, h: 2000 }],
+            nodes: [
+                node({
+                    id: 'bc',
+                    parentId: null,
+                    type: 'barcode',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    data: { kind: 'static', value: '123456789012' },
+                    size: { w: 1000, h: 300 },
+                }),
+                node({
+                    id: 'q',
+                    parentId: null,
+                    type: 'qr',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    data: { kind: 'static', value: 'hello' },
+                    size: { w: 1000, h: 300 },
+                }),
+            ],
+        });
+        // A non-matching 4:1 raster in a 10:3 box: `contain` would letterbox it,
+        // `cover` would crop it, so the fit choice is observable on every attr.
+        const assets = new Map<string, PreparedAsset>([
+            ['bc', { image: {} as CanvasImageSource, widthPx: 400, heightPx: 100 }],
+            ['q', { image: {} as CanvasImageSource, widthPx: 100, heightPx: 100 }],
+        ]);
+        const imageOf = (id: string): Konva.Image => {
+            const found = resolve(fitDoc).find((n) => n.id === id);
+            if (!found) throw new Error(`missing node ${id}`);
+            return (createKonvaNode(found, assets) as Konva.Group).getChildren()[0] as Konva.Image;
+        };
+
+        const bc = imageOf('bc');
+        expect(bc.x(), 'barcode draws from the box origin').toBe(0);
+        expect(bc.y()).toBe(0);
+        expect(bc.width(), 'barcode fills the box width').toBe(1000);
+        expect(bc.height(), 'barcode fills the box height').toBe(300);
+        expect(bc.crop(), 'barcode never crops its quiet zone/end bars').toEqual({
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        });
+
+        // Regression guard for scope creep: 2D `qr` keeps the centre-containment.
+        // 100×100 square in a 1000×300 box → 300×300 at x=350.
+        const qr = imageOf('q');
+        expect(qr.x()).toBe(350);
+        expect(qr.y()).toBe(0);
+        expect(qr.width()).toBe(300);
+        expect(qr.height()).toBe(300);
+        expect(qr.crop(), 'contain never crops').toEqual({ x: 0, y: 0, width: 0, height: 0 });
+    });
 });
 
 describe('symbol draw — nearest-neighbour sceneFunc (option D)', () => {

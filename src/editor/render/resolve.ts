@@ -325,17 +325,19 @@ export const nodeLocalPoints = (node: Node): [number, number][] => {
 /**
  * Local outline of what a node **actually draws**, in the node's local space.
  *
- * `image`/`qr`/`barcode` are painted through `fitImageAttrs`. A `contain` fit
- * places the raster in a centred sub-rect of the node's `(0,0,w,h)` box whenever
- * the content aspect differs from the box aspect, so this helper returns that
- * drawn rect — not the raw box — and a keep-out predicate cannot falsely flag a
- * letterboxed symbol/image whose *box* pokes outside the printable area while
- * its *content* stays well inside.
+ * `image`/`qr`/`barcode`/`code` are all painted through `fitImageAttrs`. A
+ * `contain` fit places the raster in a centred sub-rect of the node's
+ * `(0,0,w,h)` box whenever the content aspect differs from the box aspect, so
+ * this helper returns that drawn rect — not the raw box — and a keep-out
+ * predicate cannot falsely flag a letterboxed symbol/image whose *box* pokes
+ * outside the printable area while its *content* stays well inside.
  *
  * - `group`/`shape`/`text` (and anything else) → {@link nodeLocalPoints} unchanged;
- * - `image` with `fit: 'stretch'` or `'cover'` → the raster fills the whole box
- *   (`fitImageAttrs`), so the raw box is returned (no letterbox to allow for);
- * - `image` with `fit: 'contain'` (or absent = default) / `barcode` / `code` → when
+ * - `image` with `fit: 'stretch'` or `'cover'`, and `barcode` (a rendering
+ *   invariant: its raster is generated at the box size and drawn `stretch`) →
+ *   the raster fills the whole box (`fitImageAttrs`), so the raw box is returned
+ *   (no letterbox to allow for);
+ * - `image` with `fit: 'contain'` (or absent = default) / `code` → when
  *   `assetSize` is present with positive dimensions, contain-fit using the aspect
  *   `widthPx/heightPx`; otherwise fall back to the raw box;
  * - `qr` → the symbol canvas is always square, so it contain-fits a square into
@@ -362,7 +364,11 @@ export const nodeDrawnLocalPoints = (
 
     // Only `contain` letterboxes inside the box; `stretch`/`cover` both draw the
     // full box (see `fitImageAttrs`), so a `stretch`/`cover` image that genuinely
-    // pokes outside must be sampled by its raw box.
+    // pokes outside must be sampled by its raw box. A barcode always draws its
+    // raw box: its fit is a rendering invariant (`stretch`), not document data.
+    if (node.type === 'barcode') {
+        return nodeLocalPoints(node);
+    }
     if (node.type === 'image' && node.fit !== undefined && node.fit !== 'contain') {
         return nodeLocalPoints(node);
     }
@@ -380,7 +386,7 @@ export const nodeDrawnLocalPoints = (
         srcW = hasSize ? assetSize.widthPx : 1;
         srcH = hasSize ? assetSize.heightPx : 1;
     } else {
-        // image/barcode without a known aspect cannot be letterboxed here; keep
+        // image/code without a known aspect cannot be letterboxed here; keep
         // the legacy raw-box behaviour.
         if (!assetSize || assetSize.widthPx <= 0 || assetSize.heightPx <= 0) {
             return nodeLocalPoints(node);

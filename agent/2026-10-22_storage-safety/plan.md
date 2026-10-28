@@ -200,3 +200,34 @@ Source: [`upstream-dev-survey.md`](upstream-dev-survey.md) (niimblue
 Do **not** adopt from upstream: screentone replacement or its px/float-angle
 parameters, `beforeunload` dirty guard (we autosave), `noScaleCache` (Konva does
 not cache), nested `{var}` token syntax (we use JS templates).
+
+## Wave 3 — correctness backlog (owner go 2026-10-26, all six, ranked)
+
+Source: `handoff.md` § "Next work". One phase per item, one commit each, each
+through review before commit.
+
+| Phase | Item | Failure mode | Approach | Status |
+| --- | --- | --- | --- | --- |
+| **P12** | Print CSV readiness (#6/#7) | attached-but-loading/failed CSV = "no CSV" ⇒ Print builds a 1-record fallback; preview never invalidates on arrival | `usePrintJob` status + revision; gate button **and** builder; preview re-runs on the revision — [`phase12_action-plan.md`](phase12_action-plan.md) | **DONE** `51495c2` |
+| **P13** | Barcode fit coherence | raster + preview draw 1D barcodes `cover`; verdict and policy mask assume `contain` ⇒ quiet zone / end bars cropped, "too small" over-warns | pick **one** fit and align raster, preview, verdict (`drawnPitchBelowMinModule`), mask (`renderLabelPage`) and keep-out (`resolve.nodeDrawnLocalPoints`) | next |
+| **P14** | `shrink` text loss (D-42) | `Konva.Text` is built with `height: node.h` before the shrink scale, so lines past the unscaled box are dropped; the inline overlay never downscales | fix both, keep `wrappedLineStarts` in sync | — |
+| **P15** | Gamma preview trigger (#3) | `quantizedPreviewTrigger` omits `gamma` ⇒ a gamma-only edit shows no preview | add `gamma` to the trigger | — |
+| **P16** | Persistent dither invalidation (#2) | `useQuantizedPreview` omits `quantizerDefaults` / `defaultQuantizerByType` | wire `quantizerSettingsKey` into the effect deps (not the peek trigger — D-59) | — |
+| **P17** | `clip` semantics (D-42) | `clip` renders word-wrap + truncation instead of "no wrap, hard clip" | settle the `types.ts` vs `objects.ts` contradiction first, then align renderers | — |
+
+Explicit non-goals for wave 3: PNG export, PDF export, preset marketplace,
+`promptText` (dead code — delete or adopt later), D-70 cross-tab atomicity
+(needs a `StorageAdapter.transaction`).
+
+## Commit strategy (wave 3)
+
+Semantic commits, one per phase, only after the phase review is green:
+
+1. `fix(print): gate printing on the attached CSV actually loading` ✅ `51495c2`
+2. `fix(render): draw barcodes with the fit the verdict and mask assume`
+3. `fix(text): keep every wrapped line when shrink scales the box`
+4. `fix(dither): show the preview when only gamma changes`
+5. `fix(dither): rebuild the preview when the persistent quantizer defaults change`
+6. `fix(text): make clip mean clip, not wrap-and-truncate`
+
+No `git stash`, no destructive git commands, no push.
