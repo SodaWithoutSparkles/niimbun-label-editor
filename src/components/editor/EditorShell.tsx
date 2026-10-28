@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { useStore } from '../../store/useStore';
-import { getAppJobRunner } from '../../print/appTransport';
+import { getAppJobRunner, getAppTransport } from '../../print/appTransport';
 import { PrintDialog } from '../print/PrintDialog';
 import { usePrintJob } from '../print/usePrintJob';
 import { InsertRail } from './InsertRail';
@@ -59,6 +59,22 @@ export const EditorShell: React.FC = () => {
     useEffect(() => {
         if (!currentDoc && isPrintOpen) closePrint();
     }, [currentDoc, isPrintOpen, closePrint]);
+
+    // One fire-and-forget read per print-dialog open, so the dialog's roll/dpi
+    // mismatch warning and keep-out geometry describe the roll that is loaded
+    // now rather than the one loaded at connect time. Deliberately no spinner
+    // and no timer: the transport's status subscription delivers the update,
+    // and a roll swapped while the dialog is open is covered by the adapter's
+    // own RFID-fetched subscription. Read the transport at effect time (not a
+    // `[]` memo) so a transport swap is respected.
+    useEffect(() => {
+        if (!isPrintOpen) return;
+        try {
+            void getAppTransport().refreshInfo?.()?.catch(() => undefined);
+        } catch {
+            // Fire-and-forget: a synchronous throw is as harmless as a rejection.
+        }
+    }, [isPrintOpen]);
 
     // System paste (editor only): an image becomes a new image node, plain text
     // a new text node. The seams read the store at paste time, so the effect

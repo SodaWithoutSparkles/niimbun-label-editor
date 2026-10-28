@@ -442,6 +442,32 @@ describe('MockTransport printer info', () => {
     expect(connected).not.toHaveProperty('hardwareVersion');
     expect(connected).not.toHaveProperty('softwareVersion');
     expect(connected).not.toHaveProperty('rfid');
+    expect(connected).not.toHaveProperty('labelType');
+  });
+
+  it('reports a configured labelType (the printer-reported roll type)', async () => {
+    const connected = await connectedStatus({ labelType: 3 as LabelType });
+
+    expect(connected?.labelType).toBe(3);
+    // Not a capability: it describes the loaded roll, not what the printer supports.
+    expect(connected?.capabilities?.paperTypes).toEqual([1, 2, 5]);
+  });
+
+  it('derives labelType from the RFID consumables type by default', async () => {
+    const connected = await connectedStatus({
+      rfid: { tagPresent: true, consumablesType: 2 as LabelType },
+    });
+
+    expect(connected?.labelType).toBe(2);
+  });
+
+  it('lets an explicit labelType override the RFID-derived one', async () => {
+    const connected = await connectedStatus({
+      rfid: { tagPresent: true, consumablesType: 1 as LabelType },
+      labelType: 4 as LabelType,
+    });
+
+    expect(connected?.labelType).toBe(4);
   });
 
   it('refreshInfo re-emits an independent copy of the status', async () => {

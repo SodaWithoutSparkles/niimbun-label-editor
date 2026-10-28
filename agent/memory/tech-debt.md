@@ -104,3 +104,4 @@ goes **here** (or into the matching area file if it needs more than a line), not
 only into `state.md` (gitignored) or the phase handoff. Keep entries short; link
 out for detail. `agent/memory/csv-templates.md` and `objects-assets.md` hold the
 deeper "how it works / gotchas" that these items assume.
+| D-71 | print | **`connect()` emits several status objects** (2026-10-28, P18): the library's own `connect` event makes `handleConnect` emit `{...lastConnected, state:'connected'}`, then `connect()` emits its built status, and any negotiation metadata event landing after `handleConnect` adds another. Harmless (the store/chip writes are idempotent) but redundant traffic; suppress `handleConnect`'s emit while our own connect flow is in progress | extra status emissions per connect; no correctness impact | chore — add a `connect()`-scope flag when touching the adapter again |

@@ -18,6 +18,7 @@ import type {
   RfidInfo,
 } from '@mmote/niimbluelib';
 import { PrintAbortedError } from './transport';
+import { LABEL_TYPE_OPTIONS } from './labelTypeNames';
 import type {
   PrinterCapabilities,
   PrinterRfidInfo,
@@ -138,12 +139,30 @@ export class NiimbotTransport implements PrinterTransport {
     // disconnects itself once it passes its own fail threshold.
   };
 
+  // The library re-reads metadata on its own: RFID after a lid/roll swap (the
+  // heartbeat's `paperRfidSuccess`/`lidClosed` change detector) and after every
+  // print, printer info during connect negotiation and `refreshInfo()`. Both
+  // paths announce the result only through these events, so without them the
+  // cached roll/dpi/versions/RFID would stay frozen at connect time.
+  private readonly handleRfidInfoFetched = (): void => {
+    this.republishMetadata('rfid');
+  };
+
+  private readonly handlePrinterInfoFetched = (): void => {
+    this.republishMetadata('printer');
+  };
+
   constructor(options: NiimbotTransportOptions = {}) {
     this.options = options;
   }
 
   async connect(): Promise<void> {
     this.emitStatus({ state: 'connecting' });
+
+    // A fresh session must not inherit the previous printer's fields: clear the
+    // cache before wiring so the negotiation events repopulate it, and so the
+    // "keep the last known value" merge below can only draw on this session.
+    this.lastConnected = { state: 'connected' };
 
     const client = this.getOrCreateClient();
     this.wire(client);
@@ -187,6 +206,11 @@ export class NiimbotTransport implements PrinterTransport {
     }
 
     this.unwire(client);
+    // Drop the connection flag before awaiting: a metadata handler already
+    // queued (the library's own `void fetchRfidInfo()` chains) must not emit a
+    // `connected` status after the disconnect has started. Mirrors the
+    // connect-failure path.
+    this.connected = false;
     try {
       await client.disconnect();
     } finally {
@@ -211,6 +235,11 @@ export class NiimbotTransport implements PrinterTransport {
       printerInfo,
       rfidInfo,
       this.lastConnected.deviceName,
+      // Same rule as the event path: a produced paper/tag read is authoritative
+      // for the roll fields, so the manual Refresh can clear a swapped roll too.
+      // `safeFetchRfidInfo` falls back to the cache on failure, so absence can
+      // never be fabricated by a rejected read.
+      rfidReadProducedData(rfidInfo) ? RFID_OWNED_FIELDS : [],
     );
     this.lastConnected = status;
     // A refresh must not clobber an in-flight print's state.
@@ -383,6 +412,8 @@ export class NiimbotTransport implements PrinterTransport {
     client.on('disconnect', this.handleDisconnect);
     client.on('heartbeat', this.handleHeartbeat);
     client.on('heartbeatfailed', this.handleHeartbeatFailed);
+    client.on('printerinfofetched', this.handlePrinterInfoFetched);
+    client.on('rfidinfofetched', this.handleRfidInfoFetched);
     this.wired = true;
   }
 
@@ -396,6 +427,8 @@ export class NiimbotTransport implements PrinterTransport {
     client.off('disconnect', this.handleDisconnect);
     client.off('heartbeat', this.handleHeartbeat);
     client.off('heartbeatfailed', this.handleHeartbeatFailed);
+    client.off('printerinfofetched', this.handlePrinterInfoFetched);
+    client.off('rfidinfofetched', this.handleRfidInfoFetched);
     this.wired = false;
   }
 
@@ -404,34 +437,78 @@ export class NiimbotTransport implements PrinterTransport {
     client?.stopHeartbeat();
   }
 
-  /** Build the rich 'connected' status from freshly fetched printer + RFID info.
-   * Shared by connect() and refreshInfo() so the two can never drift. */
+  /**
+   * Rebuild the cached status from the client's own caches after the library
+   * re-fetched something, and publish it when the channel is ours to use.
+   *
+   * The event payloads are ignored on purpose: `getPrinterInfo()` /
+   * `getRfidInfo()` hold the same freshly merged objects, so the single
+   * {@link buildConnectedStatus} helper serves this path and the connect /
+   * refresh path, and their field lists cannot drift.
+   *
+   * `scope` says which read this event belongs to. `rfidinfofetched` fires
+   * unconditionally — the library catches every sub-read and still emits — so
+   * an empty/paper-only payload may just be a failed read. The tag read is
+   * therefore authoritative for the roll fields **only when it actually
+   * produced data** ({@link rfidReadProducedData}); otherwise the previous
+   * values are kept, so one comms hiccup cannot wipe a known roll.
+   * `printerinfofetched` can carry a partial HW/SW/battery payload, so it
+   * always keeps the last known value for anything it omits.
+   */
+  private republishMetadata(scope: 'rfid' | 'printer'): void {
+    const client = this.client;
+    if (!client) {
+      return;
+    }
+    const rfidInfo = client.getRfidInfo();
+    const status = this.buildConnectedStatus(
+      client,
+      client.getPrinterInfo(),
+      rfidInfo,
+      this.lastConnected.deviceName,
+      scope === 'rfid' && rfidReadProducedData(rfidInfo) ? RFID_OWNED_FIELDS : [],
+    );
+    // Always refresh the cache. When we cannot emit, the connect flow owns the
+    // first status and the print settle publishes the result.
+    this.lastConnected = status;
+    // The library emits these during connect() negotiation, before we are
+    // 'connected'. Mid-print the job owns the status channel.
+    if (!this.connected || this.currentState === 'printing') {
+      return;
+    }
+    this.emitStatus(status);
+  }
+
+  /**
+   * Build the rich 'connected' status from freshly fetched printer + RFID info.
+   * Shared by connect(), refreshInfo() and the metadata-fetched events so all
+   * three can never drift.
+   *
+   * Fields the fresh read did not carry keep their last known value (a partial
+   * payload must never `undefined` a known value) — except for the fields in
+   * `authoritative`, which the caller's read owns outright and may therefore
+   * clear.
+   */
   private buildConnectedStatus(
     client: NiimbotAbstractClient,
     printerInfo: PrinterInfo,
     rfidInfo: CombinedRfidInfo,
     deviceName: string | undefined,
+    authoritative: readonly (keyof PrinterStatus)[] = [],
   ): PrinterStatus {
-    const status: PrinterStatus = {
-      state: 'connected',
+    const fresh: Partial<PrinterStatus> = {
       deviceName: deviceName ?? printerInfo.serial ?? client.getModelMetadata()?.model,
       dpi: dpiOf(printerInfo),
       batteryPercent: printerInfo.batteryPercents,
       rollWidthHm: hmOf(rfidInfo.paperInfo?.paperWidth),
       rollHeightHm: hmOf(rfidInfo.paperInfo?.paperHeight),
       capabilities: capabilitiesOf(client),
+      hardwareVersion: printerInfo.hardwareVersion,
+      softwareVersion: printerInfo.softwareVersion,
+      rfid: rfidOf(rfidInfo.labelRfidInfo),
+      labelType: reportedLabelTypeOf(rfidInfo),
     };
-    if (printerInfo.hardwareVersion !== undefined) {
-      status.hardwareVersion = printerInfo.hardwareVersion;
-    }
-    if (printerInfo.softwareVersion !== undefined) {
-      status.softwareVersion = printerInfo.softwareVersion;
-    }
-    const rfid = rfidOf(rfidInfo.labelRfidInfo);
-    if (rfid !== undefined) {
-      status.rfid = rfid;
-    }
-    return status;
+    return mergeKnownValues(this.lastConnected, fresh, authoritative);
   }
 
   private async safeFetchPrinterInfo(client: NiimbotAbstractClient): Promise<PrinterInfo> {
@@ -517,6 +594,80 @@ function capabilitiesOf(client: NiimbotAbstractClient): PrinterCapabilities | un
 
 function hmOf(mm: number | undefined): number | undefined {
   return mm === undefined ? undefined : mmToHm(mm);
+}
+
+/**
+ * The label type the printer reports for the loaded roll: the RFID tag's own
+ * `consumablesType` first, then the paper settings' `paperType`. `LabelType.Invalid`
+ * and values outside our {@link LABEL_TYPE_OPTIONS} count as "not reported", so
+ * the next source gets a turn; no source yields `undefined` (absent).
+ */
+function reportedLabelTypeOf(rfidInfo: CombinedRfidInfo): LabelType | undefined {
+  const candidates = [
+    rfidInfo.labelRfidInfo?.consumablesType,
+    rfidInfo.paperInfo?.paperType,
+  ];
+  return candidates.find(
+    (type): type is LabelType =>
+      type !== undefined && LABEL_TYPE_OPTIONS.some((option) => option.value === type),
+  );
+}
+
+/**
+ * Status fields the RFID tag read owns outright once it produced data. The
+ * library's `fetchRfidInfo()` catches every sub-read and emits
+ * `rfidinfofetched` regardless, so only {@link rfidReadProducedData} reads may
+ * clear these: a roll swapped to one that reports nothing must not inherit the
+ * previous roll's dimensions/type, but a failed read must not wipe them either.
+ */
+const RFID_OWNED_FIELDS: readonly (keyof PrinterStatus)[] = [
+  'rollWidthHm',
+  'rollHeightHm',
+  'rfid',
+  'labelType',
+];
+
+/**
+ * True when an RFID read returned anything at all. The library's
+ * `fetchRfidInfo()` swallows each failing sub-read and still emits
+ * `rfidinfofetched` with whatever it managed to collect, so an empty payload
+ * means "the read failed", not "the roll was removed". A payload with
+ * `paperInfo` but no tag is a successful paper read (and a real pristine roll).
+ */
+function rfidReadProducedData(rfidInfo: CombinedRfidInfo): boolean {
+  return rfidInfo.paperInfo !== undefined || rfidInfo.labelRfidInfo !== undefined;
+}
+
+/**
+ * Overlay a freshly built status on the last known one.
+ *
+ * A field the fresh read reported wins; a field it did not carry keeps its
+ * previous value, so a partial payload never erases data we already know —
+ * unless the field is listed in `authoritative`, where absence means "the
+ * device no longer reports it" and the cached value is dropped. The result is
+ * always `state: 'connected'` and never carries a transient `error`.
+ */
+function mergeKnownValues(
+  previous: PrinterStatus,
+  fresh: Partial<PrinterStatus>,
+  authoritative: readonly (keyof PrinterStatus)[] = [],
+): PrinterStatus {
+  const merged: PrinterStatus = { state: 'connected' };
+  const target = merged as unknown as Record<string, unknown>;
+  for (const [key, value] of Object.entries(fresh)) {
+    if (key === 'state') {
+      continue;
+    }
+    if (value !== undefined) {
+      target[key] = value;
+    } else if (!authoritative.includes(key as keyof PrinterStatus)) {
+      const known = previous[key as keyof PrinterStatus];
+      if (known !== undefined) {
+        target[key] = known;
+      }
+    }
+  }
+  return merged;
 }
 
 /** Map a label RFID tag onto {@link PrinterRfidInfo}; `undefined` when there is

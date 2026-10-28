@@ -154,11 +154,30 @@ Printing a **25 mm** label on the **567-dot (~48 mm)** printhead left-aligns con
 
 - **`PrinterStatus` is wider than the 5 connect-time fields:** `deviceName`, `dpi`, `batteryPercent`,
   `rollWidthHm`/`rollHeightHm`, `capabilities`, plus `hardwareVersion`, `softwareVersion` and
-  `rfid?: { tagPresent, usedPaper?, allPaper?, consumablesType? }`. `rfid` comes from
-  `CombinedRfidInfo.labelRfidInfo` (NOT `ribbonRfidInfo`), is `undefined` when absent, and is captured
-  once at connect — `refreshInfo?()` re-fetches printer+RFID and re-emits. **⚠ Advisory only**
-  (tag-derived, possibly user-written or harvested) — never treat as a measurement (see the
-  narrow-roll note above).
+  `rfid?: { tagPresent, usedPaper?, allPaper?, consumablesType? }` plus
+  `labelType?` (the roll type the printer reports: tag `consumablesType` first,
+  then `paperInfo.paperType`; `Invalid`/unknown ⇒ absent — **not** a capability).
+  `rfid` comes from `CombinedRfidInfo.labelRfidInfo` (NOT `ribbonRfidInfo`), is
+  `undefined` when absent, and is **kept fresh** (P18): the adapter subscribes
+  `rfidinfofetched` + `printerinfofetched` and rebuilds `lastConnected` through
+  `buildConnectedStatus` from `getPrinterInfo()`/`getRfidInfo()`, emitting only
+  when `connected` and not `printing` (the job's settle publishes mid-print
+  updates; connect()'s negotiation events only update the cache). The library
+  re-reads RFID on a lid/paper-RFID heartbeat change and after every print, so
+  roll swaps are seen without the manual Refresh. `rfidinfofetched` is
+  authoritative for the roll fields (`rollWidthHm`/`rollHeightHm`/`rfid`/
+  `labelType`) **only when the read produced data** (`paperInfo` or
+  `labelRfidInfo` present): the library catches every sub-read and emits the
+  event regardless, so an empty payload is a failed read and keeps the previous
+  roll. A produced paper-only read still **clears** `rfid`/`labelType`, so a
+  swapped roll's tag data cannot describe a roll that is gone.
+  `printerinfofetched` (and a read that produced nothing) keeps the previous
+  value for a field the payload omits; `refreshInfo()` applies the same
+  produced-data rule. `refreshInfo?()` is now the explicit one-shot read
+  (`EditorShell` calls it once per print-dialog open, fire-and-forget) — **do
+  not add a poll**; the event subscriptions are the live path. **⚠ Advisory only**
+  (tag-derived, possibly user-written or harvested) — never treat as a measurement
+  (see the narrow-roll note above).
 - **Paper dims are NOT duplicated:** the RFID dimensions cell renders `hmToMm(rollWidthHm) ×
   hmToMm(rollHeightHm)`. **There is no firmware field in the lib** — the reference's `HW | sw | FW`
   strip is 4 cells where "FW" is a trailing *tag*, not a value.

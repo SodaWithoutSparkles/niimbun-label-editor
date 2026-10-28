@@ -20,10 +20,11 @@ import type { Node } from '../../core/doc/types';
  * closed. Heavy editor children are stubbed so the test isolates the print seam.
  */
 
-const { engineEvaluate, engineDispose, createEngineMock } = vi.hoisted(() => ({
+const { engineEvaluate, engineDispose, createEngineMock, refreshInfoMock } = vi.hoisted(() => ({
     engineEvaluate: vi.fn(async () => 'EVALUATED' as unknown),
     engineDispose: vi.fn(),
     createEngineMock: vi.fn(),
+    refreshInfoMock: vi.fn(async () => undefined),
 }));
 
 vi.mock('../../templates/jsEngine', () => ({
@@ -56,6 +57,8 @@ vi.mock('../../print/appTransport', () => ({
         run: vi.fn(async () => ({ cancelled: false, pagesPrinted: 0 })),
         cancel: vi.fn(),
     }),
+    // Only `refreshInfo` is exercised by the shell's dialog-open refresh.
+    getAppTransport: () => ({ refreshInfo: refreshInfoMock }),
 }));
 
 // Stub the editor surface: this test only exercises the print mounting seam.
@@ -105,6 +108,8 @@ beforeEach(() => {
     engineDispose.mockReset();
     createEngineMock.mockReset();
     createEngineMock.mockImplementation(() => ({ evaluate: engineEvaluate, dispose: engineDispose }));
+    refreshInfoMock.mockReset();
+    refreshInfoMock.mockImplementation(async () => undefined);
 });
 
 afterEach(() => {
@@ -164,5 +169,34 @@ describe('EditorShell — print dialog mount gate (decision 42)', () => {
         await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
         await waitFor(() => expect(resolveSpy).toHaveBeenCalled());
         await waitFor(() => expect(createEngineMock).toHaveBeenCalledTimes(1));
+    });
+
+    it('refreshes printer info once per print-dialog open', async () => {
+        await setupStore();
+
+        render(<EditorShell />);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(refreshInfoMock).not.toHaveBeenCalled();
+
+        act(() => useStore.setState({ isPrintOpen: true }));
+        await waitFor(() => expect(refreshInfoMock).toHaveBeenCalledTimes(1));
+
+        act(() => useStore.setState({ isPrintOpen: false }));
+        act(() => useStore.setState({ isPrintOpen: true }));
+
+        await waitFor(() => expect(refreshInfoMock).toHaveBeenCalledTimes(2));
+    });
+
+    it('swallows a rejected refreshInfo without blocking the dialog', async () => {
+        refreshInfoMock.mockRejectedValueOnce(new Error('Not connected'));
+        await setupStore();
+
+        render(<EditorShell />);
+        act(() => useStore.setState({ isPrintOpen: true }));
+
+        await waitFor(() => expect(refreshInfoMock).toHaveBeenCalledTimes(1));
+        // The dialog mounted normally and nothing surfaced the rejection.
+        await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+        expect(screen.queryByText(/Not connected/)).not.toBeInTheDocument();
     });
 });

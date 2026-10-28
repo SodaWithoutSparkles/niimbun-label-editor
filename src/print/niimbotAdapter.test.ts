@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { instantiateClient, PageColorType } from '@mmote/niimbluelib';
+import { instantiateClient, LabelType, PageColorType, ResolutionClass } from '@mmote/niimbluelib';
 import type { EncodedImage, NiimbotAbstractClient } from '@mmote/niimbluelib';
 import { NiimbotTransport } from './niimbotAdapter';
 import { PrintAbortedError } from './transport';
@@ -23,6 +23,10 @@ interface FakeClient {
   client: NiimbotAbstractClient;
   order: string[];
   handlers: Record<string, (event: unknown) => void>;
+  /** Replace what the cache getters (`getPrinterInfo`/`fetchPrinterInfo`) return. */
+  setPrinterInfo: (info: Record<string, unknown>) => void;
+  /** Replace what the cache getters (`getRfidInfo`/`fetchRfidInfo`) return. */
+  setRfidInfo: (info: Record<string, unknown>) => void;
   newPrintTask: ReturnType<typeof vi.fn>;
   printInit: ReturnType<typeof vi.fn>;
   printPage: ReturnType<typeof vi.fn>;
@@ -55,6 +59,16 @@ function makeFakeClient(
   const rfidInfo = {
     paperInfo: { valid: true, paperWidth: 40, paperHeight: 30 },
     ...options.rfidInfo,
+  };
+  // Mutable caches: the adapter reads `getPrinterInfo()`/`getRfidInfo()` when the
+  // library announces a fetch, so a test can move them between events.
+  let currentPrinterInfo: Record<string, unknown> = printerInfo;
+  let currentRfidInfo: Record<string, unknown> = rfidInfo;
+  const setPrinterInfo = (info: Record<string, unknown>): void => {
+    currentPrinterInfo = info;
+  };
+  const setRfidInfo = (info: Record<string, unknown>): void => {
+    currentRfidInfo = info;
   };
 
   const printInit = vi.fn(async () => {
@@ -110,10 +124,10 @@ function makeFakeClient(
     startHeartbeat,
     stopHeartbeat,
     setHeartbeatInterval,
-    fetchPrinterInfo: vi.fn(async () => printerInfo),
-    fetchRfidInfo: vi.fn(async () => rfidInfo),
-    getPrinterInfo: vi.fn(() => ({})),
-    getRfidInfo: vi.fn(() => rfidInfo),
+    fetchPrinterInfo: vi.fn(async () => currentPrinterInfo),
+    fetchRfidInfo: vi.fn(async () => currentRfidInfo),
+    getPrinterInfo: vi.fn(() => currentPrinterInfo),
+    getRfidInfo: vi.fn(() => currentRfidInfo),
     getModelMetadata: vi.fn(() => options.metadata),
   };
 
@@ -121,6 +135,8 @@ function makeFakeClient(
     client: raw as unknown as NiimbotAbstractClient,
     order,
     handlers,
+    setPrinterInfo,
+    setRfidInfo,
     newPrintTask,
     printInit,
     printPage,
@@ -837,6 +853,384 @@ describe('NiimbotTransport printer info + heartbeat', () => {
 
     expect(statuses.some((status) => status.state === 'error')).toBe(false);
     expect(statuses).toHaveLength(0);
+  });
+});
+
+describe('NiimbotTransport metadata refresh (library re-reads)', () => {
+  const lastStatus = (statuses: PrinterStatus[]): PrinterStatus | undefined => statuses.at(-1);
+
+  it('republishes the roll, RFID and label type when the library re-reads the tag', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    // The library swapped the roll and re-read the tag (lid / paperRfid change).
+    fake.setRfidInfo({
+      paperInfo: { valid: true, paperWidth: 50, paperHeight: 25 },
+      labelRfidInfo: {
+        tagPresent: true,
+        usedPaper: 3,
+        allPaper: 80,
+        consumablesType: LabelType.WithGaps,
+      },
+    });
+    fake.handlers['rfidinfofetched']?.({ info: {} });
+
+    expect(statuses).toHaveLength(1);
+    expect(lastStatus(statuses)).toMatchObject({
+      state: 'connected',
+      deviceName: 'Fake',
+      rollWidthHm: 5000,
+      rollHeightHm: 2500,
+      labelType: LabelType.WithGaps,
+      rfid: { tagPresent: true, usedPaper: 3, allPaper: 80, consumablesType: LabelType.WithGaps },
+    });
+  });
+
+  it('republishes dpi/versions/battery when the library re-reads printer info', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    fake.setPrinterInfo({
+      serial: 'SN-2',
+      batteryPercents: 33,
+      resolutionClass: ResolutionClass.DPI203,
+      hardwareVersion: 'HW-9',
+      softwareVersion: 'SW-9',
+    });
+    fake.handlers['printerinfofetched']?.({ info: {} });
+
+    expect(statuses).toHaveLength(1);
+    expect(lastStatus(statuses)).toMatchObject({
+      state: 'connected',
+      dpi: 203,
+      batteryPercent: 33,
+      hardwareVersion: 'HW-9',
+      softwareVersion: 'SW-9',
+    });
+  });
+
+  it('updates the cache but emits nothing for an event fired before connect completes', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    // The library announces its connect-time reads before our connect resolves.
+    vi.mocked(fake.client.connect).mockImplementationOnce(async () => {
+      // The negotiation fetch saw the new roll...
+      fake.setRfidInfo({ paperInfo: { valid: true, paperWidth: 50, paperHeight: 30 } });
+      fake.handlers['rfidinfofetched']?.({ info: {} });
+      // ...then our own connect() fetch loses the width: only the cached status
+      // from the event can still know it.
+      fake.setRfidInfo({ paperInfo: { valid: true, paperHeight: 30 } });
+      return { deviceName: 'Fake', result: 1 };
+    });
+    const transport = new NiimbotTransport({ createClient: () => fake.client });
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    await transport.connect();
+
+    // One 'connecting' plus the single status the connect flow owns.
+    expect(statuses.map((status) => status.state)).toEqual(['connecting', 'connected']);
+    // The early event updated the cached status, so the partial later read keeps it.
+    expect(lastStatus(statuses)).toMatchObject({ state: 'connected', rollWidthHm: 5000, rollHeightHm: 3000 });
+  });
+
+  it('updates the cache but never emits while a print job owns the channel', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    let stateWhenFired: string | undefined;
+    fake.printPage.mockImplementationOnce(async () => {
+      fake.setRfidInfo({ paperInfo: { valid: true, paperWidth: 50, paperHeight: 25 } });
+      fake.handlers['rfidinfofetched']?.({ info: {} });
+      stateWhenFired = lastStatus(statuses)?.state;
+    });
+
+    await transport.print(jobOf([1]));
+
+    // Nothing was emitted by the event itself...
+    expect(stateWhenFired).toBe('printing');
+    expect(statuses.map((status) => status.state)).toEqual(['printing', 'connected']);
+    // ...and the settle published the fresh roll.
+    expect(lastStatus(statuses)).toMatchObject({
+      state: 'connected',
+      rollWidthHm: 5000,
+      rollHeightHm: 2500,
+    });
+  });
+
+  it('keeps the previous roll fields when an RFID event carries an empty payload', async () => {
+    const fake = makeFakeClient({
+      taskType: 'B1',
+      rfidInfo: {
+        paperInfo: { valid: true, paperWidth: 40, paperHeight: 30 },
+        labelRfidInfo: {
+          tagPresent: true,
+          usedPaper: 12,
+          allPaper: 100,
+          consumablesType: LabelType.WithGaps,
+        },
+      },
+    });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    // The library emits `rfidinfofetched` even when every sub-read failed: an
+    // empty payload is a comms hiccup, not a removed roll.
+    fake.setRfidInfo({});
+    fake.handlers['rfidinfofetched']?.({ info: {} });
+
+    const status = lastStatus(statuses);
+    expect(status?.state).toBe('connected');
+    expect(status?.rollWidthHm).toBe(4000);
+    expect(status?.rollHeightHm).toBe(3000);
+    expect(status?.rfid).toMatchObject({ tagPresent: true, consumablesType: LabelType.WithGaps });
+    expect(status?.labelType).toBe(LabelType.WithGaps);
+  });
+
+  it('clears the tag-derived fields when a successful paper read reports no tag', async () => {
+    const fake = makeFakeClient({
+      taskType: 'B1',
+      rfidInfo: {
+        paperInfo: { valid: true, paperWidth: 40, paperHeight: 30 },
+        labelRfidInfo: {
+          tagPresent: true,
+          usedPaper: 12,
+          allPaper: 100,
+          consumablesType: LabelType.WithGaps,
+        },
+      },
+    });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    // A produced paper read with no tag: the roll is real, the tag is not.
+    fake.setRfidInfo({ paperInfo: { valid: true, paperWidth: 50, paperHeight: 25 } });
+    fake.handlers['rfidinfofetched']?.({ info: {} });
+
+    const status = lastStatus(statuses);
+    expect(status?.rollWidthHm).toBe(5000);
+    expect(status?.rollHeightHm).toBe(2500);
+    // The old roll's tag data must not survive a successful read that has none.
+    expect(status?.rfid).toBeUndefined();
+    expect(status?.labelType).toBeUndefined();
+    // The device fields are untouched by a tag read.
+    expect(status).toMatchObject({ deviceName: 'Fake', dpi: 300, batteryPercent: 77 });
+  });
+
+  it('refreshInfo clears the tag-derived fields of a swapped roll too', async () => {
+    const fake = makeFakeClient({
+      taskType: 'B1',
+      rfidInfo: {
+        paperInfo: { valid: true, paperWidth: 40, paperHeight: 30 },
+        labelRfidInfo: {
+          tagPresent: true,
+          usedPaper: 12,
+          allPaper: 100,
+          consumablesType: LabelType.WithGaps,
+        },
+      },
+    });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    // The manual Refresh is the same full read as the event path.
+    fake.setRfidInfo({ paperInfo: { valid: true, paperWidth: 50, paperHeight: 25 } });
+    await transport.refreshInfo();
+
+    const status = lastStatus(statuses);
+    expect(status?.rollWidthHm).toBe(5000);
+    expect(status?.rollHeightHm).toBe(2500);
+    expect(status?.rfid).toBeUndefined();
+    expect(status?.labelType).toBeUndefined();
+  });
+
+  it('clears the label type when the new tag reports only Invalid/unknown types', async () => {
+    const fake = makeFakeClient({
+      taskType: 'B1',
+      rfidInfo: {
+        paperInfo: { valid: true, paperWidth: 40, paperHeight: 30, paperType: LabelType.Black },
+      },
+    });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    fake.setRfidInfo({
+      paperInfo: { valid: true, paperWidth: 40, paperHeight: 30, paperType: 99 as LabelType },
+      labelRfidInfo: {
+        tagPresent: true,
+        usedPaper: 0,
+        allPaper: 0,
+        consumablesType: LabelType.Invalid,
+      },
+    });
+    fake.handlers['rfidinfofetched']?.({ info: {} });
+
+    expect(lastStatus(statuses)?.labelType).toBeUndefined();
+  });
+
+  it('replaces all four roll fields when the tag reports a different roll', async () => {
+    const fake = makeFakeClient({
+      taskType: 'B1',
+      rfidInfo: {
+        paperInfo: { valid: true, paperWidth: 40, paperHeight: 30 },
+        labelRfidInfo: {
+          tagPresent: true,
+          usedPaper: 12,
+          allPaper: 100,
+          consumablesType: LabelType.WithGaps,
+        },
+      },
+    });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    fake.setRfidInfo({
+      paperInfo: { valid: true, paperWidth: 50, paperHeight: 25, paperType: LabelType.Black },
+      labelRfidInfo: {
+        tagPresent: true,
+        usedPaper: 2,
+        allPaper: 60,
+        consumablesType: LabelType.Perforated,
+      },
+    });
+    fake.handlers['rfidinfofetched']?.({ info: {} });
+
+    expect(lastStatus(statuses)).toMatchObject({
+      rollWidthHm: 5000,
+      rollHeightHm: 2500,
+      rfid: { tagPresent: true, usedPaper: 2, allPaper: 60, consumablesType: LabelType.Perforated },
+      // The new tag wins: `consumablesType` is preferred over `paperType`.
+      labelType: LabelType.Perforated,
+    });
+  });
+
+  it('keeps the previous printer fields when a printer read is partial', async () => {
+    const fake = makeFakeClient({
+      taskType: 'B1',
+      printerInfo: { hardwareVersion: 'HW-1', softwareVersion: 'SW-2' },
+    });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+
+    // A printer read that returned nothing keeps the known device fields.
+    fake.setPrinterInfo({});
+    fake.handlers['printerinfofetched']?.({ info: {} });
+
+    expect(lastStatus(statuses)).toMatchObject({
+      deviceName: 'Fake',
+      dpi: 300,
+      batteryPercent: 77,
+      hardwareVersion: 'HW-1',
+      softwareVersion: 'SW-2',
+    });
+  });
+
+  it('emits no status when a metadata event lands after the disconnect started', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+    const rfidHandler = fake.handlers['rfidinfofetched'];
+
+    // Hold the disconnect open, then let the library's own queued
+    // `void fetchRfidInfo()` resolve while it is still in flight.
+    let release: (() => void) | undefined;
+    vi.mocked(fake.client.disconnect).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const disconnecting = transport.disconnect();
+
+    fake.setRfidInfo({ paperInfo: { valid: true, paperWidth: 50, paperHeight: 25 } });
+    rfidHandler?.({ info: {} });
+    expect(statuses).toHaveLength(0);
+
+    release?.();
+    await disconnecting;
+    expect(statuses.map((status) => status.state)).toEqual(['disconnected']);
+  });
+
+  it('unsubscribes both handlers on disconnect', async () => {
+    const fake = makeFakeClient({ taskType: 'B1' });
+    const transport = await connectedTransport(fake);
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+    const rfidHandler = fake.handlers['rfidinfofetched'];
+    const printerHandler = fake.handlers['printerinfofetched'];
+
+    await transport.disconnect();
+
+    expect(fake.client.off).toHaveBeenCalledWith('rfidinfofetched', expect.any(Function));
+    expect(fake.client.off).toHaveBeenCalledWith('printerinfofetched', expect.any(Function));
+    const count = statuses.length;
+    rfidHandler?.({ info: {} });
+    printerHandler?.({ info: {} });
+    expect(statuses).toHaveLength(count);
+  });
+});
+
+describe('NiimbotTransport reported label type', () => {
+  const connectWith = async (rfidInfo: Record<string, unknown>): Promise<PrinterStatus | undefined> => {
+    const fake = makeFakeClient({ taskType: 'B1', rfidInfo });
+    const transport = new NiimbotTransport({ createClient: () => fake.client });
+    const statuses: PrinterStatus[] = [];
+    transport.onStatus((status) => statuses.push(status));
+    await transport.connect();
+    return statuses.find((status) => status.state === 'connected');
+  };
+
+  it('prefers the tag consumables type over the paper type', async () => {
+    const connected = await connectWith({
+      paperInfo: { valid: true, paperWidth: 40, paperHeight: 30, paperType: LabelType.Black },
+      labelRfidInfo: { tagPresent: true, usedPaper: 0, allPaper: 10, consumablesType: LabelType.WithGaps },
+    });
+
+    expect(connected?.labelType).toBe(LabelType.WithGaps);
+  });
+
+  it('falls back to the paper type when the tag reports none', async () => {
+    const connected = await connectWith({
+      paperInfo: { valid: true, paperWidth: 40, paperHeight: 30, paperType: LabelType.Black },
+    });
+
+    expect(connected?.labelType).toBe(LabelType.Black);
+  });
+
+  it('treats Invalid or unknown values as absent and falls through', async () => {
+    const fromPaper = await connectWith({
+      paperInfo: { valid: true, paperWidth: 40, paperHeight: 30, paperType: LabelType.Perforated },
+      labelRfidInfo: {
+        tagPresent: true,
+        usedPaper: 0,
+        allPaper: 10,
+        consumablesType: LabelType.Invalid,
+      },
+    });
+    expect(fromPaper?.labelType).toBe(LabelType.Perforated);
+
+    const none = await connectWith({
+      paperInfo: { valid: true, paperWidth: 40, paperHeight: 30, paperType: 99 as LabelType },
+      labelRfidInfo: {
+        tagPresent: true,
+        usedPaper: 0,
+        allPaper: 10,
+        consumablesType: LabelType.Invalid,
+      },
+    });
+    expect(none).not.toHaveProperty('labelType');
   });
 });
 

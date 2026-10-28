@@ -85,7 +85,7 @@ export interface PrinterCapabilities {
   supportsSpeed?: boolean;
 }
 
-/** RFID label-tag info, from the connect-time CombinedRfidInfo. */
+/** RFID label-tag info, from the latest CombinedRfidInfo. */
 export interface PrinterRfidInfo {
   tagPresent: boolean;
   usedPaper?: number;
@@ -98,7 +98,12 @@ export interface PrinterStatus {
   deviceName?: string;
   /** Printer printhead dpi, when known. */
   dpi?: number;
-  /** Printer-reported roll/label size in hm, when known. */
+  /**
+   * Printer-reported roll/label size in hm, when known. Refreshed whenever the
+   * library re-reads the RFID tag (roll swap, print end) or `refreshInfo()`
+   * runs — not only at connect time. Advisory (tag-derived), never a
+   * measurement.
+   */
   rollWidthHm?: hm;
   rollHeightHm?: hm;
   batteryPercent?: number;
@@ -112,10 +117,21 @@ export interface PrinterStatus {
   /** Printer-reported software version, when known. */
   softwareVersion?: string;
   /**
-   * RFID label-tag block, when a label tag was present at connect time. The
-   * roll dimensions live in `rollWidthHm`/`rollHeightHm`, not here.
+   * RFID label-tag block, when a label tag was present. The roll dimensions
+   * live in `rollWidthHm`/`rollHeightHm`, not here. Refreshed with the rest of
+   * the tag data (roll swap, print end, `refreshInfo()`).
    */
   rfid?: PrinterRfidInfo;
+  /**
+   * The type the printer reports for the loaded roll, when it reports one.
+   *
+   * Not a capability (see {@link PrinterCapabilities.paperTypes}): it describes
+   * the roll currently loaded. Sourced from the RFID tag's `consumablesType`
+   * and, when the tag reports none, from the paper settings' `paperType`;
+   * absent when neither yields a known type. Advisory like all tag data, and
+   * refreshed with it.
+   */
+  labelType?: LabelType;
 }
 
 /**
@@ -178,7 +194,13 @@ export interface PrinterTransport {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   print(job: PrintJob): Promise<PrintResult>;
-  /** Re-fetch device + RFID info. No-op-safe when disconnected. */
+  /**
+   * Re-fetch device + RFID info. No-op-safe when disconnected.
+   *
+   * Not the only freshness path: a transport may also republish when the
+   * library re-reads device/RFID info on its own (`PrinterStatus` field docs
+   * name the refreshed fields). This is the explicit one-shot read.
+   */
   refreshInfo?(): Promise<void>;
   /** Subscribe to status; returns an unsubscribe function. */
   onStatus(listener: (status: PrinterStatus) => void): () => void;

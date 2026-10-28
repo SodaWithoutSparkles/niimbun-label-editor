@@ -61,6 +61,12 @@ export interface MockTransportOptions {
   softwareVersion?: string;
   /** RFID label-tag block, surfaced in status when set. */
   rfid?: PrinterRfidInfo;
+  /**
+   * The roll type the mock printer reports (the real adapter's `labelType`).
+   * Defaults to the RFID tag's `consumablesType` when one is configured, so a
+   * mock with a roll tag reports a matching roll type; absent otherwise.
+   */
+  labelType?: LabelType;
 }
 
 /**
@@ -82,6 +88,7 @@ export class MockTransport implements PrinterTransport {
   private readonly hardwareVersion?: string;
   private readonly softwareVersion?: string;
   private readonly rfid?: PrinterRfidInfo;
+  private readonly labelType?: LabelType;
 
   private connected = false;
 
@@ -113,6 +120,10 @@ export class MockTransport implements PrinterTransport {
     this.hardwareVersion = options.hardwareVersion;
     this.softwareVersion = options.softwareVersion;
     this.rfid = options.rfid;
+    // Derive from the tag like the real adapter (tag consumable type first) so
+    // a configured roll automatically reports a coherent type; an explicit
+    // option wins.
+    this.labelType = options.labelType ?? options.rfid?.consumablesType;
   }
 
   async connect(): Promise<void> {
@@ -260,6 +271,9 @@ export class MockTransport implements PrinterTransport {
     if (this.rfid !== undefined) {
       // Fresh RFID object per emit: consumers never share state.
       status.rfid = { ...this.rfid };
+    }
+    if (this.labelType !== undefined) {
+      status.labelType = this.labelType;
     }
     for (const listener of this.statusListeners) {
       listener(status);
