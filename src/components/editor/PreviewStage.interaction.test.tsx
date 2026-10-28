@@ -734,6 +734,13 @@ describe('PreviewStage P3 selection & resize semantics', () => {
     });
 
     describe('item 6 — text box-only live resize', () => {
+        /** The same text box with `wrap: 'cut'`: its registered node is the clip group. */
+        const cutTextNode = (id: string): Node => ({
+            ...(textNode(id) as TextNode),
+            wrap: 'cut',
+            text: { kind: 'static', value: 'W'.repeat(40) },
+        });
+
         it('keeps the glyph scale at ±1 while resizing the box, and commits that box', () => {
             const stage = mountSelection([textNode('t')], ['t']);
             const transformer = stage.findOne('Transformer') as Konva.Transformer;
@@ -814,6 +821,97 @@ describe('PreviewStage P3 selection & resize semantics', () => {
             expect(state.docPast).toHaveLength(0);
             const node = state.currentDoc!.nodes.find((entry) => entry.id === 't')!;
             expect(node.size).toEqual({ w: 1000, h: 500 });
+        });
+
+        it('drives a cut text’s clip rect and Text box with the live box (P17)', () => {
+            // A `cut` text registers its clip group, so the box-only recipe writes
+            // the group's box — the clip rect and the child Text are separate
+            // attrs and must follow it per event (review must-fix 1).
+            const stage = mountSelection([cutTextNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const group = transformer.nodes()[0] as Konva.Group;
+            expect(group, 'a cut text registers its clip group').toBeInstanceOf(Konva.Group);
+            const text = group.findOne('Text') as Konva.Text;
+            expect(text, 'the clip group holds the laid-out Text').toBeTruthy();
+            expect(group.width()).toBe(1000);
+            expect(group.height()).toBe(500);
+            expect(group.clipWidth()).toBe(1000);
+            expect(group.clipHeight()).toBe(500);
+            expect(text.width()).toBe(1000);
+            expect(text.height()).toBe(500);
+
+            act(() => {
+                // Grow: the clip and the Text must follow, or the bigger box can
+                // never reveal the extra text it now fits.
+                group.scaleX(1.5);
+                group.scaleY(1.4);
+                transformer.fire('transformstart', {});
+                transformer.fire('transform', {});
+            });
+            expect(group.width()).toBeCloseTo(1500, 5);
+            expect(group.height()).toBeCloseTo(700, 5);
+            expect(group.clipWidth(), 'clip width follows the grown box').toBeCloseTo(1500, 5);
+            expect(group.clipHeight(), 'clip height follows the grown box').toBeCloseTo(700, 5);
+            expect(text.width(), 'the Text re-lays out in the grown box').toBeCloseTo(1500, 5);
+            expect(text.height()).toBeCloseTo(700, 5);
+
+            act(() => {
+                // Shrink: a stale clip would show ink outside the new box.
+                group.scaleX(0.4);
+                group.scaleY(0.4);
+                transformer.fire('transform', {});
+            });
+            const shrunkW = group.width();
+            const shrunkH = group.height();
+            expect(shrunkW).toBeCloseTo(600, 5);
+            expect(shrunkH).toBeCloseTo(280, 5);
+            expect(group.clipWidth(), 'clip width follows the shrunk box').toBeCloseTo(shrunkW, 5);
+            expect(group.clipHeight(), 'clip height follows the shrunk box').toBeCloseTo(shrunkH, 5);
+            expect(text.width()).toBeCloseTo(shrunkW, 5);
+            expect(text.height()).toBeCloseTo(shrunkH, 5);
+
+            act(() => {
+                transformer.fire('transformend', {});
+            });
+
+            // The committed box is the live box, and the clip still matches it
+            // after the commit re-render.
+            const state = useStore.getState();
+            const node = state.currentDoc!.nodes.find((entry) => entry.id === 't')!;
+            expect(node.size).toEqual({ w: Math.round(shrunkW), h: Math.round(shrunkH) });
+            expect(group.width()).toBe(node.size!.w);
+            expect(group.clipWidth()).toBe(node.size!.w);
+            expect(group.clipHeight()).toBe(node.size!.h);
+            expect(text.width()).toBe(node.size!.w);
+            expect(text.height()).toBe(node.size!.h);
+            expect(state.docPast).toHaveLength(1);
+        });
+
+        it('restores a cut text’s clip rect on a cancelled box-only resize (P17)', () => {
+            const stage = mountSelection([cutTextNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const group = transformer.nodes()[0] as Konva.Group;
+            const text = group.findOne('Text') as Konva.Text;
+
+            act(() => {
+                transformer.fire('transformstart', {});
+                group.scaleX(1.5);
+                group.scaleY(1.5);
+                transformer.fire('transform', {});
+            });
+            expect(group.clipWidth()).toBeCloseTo(1500, 5);
+
+            act(() => {
+                // No `transformend` (OS mouse steal): the cancel path reverts the
+                // box and must revert the clip with it.
+                window.dispatchEvent(new Event('pointercancel'));
+            });
+
+            expect(group.width()).toBeCloseTo(1000, 5);
+            expect(group.clipWidth()).toBeCloseTo(1000, 5);
+            expect(group.clipHeight()).toBeCloseTo(500, 5);
+            expect(text.width()).toBeCloseTo(1000, 5);
+            expect(text.height()).toBeCloseTo(500, 5);
         });
     });
 });

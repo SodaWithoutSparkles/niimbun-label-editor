@@ -446,7 +446,7 @@ describe('matrixToKonvaAttrs — exact affine decomposition', () => {
 describe('createKonvaNode — text wrap (P5 D1/D2a)', () => {
     // The fake 2D context in `beforeAll` measures every glyph at 10px, which
     // makes the shrink math deterministic without a font dependency.
-    const buildText = (over: Record<string, unknown> = {}): Konva.Text => {
+    const buildNode = (over: Record<string, unknown> = {}): Konva.Group | Konva.Shape => {
         const doc = createLabelDoc({
             id: 'doc-wrap',
             now: 1_700_000_000,
@@ -467,8 +467,10 @@ describe('createKonvaNode — text wrap (P5 D1/D2a)', () => {
                 }),
             ],
         });
-        return createKonvaNode(resolve(doc)[0]!) as Konva.Text;
+        return createKonvaNode(resolve(doc)[0]!);
     };
+    const buildText = (over: Record<string, unknown> = {}): Konva.Text =>
+        buildNode(over) as Konva.Text;
 
     it("defaults to Konva's word wrap and lineHeight 1", () => {
         const text = buildText();
@@ -483,6 +485,10 @@ describe('createKonvaNode — text wrap (P5 D1/D2a)', () => {
         // clip wraps at words (Konva then hides lines past the box height).
         expect(buildText({ wrap: 'clip' }).wrap()).toBe('word');
         expect(buildText({ wrap: 'shrink' }).wrap()).toBe('word');
+        // cut never wraps: Konva `wrap: 'none'` (the clip group does the cutting).
+        expect(buildNode({ wrap: 'cut' })).toBeInstanceOf(Konva.Group);
+        const cutGroup = buildNode({ wrap: 'cut' }) as Konva.Group;
+        expect(cutGroup.getChildren().some((child) => child instanceof Konva.Text)).toBe(true);
     });
 
     it('passes an explicit lineHeight through', () => {
@@ -627,5 +633,114 @@ describe('createKonvaNode — text wrap (P5 D1/D2a)', () => {
         expect(zeroHeight.scaleX()).toBe(0);
         expect(zeroHeight.scaleY()).toBe(0);
         expect(zeroHeight.height()).toBe(0);
+    });
+});
+
+describe('createKonvaNode — cut wrap (P17)', () => {
+    // Same 10px-per-glyph fake context as the wrap block above: 26 chars in a
+    // 100hm box measure to 260hm, so an un-wrapped line overflows deterministically.
+    const buildNode = (over: Record<string, unknown> = {}): Konva.Group | Konva.Shape => {
+        const doc = createLabelDoc({
+            id: 'doc-cut',
+            now: 1_700_000_000,
+            backingW: 3000,
+            backingH: 2000,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 3000, h: 2000 }],
+            nodes: [
+                node({
+                    id: 'cw',
+                    parentId: null,
+                    type: 'text',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    text: { kind: 'static', value: 'hi' },
+                    size: { w: 100, h: 40 },
+                    ...over,
+                }),
+            ],
+        });
+        return createKonvaNode(resolve(doc)[0]!);
+    };
+
+    it('wraps the Text in a clip group bounded by the node box', () => {
+        const built = buildNode({ wrap: 'cut' });
+        expect(built).toBeInstanceOf(Konva.Group);
+        const group = built as Konva.Group;
+        expect(group.clipX()).toBe(0);
+        expect(group.clipY()).toBe(0);
+        expect(group.clipWidth()).toBe(100);
+        expect(group.clipHeight()).toBe(40);
+        expect(group.getChildren()).toHaveLength(1);
+
+        const text = group.getChildren()[0] as Konva.Text;
+        expect(text).toBeInstanceOf(Konva.Text);
+        expect(text.wrap()).toBe('none');
+        // The fixed width stays: Konva never emits a continuation line under
+        // `wrap: 'none'` (it truncates each hard line at the box instead).
+        expect(text.width()).toBe(100);
+        expect(text.height()).toBe(40);
+        // The Text is untransformed: the node transform lives on the clip group,
+        // so the clip rect is the node's local box.
+        expect(text.x()).toBe(0);
+        expect(text.y()).toBe(0);
+        expect(text.scaleX()).toBe(1);
+        expect(text.scaleY()).toBe(1);
+    });
+
+    it('keeps the node transform on the clip group, not the Text', () => {
+        const group = buildNode({
+            wrap: 'cut',
+            transform: { x: 15, y: 25, rotDeg: 90, scaleX: 2, scaleY: 3 },
+        }) as Konva.Group;
+        const text = group.getChildren()[0] as Konva.Text;
+        expect(group.x()).toBe(15);
+        expect(group.y()).toBe(25);
+        expect(group.rotation()).toBe(90);
+        expect(group.scaleX()).toBe(2);
+        expect(group.scaleY()).toBe(3);
+        expect(text.x()).toBe(0);
+        expect(text.rotation()).toBe(0);
+        expect(text.scaleX()).toBe(1);
+    });
+
+    it('leaves clip as a bare word-wrapping Text (no group)', () => {
+        const built = buildNode({ wrap: 'clip' });
+        expect(built).toBeInstanceOf(Konva.Text);
+        expect((built as Konva.Text).wrap()).toBe('word');
+    });
+
+    it('never shrinks a cut text: one hard line, cut at the box width', () => {
+        const group = buildNode({
+            text: { kind: 'static', value: 'a'.repeat(26) },
+            fontSize: 100,
+            lineHeight: 1,
+            wrap: 'cut',
+        }) as Konva.Group;
+        const text = group.getChildren()[0] as Konva.Text;
+        // No shrink scale anywhere: the node is 1:1 and the clip is the invariant.
+        expect(group.scaleX()).toBe(1);
+        expect(group.scaleY()).toBe(1);
+        expect(text.scaleX()).toBe(1);
+        expect(text.scaleY()).toBe(1);
+        // No continuation line: the 26-glyph line is cut where the 10px-per-glyph
+        // fake context stops fitting the 100hm box, and the remainder is gone.
+        expect(text.textArr.map((line) => line.text)).toEqual(['a'.repeat(10)]);
+        expect(text.getTextWidth()).toBeLessThanOrEqual(100);
+    });
+
+    it('breaks only on hard newlines in cut mode', () => {
+        const text = (buildNode({
+            wrap: 'cut',
+            text: { kind: 'static', value: 'a'.repeat(15) + '\nb' },
+            // Two 100hm lines fit the box, so Konva's fixed-height break does not
+            // interfere: the only break under test is the hard one.
+            size: { w: 100, h: 200 },
+            fontSize: 100,
+            lineHeight: 1,
+        }) as Konva.Group).getChildren()[0] as Konva.Text;
+        // The first hard line is cut at the box width (10 glyphs), the second
+        // starts a new line: there is no soft continuation line.
+        expect(text.textArr.map((line) => line.text)).toEqual(['a'.repeat(10), 'b']);
     });
 });

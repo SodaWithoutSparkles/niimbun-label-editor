@@ -48,11 +48,16 @@ export type ImageFit = (typeof IMAGE_FITS)[number];
 export const DEFAULT_IMAGE_FIT: ImageFit = 'contain';
 
 /**
- * How a text node's content fills its box. `word`/`char` wrap; `clip` wraps at
- * words but hides lines past the box height; `shrink` wraps then uniformly
- * downscales (never up) so the measured text fits the box.
+ * How a text node's content fills its box.
+ *
+ * - `word` / `char` wrap (at a word or per character);
+ * - `clip` wraps at **words**, then hides the lines past the box height;
+ * - `shrink` wraps, then uniformly downscales (never up) so the measured text
+ *   fits the box;
+ * - `cut` does **not** wrap: each hard `\n` line is one line, cut at the box
+ *   edge (no ellipsis, no growth, no shrink).
  */
-export const TEXT_WRAPS = ['word', 'char', 'clip', 'shrink'] as const;
+export const TEXT_WRAPS = ['word', 'char', 'clip', 'shrink', 'cut'] as const;
 export type TextWrap = (typeof TEXT_WRAPS)[number];
 export const DEFAULT_TEXT_WRAP: TextWrap = 'word';
 

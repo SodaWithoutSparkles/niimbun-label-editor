@@ -229,6 +229,47 @@ const nodeBaseExtent = (node: Node): Size =>
         : nodeSize(node);
 
 /**
+ * The `Konva.Text` child of each `cut` clip group, cached for the live resize.
+ * `findOne('Text')` allocates a selector and walks the subtree, and the box-only
+ * gesture calls this per `transform` event (per pointermove); the Text is the
+ * group's only child and survives the group's re-renders, so a `WeakMap` keeps
+ * the lookup off the hot path (an entry dies with its group).
+ */
+const cutTextChild = new WeakMap<Konva.Group, Konva.Text>();
+
+/**
+ * Keep a `cut` text's clip group consistent with its box (P17).
+ *
+ * A `cut` text registers its **clip group** as the node the Transformer drives,
+ * and the laid-out `Konva.Text` is that group's child (see `ResolvedShape`). The
+ * box-only resize recipe writes the group's `width`/`height`, but the clip rect
+ * and the child Text's `width`/`height` are separate attrs: without this sync the
+ * live gesture keeps clipping at the committed box (shrinking shows ink outside
+ * the box) and can never lay out the extra lines a grown box now fits.
+ * `clipWidth`/`clipHeight` are in the group's local space, so they take the
+ * unscaled box exactly like `width`/`height`.
+ *
+ * Both writes are change-guarded: a `width`/`height` set re-enters Konva's
+ * `_setTextData` (a full `measureText` pass), so an unchanged box must not touch
+ * it on every pointermove.
+ */
+const syncCutTextBox = (group: Konva.Group, w: number, h: number): void => {
+    if (group.clipWidth() !== w || group.clipHeight() !== h) {
+        group.setAttrs({ clipWidth: w, clipHeight: h });
+    }
+    let text = cutTextChild.get(group);
+    // The cached child can only go stale if the group's subtree was replaced;
+    // re-resolve then (the parent check is a property read).
+    if (!text || text.getParent() !== group) {
+        const found = group.findOne<Konva.Text>('Text');
+        if (!found) return;
+        text = found;
+        cutTextChild.set(group, text);
+    }
+    if (text.width() !== w || text.height() !== h) text.setAttrs({ width: w, height: h });
+};
+
+/**
  * True when a pointer event's target belongs to the Transformer (an anchor,
  * rotater or border), which runs its own resize/rotate gesture. Konva's anchor
  * mousedown does not `cancelBubble` (Transformer.js), so the Stage handler also
@@ -1242,6 +1283,10 @@ export const PreviewStage: React.FC = () => {
             if (source.type === 'text') {
                 const box = nodeSize(source);
                 konvaNode.setAttrs({ width: box.w, height: box.h });
+                // A `cut` text also owns a clip rect + child Text box that the
+                // live recipe moves; restore them or the abandoned size keeps
+                // clipping after the cancel.
+                if (source.wrap === 'cut') syncCutTextBox(konvaNode as Konva.Group, box.w, box.h);
             }
         }
         transformerRef.current?.forceUpdate();
@@ -1599,13 +1644,21 @@ export const PreviewStage: React.FC = () => {
         if (!konvaNode) return;
         const scaleX = konvaNode.scaleX();
         const scaleY = konvaNode.scaleY();
+        // The live box after this event: Konva's scale is the gesture factor so
+        // far, applied to the box the previous event left behind.
+        const nextWidth = konvaNode.width() * Math.abs(scaleX);
+        const nextHeight = konvaNode.height() * Math.abs(scaleY);
         konvaNode.setAttrs({
-            width: konvaNode.width() * Math.abs(scaleX),
-            height: konvaNode.height() * Math.abs(scaleY),
+            width: nextWidth,
+            height: nextHeight,
             // Preserve the flip sign, matching the commit's scale collapse.
             scaleX: Math.sign(scaleX) || 1,
             scaleY: Math.sign(scaleY) || 1,
         });
+        // A `cut` text registers its clip group: sync the clip rect and the
+        // child Text to the same live box, or the clip stays at the committed
+        // size for the whole gesture.
+        if (boxOnlyTextSource.wrap === 'cut') syncCutTextBox(konvaNode as Konva.Group, nextWidth, nextHeight);
         boxOnlyTextRef.current = true;
     }, [boxOnlyTextSource]);
 
@@ -1667,6 +1720,13 @@ export const PreviewStage: React.FC = () => {
                 const target = boxOnly
                     ? { w: konvaNode.width(), h: konvaNode.height() }
                     : transformerTargetSize(base, konvaNode.scaleX(), konvaNode.scaleY());
+                // A `cut` text's clip group is committed with the same rounded
+                // box the doc gets below: keep the clip rect and the child Text
+                // on it so no frame renders with a stale cut (the re-render then
+                // re-applies the identical values).
+                if (boxOnly && source.type === 'text' && source.wrap === 'cut') {
+                    syncCutTextBox(konvaNode as Konva.Group, Math.round(target.w), Math.round(target.h));
+                }
                 // The live gesture's actual uniform/free choice, read straight
                 // off the scales: `|scaleX| == |scaleY|` exactly when Konva held
                 // the ratio (a corner with `keepRatio` on or Shift). This is what

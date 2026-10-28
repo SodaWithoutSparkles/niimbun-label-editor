@@ -717,7 +717,8 @@
         "word": "Wrap at word",
         "char": "Wrap at character",
         "clip": "Clip overflow",
-        "shrink": "Shrink to fit"
+        "shrink": "Shrink to fit",
+        "cut": "Cut at box edge"
       },
       "codeFormat": {
         "datamatrix": "Data Matrix",

@@ -502,7 +502,7 @@ describe('resolve — text wrap + lineHeight (P5 D2)', () => {
     });
 
     it('emits every explicit wrap mode', () => {
-        for (const wrap of ['word', 'char', 'clip', 'shrink'] as const) {
+        for (const wrap of ['word', 'char', 'clip', 'shrink', 'cut'] as const) {
             expect(resolve(textDoc({ wrap }))[0], wrap).toMatchObject({ wrap });
         }
     });

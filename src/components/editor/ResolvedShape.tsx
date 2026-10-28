@@ -156,7 +156,56 @@ export const ResolvedShape = React.memo(function ResolvedShape({
     const inkWidth = (hmWidth: number): number => hmWidth * strokeScale * Math.abs(attrs.scaleX);
 
     switch (node.type) {
-        case 'text':
+        case 'text': {
+            const textProps = {
+                text: node.text,
+                width: node.w,
+                // Lay out in the **unscaled** box (see `shrinkScaleOf`): the
+                // measurement had no fixed height, so scaling a box of
+                // `node.h` would make Konva drop lines past it pre-scale.
+                // Non-shrink wraps keep `node.h` exactly.
+                height: node.wrap === 'shrink' ? node.h / layoutShrink : node.h,
+                fontSize: node.fontSize,
+                fontFamily: node.fontFamily,
+                fontStyle: node.fontStyle,
+                align: node.align,
+                padding: node.paddingHm,
+                wrap: konvaTextWrap(node.wrap),
+                lineHeight: node.lineHeight,
+                letterSpacing: node.letterSpacing,
+                listening: false,
+                fill: node.placeholder ? '#9ca3af' : '#111827',
+                stroke,
+                strokeWidth: selected ? 1 : 0,
+                // Selection outline only: constant screen width.
+                strokeScaleEnabled: false,
+            };
+            if (node.wrap === 'cut') {
+                // Konva never clips (its `wrap: 'none'` truncates each hard
+                // line at the fixed width but paints glyph overhang past it), so
+                // the clip is the invariant: the node transform lives on a group
+                // in whose **local** space the clip rect is the node box, and
+                // the Text stays at the origin (same structure as
+                // `konvaFactory`). `width`/`height` are repeated on the group as
+                // data only: the editor's box-only resize recipe reads
+                // `width()`/`height()` off the registered node, and the
+                // registered node is now the group.
+                return (
+                    <KonvaGroup
+                        ref={ref}
+                        {...attrs}
+                        width={node.w}
+                        height={node.h}
+                        clipX={0}
+                        clipY={0}
+                        clipWidth={node.w}
+                        clipHeight={node.h}
+                        listening={false}
+                    >
+                        <Text {...textProps} />
+                    </KonvaGroup>
+                );
+            }
             return (
                 <Text
                     ref={ref}
@@ -168,29 +217,10 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                     scaleY={attrs.scaleY * shrinkScale}
                     offsetX={0}
                     offsetY={0}
-                    text={node.text}
-                    width={node.w}
-                    // Lay out in the **unscaled** box (see `shrinkScaleOf`): the
-                    // measurement had no fixed height, so scaling a box of
-                    // `node.h` would make Konva drop lines past it pre-scale.
-                    // Non-shrink wraps keep `node.h` exactly.
-                    height={node.wrap === 'shrink' ? node.h / layoutShrink : node.h}
-                    fontSize={node.fontSize}
-                    fontFamily={node.fontFamily}
-                    fontStyle={node.fontStyle}
-                    align={node.align}
-                    padding={node.paddingHm}
-                    wrap={konvaTextWrap(node.wrap)}
-                    lineHeight={node.lineHeight}
-                    letterSpacing={node.letterSpacing}
-                    listening={false}
-                    fill={node.placeholder ? '#9ca3af' : '#111827'}
-                    stroke={stroke}
-                    strokeWidth={selected ? 1 : 0}
-                    // Selection outline only: constant screen width.
-                    strokeScaleEnabled={false}
+                    {...textProps}
                 />
             );
+        }
         case 'rectangle': {
             // Only the attrs the selection highlight does not override: `fill`
             // (`'transparent'` = no fill) and `cornerRadius`. `stroke`/

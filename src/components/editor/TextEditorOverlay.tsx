@@ -109,9 +109,17 @@ export const localPointOf = (
     return { x: (d * px - c * py) / det, y: (-b * px + a * py) / det };
 };
 
-/** Textarea wrapping CSS that mirrors the Konva `wrap` modes that affect flow. */
-const wrapStyle = (wrap: TextWrap): React.CSSProperties =>
-    wrap === 'char' ? { wordBreak: 'break-all' } : { overflowWrap: 'break-word' };
+/**
+ * Textarea wrapping CSS that mirrors the Konva `wrap` modes that affect flow.
+ * `cut` mirrors Konva's `wrap: 'none'`: the later `whiteSpace: 'pre'` overrides
+ * the base `pre-wrap`, so the textarea itself cuts at the box instead of
+ * soft-wrapping.
+ */
+const wrapStyle = (wrap: TextWrap): React.CSSProperties => {
+    if (wrap === 'char') return { wordBreak: 'break-all' };
+    if (wrap === 'cut') return { whiteSpace: 'pre', overflowWrap: 'normal' };
+    return { overflowWrap: 'break-word' };
+};
 
 /**
  * Caret bar thickness as a fraction of the font size, measured in layout px
@@ -144,6 +152,10 @@ const lineHeightPxOf = (font: CaretFont): number => font.fontSize * font.lineHei
  * wraps at `contentWidth`), returning each line's start offset. Mirrors the
  * textarea/Konva word/char break roughly (a word longer than the line is broken
  * at the overflow point in both modes).
+ *
+ * `cut` never soft-wraps (Konva `wrap: 'none'`, textarea `white-space: pre`), so
+ * only hard `\n` starts a new visual line: a long line stays one line — cut at
+ * the box edge — and the caret keeps the right line/column on it.
  */
 export const wrappedLineStarts = (
     ctx: CanvasRenderingContext2D,
@@ -152,6 +164,12 @@ export const wrappedLineStarts = (
     font: CaretFont,
     wrap: TextWrap,
 ): number[] => {
+    const hardLineStarts = (): number[] => {
+        const starts = [0];
+        for (let i = 0; i < text.length; i += 1) if (text[i] === '\n') starts.push(i + 1);
+        return starts;
+    };
+    if (wrap === 'cut') return hardLineStarts();
     const fontSpec = `${font.fontStyle} ${font.fontSize}px ${font.fontFamily}`;
     const width = (s: string): number => {
         ctx.font = fontSpec;
@@ -202,6 +220,31 @@ const lineColOf = (starts: readonly number[], text: string, offset: number): { l
         else break;
     }
     return { line, col: clamped - starts[line]! };
+};
+
+/**
+ * Keep the synthetic caret inside a `cut` node's box.
+ *
+ * The caret bar is a sibling of the `overflow: hidden` textarea, so nothing
+ * clips it to the node. `cut` never soft-wraps, so a long line puts the caret's
+ * column at or past the box edge, and a hard-`\n` line below the box height is
+ * off-node too: `null` means "past the cut edge" (the text under it is not
+ * visible either, so the caret is hidden). Otherwise `left` is clamped into
+ * `[0, boxWidth - width]` and the bar itself is narrowed to the box, so it can
+ * never overhang the right edge. Only `cut` needs this; every other mode
+ * soft-wraps, so its caret column always fits the box.
+ */
+export const clampCutCaret = (
+    caret: { left: number; top: number; height: number },
+    boxWidth: number,
+    boxHeight: number,
+    caretWidth: number,
+): { left: number; top: number; height: number; width: number } | null => {
+    // Past the cut on either axis: nothing under the caret is visible.
+    if (caret.left > boxWidth || caret.top >= boxHeight) return null;
+    const width = Math.min(caretWidth, boxWidth);
+    const maxLeft = Math.max(0, boxWidth - width);
+    return { ...caret, left: Math.min(Math.max(caret.left, 0), maxLeft), width };
 };
 
 /**
@@ -429,6 +472,16 @@ export const TextEditorOverlay: React.FC<TextEditorOverlayProps> = ({
         // A plain Enter falls through and inserts a newline (native behaviour).
     };
 
+    // The textarea's `overflow: hidden` cannot clip the caret (a sibling), so a
+    // `cut` line's caret — which can sit at/past the node edge because nothing
+    // soft-wraps it — is clamped to the box, and hidden once it is past the cut
+    // edge (to the right, or on a line below the box). Other wrap modes
+    // soft-wrap, so their caret always fits: untouched.
+    const visibleCaret =
+        caret && wrap === 'cut'
+            ? clampCutCaret(caret, session.unscaledWidth, session.unscaledHeight, caretWidth)
+            : caret && { ...caret, width: caretWidth };
+
     // The textarea and the synthetic caret are one layout unit: both stay in
     // natural layout px so the caret math is untouched.
     const content = (
@@ -477,17 +530,17 @@ export const TextEditorOverlay: React.FC<TextEditorOverlayProps> = ({
                     ...wrapStyle(wrap),
                 }}
             />
-            {caret && (
+            {visibleCaret && (
                 <div
                     aria-hidden
                     data-testid="text-editor-caret"
-                    key={`${caret.left}-${caret.top}`} // Forces animation restart at 0% on move
+                    key={`${visibleCaret.left}-${visibleCaret.top}`} // Forces animation restart at 0% on move
                     style={{
                         position: 'absolute',
-                        left: `${caret.left}px`,
-                        top: `${caret.top}px`,
-                        width: `${caretWidth}px`,
-                        height: `${caret.height}px`,
+                        left: `${visibleCaret.left}px`,
+                        top: `${visibleCaret.top}px`,
+                        width: `${visibleCaret.width}px`,
+                        height: `${visibleCaret.height}px`,
                         background: '#0ea5e9',
                         // The enclosing transform scales this bar too, so its
                         // width follows the text at every zoom level.

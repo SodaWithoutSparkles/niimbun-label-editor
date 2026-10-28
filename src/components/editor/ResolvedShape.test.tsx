@@ -178,7 +178,7 @@ describe('ResolvedShape — preview style (#8)', () => {
 });
 
 describe('ResolvedShape — text wrap preview (P5)', () => {
-    const renderText = (over: Record<string, unknown>): Konva.Text => {
+    const renderStage = (over: Record<string, unknown>): Konva.Stage => {
         const resolved = resolve(
             createLabelDoc({
                 id: 'doc-text',
@@ -215,8 +215,10 @@ describe('ResolvedShape — text wrap preview (P5)', () => {
                 </Layer>
             </Stage>,
         );
-        return (stage as unknown as Konva.Stage).findOne('Text') as Konva.Text;
+        return stage as unknown as Konva.Stage;
     };
+    const renderText = (over: Record<string, unknown>): Konva.Text =>
+        renderStage(over).findOne('Text') as Konva.Text;
 
     it('renders wrap + lineHeight on the Konva Text (preview ≡ print)', () => {
         expect(renderText({}).wrap()).toBe('word');
@@ -225,6 +227,54 @@ describe('ResolvedShape — text wrap preview (P5)', () => {
         expect(renderText({ lineHeight: 1.5 }).lineHeight()).toBe(1.5);
         expect(renderText({}).letterSpacing()).toBe(0);
         expect(renderText({ letterSpacing: 1.5 }).letterSpacing()).toBe(1.5);
+    });
+
+    it('clips a cut text in a group carrying the node transform (P17)', () => {
+        const stage = renderStage({
+            wrap: 'cut',
+            text: { kind: 'static', value: 'a'.repeat(30) },
+            size: { w: 100, h: 40 },
+            fontSize: 100,
+            transform: { x: 20, y: 30, rotDeg: 45, scaleX: 2, scaleY: 2 },
+        });
+        // `clip` keeps the bare Text; `cut` is the only mode with a group.
+        const group = stage.findOne('Group') as Konva.Group;
+        expect(group).toBeTruthy();
+        expect(group.clipX()).toBe(0);
+        expect(group.clipY()).toBe(0);
+        expect(group.clipWidth()).toBe(100);
+        expect(group.clipHeight()).toBe(40);
+        // The group carries the transform, and the box size the editor's
+        // box-only resize recipe reads off the registered node.
+        expect(group.x()).toBe(20);
+        expect(group.y()).toBe(30);
+        expect(group.rotation()).toBe(45);
+        expect(group.scaleX()).toBe(2);
+        expect(group.width()).toBe(100);
+        expect(group.height()).toBe(40);
+        // The Transformer measures the group's client rect: it must be the node
+        // box, not the (cut) text's natural width.
+        const clientRect = group.getClientRect({ skipTransform: true });
+        expect(clientRect.width).toBe(100);
+        expect(clientRect.height).toBe(40);
+
+        const text = group.getChildren()[0] as Konva.Text;
+        expect(text).toBeInstanceOf(Konva.Text);
+        expect(text.wrap()).toBe('none');
+        expect(text.width()).toBe(100);
+        expect(text.x()).toBe(0);
+        expect(text.y()).toBe(0);
+        expect(text.scaleX()).toBe(1);
+        // No continuation line: the hard line is cut at the box width.
+        expect(text.textArr).toHaveLength(1);
+        expect(text.textArr[0]!.text.length).toBeLessThan(30);
+        expect(text.getTextWidth()).toBeLessThanOrEqual(100);
+    });
+
+    it('keeps the clip preview group-free and word-wrapped', () => {
+        const stage = renderStage({ wrap: 'clip', text: { kind: 'static', value: 'a'.repeat(30) } });
+        expect(stage.findOne('Group')).toBeUndefined();
+        expect((stage.findOne('Text') as Konva.Text).wrap()).toBe('word');
     });
 
     it('passes a combined bold+italic fontStyle through to the Konva Text', () => {

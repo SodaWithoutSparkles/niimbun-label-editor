@@ -185,3 +185,13 @@ keeps tests offline.
   `konvaFactory` (print) and `ResolvedShape` (preview) pass it to `Konva.Text`, and
   `measureKonvaText` includes it so `shrink` does not overflow the box. The inspector field is
   `wired: true`. If you add another text renderer, pass it or preview ≠ print.
+- **`wrap: 'cut'` (P17, 2026-10-29):** fifth text wrap mode — no wrapping, one text line per hard
+  `\n`, cut at the box edge (no ellipsis, no shrink). Both renderers draw it inside a clip group
+  (transform on the `Konva.Group`, Text at the origin, `clip 0,0 node.w,node.h`); the inline editor
+  mirrors it with `white-space: pre` + hard-`\n`-only `wrappedLineStarts`. Contract: `clip` = wrap at
+  words then hide lines past the height (unchanged); `cut` = the crop. **Konva 10.3 `wrap: 'none'`
+  does NOT spill under a fixed width** — `_setTextData` keeps one entry per hard line, truncated at
+  the last fitting grapheme (and drops a line whose first glyph cannot fit), so the clip only
+  catches glyph overhang/antialiasing. Keep `width: node.w` on the cut Text: width auto makes
+  `Text.getWidth()` the natural line width, which breaks the Transformer box and `align` (both read
+  the box width). `paintCoverage` recurses into groups for the mask.

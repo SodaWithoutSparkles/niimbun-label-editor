@@ -126,8 +126,9 @@ export interface TextNode extends BaseNode {
     direction?: TextDirection;
     /**
      * Absent ⇒ {@link DEFAULT_TEXT_WRAP} (`'word'`). `word`=wrap at word,
-     * `char`=wrap per character, `clip`=no wrap cut at the box, `shrink`=uniform
-     * downscale to fit the box.
+     * `char`=wrap per character, `clip`=wrap at words then hide lines past the
+     * box height, `shrink`=uniform downscale to fit the box, `cut`=no wrap:
+     * each hard `\n` line is cut at the box edge (no ellipsis, no shrink).
      */
     wrap?: TextWrap;
 }

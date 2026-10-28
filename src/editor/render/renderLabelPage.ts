@@ -237,23 +237,32 @@ const rgb = (color: readonly [number, number, number]): string => `rgb(${color[0
  * the mask would cover pixels the raster leaves white (M2: mask-topmost ==
  * raster-topmost).
  */
-const paintCoverage = (node: Konva.Shape, color: string): void => {
+const paintCoverage = (node: Konva.Node, color: string): void => {
+    // A `cut` text is drawn inside a clipping group (Konva's `wrap: 'none'`
+    // does not clip), so the mask must paint its glyphs through the group. The
+    // group's own clip applies to the mask draw too, keeping mask coverage ==
+    // raster ink at the cut edge.
+    if (node instanceof Konva.Group) {
+        for (const child of node.getChildren()) paintCoverage(child, color);
+        return;
+    }
     if (node instanceof Konva.Text) {
         node.strokeEnabled(false);
         node.fill(color);
         return;
     }
+    const shape = node as Konva.Shape;
     // NOTE: `hasFill` is a *presence* test, not an *ink* test: a light `#eeeeee`
     // or low-alpha `#00000040` fill is claimed at full mask coverage while
     // `threshold` may render it white. Pre-existing; tracked as follow-up debt.
-    if (hasFill(node.fill() as string | undefined)) node.fill(color);
-    else node.fillEnabled(false);
+    if (hasFill(shape.fill() as string | undefined)) shape.fill(color);
+    else shape.fillEnabled(false);
     // Symmetric no-stroke rule: an invisible stroke must not claim a band.
-    if (hasStroke(node.stroke() as string | undefined)) {
-        node.strokeEnabled(true);
-        node.stroke(color);
+    if (hasStroke(shape.stroke() as string | undefined)) {
+        shape.strokeEnabled(true);
+        shape.stroke(color);
     } else {
-        node.strokeEnabled(false);
+        shape.strokeEnabled(false);
     }
 };
 
@@ -508,7 +517,7 @@ export const buildPolicyMask = async (
             }
             const konva = createKonvaNode(leaf, assets);
             konva.setAttrs(attrs);
-            paintCoverage(konva as Konva.Shape, rgb(keyColors[carrier.value]!));
+            paintCoverage(konva, rgb(keyColors[carrier.value]!));
             layer.add(konva);
         }
 

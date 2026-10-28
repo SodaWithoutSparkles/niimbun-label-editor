@@ -12,6 +12,7 @@ import {
     TextEditorOverlay,
     caretFromPoint,
     caretRectForOffset,
+    clampCutCaret,
     computeScreenPlacement,
     localPointOf,
     wrappedLineStarts,
@@ -135,6 +136,17 @@ describe('wrappedLineStarts', () => {
     it('makes progress for a single char wider than the line', () => {
         expect(wrappedLineStarts(ctx, 'ab', 5, font, 'char')).toEqual([0, 1, 2]);
     });
+
+    it('never soft-wraps in cut mode: only hard newlines start a line', () => {
+        // The textarea is `white-space: pre` and Konva is `wrap: 'none'`, so a
+        // long line is one visual line (cut at the box edge).
+        expect(wrappedLineStarts(ctx, 'hello world', 70, font, 'cut')).toEqual([0]);
+        expect(wrappedLineStarts(ctx, 'abcdef', 25, font, 'cut')).toEqual([0]);
+        expect(wrappedLineStarts(ctx, 'ab\ncde', 5, font, 'cut')).toEqual([0, 3]);
+        expect(wrappedLineStarts(ctx, 'a\nb\nc', 5, font, 'cut')).toEqual([0, 2, 4]);
+        // `clip` keeps soft-wrapping exactly as it shipped (two visual lines).
+        expect(wrappedLineStarts(ctx, 'hello world', 70, font, 'clip')).toHaveLength(2);
+    });
 });
 
 describe('caretFromPoint', () => {
@@ -163,6 +175,12 @@ describe('caretFromPoint', () => {
         // Click x=20 on line 1 → col 2 → offset 8.
         expect(caretFromPoint(ctx, 'hello world', 20, 15, 70, font, 'word', 'left')).toBe(8);
     });
+
+    it('keeps a cut click on the single long line', () => {
+        // The same click is a *second* line in word mode; `cut` has one line, so
+        // it lands at column 2 of line 0 (the caret does not jump a line).
+        expect(caretFromPoint(ctx, 'hello world', 20, 15, 70, font, 'cut', 'left')).toBe(2);
+    });
 });
 
 describe('caretRectForOffset', () => {
@@ -185,6 +203,72 @@ describe('caretRectForOffset', () => {
             left: 0,
             top: 10,
             height: 10,
+        });
+    });
+
+    it('keeps a cut caret on the single long line, past the box edge', () => {
+        // No soft break in cut mode: offset 8 is on line 0 at x 80 — even though
+        // 70 is the box width (the textarea `white-space: pre` cuts instead).
+        expect(caretRectForOffset(ctx, 'hello world', 8, 70, font, 'cut', 'left')).toEqual({
+            left: 80,
+            top: 0,
+            height: 10,
+        });
+    });
+});
+
+describe('clampCutCaret', () => {
+    it('leaves a caret inside the box untouched', () => {
+        expect(clampCutCaret({ left: 20, top: 10, height: 30 }, 200, 300, 15)).toEqual({
+            left: 20,
+            top: 10,
+            height: 30,
+            width: 15,
+        });
+    });
+
+    it('clamps a caret at the box edge so the whole bar stays inside', () => {
+        expect(clampCutCaret({ left: 199, top: 0, height: 30 }, 200, 300, 15)).toEqual({
+            left: 185,
+            top: 0,
+            height: 30,
+            width: 15,
+        });
+    });
+
+    it('never pulls a caret left of the box (right/centre aligned long line)', () => {
+        expect(clampCutCaret({ left: -40, top: 0, height: 30 }, 200, 300, 15)).toEqual({
+            left: 0,
+            top: 0,
+            height: 30,
+            width: 15,
+        });
+    });
+
+    it('hides a caret past the cut edge', () => {
+        expect(clampCutCaret({ left: 260, top: 0, height: 30 }, 200, 300, 15)).toBeNull();
+        expect(clampCutCaret({ left: 200.5, top: 0, height: 30 }, 200, 300, 15)).toBeNull();
+    });
+
+    it('hides a caret on a line below the box height', () => {
+        // A hard-`\n` line starting at/under the box bottom is not visible either.
+        expect(clampCutCaret({ left: 10, top: 300, height: 300 }, 200, 100, 15)).toBeNull();
+        expect(clampCutCaret({ left: 10, top: 100, height: 300 }, 200, 100, 15)).toBeNull();
+        // The last line that *starts* inside the box is kept.
+        expect(clampCutCaret({ left: 10, top: 99, height: 300 }, 200, 100, 15)).toEqual({
+            left: 10,
+            top: 99,
+            height: 300,
+            width: 15,
+        });
+    });
+
+    it('narrows the bar to a box narrower than the bar', () => {
+        expect(clampCutCaret({ left: 3, top: 0, height: 10 }, 8, 100, 15)).toEqual({
+            left: 0,
+            top: 0,
+            height: 10,
+            width: 8,
         });
     });
 });
@@ -461,6 +545,101 @@ describe('TextEditorOverlay', () => {
         render(overlay());
         // Unset at 0/undefined: the pre-fix DOM is byte-identical.
         expect((screen.getByRole('textbox') as HTMLTextAreaElement).style.letterSpacing).toBe('');
+    });
+
+    it('cuts a cut text at the box: white-space pre, no overflow wrap (P17)', () => {
+        render(overlay({ wrap: 'cut' }));
+        const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+        // The later `wrapStyle` spread overrides the base `pre-wrap`: the
+        // textarea itself must not soft-wrap, matching Konva's `wrap: 'none'`.
+        expect(textarea.style.whiteSpace).toBe('pre');
+        expect(textarea.style.overflowWrap).toBe('normal');
+        // No shrink inner box: `cut` never shrinks.
+        expect(screen.queryByTestId('text-editor-inner')).toBeNull();
+    });
+
+    it('hides the caret once it is past a cut box’s edge (P17)', () => {
+        const long = 'a'.repeat(40);
+        render(overlay({ wrap: 'cut', session: { ...session, text: long } }));
+        const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+        // The open-time seed puts the caret at the click origin, inside the box.
+        expect(screen.getByTestId('text-editor-caret')).toBeTruthy();
+
+        act(() => {
+            // Move the caret to the end of the un-wrapped line: its column is
+            // far past the 200px box, and the caret div is a sibling of the
+            // `overflow: hidden` textarea, so it must hide rather than paint
+            // outside the node.
+            textarea.setSelectionRange(long.length, long.length);
+            fireEvent.keyUp(textarea);
+        });
+
+        expect(screen.queryByTestId('text-editor-caret')).toBeNull();
+    });
+
+    it('clamps the caret inside a cut box when it lands at the cut edge (P17)', () => {
+        // Measure with the same font the overlay uses (the canvas shim is
+        // installed) so the box is sized to leave the end-of-line caret just
+        // inside the node — its bar would otherwise overhang the edge.
+        const text = 'hello world';
+        const ctx2d = document.createElement('canvas').getContext('2d')!;
+        const caretFont: CaretFont = {
+            fontSize: session.fontSize,
+            fontFamily: session.fontFamily,
+            fontStyle: session.fontStyle,
+            lineHeight: session.lineHeight,
+        };
+        const endLeft = caretRectForOffset(ctx2d, text, text.length, 10_000, caretFont, 'cut', 'left').left;
+        const boxWidth = Math.ceil(endLeft);
+        const dpr = window.devicePixelRatio || 1;
+        const deviceScale = session.scaleX * dpr;
+        const caretWidth =
+            Math.max(1, Math.round(session.fontSize * CARET_WIDTH_RATIO * deviceScale)) / deviceScale;
+
+        render(overlay({ wrap: 'cut', session: { ...session, text, unscaledWidth: boxWidth } }));
+        const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+        act(() => {
+            textarea.setSelectionRange(text.length, text.length);
+            fireEvent.keyUp(textarea);
+        });
+
+        const caret = screen.getByTestId('text-editor-caret') as HTMLElement;
+        // The bar's right edge sits exactly on the cut edge: inside, not past it.
+        expect(parseFloat(caret.style.left) + caretWidth).toBeCloseTo(boxWidth, 6);
+        expect(parseFloat(caret.style.left)).toBeGreaterThanOrEqual(0);
+    });
+
+    it('hides the caret on a hard-newline line below a cut box (P17)', () => {
+        // Two 300px lines in a 100px-tall box: line 2 starts below the cut, so
+        // nothing under its caret is visible and the bar must not paint there.
+        const text = 'line1\nline2';
+        render(overlay({ wrap: 'cut', session: { ...session, text } }));
+        const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+        // The open-time seed is on line 1 (top 0), inside the box.
+        expect(screen.getByTestId('text-editor-caret')).toBeTruthy();
+
+        act(() => {
+            textarea.setSelectionRange(text.length, text.length);
+            fireEvent.keyUp(textarea);
+        });
+
+        expect(screen.queryByTestId('text-editor-caret')).toBeNull();
+    });
+
+    it('narrows the caret bar to a box narrower than the bar (P17)', () => {
+        // A 6px box cannot hold the 15px bar: the bar is cut to the box instead
+        // of overhanging its right edge.
+        render(overlay({ wrap: 'cut', session: { ...session, text: 'hi', unscaledWidth: 6 } }));
+        const caret = screen.getByTestId('text-editor-caret') as HTMLElement;
+        expect(parseFloat(caret.style.width)).toBe(6);
+        expect(parseFloat(caret.style.left)).toBe(0);
+    });
+
+    it('keeps pre-wrap + word wrapping for the other modes', () => {
+        render(overlay());
+        const word = screen.getByRole('textbox') as HTMLTextAreaElement;
+        expect(word.style.whiteSpace).toBe('pre-wrap');
+        expect(word.style.overflowWrap).toBe('break-word');
     });
 
     it('wraps the shrink text at the natural node width (Konva parity)', () => {

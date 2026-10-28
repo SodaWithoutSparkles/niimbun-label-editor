@@ -1397,3 +1397,76 @@ describe('renderLabelPage — mirror clip notice (W2 review, round A)', () => {
         expect(mirrored.notices ?? [], 'nothing clipped ⇒ no notice').toEqual([]);
     });
 });
+
+describe('renderLabelPage — text wrap cut/clip (P17)', () => {
+    // 4000×2000 hm @254dpi → 400×200 px, so hm → px is a clean /10. The text box
+    // is 1000×600 hm = 100×60 px and `fontSize` 400 = 40 px, lineHeight 1 ⇒ each
+    // text line is 40 px tall (only the first fits the 60 px box).
+    const wrapDoc = (wrap: string, value: string): LabelDoc =>
+        createLabelDoc({
+            backingW: 4000,
+            backingH: 2000,
+            dpi: 254,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 4000, h: 2000 }],
+            nodes: [
+                node({
+                    id: 'wt',
+                    parentId: null,
+                    type: 'text',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    text: { kind: 'static', value },
+                    size: { w: 1000, h: 600 },
+                    fontSize: 400,
+                    lineHeight: 1,
+                    wrap,
+                }),
+            ],
+        });
+
+    /** Bounding box of the raster's dark (ink) pixels, in device px. */
+    const inkBounds = (
+        rgba: RgbaBuffer,
+    ): { minX: number; minY: number; maxX: number; maxY: number; count: number } => {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        let count = 0;
+        for (let y = 0; y < rgba.height; y += 1) {
+            for (let x = 0; x < rgba.width; x += 1) {
+                if (pixelAt(rgba, x, y)[0]! >= 128) continue;
+                count += 1;
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+            }
+        }
+        return { minX, minY, maxX, maxY, count };
+    };
+
+    it('keeps every cut line inside the box: ink never paints past node.w', async () => {
+        // 40 glyphs at 40 px: the natural line is far wider than the 100 px box,
+        // so any wrapping/overflow bug would paint across the page.
+        const page = await renderLabelPage(wrapDoc('cut', 'W'.repeat(40)));
+        const ink = inkBounds(page.rgba);
+        expect(ink.count, 'the cut text still paints ink').toBeGreaterThan(0);
+        expect(ink.maxX, 'the clip group holds ink inside the 100 px box').toBeLessThan(100);
+        expect(ink.maxX, 'the line runs on to the cut edge (no early wrap)').toBeGreaterThan(50);
+        expect(ink.maxY, 'one line, inside the 60 px box height').toBeLessThan(60);
+        // Nothing is painted below the single cut line inside the box.
+        expect(isWhite(page.rgba, 95, 55), 'the box is not filled').toBe(true);
+    });
+
+    it('keeps only the lines that fit the box height for clip', async () => {
+        // Five 40 px lines need 200 px; the box is 60 px tall, so `clip` (word
+        // wrap + Konva's fixed height) hides lines 2..5.
+        const page = await renderLabelPage(wrapDoc('clip', 'AAA\nBBB\nCCC\nDDD\nEEE'));
+        const ink = inkBounds(page.rgba);
+        expect(ink.count, 'the first line still paints ink').toBeGreaterThan(0);
+        // Line 2 would start at y = 40: no ink below the first line's glyphs.
+        expect(ink.maxY, 'lines past the box height are hidden').toBeLessThan(40);
+    });
+});

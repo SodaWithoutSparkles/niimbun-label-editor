@@ -781,6 +781,10 @@ describe('isNode — text wrap (P5)', () => {
         expect(wrapOf(textNode(undefined))).toBeUndefined();
     });
 
+    it('round-trips the cut wrap (P17)', () => {
+        expect(wrapOf(textNode('cut'))).toBe('cut');
+    });
+
     it('round-trips wrap through isLabelDoc', () => {
         const result = isLabelDoc(
             validRaw({
@@ -790,6 +794,17 @@ describe('isNode — text wrap (P5)', () => {
         expect(result.ok).toBe(true);
         if (!result.ok) return;
         expect(result.doc.nodes[0]?.type === 'text' && result.doc.nodes[0].wrap).toBe('shrink');
+    });
+
+    it('round-trips the cut wrap through isLabelDoc (P17)', () => {
+        const result = isLabelDoc(
+            validRaw({
+                nodes: [baseNode({ id: 'w', type: 'text', shape: undefined, text: 'hi', wrap: 'cut' })],
+            }),
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.nodes[0]?.type === 'text' && result.doc.nodes[0].wrap).toBe('cut');
     });
 });
 

@@ -246,6 +246,7 @@ const WRAP_LABEL_KEYS = {
     char: 'editor.mfp.wrap.char',
     clip: 'editor.mfp.wrap.clip',
     shrink: 'editor.mfp.wrap.shrink',
+    cut: 'editor.mfp.wrap.cut',
 } as const satisfies Record<TextWrap, string>;
 
 const isWrapOption = (option: string): option is TextWrap => option in WRAP_LABEL_KEYS;

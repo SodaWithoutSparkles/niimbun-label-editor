@@ -105,13 +105,18 @@ const flattenPoints = (points: readonly [number, number][]): number[] => {
 
 /**
  * The **one** mapping from a text node's `wrap` mode to Konva's `wrap` prop
- * (P5). `word` wraps at words; `char` wraps per character; `clip` and `shrink`
- * both wrap at words (`clip` then relies on Konva hiding lines past the box
- * height; `shrink` is downscaled by `measureKonvaText`). Shared by both
- * renderers so preview ≡ print.
+ * (P5, P17). `word` wraps at words; `char` wraps per character; `none` never
+ * produces a continuation line (`cut` truncates each hard `\n` line at the box
+ * width, and both renderers also clip it to the box — Konva never clips itself);
+ * `clip` and `shrink` both wrap at words (`clip` then relies on Konva hiding
+ * lines past the box height; `shrink` is downscaled by `measureKonvaText`).
+ * Shared by both renderers so preview ≡ print.
  */
-export const konvaTextWrap = (wrap: TextWrap): 'word' | 'char' =>
-    wrap === 'char' ? 'char' : 'word';
+export const konvaTextWrap = (wrap: TextWrap): 'word' | 'char' | 'none' => {
+    if (wrap === 'char') return 'char';
+    if (wrap === 'cut') return 'none';
+    return 'word';
+};
 
 /**
  * The box + fit an image leaf uses. Barcodes stretch: their raster is generated
@@ -413,6 +418,27 @@ export const createKonvaNode = (
                 // (Konva scales a text from its top-left origin, offset 0).
                 attrs.scaleX *= shrink;
                 attrs.scaleY *= shrink;
+            }
+            if (node.wrap === 'cut') {
+                // Konva's `wrap: 'none'` never emits a *continuation* line: with
+                // a fixed width it drops each hard `\n` line after the last
+                // grapheme that fits (no ellipsis), which is the cut contract.
+                // The clip group is still the invariant: it guarantees the box
+                // edge whatever Konva's advance-width measurement does (italic
+                // overhang and antialiasing paint past the measured advance), so
+                // ink can never leave the box. The transform lives on the group
+                // (the Text stays at the origin), so rotation/scale compose
+                // exactly as they did on the bare Text — the clip is in the
+                // node's local space because it is applied *after* the node
+                // transform.
+                const clipped = new Konva.Group({
+                    clipX: 0,
+                    clipY: 0,
+                    clipWidth: node.w,
+                    clipHeight: node.h,
+                });
+                clipped.add(text);
+                return withTransform(clipped, node.localTransform);
             }
             text.setAttrs(attrs);
             return text;

@@ -123,7 +123,7 @@ export const TEXT_FIELDS: readonly FieldDescriptor[] = [
     // Bold/italic and text content are edited inline (ViewControls toggles /
     // WYSIWYG in place), so they no longer appear as Object-tab fields.
     // How the text fills its box (P5): both renderers read `node.wrap`.
-    { key: 'wrap', scope: 'text', kind: 'select', wired: true, options: ['word', 'char', 'clip', 'shrink'] },
+    { key: 'wrap', scope: 'text', kind: 'select', wired: true, options: ['word', 'char', 'clip', 'shrink', 'cut'] },
     { key: 'letterSpacing', scope: 'text', kind: 'number', wired: true },
     { key: 'direction', scope: 'text', kind: 'select', wired: false, options: ['ltr', 'rtl'], reason: 'style' },
 ];
