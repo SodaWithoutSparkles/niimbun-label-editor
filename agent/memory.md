@@ -32,6 +32,11 @@ Label editor for NIIMBOT thermal printers (React 19, TypeScript, Tailwind v4, zu
 
 ## Essentials
 
+- **This repo is public — never write an absolute home path anywhere in it.**
+  No `/mnt/<drive>/Users/<user>/…`, `C:\Users\<user>\…`, `/home/<user>/…`, and no
+  absolute Windows binary path (`bun.exe`, browser helpers): use the tool name
+  (`bun`, `ab`) or a repo-relative path. Masking the user (`<user>`, `USER`) is
+  not enough — the shape alone is a leak. Clear any path found already.
 - **Product strings go through i18n** (plan decision 40): all label-editor UI strings via `t()` with typed keys; dynamic keys via the literal-map pattern (see `i18n.md`).
 - **Package manager:** `bun` (binary path in global memory). `bun.lock` is tracked; there is no package-lock.json — never npm.
 - **Tests:** `bun run test` (Vitest, in-process). Never `bun test` — that is Bun's own runner. See [`memory/testing.md`](memory/testing.md).

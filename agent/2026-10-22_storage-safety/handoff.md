@@ -43,6 +43,13 @@
 | P16 dither invalidation | `useQuantizedPreview`'s both scheduling effects depend on `quantizerSettingsKey`; a raster planned/painted under older defaults is rejected/hidden. The peek trigger stays settings-free (D-59). | `c0fc192` |
 | P17 `clip` + `cut` | `clip` keeps its shipped meaning (wrap at words, hide lines past the height) and is now documented that way. New `cut`: no wrap, one line per hard `\n`, cut at the box edge, drawn in a clipping group in both renderers (clip + child follow a live resize). | `02b31bd` |
 
+## Wave 4 — owner requests (2026-10-29)
+
+| Change | Behaviour now | Commit |
+| --- | --- | --- |
+| Export only referenced assets (P20) | `buildBundle` prunes the exported copy's `resources.images`/`.fonts` to what the nodes use (image `imageId`; text `fontId` **and** `fontFamily`), collapses duplicate ids last-wins, then inlines. `missing` counts only referenced unreadable refs, and the export warns (non-blocking) when it is non-zero. | `c183c8f` |
+| Screentone pitch floor | `SCREENTONE_PITCH_MM_MIN` 0.3 → 0.2 mm and the advisory snap floor 0.4 → 0.2 mm (now derived from the clamp min): 2 dots / 0.250 mm at 203 dpi, 3 / 0.254 at 300, 5 / 0.212 at 600. Defaults, levels, boldness and the pinned planes unchanged. | `0209cb9` |
+
 ## Contracts — do not break
 
 - **Destructive cleanup** requires `complete === true` and a fresh re-scan.
@@ -50,7 +57,9 @@
 - **Autosave**: append to the `autosaveWrites` chain; never replace the tail.
   `flushAutosave()` returns the chain in every branch.
 - **Bundle**: import must mint fresh doc ids (trust is keyed by id) and must not
-  trust the file (size → parse → per-doc validation).
+  trust the file (size → parse → per-doc validation). **Export prunes to node
+  references** — never inline the raw `doc.resources.*` registry (it is
+  append-only), and keep `fontFamily` refs, not just `fontId`.
 - **Print offset** is hm in the doc, px only inside the dialog.
 - **Screentone boldness** is a level bias, not a contrast band; it is
   pixel-changing and must stay in `policyKeyOf` and the explicit per-policy
@@ -104,9 +113,12 @@ Wave 3 is done (see the table above). Remaining, ranked:
 
 ## Environment / commands
 
-- Repo: `/mnt/c/Users/USER/code/niimbun-label-editor` (WSL on drvfs).
-- bun is not on PATH: use `/mnt/c/Users/USER/.bun/bin/bun.exe run <script>`.
-- Tests: `bun.exe run test` (Vitest). Build: `bun.exe run build`.
+- Repo: `niimbun-label-editor` (WSL on drvfs — the checkout path is machine-local and
+  deliberately not written down; run everything from the repo root).
+- Package manager: **bun** — `bun run test`, `bun run build`. (If `bun` is not on
+  `PATH` in your shell, use the installed bun; never paste its absolute path into
+  a doc.)
+- Tests: `bun run test` (Vitest). Build: `bun run build`.
 - Typecheck: `node node_modules/typescript/bin/tsc --noEmit`.
 - Never `git stash`, never destructive git, no push.
 
