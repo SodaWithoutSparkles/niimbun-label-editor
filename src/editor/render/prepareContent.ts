@@ -123,12 +123,17 @@ export const prepareResolvedContent = async (input: PrepareContentInput): Promis
         try {
             if (source.kind === 'csv') {
                 resolved = finalize(csvCell(csv, source.column, rowIndex), source.fallback);
-            } else {
+            } else if (source.kind === 'template') {
                 const raw =
                     engine === undefined
                         ? undefined
                         : coerceText(await engine.evaluate(source.code, rowCtx));
                 resolved = finalize(raw, source.fallback);
+            } else {
+                // `field` values are injected by P2 of this run; until then the
+                // node renders its `fallback` through `resolveContent`'s existing
+                // non-static path, so no override is produced here.
+                continue;
             }
         } catch {
             // A hostile/rejecting engine must never break the render.

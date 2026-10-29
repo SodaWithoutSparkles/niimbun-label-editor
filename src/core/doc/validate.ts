@@ -23,6 +23,7 @@ import type {
     BaseNode,
     CsvRef,
     ContentSource,
+    DocKind,
     FontRef,
     GlobalSpec,
     Guide,
@@ -291,6 +292,17 @@ const toContentSource = (value: unknown): ContentSource | undefined => {
                       fallback: isString(value.fallback) ? value.fallback : '',
                   }
                 : undefined;
+        case 'field': {
+            // A field name is an opaque key: reject empty/whitespace-only, but
+            // never trim the stored value. Falling back (undefined) makes the
+            // carrier use `{ kind: 'static', value: '' }`.
+            if (!isString(value.name) || value.name.trim().length === 0) return undefined;
+            return {
+                kind: 'field',
+                name: value.name,
+                fallback: isString(value.fallback) ? value.fallback : '',
+            };
+        }
         default:
             return undefined;
     }
@@ -1017,6 +1029,16 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
     if (updatedAt === undefined) errors.push('meta.updatedAt: must be a finite epoch-seconds number');
     const thumb = toThumb(metaRaw.thumb);
     const paperTypeId = isString(metaRaw.paperTypeId) ? metaRaw.paperTypeId : undefined;
+    // `kind` is additive: absent stays absent (legacy docs are not rewritten).
+    // A present-but-unknown value is dropped as a non-fatal repair.
+    let kind: DocKind | undefined;
+    if (metaRaw.kind !== undefined) {
+        if (metaRaw.kind === 'label' || metaRaw.kind === 'preset') {
+            kind = metaRaw.kind;
+        } else {
+            repairs.push('meta.kind: unknown value dropped');
+        }
+    }
 
     if (!isRecord(raw.label)) return { ok: false, errors: [...errors, 'label: must be an object'] };
     const labelRaw = raw.label;
@@ -1084,6 +1106,7 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
                 updatedAt: updatedAt!,
                 ...(thumb ? { thumb } : {}),
                 ...(paperTypeId !== undefined ? { paperTypeId } : {}),
+                ...(kind !== undefined ? { kind } : {}),
             },
             label: {
                 backingW: backingW!,

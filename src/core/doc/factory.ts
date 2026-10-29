@@ -11,7 +11,7 @@ import {
 } from '../render/screentone';
 import { PAPER_TYPE_SEEDS } from './paper-types';
 import { normalizeDpi } from './validate';
-import type { Guide, LabelDoc, Node, Region, Transform } from './types';
+import type { DocKind, Guide, LabelDoc, Node, Region, Transform } from './types';
 
 /** Mint a fresh, globally-unique label id (plan decision 39). */
 export const newLabelId = (): string => {
@@ -206,6 +206,8 @@ export interface CreateLabelDocOptions {
     id?: string;
     name?: string;
     paperTypeId?: string;
+    /** `'label'` (default) or `'preset'` — see {@link DocKind}. */
+    kind?: DocKind;
     backingW?: hm;
     backingH?: hm;
     dpi?: number;
@@ -230,6 +232,7 @@ export const createLabelDoc = (options: CreateLabelDocOptions = {}): LabelDoc =>
             name: options.name ?? preset?.name ?? '',
             createdAt: now,
             updatedAt: now,
+            kind: options.kind ?? 'label',
             ...(options.paperTypeId !== undefined ? { paperTypeId: options.paperTypeId } : {}),
         },
         label: {

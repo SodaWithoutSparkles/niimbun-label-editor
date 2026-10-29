@@ -231,6 +231,9 @@ const CONTENT_KIND_LABEL_KEYS = {
     static: 'editor.mfp.contentStatic',
     csv: 'editor.mfp.contentCsv',
     template: 'editor.mfp.contentTemplate',
+    // P4 owns the real UI; until then a field source still labels as a template
+    // (mirrors `contentKindPatch`'s else-branch).
+    field: 'editor.mfp.contentTemplate',
 } as const satisfies Record<ContentSource['kind'], string>;
 
 /** i18n keys for the read-only `templateTrust` state (literal map). */

@@ -123,6 +123,37 @@ describe('docSlice — create → reload → reopen', () => {
         expect(store2.getState().currentDoc?.label.backingH).toBe(7800);
     });
 
+    it('createLabel persists nodes passed in the spec', async () => {
+        const adapter = createMemoryAdapter();
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo(createLabelRepo(adapter));
+
+        const node: Node = {
+            id: 'n1',
+            parentId: null,
+            type: 'text',
+            visible: true,
+            locked: false,
+            transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+            text: { kind: 'field', name: 'price', fallback: '$0' },
+        };
+        const created = await store.getState().createLabel({
+            paperTypeId: 'ftagSpare-25x78',
+            name: 'With nodes',
+            nodes: [node],
+        });
+        expect(created).not.toBeNull();
+        expect(created!.nodes).toHaveLength(1);
+
+        // Read back through the gzip path: the nodes are really stored.
+        const reopened = await createLabelRepo(adapter).get(created!.meta.id);
+        expect(reopened?.nodes).toHaveLength(1);
+        expect(reopened?.nodes[0]).toMatchObject({
+            type: 'text',
+            text: { kind: 'field', name: 'price', fallback: '$0' },
+        });
+    });
+
     it('deletes a label and removes it from Recent', async () => {
         const adapter = createMemoryAdapter();
         const store = createAppStore(makeStorage());

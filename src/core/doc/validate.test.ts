@@ -987,6 +987,135 @@ describe('isNode', () => {
     });
 });
 
+describe('isLabelDoc — meta.kind (preset flag)', () => {
+    it('keeps a preset kind through isLabelDoc', () => {
+        const result = isLabelDoc(
+            validRaw({
+                meta: {
+                    id: 'doc-1',
+                    name: 'Label',
+                    createdAt: 1,
+                    updatedAt: 2,
+                    kind: 'preset',
+                },
+            }),
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.meta.kind).toBe('preset');
+        // The produced doc validates again unchanged: the flag is stable.
+        const again = isLabelDoc(result.doc);
+        expect(again.ok).toBe(true);
+        if (!again.ok) return;
+        expect(again.doc.meta.kind).toBe('preset');
+    });
+
+    it('keeps an explicit label kind', () => {
+        const result = isLabelDoc(
+            validRaw({
+                meta: { id: 'doc-1', name: 'Label', createdAt: 1, updatedAt: 1, kind: 'label' },
+            }),
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.meta.kind).toBe('label');
+    });
+
+    it('leaves an absent kind absent — legacy docs are not rewritten', () => {
+        const result = isLabelDoc(validRaw());
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.meta.kind).toBeUndefined();
+        expect('kind' in result.doc.meta).toBe(false);
+        expect(result.repairs).toEqual([]);
+    });
+
+    it('drops an unknown kind and reports a repair', () => {
+        const result = isLabelDoc(
+            validRaw({
+                meta: { id: 'doc-1', name: 'Label', createdAt: 1, updatedAt: 1, kind: 'template' },
+            }),
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.meta.kind).toBeUndefined();
+        expect('kind' in result.doc.meta).toBe(false);
+        expect(result.repairs).toContain('meta.kind: unknown value dropped');
+    });
+});
+
+describe('isNode — field content source', () => {
+    it('keeps a field source on a text node without trimming the name', () => {
+        const node = isNode(
+            baseNode({
+                type: 'text',
+                shape: undefined,
+                text: { kind: 'field', name: ' price ', fallback: '$0' },
+            }),
+        );
+        expect(node).toMatchObject({
+            text: { kind: 'field', name: ' price ', fallback: '$0' },
+        });
+    });
+
+    it('keeps a field source on qr/code/text nodes and defaults a missing fallback', () => {
+        const qr = isNode(
+            baseNode({
+                type: 'qr',
+                shape: undefined,
+                data: { kind: 'field', name: 'sku', fallback: '—' },
+            }),
+        );
+        expect(qr).toMatchObject({ data: { kind: 'field', name: 'sku', fallback: '—' } });
+
+        const code = isNode(
+            baseNode({
+                type: 'code',
+                shape: undefined,
+                data: { kind: 'field', name: 'sku', fallback: 7 },
+            }),
+        );
+        expect(code).toMatchObject({ data: { kind: 'field', name: 'sku', fallback: '' } });
+
+        const missing = isNode(
+            baseNode({
+                type: 'text',
+                shape: undefined,
+                text: { kind: 'field', name: 'sku' },
+            }),
+        );
+        expect(missing).toMatchObject({ text: { kind: 'field', name: 'sku', fallback: '' } });
+    });
+
+    it('falls back to an empty static source for a missing/empty/non-string name', () => {
+        for (const text of [
+            { kind: 'field', fallback: '$0' },
+            { kind: 'field', name: '', fallback: '$0' },
+            { kind: 'field', name: '   ', fallback: '$0' },
+            { kind: 'field', name: 5, fallback: '$0' },
+        ]) {
+            expect(isNode(baseNode({ type: 'text', shape: undefined, text }))).toMatchObject({
+                text: { kind: 'static', value: '' },
+            });
+        }
+    });
+
+    it('falls back to an empty static source for a non-record carrier', () => {
+        expect(isNode(baseNode({ type: 'text', shape: undefined, text: 42 }))).toMatchObject({
+            text: { kind: 'static', value: '' },
+        });
+        expect(isNode(baseNode({ type: 'qr', shape: undefined, data: null }))).toMatchObject({
+            data: { kind: 'static', value: '' },
+        });
+    });
+
+    it('still drops an unknown source kind', () => {
+        expect(
+            isNode(baseNode({ type: 'text', shape: undefined, text: { kind: 'mystery' } })),
+        ).toMatchObject({ text: { kind: 'static', value: '' } });
+    });
+});
+
 describe('isLabelDoc — acceptance and repair', () => {
     it('accepts a structurally valid document', () => {
         const result = isLabelDoc(validRaw());

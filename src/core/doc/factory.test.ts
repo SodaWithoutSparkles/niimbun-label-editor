@@ -82,6 +82,20 @@ describe('createLabelDoc', () => {
         expect(createLabelDoc().meta.paperTypeId).toBeUndefined();
     });
 
+    it('writes an explicit label kind by default', () => {
+        expect(createLabelDoc().meta.kind).toBe('label');
+        expect(createFtagSpareDoc().meta.kind).toBe('label');
+    });
+
+    it('honours kind: "preset"', () => {
+        const doc = createLabelDoc({ kind: 'preset', name: 'Price tag' });
+        expect(doc.meta.kind).toBe('preset');
+        expect(isLabelDoc(doc).ok).toBe(true);
+        const validated = isLabelDoc(doc);
+        if (!validated.ok) return;
+        expect(validated.doc.meta.kind).toBe('preset');
+    });
+
     it('records an unknown user-authored paperTypeId (no built-in preset)', () => {
         const doc = createLabelDoc({
             paperTypeId: 'user-123',

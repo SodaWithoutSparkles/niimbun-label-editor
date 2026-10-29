@@ -31,6 +31,9 @@ const KIND_LABEL_KEYS = {
     static: 'editor.mfp.contentStatic',
     csv: 'editor.mfp.contentCsv',
     template: 'editor.mfp.contentTemplate',
+    // P4 owns the real UI; until then a field source still labels as a template
+    // (mirrors `switchKind`'s else-branch).
+    field: 'editor.mfp.contentTemplate',
 } as const satisfies Record<SourceKind, string>;
 
 /** Field label key per carrier node type (literal map keeps typed keys). */

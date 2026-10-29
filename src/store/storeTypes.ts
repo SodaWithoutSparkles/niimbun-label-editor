@@ -35,6 +35,11 @@ export interface CreateLabelSpec {
     regions?: Region[];
     /** Non-printable editor guides copied onto `label.guides` (e.g. an F-tag score line). */
     guides?: Guide[];
+    /**
+     * Content to place in the new doc. Lets copy/preset paths hand nodes to the
+     * factory, which already clones and rounds them.
+     */
+    nodes?: Node[];
     printDirection?: LabelDoc['label']['printDirection'];
 }
 

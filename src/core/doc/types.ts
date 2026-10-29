@@ -202,7 +202,12 @@ export type Node = GroupNode | TextNode | ImageNode | ShapeNode | QrNode | Barco
 export type ContentSource =
     | { kind: 'static'; value: string }
     | { kind: 'csv'; column: string; fallback: string }
-    | { kind: 'template'; code: string; fallback: string };
+    | { kind: 'template'; code: string; fallback: string }
+    /**
+     * A named field left for the user to fill in. Field names are a namespace of
+     * their own — they never collide with a CSV `column` or a template.
+     */
+    | { kind: 'field'; name: string; fallback: string };
 
 export interface FontRef {
     fontId: string;
@@ -293,6 +298,12 @@ export interface PrintOffset {
     type: 'inner' | 'outer';
 }
 
+/**
+ * What a document is for. Absent on the wire/doc means `'label'` (legacy docs
+ * are never rewritten just to add it).
+ */
+export type DocKind = 'label' | 'preset';
+
 export interface LabelDoc {
     version: 1;
     meta: {
@@ -300,6 +311,11 @@ export interface LabelDoc {
         name: string;
         createdAt: number; // epoch seconds (UTC)
         updatedAt: number; // epoch seconds (UTC)
+        /**
+         * Absent / `'label'` = a normal label; `'preset'` = a user-designed label
+         * with data left to fill in. Additive optional field — `version` stays 1.
+         */
+        kind?: DocKind;
         // Cosmetic preview. RASTER ONLY (PNG/WebP/JPG) — never SVG, never HTML,
         // never a data URL that could script. May be stale; never used for
         // measurement or rendering. Validation: raster mime only, ≤ 512 px

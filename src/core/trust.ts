@@ -156,14 +156,14 @@ export const docHasTemplateSources = (doc: LabelDoc): boolean => {
         if (type === 'text') {
             if (isTemplateSource((node as { text?: unknown }).text)) return true;
             const kind = sourceKind((node as { text?: unknown }).text);
-            // static/csv are safe; anything else (missing, null, unknown) could
-            // be executable, so gate it.
-            return kind !== 'static' && kind !== 'csv';
+            // static/csv/field are pure data; anything else (missing, null,
+            // unknown) could be executable, so gate it.
+            return kind !== 'static' && kind !== 'csv' && kind !== 'field';
         }
         if (type === 'qr' || type === 'barcode' || type === 'code') {
             if (isTemplateSource((node as { data?: unknown }).data)) return true;
             const kind = sourceKind((node as { data?: unknown }).data);
-            return kind !== 'static' && kind !== 'csv';
+            return kind !== 'static' && kind !== 'csv' && kind !== 'field';
         }
         return false;
     });
