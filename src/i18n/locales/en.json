@@ -324,7 +324,6 @@
     "dataSource": "Data source (CSV)",
     "media": "Media",
     "newLabel": "New label",
-    "comingSoon": "Coming soon",
     "emptyRecent": "No labels yet"
   },
   "gallery": {
@@ -333,8 +332,6 @@
     "emptyHint": "Create your first label to get started.",
     "storageUnavailableTitle": "Label storage unavailable",
     "storageUnavailableHint": "The browser could not open the label database. Your saved labels are not shown. Reload the page to retry.",
-    "quickPrint": "Quick print",
-    "quickPrintUnavailable": "Printing is not available yet",
     "updatedTitle": "Last updated",
     "size": "{{w}} × {{h}} mm",
     "openLabel": "Open {{name}}",
@@ -344,6 +341,12 @@
     "delete": "Delete",
     "deleteConfirm": "Delete \"{{name}}\"? This cannot be undone.",
     "deleteFailed": "Could not delete the label."
+  },
+  "presets": {
+    "title": "Label presets",
+    "emptyTitle": "No presets yet",
+    "emptyHint": "A preset is a label with the data left to fill in. Save one from the editor to reuse it.",
+    "sidebarHint": "Your label presets appear in the main pane."
   },
   "connection": {
     "connected": "Connected",

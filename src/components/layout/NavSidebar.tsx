@@ -26,12 +26,12 @@ const SECTION_ICONS = {
 const ORDERED_SECTIONS: GallerySection[] = ['recent', 'paper', 'templates', 'csv', 'media'];
 
 /**
- * Gallery nav sidebar: Recent / Paper management / Templates / Data source /
- * Media, plus the `＋ New label` CTA. The active section lives in the store
- * (`gallerySection`) so `MainLayout` can swap the pane; `Recent` lists the
- * labels, `Paper management` points at the paper-type manager, `Data source` at
- * the CSV manager and `Media` at the media manager. `Templates` stays a
- * placeholder (P9).
+ * Gallery nav sidebar: Recent / Paper management / Label presets / Data source
+ * / Media, plus the `＋ New label` CTA. The active section lives in the store
+ * (`gallerySection`) so `MainLayout` can swap the pane; `Recent` lists ordinary
+ * labels (never presets), `Paper management` points at the paper-type manager,
+ * `Label presets` at the preset pane, `Data source` at the CSV manager and
+ * `Media` at the media manager.
  */
 export const NavSidebar: React.FC = () => {
     const { t } = useTranslation();
@@ -41,6 +41,9 @@ export const NavSidebar: React.FC = () => {
     const gallerySection = useStore((state) => state.gallerySection);
     const setGallerySection = useStore((state) => state.setGallerySection);
     const [showCreate, setShowCreate] = useState(false);
+
+    // Presets have their own pane, so Recent lists ordinary labels only.
+    const labels = gallery.filter((summary) => summary.kind !== 'preset');
 
     const handleOpen = (id: string) => {
         void openLabel(id).then((doc) => {
@@ -88,11 +91,11 @@ export const NavSidebar: React.FC = () => {
 
             <div className="min-h-0 flex-1 overflow-y-auto border-t border-gray-700 p-2 [scrollbar-gutter:stable]">
                 {gallerySection === 'recent' ? (
-                    gallery.length === 0 ? (
+                    labels.length === 0 ? (
                         <p className="px-2 py-3 text-xs text-gray-500">{t('nav.emptyRecent')}</p>
                     ) : (
                         <ul className="space-y-0.5">
-                            {gallery.map((summary) => (
+                            {labels.map((summary) => (
                                 <li key={summary.id}>
                                     <button
                                         type="button"
@@ -114,7 +117,7 @@ export const NavSidebar: React.FC = () => {
                               ? t('csvs.sidebarHint')
                               : gallerySection === 'media'
                                 ? t('media.sidebarHint')
-                                : t('nav.comingSoon')}
+                                : t('presets.sidebarHint')}
                     </p>
                 )}
             </div>

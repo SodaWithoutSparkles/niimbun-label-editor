@@ -71,6 +71,59 @@ describe('GalleryView', () => {
         expect(screen.getByText('25 × 78 mm')).toBeInTheDocument();
     });
 
+    it('never renders a preset in the Recent grid', async () => {
+        // P3 partition: presets have their own pane (`PresetSection`).
+        useStore.setState({
+            galleryLoading: false,
+            labelRepo: createLabelRepo(createMemoryAdapter()),
+            gallery: [
+                {
+                    id: 'label-1',
+                    name: 'Ordinary label',
+                    createdAt: 0,
+                    updatedAt: 100,
+                    backingW: 2500,
+                    backingH: 7800,
+                },
+                {
+                    id: 'preset-1',
+                    name: 'Shipping preset',
+                    createdAt: 0,
+                    updatedAt: 200,
+                    backingW: 2500,
+                    backingH: 7800,
+                    kind: 'preset',
+                },
+            ],
+        });
+        render(<GalleryView />);
+
+        expect(await screen.findByText('Ordinary label')).toBeInTheDocument();
+        expect(screen.queryByText('Shipping preset')).not.toBeInTheDocument();
+    });
+
+    it('shows the empty state when the library holds only presets', async () => {
+        useStore.setState({
+            galleryLoading: false,
+            labelRepo: createLabelRepo(createMemoryAdapter()),
+            gallery: [
+                {
+                    id: 'preset-1',
+                    name: 'Shipping preset',
+                    createdAt: 0,
+                    updatedAt: 200,
+                    backingW: 2500,
+                    backingH: 7800,
+                    kind: 'preset',
+                },
+            ],
+        });
+        render(<GalleryView />);
+
+        expect(await screen.findByText('No labels yet')).toBeInTheDocument();
+        expect(screen.queryByText('Shipping preset')).not.toBeInTheDocument();
+    });
+
     it('draws the placeholder backing outline at a constant 1 px whatever the aspect ratio', async () => {
         // The `viewBox` is in hm, so a user-unit stroke scales with the fit: a
         // 25×78 mm label used to render a 0.46 px hairline on the white art area

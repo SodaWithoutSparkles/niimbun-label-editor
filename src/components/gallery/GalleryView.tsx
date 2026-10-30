@@ -7,8 +7,9 @@ import { LabelCard } from './LabelCard';
 import { useThumbBackfill } from './useThumbBackfill';
 
 /**
- * Gallery home surface — a grid of pseudo-cards. Art is never rendered from a
- * template and nothing is fetched; see `LabelCard` for the resolve order.
+ * Gallery home surface — a grid of pseudo-cards for ordinary labels. Presets
+ * are excluded and shown in `PresetSection` instead. Art is never rendered from
+ * a template and nothing is fetched; see `LabelCard` for the resolve order.
  */
 export const GalleryView: React.FC = () => {
     const { t } = useTranslation();
@@ -47,6 +48,11 @@ export const GalleryView: React.FC = () => {
         [gallery, deleteLabel, t],
     );
 
+    // Partition: presets live in their own pane (`#/gallery/templates`), never
+    // in the Recent grid. The store keeps everything newest-first, so filtering
+    // preserves the order.
+    const labels = gallery.filter((summary) => summary.kind !== 'preset');
+
     if (galleryLoading) {
         return (
             <div className="flex flex-1 items-center justify-center bg-gray-900 text-sm text-gray-400">
@@ -70,7 +76,7 @@ export const GalleryView: React.FC = () => {
         );
     }
 
-    if (gallery.length === 0) {
+    if (labels.length === 0) {
         return (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 bg-gray-900 p-8 text-center">
                 <ImageOff size={32} className="text-gray-600" />
@@ -83,7 +89,7 @@ export const GalleryView: React.FC = () => {
     return (
         <div className="min-w-0 flex-1 overflow-y-auto bg-gray-900 p-6 [scrollbar-gutter:stable]">
             <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
-                {gallery.map((summary) => (
+                {labels.map((summary) => (
                     <LabelCard
                         key={summary.id}
                         summary={summary}

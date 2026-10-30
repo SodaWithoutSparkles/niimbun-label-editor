@@ -3,6 +3,7 @@ import { useStore } from '../../store/useStore';
 import { Header } from './Header';
 import { NavSidebar } from './NavSidebar';
 import { GalleryView } from '../gallery/GalleryView';
+import { PresetSection } from '../gallery/PresetSection';
 import { PaperTypeSection } from '../gallery/PaperTypeSection';
 import { CsvSection } from '../gallery/CsvSection';
 import { MediaSection } from '../gallery/MediaSection';
@@ -10,9 +11,11 @@ import { EditorShell } from '../editor/EditorShell';
 
 /**
  * App shell. `Header` is shared; the gallery renders `NavSidebar` + a main pane
- * (the label card grid, the paper-type manager, the CSV manager, or the media
- * manager when the sidebar selects one), while the editor renders the P3
- * `EditorShell` (ui-spec.md §2), which owns its own status bar. The template's
+ * (the label card grid, the label-preset pane, the paper-type manager, the CSV
+ * manager, or the media manager when the sidebar selects one), while the editor
+ * renders the P3 `EditorShell` (ui-spec.md §2), which owns its own status bar.
+ * Note: the sidebar section id is `templates`, but the surface is the label
+ * presets pane (user-facing name since the label-presets run). The template's
  * `LeftSidebar` / `RightSidebar` / `DrawingCanvas` are no longer referenced from
  * either path (stripped in W6).
  */
@@ -42,6 +45,8 @@ export const MainLayout: React.FC = () => {
                         <CsvSection />
                     ) : gallerySection === 'media' ? (
                         <MediaSection />
+                    ) : gallerySection === 'templates' ? (
+                        <PresetSection />
                     ) : (
                         <GalleryView />
                     )}
