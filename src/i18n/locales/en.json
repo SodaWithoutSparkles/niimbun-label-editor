@@ -349,7 +349,17 @@
     "emptyHint": "A preset is a label with the data left to fill in. Save one from the editor to reuse it.",
     "sidebarHint": "Your label presets appear in the main pane.",
     "saved": "Saved \"{{name}}\" as a preset.",
-    "saveFailed": "Could not save the preset."
+    "saveFailed": "Could not save the preset.",
+    "open": "Fill in {{name}}",
+    "fillHint": "Fill in the fields below — the preview and the print use the same values.",
+    "preview": "Preview with your values",
+    "print": "Print",
+    "openInEditor": "Open in editor",
+    "cancel": "Cancel",
+    "loading": "Loading preset…",
+    "loadFailed": "Could not load this preset.",
+    "openCopyFailed": "Could not open a copy in the editor.",
+    "noFields": "This preset has no fields. Print it as it is."
   },
   "connection": {
     "connected": "Connected",

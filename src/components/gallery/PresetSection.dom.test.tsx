@@ -18,6 +18,13 @@ import { confirm } from '../common/dialogs/dialogService';
 
 vi.mock('../common/dialogs/dialogService', () => ({ confirm: vi.fn() }));
 
+// The fill dialog's own content/print wiring is covered by its own test; here
+// the section only owns *which* preset is open.
+vi.mock('./FillPresetDialog', () => ({
+    FillPresetDialog: ({ open, presetId }: { open: boolean; presetId: string | null }) =>
+        open ? <div data-testid="fill-dialog">{presetId}</div> : null,
+}));
+
 afterEach(() => {
     cleanup();
     vi.mocked(confirm).mockReset();
@@ -70,6 +77,33 @@ describe('PresetSection', () => {
                 'A preset is a label with the data left to fill in. Save one from the editor to reuse it.',
             ),
         ).toBeInTheDocument();
+    });
+
+    it('opens the fill dialog from the card art, with a sibling delete button', async () => {
+        await seedLibrary();
+        render(<PresetSection />);
+        await screen.findByText('Shipping preset');
+
+        const openButton = screen.getByRole('button', { name: 'Fill in Shipping preset' });
+        const deleteButton = screen.getByRole('button', { name: 'Delete' });
+        expect(openButton.contains(deleteButton)).toBe(false);
+
+        fireEvent.click(openButton);
+
+        expect(await screen.findByTestId('fill-dialog')).toHaveTextContent('preset-1');
+    });
+
+    it('deletes a preset without opening the fill dialog', async () => {
+        const repo = await seedLibrary();
+        const remove = vi.spyOn(repo, 'remove');
+        vi.mocked(confirm).mockResolvedValue(true);
+        render(<PresetSection />);
+        await screen.findByText('Shipping preset');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        await vi.waitFor(() => expect(remove).toHaveBeenCalledWith('preset-1'));
+        expect(screen.queryByTestId('fill-dialog')).not.toBeInTheDocument();
     });
 
     it('deletes a preset through the store after the confirm is accepted', async () => {

@@ -315,6 +315,59 @@ describe('usePrintJob — injected field values', () => {
     });
 });
 
+describe('usePrintJob — explicit document option', () => {
+    it('resolves the passed document, not state.currentDoc, with the injected fields', async () => {
+        const storeDoc = makeDoc([textFieldNode('store-field', 'price')]);
+        const presetDoc = createLabelDoc({
+            id: 'preset-doc',
+            now: 1_700_000_100,
+            backingW: 3000,
+            backingH: 2000,
+            nodes: [textFieldNode('preset-field', 'price')],
+        });
+        useStore.setState({ currentDoc: storeDoc, trustRepo: makeTrustRepo() });
+
+        const { result } = renderHook(() =>
+            usePrintJob({ open: true, doc: presetDoc, fields: { price: '7.50' } }),
+        );
+        const ctx = await result.current.prepareRow(0);
+
+        expect(ctx.overrides?.get('preset-field')).toEqual({ text: '7.50', placeholder: false });
+        // The store's open document was never resolved.
+        expect(ctx.overrides?.has('store-field')).toBe(false);
+        expect(textAt(presetDoc, ctx)).toBe('7.50');
+    });
+
+    it('stays inert for an explicit null document even when a doc is open', async () => {
+        const resolveSpy = vi.fn(async () => 'always' as TrustDecision);
+        const gate: TrustGate = {
+            resolve: resolveSpy as unknown as TrustGate['resolve'],
+            allowOnce: vi.fn(),
+            denyOnce: vi.fn(),
+            always: vi.fn(async () => undefined),
+            never: vi.fn(async () => undefined),
+            remove: vi.fn(async () => undefined),
+            clear: vi.fn(async () => undefined),
+            clearSession: vi.fn(),
+            sessionEntries: () => [],
+        };
+        useStore.setState({
+            currentDoc: makeDoc([textTemplateNode()]),
+            trustRepo: null,
+            trustGate: gate,
+        });
+
+        const { result } = renderHook(() => usePrintJob({ open: true, doc: null }));
+        const ctx = await result.current.prepareRow(0);
+
+        expect(ctx).toEqual({});
+        expect(resolveSpy).not.toHaveBeenCalled();
+        expect(createEngineMock).not.toHaveBeenCalled();
+        expect(promptMock).not.toHaveBeenCalled();
+        expect(createGlobalsCacheMock).not.toHaveBeenCalled();
+    });
+});
+
 describe('usePrintJob — closed dialog is inert', () => {
     const makeGate = (resolveSpy: ReturnType<typeof vi.fn>): TrustGate => ({
         resolve: resolveSpy as unknown as TrustGate['resolve'],

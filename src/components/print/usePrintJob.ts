@@ -69,6 +69,14 @@ import type { AssetDeps, ResolveContext } from '../../editor/render';
  * `csv` is non-null only while the status is `ready`, so `buildCsvPrintJob`
  * can never see a half-loaded table. Re-opening the dialog re-reads (the
  * effect re-runs on `open`); there is no retry/backoff.
+ *
+ * ## Explicit document (P5)
+ *
+ * `doc` lets a caller resolve a record that is not `currentDoc` — the preset
+ * fill dialog never opens its preset in the editor. The option wins when the
+ * key is present: a document resolves, `null` keeps the hook inert (no gate, no
+ * engine, no `prepareRow` output). When the key is absent the hook keeps
+ * reading `state.currentDoc`, so `EditorShell`'s call site is untouched.
  */
 
 /** Readiness of the document's attached CSV table (P12). */
@@ -98,6 +106,14 @@ export interface UsePrintJobOptions {
      * values. Lives only in memory — never written to the document.
      */
     fields?: Record<string, string>;
+    /**
+     * Document to resolve instead of the store's open document. Present (even
+     * as `null`) means the option wins: the preset fill dialog resolves its
+     * own record without making it `currentDoc`, and a `null` document keeps
+     * the hook inert. Absent keeps today's `state.currentDoc` behavior, so the
+     * editor's `PrintDialog` call site is unchanged.
+     */
+    doc?: LabelDoc | null;
 }
 
 /** Read the attached CSV table; `null` on failure (gone, throw or no repo). */
@@ -128,8 +144,11 @@ interface CsvSettle {
     readonly revision: number;
 }
 
-export const usePrintJob = ({ open, fields }: UsePrintJobOptions): PrintJobDeps => {
-    const doc = useStore((state) => state.currentDoc);
+export const usePrintJob = ({ open, fields, doc: docOption }: UsePrintJobOptions): PrintJobDeps => {
+    const storeDoc = useStore((state) => state.currentDoc);
+    // An explicitly passed document (even `null`) wins over the store's open
+    // document; absent keeps the editor's existing behavior.
+    const doc = docOption === undefined ? storeDoc : docOption;
     const csvRepo = useStore((state) => state.csvRepo);
     const trustRepo = useStore((state) => state.trustRepo);
     const storeGate = useStore((state) => state.trustGate);
@@ -241,81 +260,96 @@ export const usePrintJob = ({ open, fields }: UsePrintJobOptions): PrintJobDeps 
     const csvRef = useRef(csv);
     csvRef.current = csv;
 
-    const runPrepare = useCallback(async (rowIndex: number): Promise<ResolveContext> => {
-        const currentDoc = docRef.current;
-        if (!currentDoc) return {};
+    const runPrepare = useCallback(
+        async (rowIndex: number, session: number): Promise<ResolveContext> => {
+            // The session can be disposed while an await is in flight (the trust
+            // prompt is user-paced). A stale pass writes no trust decision, builds
+            // no engine/cache and returns no content, so a close is final.
+            const stale = (): boolean =>
+                !openRef.current || session !== sessionRef.current;
+            const currentDoc = docRef.current;
+            if (!currentDoc) return {};
 
-        // Decision 42: a plain document never touches the gate or the engine.
-        const hasTemplates = docHasTemplateSources(currentDoc);
+            // Decision 42: a plain document never touches the gate or the engine.
+            const hasTemplates = docHasTemplateSources(currentDoc);
 
-        let trust: TrustDecision = 'ask';
-        if (hasTemplates) {
-            const cached = trustRef.current;
-            if (cached && cached.docId === currentDoc.meta.id) {
-                trust = cached.trust;
-            } else {
-                const gate: TrustGate | null =
-                    storeGateRef.current ?? trustGateFor(trustRepoRef.current);
-                trust = gate ? await gate.resolve(currentDoc.meta.id) : 'ask';
-                if (trust === 'ask' && gate) {
-                    const choice = await promptTemplateTrust({
-                        docId: currentDoc.meta.id,
-                        docName: currentDoc.meta.name,
-                    });
-                    switch (choice) {
-                        case 'allowOnce':
-                            gate.allowOnce(currentDoc.meta.id);
-                            break;
-                        case 'always':
-                            // A failed record write must never crash the pass:
-                            // fall back to a session allow (templates run).
-                            await gate
-                                .always(currentDoc.meta.id)
-                                .catch(() => gate.allowOnce(currentDoc.meta.id));
-                            break;
-                        case 'denyOnce':
-                            gate.denyOnce(currentDoc.meta.id);
-                            break;
-                        case 'never':
-                            // A failed record write must still block: fall back
-                            // to a session deny.
-                            await gate
-                                .never(currentDoc.meta.id)
-                                .catch(() => gate.denyOnce(currentDoc.meta.id));
-                            break;
-                        case 'none':
-                        default:
-                            // Displaced prompt: no write; stays `ask`, re-prompts.
-                            break;
+            let trust: TrustDecision = 'ask';
+            if (hasTemplates) {
+                const cached = trustRef.current;
+                if (cached && cached.docId === currentDoc.meta.id) {
+                    trust = cached.trust;
+                } else {
+                    const gate: TrustGate | null =
+                        storeGateRef.current ?? trustGateFor(trustRepoRef.current);
+                    trust = gate ? await gate.resolve(currentDoc.meta.id) : 'ask';
+                    if (stale()) return {};
+                    if (trust === 'ask' && gate) {
+                        const choice = await promptTemplateTrust({
+                            docId: currentDoc.meta.id,
+                            docName: currentDoc.meta.name,
+                        });
+                        // The prompt can outlive the dialog: do not record a
+                        // decision for a dead session.
+                        if (stale()) return {};
+                        switch (choice) {
+                            case 'allowOnce':
+                                gate.allowOnce(currentDoc.meta.id);
+                                break;
+                            case 'always':
+                                // A failed record write must never crash the pass:
+                                // fall back to a session allow (templates run).
+                                await gate
+                                    .always(currentDoc.meta.id)
+                                    .catch(() => gate.allowOnce(currentDoc.meta.id));
+                                break;
+                            case 'denyOnce':
+                                gate.denyOnce(currentDoc.meta.id);
+                                break;
+                            case 'never':
+                                // A failed record write must still block: fall back
+                                // to a session deny.
+                                await gate
+                                    .never(currentDoc.meta.id)
+                                    .catch(() => gate.denyOnce(currentDoc.meta.id));
+                                break;
+                            case 'none':
+                            default:
+                                // Displaced prompt: no write; stays `ask`, re-prompts.
+                                break;
+                        }
+                        trust = await gate.resolve(currentDoc.meta.id);
+                        if (stale()) return {};
                     }
-                    trust = await gate.resolve(currentDoc.meta.id);
+                    trustRef.current = { docId: currentDoc.meta.id, trust };
                 }
-                trustRef.current = { docId: currentDoc.meta.id, trust };
             }
-        }
 
-        // Fail-closed: only `always` may execute templates.
-        const mayExecute = hasTemplates && trust === 'always';
-        if (mayExecute && !engineRef.current) engineRef.current = createJavaScriptTemplateEngine();
-        const engine: TemplateEngine | undefined = mayExecute
-            ? engineRef.current ?? undefined
-            : undefined;
+            // Fail-closed: only `always` may execute templates.
+            const mayExecute = hasTemplates && trust === 'always';
+            if (mayExecute && !engineRef.current)
+                engineRef.current = createJavaScriptTemplateEngine();
+            const engine: TemplateEngine | undefined = mayExecute
+                ? engineRef.current ?? undefined
+                : undefined;
 
-        if (!globalsCacheRef.current) globalsCacheRef.current = createGlobalsCache();
+            if (!globalsCacheRef.current) globalsCacheRef.current = createGlobalsCache();
 
-        const result = await runResolvePass(
-            {
-                doc: currentDoc,
-                csv: csvRef.current,
-                rowIndex,
-                trust,
-                engine,
-                fields: fieldsRef.current,
-            },
-            globalsCacheRef.current,
-        );
-        return { overrides: result.overrides };
-    }, []);
+            const result = await runResolvePass(
+                {
+                    doc: currentDoc,
+                    csv: csvRef.current,
+                    rowIndex,
+                    trust,
+                    engine,
+                    fields: fieldsRef.current,
+                },
+                globalsCacheRef.current,
+            );
+            if (stale()) return {};
+            return { overrides: result.overrides };
+        },
+        [],
+    );
 
     // Single-flight queue shared by thumbnails + the print job (serial-use engine).
     const queueRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -331,7 +365,7 @@ export const usePrintJob = ({ open, fields }: UsePrintJobOptions): PrintJobDeps 
         // a queued pass is NOT superseded: each caller awaits its own row.
         const task = queueRef.current.then((): Promise<ResolveContext> | ResolveContext => {
             if (!openRef.current || session !== sessionRef.current) return {};
-            return runPrepare(rowIndex);
+            return runPrepare(rowIndex, session);
         });
         // Keep the chain alive even if a pass rejects.
         queueRef.current = task.catch(() => undefined);

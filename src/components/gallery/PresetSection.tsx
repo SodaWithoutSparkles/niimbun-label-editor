@@ -1,8 +1,9 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ImageOff } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { confirm } from '../common/dialogs/dialogService';
+import { FillPresetDialog } from './FillPresetDialog';
 import { PresetCard } from './PresetCard';
 import { useThumbBackfill } from './useThumbBackfill';
 
@@ -19,6 +20,8 @@ import { useThumbBackfill } from './useThumbBackfill';
  * Deleting goes through the store's `deleteLabel` (never a raw repo
  * `remove`): it owns the autosave flush, the in-flight open invalidation and
  * the gallery refresh. Failures surface through the store's own notification.
+ * The section also owns which preset's fill dialog is open (P5), so the cards
+ * stay presentational.
  */
 export const PresetSection: React.FC = () => {
     const { t } = useTranslation();
@@ -26,6 +29,8 @@ export const PresetSection: React.FC = () => {
     const galleryLoading = useStore((state) => state.galleryLoading);
     const storageError = useStore((state) => state.storageError);
     const deleteLabel = useStore((state) => state.deleteLabel);
+    /** The preset whose fill dialog is open; `null` = closed. */
+    const [fillId, setFillId] = useState<string | null>(null);
 
     // Presets saved before a thumb existed get one on this visit, same as the
     // Recent grid. Mounted above the early returns so the hook order is stable.
@@ -75,6 +80,7 @@ export const PresetSection: React.FC = () => {
                     <PresetCard
                         key={summary.id}
                         summary={summary}
+                        onOpen={setFillId}
                         onDelete={(id) => {
                             void handleDelete(id);
                         }}
@@ -90,6 +96,11 @@ export const PresetSection: React.FC = () => {
                 <h1 className="text-lg font-semibold text-gray-100">{t('presets.title')}</h1>
             </div>
             {body}
+            <FillPresetDialog
+                open={fillId !== null}
+                presetId={fillId}
+                onClose={() => setFillId(null)}
+            />
         </div>
     );
 };
