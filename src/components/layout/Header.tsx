@@ -28,9 +28,13 @@ export const Header: React.FC = () => {
     // actually persists. Hidden in the gallery (there is no document to name).
     const docName = useStore(state => state.currentDoc?.meta.name ?? '');
     const hasDoc = useStore(state => state.currentDoc !== null);
+    /** Absent kind = a normal label; a preset must not offer "Save as preset". */
+    const isPresetDoc = useStore(state => state.currentDoc?.meta.kind === 'preset');
     const openPrint = useStore(state => state.openPrint);
     const renameDoc = useStore(state => state.renameDoc);
     const saveCurrentLabel = useStore(state => state.saveCurrentLabel);
+    const saveCopy = useStore(state => state.saveCopy);
+    const addNotification = useStore(state => state.addNotification);
     const autoSave = useStore(state => state.autoSave);
     const toggleAutoSave = useStore(state => state.toggleAutoSave);
     const galleryLength = useStore(state => state.gallery.length);
@@ -106,6 +110,24 @@ export const Header: React.FC = () => {
         await saveCurrentLabel();
     };
 
+    // "Save as preset" persists a COPY and stays in the editor (owner decision):
+    // `saveCopy` never mutates `currentDoc`, so the open label keeps its id, kind,
+    // content and history. The notification names the new preset record.
+    const handleSaveAsPreset = async () => {
+        setActiveMenu(null);
+        const doc = useStore.getState().currentDoc;
+        if (!doc) return;
+        const copy = await saveCopy(doc, { kind: 'preset', name: doc.meta.name });
+        if (copy) {
+            addNotification({
+                type: 'success',
+                message: t('presets.saved', { name: copy.meta.name }),
+            });
+        } else {
+            addNotification({ type: 'error', message: t('presets.saveFailed') });
+        }
+    };
+
     // Pick one file, hand it to the transfer hook, then clear the input's
     // value: without the reset a second pick of the *same* file fires no
     // `change` event and the import silently never happens.
@@ -172,6 +194,8 @@ export const Header: React.FC = () => {
                 onCloseMenu={() => setActiveMenu(null)}
                 autoSave={autoSave}
                 onSave={handleSave}
+                onSaveAsPreset={handleSaveAsPreset}
+                showSaveAsPreset={hasDoc && !isPresetDoc}
                 onToggleAutoSave={toggleAutoSave}
                 onPrint={openPrint}
                 saveDisabled={!isEditor}

@@ -151,6 +151,44 @@ describe('prepareResolvedContent — field binding', () => {
         expect(map.get('f2')).toEqual({ text: DEFAULT_EMPTY_TEXT, placeholder: true });
     });
 
+    it('resolves an empty field name to its fallback', async () => {
+        // The validator accepts an empty `name` (the half-filled authoring
+        // state). With no value bound to it, it resolves to its fallback —
+        // exactly like an absent name — instead of degrading to static.
+        const doc = docWith([leaf('f1', 'text', { kind: 'field', name: '', fallback: 'F' })]);
+
+        const unrelated = await prepareResolvedContent({
+            doc,
+            csv: null,
+            rowIndex: 0,
+            fields: { price: '9.99' },
+        });
+        expect(unrelated.get('f1')).toEqual({ text: 'F', placeholder: false });
+
+        const noMap = await prepareResolvedContent({ doc, csv: null, rowIndex: 0 });
+        expect(noMap.get('f1')).toEqual({ text: 'F', placeholder: false });
+
+        const emptyState = await prepareResolvedContent({
+            doc: docWith([leaf('f1', 'text', { kind: 'field', name: '', fallback: '' })]),
+            csv: null,
+            rowIndex: 0,
+        });
+        expect(emptyState.get('f1')).toEqual({ text: DEFAULT_EMPTY_TEXT, placeholder: true });
+    });
+
+    it('never binds an own empty-string key to an empty field name', async () => {
+        // The map may carry an own `''` key (e.g. built from an empty form
+        // field). An empty name is unbindable, so the value must not leak.
+        const doc = docWith([leaf('f1', 'text', { kind: 'field', name: '', fallback: '—' })]);
+        const map = await prepareResolvedContent({
+            doc,
+            csv: null,
+            rowIndex: 0,
+            fields: { '': 'leak' },
+        });
+        expect(map.get('f1')).toEqual({ text: '—', placeholder: false });
+    });
+
     it('never reads a field value from the prototype chain', async () => {
         // A hostile prototype carrying own `__proto__`/`constructor` data props:
         // a naive `fields[name]` lookup would return 'LEAK' for both.

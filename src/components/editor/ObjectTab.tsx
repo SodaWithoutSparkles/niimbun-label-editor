@@ -230,10 +230,8 @@ const isCodeFormat = (option: string): option is CodeFormat => option in CODE_FO
 const CONTENT_KIND_LABEL_KEYS = {
     static: 'editor.mfp.contentStatic',
     csv: 'editor.mfp.contentCsv',
+    field: 'editor.mfp.contentField',
     template: 'editor.mfp.contentTemplate',
-    // P4 owns the real UI; until then a field source still labels as a template
-    // (mirrors `contentKindPatch`'s else-branch).
-    field: 'editor.mfp.contentTemplate',
 } as const satisfies Record<ContentSource['kind'], string>;
 
 /** i18n keys for the read-only `templateTrust` state (literal map). */
@@ -493,6 +491,10 @@ export const contentKindPatch = (node: Node, kind: ContentSource['kind']): NodeP
         next = { kind: 'static', value: current?.kind === 'static' ? current.value : '' };
     } else if (kind === 'csv') {
         next = { kind: 'csv', column: current?.kind === 'csv' ? current.column : '', fallback: current?.kind === 'csv' ? current.fallback : '' };
+    } else if (kind === 'field') {
+        // A field binding is pure data: seed an empty name (the half-authored
+        // state is valid) and keep an existing field's name/fallback.
+        next = { kind: 'field', name: current?.kind === 'field' ? current.name : '', fallback: current?.kind === 'field' ? current.fallback : '' };
     } else {
         next = { kind: 'template', code: current?.kind === 'template' ? current.code : '', fallback: current?.kind === 'template' ? current.fallback : '' };
     }
@@ -1049,7 +1051,7 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                 // `never` disables authoring a NEW template source; an existing
                 // template stays selectable so the user can switch away from it.
                 // `ask` still allows authoring (execution is what needs approval).
-                const options = (field.options ?? ['static', 'csv', 'template']).filter(
+                const options = (field.options ?? ['static', 'csv', 'field', 'template']).filter(
                     (kind) => !(kind === 'template' && trust === 'never' && current.kind !== 'template'),
                 );
                 return (

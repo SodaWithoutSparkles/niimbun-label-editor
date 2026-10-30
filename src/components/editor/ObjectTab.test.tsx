@@ -16,6 +16,7 @@ import {
     ObjectTab,
     clampSizeHm,
     colorDefault,
+    contentKindPatch,
     dataContentPatch,
     dataContentValue,
     fontFamilyPatch,
@@ -1218,6 +1219,43 @@ describe('ObjectTab — content source switcher + trust (P6)', () => {
         cleanup();
         renderWithTrust(textNode(), 'ask');
         expect(Array.from(selectWithOption('csv').options).map((option) => option.value)).toContain('template');
+    });
+
+    it('switches to a field source (not a template) through contentKindPatch', () => {
+        expect(contentKindPatch(textNode({ text: { kind: 'static', value: 'hi' } }), 'field')).toEqual({
+            text: { kind: 'field', name: '', fallback: '' },
+        });
+        // Already a field: nothing to change.
+        expect(
+            contentKindPatch(textNode({ text: { kind: 'field', name: 'price', fallback: 'F' } }), 'field'),
+        ).toEqual({});
+    });
+
+    it('preserves an existing field source name/fallback when Field is re-selected', () => {
+        const source = { kind: 'field' as const, name: 'price', fallback: '$0' };
+        const selected = textNode({ text: source });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        const select = selectWithOption('field');
+        expect(select.value).toBe('field');
+        fireEvent.change(select, { target: { value: 'field' } });
+
+        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')! as { text: unknown };
+        expect(persisted.text).toEqual(source);
+    });
+
+    it('exposes "Field" in the content-source select and writes a field source', () => {
+        const selected = textNode({ text: { kind: 'static', value: 'hi' } });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        const select = selectWithOption('static');
+        expect(Array.from(select.options).map((option) => option.textContent)).toContain('Field');
+
+        fireEvent.change(select, { target: { value: 'field' } });
+        const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')! as { text: unknown };
+        expect(persisted.text).toEqual({ kind: 'field', name: '', fallback: '' });
     });
 });
 

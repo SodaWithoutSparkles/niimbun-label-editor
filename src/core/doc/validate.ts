@@ -293,10 +293,13 @@ const toContentSource = (value: unknown): ContentSource | undefined => {
                   }
                 : undefined;
         case 'field': {
-            // A field name is an opaque key: reject empty/whitespace-only, but
-            // never trim the stored value. Falling back (undefined) makes the
-            // carrier use `{ kind: 'static', value: '' }`.
-            if (!isString(value.name) || value.name.trim().length === 0) return undefined;
+            // A field name is an opaque key. An **empty** name is valid data: it
+            // is the half-authored state ("switched to Field, name not typed
+            // yet"), resolves to `fallback`, and can never execute — exactly
+            // like an empty CSV `column`. Never trim the stored value. A
+            // missing/non-string name still falls back (undefined) so the
+            // carrier uses `{ kind: 'static', value: '' }`.
+            if (!isString(value.name)) return undefined;
             return {
                 kind: 'field',
                 name: value.name,

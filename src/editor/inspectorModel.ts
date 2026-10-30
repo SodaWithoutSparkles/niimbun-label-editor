@@ -217,13 +217,13 @@ export const quantizerParamVisibility = (
 /**
  * Extra fields whose owning engine ships later, plus the wired per-object
  * quantizer policy. Kept in one list so the Object tab has a stable shape.
- *   - `contentSource`  — static/csv/template kind switcher, wired (P6)
+ *   - `contentSource`  — static/csv/field/template kind switcher, wired (P6)
  *   - `quantizerHint`  — per-object dither policy, wired (P4)
  *   - `templateTrust`  — read-only trust state, wired (P6)
  */
 export const RESERVED_FIELDS: readonly FieldDescriptor[] = [
-    // Explicit static/csv/template switch: the ONLY place a source is rewritten.
-    { key: 'contentSource', scope: 'reserved', kind: 'contentSource', wired: true, options: ['static', 'csv', 'template'] },
+    // Explicit static/csv/field/template switch: the ONLY place a source is rewritten.
+    { key: 'contentSource', scope: 'reserved', kind: 'contentSource', wired: true, options: ['static', 'csv', 'field', 'template'] },
     // Per-object dither policy: absent ⇒ the node type's default policy.
     { key: 'quantizerHint', scope: 'reserved', kind: 'select', wired: true, options: QUANTIZER_HINT_OPTIONS },
     { key: 'quantizerThreshold', scope: 'reserved', kind: 'number', wired: true },

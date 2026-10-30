@@ -262,6 +262,51 @@ export const createLabelDoc = (options: CreateLabelDocOptions = {}): LabelDoc =>
     };
 };
 
+export interface CopyLabelDocOptions {
+    /** The copy's kind. Explicit — a copy never inherits `source.meta.kind`. */
+    kind: DocKind;
+    /** Display name; defaults to the source's name. */
+    name?: string;
+    /** Injectable id (tests); otherwise a fresh `newLabelId()`. */
+    id?: string;
+    /** Epoch seconds; injectable so tests are deterministic. */
+    now?: number;
+}
+
+/**
+ * Copy a document into a new one, optionally under a different `kind`
+ * ("save as preset", and later "open preset in the editor").
+ *
+ * This is deliberately **not** `createLabelDoc`: that factory's option list
+ * carries geometry + nodes but not `data.csv`, `globals` or
+ * `resources.{fonts,images}`, so rebuilding a preset through it would silently
+ * drop an attached CSV table or an imported font. A deep clone preserves
+ * everything; only the identity/activity fields in `meta` are rewritten — fresh
+ * id, explicit kind, name (given or inherited), both timestamps = now — and the
+ * cosmetic `meta.thumb` is cleared because it depicts the *source* record.
+ *
+ * Pure: no storage, no React, and the source document is never mutated.
+ */
+export const copyLabelDoc = (source: LabelDoc, options: CopyLabelDocOptions): LabelDoc => {
+    const cloned = clone(source);
+    const now = Math.floor(options.now ?? Date.now() / 1000);
+    // `thumb` is a cache of the source's pixels; a copy starts without one
+    // (the thumbnail hook regenerates it after the first render/save).
+    delete cloned.meta.thumb;
+    return {
+        ...cloned,
+        meta: {
+            ...cloned.meta,
+            id: options.id ?? newLabelId(),
+            name: options.name ?? cloned.meta.name,
+            createdAt: now,
+            updatedAt: now,
+            // Explicit, so a label copy can never become a preset by inheritance.
+            kind: options.kind,
+        },
+    };
+};
+
 export const createFtagSpareDoc = (
     options: Omit<CreateLabelDocOptions, 'paperTypeId'> = {},
 ): LabelDoc => createLabelDoc({ ...options, paperTypeId: 'ftagSpare-25x78' });

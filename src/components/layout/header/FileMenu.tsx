@@ -9,6 +9,13 @@ interface FileMenuProps {
     onCloseMenu: () => void;
     autoSave: boolean;
     onSave: () => void;
+    /** Copies the open document into a new preset record (kind `'preset'`). */
+    onSaveAsPreset: () => void;
+    /**
+     * Show "Save as preset" only when it can do something: a document is open
+     * and it is not already a preset (a preset copy of a preset is meaningless).
+     */
+    showSaveAsPreset: boolean;
     onToggleAutoSave: () => void;
     onPrint: () => void;
     /** Save writes the open document; disabled while the gallery is showing. */
@@ -44,6 +51,8 @@ export const FileMenu: React.FC<FileMenuProps> = ({
     onCloseMenu,
     autoSave,
     onSave,
+    onSaveAsPreset,
+    showSaveAsPreset,
     onToggleAutoSave,
     onPrint,
     saveDisabled,
@@ -79,6 +88,13 @@ export const FileMenu: React.FC<FileMenuProps> = ({
                         disabled={saveDisabled}
                         onClick={() => { onSave(); onCloseMenu(); }}
                     />
+                    {showSaveAsPreset && (
+                        <MenuItem
+                            label={t('fileMenu.saveAsPreset')}
+                            disabled={transferBusy}
+                            onClick={() => { onSaveAsPreset(); onCloseMenu(); }}
+                        />
+                    )}
                     <MenuItem
                         label={t('fileMenu.importLabels')}
                         disabled={transferBusy}

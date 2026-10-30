@@ -3,6 +3,7 @@
     "home": "Home",
     "title": "File",
     "saveProject": "Save Label",
+    "saveAsPreset": "Save as preset",
     "importLabels": "Import labels…",
     "exportCurrent": "Export this label…",
     "exportAll": "Export all labels…",
@@ -346,7 +347,9 @@
     "title": "Label presets",
     "emptyTitle": "No presets yet",
     "emptyHint": "A preset is a label with the data left to fill in. Save one from the editor to reuse it.",
-    "sidebarHint": "Your label presets appear in the main pane."
+    "sidebarHint": "Your label presets appear in the main pane.",
+    "saved": "Saved \"{{name}}\" as a preset.",
+    "saveFailed": "Could not save the preset."
   },
   "connection": {
     "connected": "Connected",
@@ -648,6 +651,8 @@
       "contentSource": "Content",
       "contentStatic": "Static",
       "contentCsv": "CSV column",
+      "contentField": "Field",
+      "fieldName": "Field name",
       "contentTemplate": "Template",
       "contentFallback": "Fallback",
       "contentSourceDisabled": "This content is bound to a CSV or template. Switch the content source to edit it.",

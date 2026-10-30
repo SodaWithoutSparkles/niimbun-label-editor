@@ -239,7 +239,7 @@ describe('inspectorModel — field descriptors', () => {
         const contentSource = RESERVED_FIELDS.find((f) => f.key === 'contentSource');
         expect(contentSource?.wired).toBe(true);
         expect(contentSource?.kind).toBe('contentSource');
-        expect(contentSource?.options).toEqual(['static', 'csv', 'template']);
+        expect(contentSource?.options).toEqual(['static', 'csv', 'field', 'template']);
         const trust = RESERVED_FIELDS.find((f) => f.key === 'templateTrust');
         expect(trust?.wired).toBe(true);
         expect(trust?.kind).toBe('templateTrust');

@@ -1087,11 +1087,17 @@ describe('isNode — field content source', () => {
         expect(missing).toMatchObject({ text: { kind: 'field', name: 'sku', fallback: '' } });
     });
 
-    it('falls back to an empty static source for a missing/empty/non-string name', () => {
+    it('keeps an empty or whitespace-only name (half-authored field is valid data)', () => {
+        for (const name of ['', '   ']) {
+            expect(
+                isNode(baseNode({ type: 'text', shape: undefined, text: { kind: 'field', name, fallback: '$0' } })),
+            ).toMatchObject({ text: { kind: 'field', name, fallback: '$0' } });
+        }
+    });
+
+    it('falls back to an empty static source for a missing or non-string name', () => {
         for (const text of [
             { kind: 'field', fallback: '$0' },
-            { kind: 'field', name: '', fallback: '$0' },
-            { kind: 'field', name: '   ', fallback: '$0' },
             { kind: 'field', name: 5, fallback: '$0' },
         ]) {
             expect(isNode(baseNode({ type: 'text', shape: undefined, text }))).toMatchObject({

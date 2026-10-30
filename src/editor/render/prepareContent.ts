@@ -20,8 +20,8 @@ import { DEFAULT_EMPTY_TEXT, type ResolvedContent } from './resolve';
  *   absent column, an absent row, or an empty cell degrades to the source
  *   `fallback` (an empty fallback becomes the `{empty}` placeholder).
  * - `field` binds by **field name** from the injected `fields` map (own
- *   properties only). An absent map, an absent name, or an empty value
- *   degrades to the source `fallback`, exactly like an empty CSV cell.
+ *   properties only). An absent map, an absent name, an empty name, or an empty
+ *   value degrades to the source `fallback`, exactly like an empty CSV cell.
  * - `template` runs **only** through an injected {@link TemplateEngine}; this
  *   module never fetches. A rejected evaluation, `undefined`, or an empty
  *   string degrades to the source `fallback`. With no engine, a template source
@@ -106,11 +106,16 @@ const csvCell = (csv: CsvRecord | null, column: string, rowIndex: number): strin
  * Value for the named field in the injected map, or `undefined` when unbindable.
  * Own properties only, so a field named `__proto__`/`constructor`/`toString`
  * reads nothing from the prototype chain.
+ *
+ * An empty name is **unbindable**: it is the half-filled authoring state, not a
+ * real field, so it never resolves even when the map happens to carry an own
+ * `''` key.
  */
 const ownField = (
     fields: Readonly<Record<string, string>> | undefined,
     name: string,
 ): string | undefined => {
+    if (name.length === 0) return undefined;
     if (fields === undefined || !Object.hasOwn(fields, name)) return undefined;
     return fields[name];
 };

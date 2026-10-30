@@ -267,6 +267,137 @@ describe('docSlice — create → reload → reopen', () => {
     });
 });
 
+/**
+ * `saveCopy` (P4): persist a copy under a fresh id in the requested kind, never
+ * touching the source record or the open document. Covers both directions —
+ * label → preset ("Save as preset") and preset → label (P5's "Open in editor").
+ */
+describe('docSlice — saveCopy', () => {
+    const fieldNode: Node = {
+        id: 'n-field',
+        parentId: null,
+        type: 'text',
+        visible: true,
+        locked: false,
+        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        text: { kind: 'field', name: 'price', fallback: '$0' },
+    };
+
+    beforeEach(() => {
+        vi.stubGlobal('DecompressionStream', ArrayBufferTolerantDecompressionStream);
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    it('persists a new preset record and leaves the source and the open doc untouched', async () => {
+        const adapter = createMemoryAdapter();
+        const repo = createLabelRepo(adapter);
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo(repo);
+
+        const source = createLabelDoc({
+            id: 'source-1',
+            name: 'Shipping label',
+            paperTypeId: 'ftagSpare-25x78',
+            now: 1_000_000,
+            nodes: [fieldNode],
+        });
+        await repo.save(source);
+        // Counts writes below so "the source is untouched" is not just a read.
+        const save = vi.spyOn(repo, 'save');
+        const snapshot = structuredClone(source);
+        store.setState({ currentDoc: source, view: 'editor' });
+
+        const copy = await store.getState().saveCopy(source, { kind: 'preset' });
+
+        expect(copy).not.toBeNull();
+        expect(copy!.meta.id).not.toBe('source-1');
+        expect(copy!.meta.kind).toBe('preset');
+        // The name defaults to the source's name (no explicit override).
+        expect(copy!.meta.name).toBe('Shipping label');
+        // Only the copy was written; the source record was never re-saved.
+        expect(save).toHaveBeenCalledTimes(1);
+        expect(save.mock.calls[0]![0].meta.id).toBe(copy!.meta.id);
+        expect(save.mock.calls[0]![0].meta.kind).toBe('preset');
+
+        // Read back through the gzip path: a real, independent record exists.
+        const storedCopy = await repo.get(copy!.meta.id);
+        expect(storedCopy).not.toBeNull();
+        expect(storedCopy!.meta.kind).toBe('preset');
+        // The source record is byte-for-byte what it was before the copy.
+        expect(await repo.get('source-1')).toEqual(snapshot);
+
+        // The open document is the same object: no re-point, no rewrite.
+        expect(store.getState().currentDoc).toBe(source);
+        expect(store.getState().currentDoc!.meta.id).toBe('source-1');
+        expect(store.getState().currentDoc!.meta.kind).toBe('label');
+        expect(source).toEqual(snapshot);
+
+        // The gallery now lists both records.
+        const ids = store.getState().gallery.map((summary) => summary.id);
+        expect(ids).toContain('source-1');
+        expect(ids).toContain(copy!.meta.id);
+        expect(store.getState().gallery).toHaveLength(2);
+        expect(store.getState().view).toBe('editor');
+    });
+
+    it('returns null (no throw) when no repo is injected', async () => {
+        const store = createAppStore(makeStorage());
+        const source = createLabelDoc({ id: 'source-1', now: 1_000_000 });
+
+        await expect(store.getState().saveCopy(source, { kind: 'preset' })).resolves.toBeNull();
+        expect(store.getState().gallery).toHaveLength(0);
+    });
+
+    it('never rejects: a failing repo.save resolves to null instead', async () => {
+        const repo = createLabelRepo(createMemoryAdapter());
+        vi.spyOn(repo, 'save').mockRejectedValueOnce(new Error('idb transaction aborted'));
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo(repo);
+        const source = createLabelDoc({ id: 'source-1', now: 1_000_000 });
+
+        await expect(store.getState().saveCopy(source, { kind: 'preset' })).resolves.toBeNull();
+        expect(store.getState().gallery).toHaveLength(0);
+    });
+
+    it('copies a preset to a label with its field bindings intact (P5 seam)', async () => {
+        const adapter = createMemoryAdapter();
+        const repo = createLabelRepo(adapter);
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo(repo);
+
+        const preset = createLabelDoc({
+            id: 'preset-1',
+            name: 'Price preset',
+            kind: 'preset',
+            now: 1_000_000,
+            nodes: [fieldNode],
+        });
+        await repo.save(preset);
+
+        const copy = await store.getState().saveCopy(preset, { kind: 'label' });
+
+        expect(copy).not.toBeNull();
+        expect(copy!.meta.kind).toBe('label');
+        expect(copy!.meta.id).not.toBe('preset-1');
+
+        // The binding survives the copy, so opening the label can still fill it.
+        const stored = await repo.get(copy!.meta.id);
+        expect(stored?.meta.kind).toBe('label');
+        expect(stored?.nodes).toHaveLength(1);
+        expect(stored!.nodes[0]).toMatchObject({
+            id: 'n-field',
+            text: { kind: 'field', name: 'price', fallback: '$0' },
+        });
+        // …and the preset record itself is unchanged.
+        const storedPreset = await repo.get('preset-1');
+        expect(storedPreset?.meta.kind).toBe('preset');
+    });
+});
+
 const textNode = (id: string): Node => ({
     id,
     parentId: null,

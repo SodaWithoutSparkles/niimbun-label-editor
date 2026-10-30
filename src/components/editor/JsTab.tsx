@@ -11,7 +11,8 @@ import { Input, Select } from '../common/forms';
  * MFP → JS tab (ui-spec.md §8, P6 W6).
  *
  * Authors the selected text/qr/barcode node's `ContentSource`: a static value, a
- * CSV column binding, or a template (`code` + `fallback`). The kind switcher is
+ * CSV column binding, a named field (filled in later, resolves to its fallback
+ * until then), or a template (`code` + `fallback`). The kind switcher is
  * the ONLY place a source is rewritten to `static` — editing a field for an
  * existing csv/template source never changes its kind (fixes the P3/P5 bug where
  * the Object tab rewrote a bound source on edit).
@@ -30,10 +31,8 @@ type SourceKind = ContentSource['kind'];
 const KIND_LABEL_KEYS = {
     static: 'editor.mfp.contentStatic',
     csv: 'editor.mfp.contentCsv',
+    field: 'editor.mfp.contentField',
     template: 'editor.mfp.contentTemplate',
-    // P4 owns the real UI; until then a field source still labels as a template
-    // (mirrors `switchKind`'s else-branch).
-    field: 'editor.mfp.contentTemplate',
 } as const satisfies Record<SourceKind, string>;
 
 /** Field label key per carrier node type (literal map keeps typed keys). */
@@ -130,11 +129,16 @@ export const JsTab: React.FC<JsTabProps> = ({ selected }) => {
     const templateBlocked = trust === 'never';
     const templateNeedsApproval = trust === 'ask';
 
-    /** Replace the source, preserving the kind's own fields. */
+    /**
+     * Replace the source, preserving the kind's own fields. A `field` source is
+     * pure data (name + fallback) — no trust gate applies to it, and switching
+     * away simply replaces it (the field kind has no payload that maps onto the
+     * other kinds).
+     */
     const switchKind = (kind: SourceKind) => {
         // A select with a filtered-out option reports `''`; ignore anything that
         // is not a real kind rather than falling through to a template source.
-        if (kind !== 'static' && kind !== 'csv' && kind !== 'template') return;
+        if (kind !== 'static' && kind !== 'csv' && kind !== 'field' && kind !== 'template') return;
         if (kind === source?.kind) return;
         // `never` disables authoring a NEW template source; an existing template
         // stays selectable so the user can switch away from it.
@@ -142,13 +146,15 @@ export const JsTab: React.FC<JsTabProps> = ({ selected }) => {
         let next: ContentSource;
         if (kind === 'static') next = { kind: 'static', value: '' };
         else if (kind === 'csv') next = { kind: 'csv', column: '', fallback: '' };
+        else if (kind === 'field') next = { kind: 'field', name: '', fallback: '' };
         else next = { kind: 'template', code: '', fallback: '' };
         write({ [fieldKey]: next } as NodePatch);
     };
 
     // `never` hides the template option unless the node is already a template
     // (so an existing template remains selectable and can be switched away).
-    const kindOptions = (['static', 'csv', 'template'] as const).filter(
+    // `field` is never gated: it is inert data.
+    const kindOptions = (['static', 'csv', 'field', 'template'] as const).filter(
         (kind) => !(kind === 'template' && templateBlocked && source?.kind !== 'template'),
     );
 
@@ -192,6 +198,18 @@ export const JsTab: React.FC<JsTabProps> = ({ selected }) => {
                             value={source?.kind === 'csv' ? source.fallback : ''}
                             onChange={(fallback) =>
                                 write({ [fieldKey]: { kind: 'csv', column: source?.kind === 'csv' ? source.column : '', fallback } } as NodePatch)
+                            }
+                            aria-label={t('editor.mfp.contentFallback')}
+                        />
+                    </TabField>
+                )}
+
+                {currentKind === 'field' && (
+                    <TabField label={t('editor.mfp.contentFallback')}>
+                        <Input
+                            value={source?.kind === 'field' ? source.fallback : ''}
+                            onChange={(fallback) =>
+                                write({ [fieldKey]: { kind: 'field', name: source?.kind === 'field' ? source.name : '', fallback } } as NodePatch)
                             }
                             aria-label={t('editor.mfp.contentFallback')}
                         />
@@ -246,6 +264,18 @@ export const JsTab: React.FC<JsTabProps> = ({ selected }) => {
                             aria-label={t('editor.mfp.csvColumn')}
                         />
                     )}
+                </TabField>
+            )}
+
+            {currentKind === 'field' && (
+                <TabField label={t('editor.mfp.fieldName')}>
+                    <Input
+                        value={source?.kind === 'field' ? source.name : ''}
+                        onChange={(name) =>
+                            write({ [fieldKey]: { kind: 'field', name, fallback: source?.kind === 'field' ? source.fallback : '' } } as NodePatch)
+                        }
+                        aria-label={t('editor.mfp.fieldName')}
+                    />
                 </TabField>
             )}
 

@@ -98,6 +98,74 @@ describe('JsTab — content source kind switcher', () => {
     });
 });
 
+describe('JsTab — field binding authoring (P4)', () => {
+    const persistedText = (): ContentSource => {
+        const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 't1')! as {
+            text: ContentSource;
+        };
+        return node.text;
+    };
+
+    it('switches the kind select to Field with an empty name and fallback', () => {
+        const selected = textNode({ kind: 'static', value: 'hi' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t1'] });
+        const { rerender } = render(<JsTab selected={[selected]} />);
+
+        fireEvent.change(kindSelect(), { target: { value: 'field' } });
+
+        // The half-authored state is written immediately (and is valid).
+        expect(persistedText()).toEqual({ kind: 'field', name: '', fallback: '' });
+
+        // Re-select the updated node (as the parent would) to see the inputs.
+        const updated = useStore.getState().currentDoc!.nodes[0]!;
+        rerender(<JsTab selected={[updated]} />);
+        expect((screen.getByLabelText('Field name') as HTMLInputElement).value).toBe('');
+        expect((screen.getByLabelText('Fallback') as HTMLInputElement).value).toBe('');
+    });
+
+    it('persists the field name and the fallback, keeping both', () => {
+        const selected = textNode({ kind: 'field', name: '', fallback: '' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t1'] });
+        const { rerender } = render(<JsTab selected={[selected]} />);
+
+        fireEvent.change(screen.getByLabelText('Field name'), { target: { value: 'price' } });
+        expect(persistedText()).toEqual({ kind: 'field', name: 'price', fallback: '' });
+
+        // Re-selected as the parent would after the commit.
+        const afterName = useStore.getState().currentDoc!.nodes[0]!;
+        rerender(<JsTab selected={[afterName]} />);
+        fireEvent.change(screen.getByLabelText('Fallback'), { target: { value: '$0' } });
+
+        expect(persistedText()).toEqual({ kind: 'field', name: 'price', fallback: '$0' });
+    });
+
+    it('leaves an existing field source untouched when Field is selected again', () => {
+        const source = { kind: 'field' as const, name: 'price', fallback: 'F' };
+        const selected = textNode(source);
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t1'] });
+        render(<JsTab selected={[selected]} />);
+        const before = useStore.getState().currentDoc;
+
+        // The select reports its current value; switchKind must early-return.
+        fireEvent.change(kindSelect(), { target: { value: 'field' } });
+
+        expect(persistedText()).toEqual(source);
+        expect(useStore.getState().currentDoc).toBe(before);
+    });
+
+    it('shows the field name input for an existing field source without rewriting it', () => {
+        const selected = textNode({ kind: 'field', name: 'price', fallback: 'F' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t1'] });
+        render(<JsTab selected={[selected]} />);
+
+        expect(kindSelect().value).toBe('field');
+        expect((screen.getByLabelText('Field name') as HTMLInputElement).value).toBe('price');
+        expect((screen.getByLabelText('Fallback') as HTMLInputElement).value).toBe('F');
+        const node = useStore.getState().currentDoc!.nodes[0]! as { text: ContentSource };
+        expect(node.text).toEqual({ kind: 'field', name: 'price', fallback: 'F' });
+    });
+});
+
 const trustState = (trust: 'ask' | 'always' | 'never'): SampleRowState => ({
     overrides: new Map(),
     trust,
@@ -138,7 +206,12 @@ describe('JsTab — never blocks a NEW template source (should-fix)', () => {
         renderWithTrust(node, 'never');
 
         const select = screen.getByLabelText('Content') as HTMLSelectElement;
-        expect(Array.from(select.options).map((option) => option.value)).toEqual(['static', 'csv']);
+        // `field` is inert data, so it stays available even when templates are blocked.
+        expect(Array.from(select.options).map((option) => option.value)).toEqual([
+            'static',
+            'csv',
+            'field',
+        ]);
 
         // A programmatic attempt (the option is gone, so the value is `''`) must
         // not fall through to creating a template source.
