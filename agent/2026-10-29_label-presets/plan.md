@@ -116,6 +116,17 @@ Read this before writing any phase action plan. Facts:
 
 ## Phases
 
+> **Owner amendment (2026-10-31):** P6 was redesigned by the owner and split in
+> two. The preset document now **declares its fields**
+> (`data.fields: { id, default?, required?, hidden? }[]`, additive); reserved ids
+> exist, and `csv.row` is the CSV row selector. The fill form is driven by
+> declarations **plus bound-but-undeclared ids**; defaults prefill, required is
+> enforced, hidden ids are reachable via "add field", and the row selector does
+> key lookup (column + typed key) with a single matched record printed.
+> The old "key column stored on the preset" sketch is dropped.
+> **P6a** = model + reserved ids + Fields panel (landed, `f72c4fe`);
+> **P6b** = fill form + row lookup.
+
 Each phase = one coordinator cycle: `phase{N}_action-plan.md` → implement →
 review (`review` primary, `review-fast` for mechanical) → fix (≤2 rounds) →
 semantic commit. No week estimates.
