@@ -32,6 +32,14 @@ No router dependency. The address is the app state:
 - **Persistence:** `view`/`gallerySection` stay **unpersisted** (`useStore.partialize`) — a reload
   with no hash must land in the gallery.
 
+## Presets pane (2026-10-31)
+
+`#/gallery/templates` renders `PresetSection` (the **Label presets** pane), not the
+recent grid. The pane keeps `kind === 'preset'`; `GalleryView` and the sidebar's Recent
+list keep `kind !== 'preset'`, so a preset never appears in Recent and a label never
+appears in the pane. Cards share the label card art/thumb backfill; the art button opens
+the fill dialog. Details: [`presets.md`](presets.md).
+
 ## Gallery card art (D-50 closed by P3 of the 2026-10-19 run)
 
 - **Colour, not quantized.** `src/editor/render/docThumbnail.ts` → `renderDocPreview(doc, assets?,

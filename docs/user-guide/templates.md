@@ -2,21 +2,27 @@
 
 This guide is for **label authors**. It explains what a text field (or a
 QR/barcode payload) can be filled with, and what happens when the data is
-missing. You do not need to be a programmer for most of it.
+missing. You do not need to be a programmer for most of it. The last section
+covers **presets** — designed labels with the data left to fill in.
 
 ## What a field can bind to
 
 In the **MFP → JS** tab, every text, QR, and barcode field has a **Content
-source** with exactly one of three kinds:
+source** with exactly one of four kinds:
 
 | Kind | What it does | Example |
 | ---- | ------------ | ------- |
 | **Static** | Fixed text typed once. Never changes. | `Acme Corp` |
 | **CSV column** | Reads one named column from the attached CSV, for the row being previewed or printed. | column `serial` for row 1 → `A-1042` |
+| **Field** | A named value the user types when using a preset. | field `price` → `9.99` |
 | **Template** | Runs a small snippet of JavaScript and prints what it returns. | `return ctx.row.serial.toUpperCase()` |
 
 Every field also has a **Fallback** value (Static has none, because Static *is*
 the value). The fallback is printed when the bound value is missing or empty.
+
+**Field** names a value that is filled in later, so it is mainly for presets.
+In the editor a Field binding shows its **Fallback**, because no value has been
+typed yet. A field can also be used inside a Template as `ctx.fields.<id>`.
 
 > The "template" kind is **not** a `{{ ... }}` text placeholder. It is a tiny
 > JavaScript snippet. If you do not need logic, prefer **CSV column** — it is
@@ -86,6 +92,8 @@ A template can read:
 
 - `ctx.row.<column>` — the current CSV row (see the developer guide for the
   exact row rules).
+- `ctx.fields.<id>` — a field value typed into a preset's fill dialog. In the
+  editor it is empty.
 - `ctx.globals.<name>` — a global you defined.
 - `ctx.label` — the label's own settings (name, width, height, dpi, direction).
 - `ctx.index` / `ctx.total` / `ctx.rowCount` — where this row is in the job.
@@ -100,6 +108,7 @@ wrong the label still renders:
 
 - **CSV column** — a missing CSV, a missing column, an out-of-range row, or an
   empty cell uses the **Fallback**.
+- **Field** — an empty value or no value typed uses the **Fallback**.
 - **Template** — an error, a timeout, a non-primitive result (an object or
   array), an empty string, or "templates are not trusted yet" uses the
   **Fallback**.
@@ -120,6 +129,11 @@ Until you choose, template fields render their **Fallback**. If you pick
 **Never**, templates stay blocked (even if you later allow once) until you
 change it in Settings. Documents with no templates are never gated at all.
 
+A preset with templates keeps the same prompt. It appears the first time you
+fill or print that preset. **Always allow** is remembered for that preset
+document; a new copy (and an imported label) is a new document, so it asks
+again.
+
 ### The stable document seed
 
 `ctx.seeds.docSeed` is the same for a given document every time it renders, and
@@ -127,6 +141,90 @@ different between documents. That makes it safe to derive repeatable values —
 for example, a pseudo-random **asset-tag UUID** that must stay the same each
 time you print the same document with the same data. It carries no stored state
 of its own.
+
+## Presets: fill in the data and print
+
+A **preset** is a designed label with some data left out. You design it once,
+then fill in the missing values and print a copy each time.
+
+### Make a preset
+
+1. Design the label normally in the editor.
+2. Leave the changing parts as **Field** or **CSV column** bindings.
+3. Choose **File ▸ Save as preset**.
+
+The app saves a **copy** with a fresh id. Your open label stays a normal label
+and is not changed. The copy appears under **Label presets** in the sidebar.
+Presets are hidden from **Recent**, and normal labels never appear in the
+preset list.
+
+### Declare the fields (MFP → Fields)
+
+The **Fields** tab lists the field names the fill form will show.
+
+- Each declared field has a fixed **name**, a **Default** value, and the
+  **Required** and **Hidden** rules.
+- **Required** means the form will not print while the value is empty.
+- **Hidden** keeps the field out of the normal form. You can still fill it
+  through **Add field** in the fill dialog.
+- To add a declaration, type a name and choose **Add field**.
+- Binding an object to a **new** field name in the **JS** tab also registers
+  that name. A binding whose name is not declared still appears in the fill
+  form, so no data hides silently.
+- Attaching a CSV declares the reserved `csv.row` field automatically. It is
+  filled by the app (the CSV row selector), so it has no Default input.
+
+To revise a preset, use **Open in editor** to make an editable normal copy,
+change it, then save the result as a preset again.
+
+### Fill and print
+
+Click a preset card to open the fill dialog.
+
+- There is one input per visible field. **Defaults are already filled in**, and
+  the binding's fallback is the placeholder.
+- The preview updates as you type, and it uses the same values as the print.
+- **Required** fields block **Print** and **Open in editor** until they are
+  filled. The dialog names the missing fields.
+- Fields marked **Hidden** do not appear. Use **Add field**: pick the field,
+  type the value, then choose **Add field**.
+- **Print** opens the normal print dialog, with the preset's label settings.
+- **Open in editor** saves a copy as a normal label and opens it. The bindings
+  stay in place and are still unfilled; the preset itself is not changed.
+
+The values you type are used for that preview and print only. They are not saved
+back into the preset.
+
+### Find one CSV row by key
+
+If the preset has a CSV attached, a **CSV row** section appears in the fill
+dialog (it needs the declared `csv.row` field, which attaching a CSV adds). If
+the file cannot be read, the dialog says so and hides the row controls.
+
+1. Pick the **Key column**.
+2. Type the key. The preview updates as you type; there is no separate search
+   button.
+
+The match must be exact, ignoring spaces at the start and end of both the key
+and the cell. If several rows share the key, the first one is used.
+
+- **No key typed** — the dialog shows the preset's stored **sample row**.
+- **A match** — the status says which row is shown, and that row fills the
+  label.
+- **No match** — the status says so and the dialog uses one empty record, so
+  row-based bindings show their fallback or the `{empty}` placeholder. What you
+  see is what prints; the app never prints a different row silently.
+
+### One record per print
+
+When the preset has a CSV that reads successfully, the dialog prints **one
+label**, not the whole table: the matched row, or the sample row when no key is
+typed.
+
+Because the job contains one record, a template that reads `ctx.index` and
+`ctx.total` sees **`0`** and **`1`** for such a print, even when the row came
+from the middle of the table. Use `ctx.row.<column>` for the row's data; do not
+use `ctx.index` to look up a table position.
 
 ---
 

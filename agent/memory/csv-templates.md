@@ -164,3 +164,16 @@ Global data tabs, or the sample-row preview.
   Conservative — a stored CSV is referenced if any doc's `doc.data.csv?.csvId` matches. `useOrphans` loads
   it (O(docs) `get()`, non-throwing per doc) and both the CSV and Media sections badge unused records +
   offer "Delete unused (N)". Sweep cost = **D-49**; an in-flight clone `put` can orphan a record = **D-48**.
+
+## Presets: fields + one-row print (2026-10-31)
+
+- `{ kind: 'field', name, fallback }` is a fourth `ContentSource` kind: **pure data**
+  (non-executable in `docHasTemplateSources`). `prepareResolvedContent({ fields })`
+  resolves it by own-property name (non-empty value → `fallback` → `{empty}`);
+  `TemplateContext.fields` is required (`{}` default), so `ctx.fields.<id>` always
+  reads. Values never persist. See [`presets.md`](presets.md).
+- `usePrintJob` accepts an explicit `csv` (`CsvJobSource`: `none`/`loading`/`ready`/`error`)
+  that wins over the repo read. The preset fill dialog passes a **one-row** `CsvRecord`
+  (`singleRowCsv`), so a key-matched preset prints exactly one record; `ctx.index` /
+  `ctx.total` are `0` / `1` there. Its own read is total — a pending or failed read never
+  falls back to the document's full table (P12 rule).
