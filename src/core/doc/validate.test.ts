@@ -1356,6 +1356,46 @@ describe('isGlobalSpec — remote/static union (P6)', () => {
     });
 });
 
+describe('isLabelDoc — data.fields (P6a)', () => {
+    it('round-trips declarations (order, flags, reserved id)', () => {
+        const fields = [
+            { id: 'price', default: '$0', required: true, hidden: true },
+            { id: 'sku' },
+            { id: 'csv.row', default: '1', required: true },
+        ];
+        const result = isLabelDoc(validRaw({ data: { sampleRowIndex: 0, globals: [], fields } }));
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.data.fields).toEqual(fields);
+        expect(result.repairs).toEqual([]);
+    });
+
+    it('leaves an absent list absent (legacy docs are not rewritten)', () => {
+        const result = isLabelDoc(validRaw());
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect('fields' in result.doc.data).toBe(false);
+    });
+
+    it('drops a bad entry with a repair and keeps the rest', () => {
+        const result = isLabelDoc(
+            validRaw({
+                data: {
+                    sampleRowIndex: 0,
+                    globals: [],
+                    fields: [{ id: 'price' }, { id: '' }, { id: 'price', default: 'dup' }],
+                },
+            }),
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.data.fields).toEqual([{ id: 'price' }]);
+        const repairs = result.repairs.join(' ');
+        expect(repairs).toContain('data.fields[1]');
+        expect(repairs).toContain('data.fields[2]');
+    });
+});
+
 describe('isLabelDoc — rejection', () => {
     it('rejects non-objects and missing/wrong version', () => {
         expect(isLabelDoc(null).ok).toBe(false);

@@ -206,6 +206,11 @@ describe('createLabelDoc', () => {
         source.xHm = 999;
         expect(owned.label.printOffset?.xHm).toBe(5);
     });
+
+    it('creates no field declarations by default (P6a)', () => {
+        expect('fields' in createLabelDoc().data).toBe(false);
+        expect('fields' in createFtagSpareDoc().data).toBe(false);
+    });
 });
 
 describe('integer hm invariant', () => {

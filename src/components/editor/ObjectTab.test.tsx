@@ -1257,6 +1257,33 @@ describe('ObjectTab — content source switcher + trust (P6)', () => {
         const persisted = useStore.getState().currentDoc!.nodes.find((n) => n.id === 't')! as { text: unknown };
         expect(persisted.text).toEqual({ kind: 'field', name: '', fallback: '' });
     });
+
+    it('declares a preserved non-empty field name exactly once (P6a)', () => {
+        const source = { kind: 'field' as const, name: 'price', fallback: '$0' };
+        const selected = textNode({ text: source });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        const select = selectWithOption('field');
+        // Re-selecting Field is a no-op source patch, but the preserved name is
+        // still registered: an undeclared binding becomes a declaration.
+        fireEvent.change(select, { target: { value: 'field' } });
+        expect(useStore.getState().currentDoc!.data.fields).toEqual([{ id: 'price' }]);
+
+        // A second pass does not duplicate it.
+        fireEvent.change(select, { target: { value: 'field' } });
+        expect(useStore.getState().currentDoc!.data.fields).toEqual([{ id: 'price' }]);
+    });
+
+    it('declares nothing for a blank field name (P6a)', () => {
+        const selected = textNode({ text: { kind: 'field', name: '', fallback: '' } });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        fireEvent.change(selectWithOption('field'), { target: { value: 'field' } });
+
+        expect('fields' in useStore.getState().currentDoc!.data).toBe(false);
+    });
 });
 
 describe('tile vertical / horizontal (H2 mixed-selection alignment)', () => {

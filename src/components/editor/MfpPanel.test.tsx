@@ -41,15 +41,24 @@ afterEach(() => {
 const tab = (name: string) => screen.getByRole('tab', { name });
 
 describe('MfpPanel — tab set', () => {
-    it('always shows Object, Data source, Global data and Warnings', () => {
+    it('always shows Object, Data source, Fields, Global data and Warnings', () => {
         useStore.setState({ currentDoc: doc([]), selectedNodeIds: [] });
         render(<MfpPanel />);
 
         expect(tab('Object')).toBeTruthy();
         expect(tab('Data source')).toBeTruthy();
+        expect(tab('Fields')).toBeTruthy();
         expect(tab('Global data')).toBeTruthy();
         expect(tab('Warnings')).toBeTruthy();
         expect(screen.queryByRole('tab', { name: 'JS' })).toBeNull();
+    });
+
+    it('opens the Fields tab for any open document', () => {
+        useStore.setState({ currentDoc: doc([]), selectedNodeIds: [] });
+        render(<MfpPanel />);
+
+        fireEvent.click(tab('Fields'));
+        expect(screen.getByText('No fields declared yet.')).toBeTruthy();
     });
 
     it('shows the JS tab for a selection that can carry a content source', () => {

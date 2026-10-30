@@ -304,6 +304,21 @@ export interface PrintOffset {
  */
 export type DocKind = 'label' | 'preset';
 
+/**
+ * A field the document declares for its `{ kind: 'field' }` bindings (P6a).
+ * Additive: a document without declarations has no `data.fields` key.
+ */
+export interface FieldDef {
+    /** Binding id referenced by `{ kind: 'field', name }`. Never empty. */
+    id: string;
+    /** Value pre-filled in the fill form. */
+    default?: string;
+    /** The fill form refuses to print while this is empty. */
+    required?: boolean;
+    /** Not shown in the default form; reachable via "add field". */
+    hidden?: boolean;
+}
+
 export interface LabelDoc {
     version: 1;
     meta: {
@@ -344,6 +359,15 @@ export interface LabelDoc {
         printOffset?: PrintOffset;
     };
     nodes: Node[];
-    data: { csv?: CsvRef; sampleRowIndex: number; globals: GlobalSpec[] };
+    data: {
+        csv?: CsvRef;
+        sampleRowIndex: number;
+        globals: GlobalSpec[];
+        /**
+         * Declared fill-in fields. Absent means no declarations (legacy docs are
+         * never rewritten); a binding does not need a declaration to resolve.
+         */
+        fields?: FieldDef[];
+    };
     resources: { fonts: FontRef[]; images: ImageRef[] };
 }

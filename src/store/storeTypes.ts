@@ -5,6 +5,7 @@ import type { GallerySection, RenderMode, ZoomMode } from './slices/viewSlice';
 import type { hm } from '../core/hm';
 import type {
     DocKind,
+    FieldDef,
     FontRef,
     Guide,
     ImageRef,
@@ -384,6 +385,20 @@ export interface AppState {
      * identical list is a no-op (no undo entry).
      */
     setDocGlobals: (globals: GlobalSpec[]) => void;
+    /**
+     * Replace `doc.data.fields` as one undo entry. The list is normalized by the
+     * shared `normalizeFieldDefs` rule (dedupe first-wins, malformed entries
+     * dropped). An empty list removes the key again, so "no declarations" has
+     * one stored shape. An identical list is a no-op (no undo entry).
+     */
+    setDocFields: (fields: FieldDef[]) => void;
+    /**
+     * Declare `id` if it is not declared yet, as one undo entry. A blank id
+     * (after trimming) or an already-declared id is a no-op. The id is stored
+     * untrimmed, exactly as a binding looks it up. Called after authoring a
+     * non-empty field name so a typed binding is registered exactly once.
+     */
+    ensureFieldDef: (id: string) => void;
     /** Gesture seam: applies `patch` to `currentDoc` without history, `updatedAt`
      * or autosave. Pair N calls with one `commitDoc` for a single undo entry.
      */

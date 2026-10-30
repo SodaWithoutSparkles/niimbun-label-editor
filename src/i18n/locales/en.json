@@ -542,6 +542,25 @@
     "cx": "CX",
     "cy": "CY"
   },
+  "fields": {
+    "title": "Fields",
+    "hint": "Declare the fields this document fills in. A binding can use any name; declared fields keep a default value and required and hidden settings.",
+    "id": "Field",
+    "default": "Default",
+    "rules": "Rules",
+    "empty": "No fields declared yet.",
+    "add": "Add field",
+    "addPlaceholder": "Field name",
+    "remove": "Remove",
+    "required": "Required",
+    "hidden": "Hidden",
+    "undeclaredTitle": "Bound but not declared",
+    "undeclaredHint": "Objects use these field names, but they have no declaration.",
+    "addDeclaration": "Add declaration",
+    "reservedHint": "Reserved field — filled in automatically.",
+    "addRowSelector": "Add CSV row selector",
+    "rowSelectorHint": "The row selector chooses which CSV row prints; the editor preview uses the sample row."
+  },
   "history": {
     "added": "Added {{type}}",
     "updated": "Updated {{type}}",
@@ -621,6 +640,7 @@
     "mfp": {
       "object": "Object",
       "dataSource": "Data source",
+      "fields": "Fields",
       "globalData": "Global data",
       "js": "JS",
       "jsDisabledSelection": "Select a text, QR or barcode object to edit its content source.",

@@ -49,7 +49,7 @@ import { resolvePrintDpi } from '../../print/resolvedDpi';
 import type { NodePatch } from '../../store/storeTypes';
 import { bytesProviderFor } from './usePreparedAssets';
 import { useSampleRowState } from './sampleRowContext';
-import { contentSourceOf } from '../../editor/contentSource';
+import { contentFieldKey, contentSourceOf } from '../../editor/contentSource';
 import { ImageImportDialog } from './ImageImportDialog';
 
 /**
@@ -581,6 +581,7 @@ export const shapeKindPatch = (node: ShapeNode, next: ShapeKind): NodePatch => {
 export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
     const { t } = useTranslation();
     const updateNode = useStore((state) => state.updateNode);
+    const ensureFieldDef = useStore((state) => state.ensureFieldDef);
     const updateNodeTransient = useStore((state) => state.updateNodeTransient);
     const commitDoc = useStore((state) => state.commitDoc);
     const doc = useStore((state) => state.currentDoc);
@@ -1071,7 +1072,21 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                         <Select
                             value={current.kind}
                             onChange={(kind) => {
-                                for (const node of selected) updateNode(node.id, contentKindPatch(node, kind as ContentSource['kind']));
+                                for (const node of selected) {
+                                    const patch = contentKindPatch(node, kind as ContentSource['kind']);
+                                    updateNode(node.id, patch);
+                                    // Declare a non-empty field name the switch
+                                    // preserved (P6a). Idempotent, and the
+                                    // blank half-authored name declares nothing.
+                                    const fieldKey = contentFieldKey(node);
+                                    const patched = fieldKey
+                                        ? (patch as Partial<Record<'text' | 'data', ContentSource>>)[fieldKey]
+                                        : undefined;
+                                    const next = patched ?? contentSourceOf(node);
+                                    if (next?.kind === 'field' && next.name.trim().length > 0) {
+                                        ensureFieldDef(next.name);
+                                    }
+                                }
                             }}
                             options={options.map((kind) => ({
                                 value: kind,

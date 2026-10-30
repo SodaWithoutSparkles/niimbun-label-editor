@@ -18,6 +18,7 @@ import {
     QR_ERROR_CORRECTIONS,
     TEXT_WRAPS,
 } from './objects';
+import { normalizeFieldDefs } from './fieldDefs';
 import type {
     AssetRef,
     BaseNode,
@@ -1087,6 +1088,14 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
         ? Math.round(dataRaw.sampleRowIndex)
         : 0;
     const globals = toArray(dataRaw.globals, isGlobalSpec, 'data.globals', errors);
+    // `data.fields` is additive: absent stays absent. The shared normalizer is
+    // the single validation rule (dedupe first-wins, drop malformed entries) and
+    // its repairs join the document repair log.
+    const normalizedFields = dataRaw.fields === undefined ? undefined : normalizeFieldDefs(dataRaw.fields);
+    if (normalizedFields) {
+        for (const repair of normalizedFields.repairs) repairs.push(`data.${repair}`);
+    }
+    const fields = normalizedFields?.fields;
 
     if (raw.resources !== undefined && !isRecord(raw.resources)) {
         errors.push('resources: must be an object');
@@ -1121,7 +1130,7 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
                 ...(printOffset ? { printOffset } : {}),
             },
             nodes,
-            data: { ...(csv ? { csv } : {}), sampleRowIndex, globals },
+            data: { ...(csv ? { csv } : {}), sampleRowIndex, globals, ...(fields ? { fields } : {}) },
             resources: { fonts, images },
         },
     };

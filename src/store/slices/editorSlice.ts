@@ -1,6 +1,7 @@
 import { newLabelId, roundNode } from '../../core/doc/factory';
 import { normalizeDpi, PRINT_OFFSET_LIMIT_HM } from '../../core/doc/validate';
 import { resizeNodeGeometry } from '../../core/doc/geometry';
+import { CSV_ROW_FIELD_ID, ensureCsvRowField, normalizeFieldDefs } from '../../core/doc/fieldDefs';
 import { effectiveTransform, IDENTITY_MAT2D, nodeLookup, worldPreservingTransform, type Mat2D } from '../../core/doc/derive';
 import { roundHm } from '../../core/hm';
 import { translateWorldPatch } from '../../editor/transformPatch';
@@ -645,17 +646,26 @@ export const createEditorSlice: StoreSlice = (set, get) => {
                 };
             }
             const current = doc.data.csv;
+            const declaresRow = doc.data.fields?.some((field) => field.id === CSV_ROW_FIELD_ID) ?? false;
             // No-op guard: an identical ref or clearing an absent one must not
             // create a dead undo entry. Compared field-wise so a preserved
-            // `alt`/`fingerprint` does not spuriously count as a change.
+            // `alt`/`fingerprint` does not spuriously count as a change. A ref
+            // that is identical but lacks the `csv.row` declaration is not a
+            // no-op: attaching (or re-attaching) a table declares the selector.
             if (ref === null) {
                 if (current === undefined) return;
-            } else if (current !== undefined && csvRefsEqual(current, ref)) {
+            } else if (current !== undefined && csvRefsEqual(current, ref) && declaresRow) {
                 return;
             }
             const next = cloneDoc(doc);
             if (ref === null) delete next.data.csv;
-            else next.data.csv = ref;
+            else {
+                next.data.csv = ref;
+                // Same undo entry as the attach. A declaration the author
+                // already made keeps its default/required/hidden settings; a
+                // missing one is appended (ordered last).
+                next.data.fields = ensureCsvRowField(next.data.fields ?? []);
+            }
             commit(next, doc);
         },
 
@@ -690,10 +700,14 @@ export const createEditorSlice: StoreSlice = (set, get) => {
                 },
             };
             // A re-attach of the identical ref with the row already at 0 is a no-op.
-            if (current !== undefined && csvRefsEqual(current, ref) && doc.data.sampleRowIndex === 0) return;
+            const declaresRow = doc.data.fields?.some((field) => field.id === CSV_ROW_FIELD_ID) ?? false;
+            if (current !== undefined && csvRefsEqual(current, ref) && doc.data.sampleRowIndex === 0 && declaresRow) return;
             const next = cloneDoc(doc);
             next.data.csv = ref;
             next.data.sampleRowIndex = 0;
+            // The CSV row selector is declared in the SAME undo entry as the
+            // attach, so the author sees one step.
+            next.data.fields = ensureCsvRowField(next.data.fields ?? []);
             commit(next, doc);
         },
 
@@ -726,6 +740,34 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             if (JSON.stringify(doc.data.globals) === JSON.stringify(next_globals)) return;
             const next = cloneDoc(doc);
             next.data.globals = next_globals;
+            commit(next, doc);
+        },
+
+        setDocFields: (fields) => {
+            const doc = get().currentDoc;
+            if (!doc) return;
+            // One normalization rule, shared with the document validator: a
+            // duplicate or malformed declaration is never persisted.
+            const normalized = normalizeFieldDefs(fields).fields;
+            // Empty and absent both mean "no declarations"; keep one stored
+            // shape by removing the key for an empty list.
+            const current = doc.data.fields ?? [];
+            // No-op guard: an identical list must not create a dead undo entry.
+            if (JSON.stringify(current) === JSON.stringify(normalized)) return;
+            const next = cloneDoc(doc);
+            if (normalized.length === 0) delete next.data.fields;
+            else next.data.fields = normalized;
+            commit(next, doc);
+        },
+
+        ensureFieldDef: (id) => {
+            const doc = get().currentDoc;
+            if (!doc) return;
+            // A blank name is the half-authored binding state: nothing to declare.
+            if (id.trim().length === 0) return;
+            if (doc.data.fields?.some((field) => field.id === id)) return;
+            const next = cloneDoc(doc);
+            next.data.fields = [...(next.data.fields ?? []), { id }];
             commit(next, doc);
         },
 
