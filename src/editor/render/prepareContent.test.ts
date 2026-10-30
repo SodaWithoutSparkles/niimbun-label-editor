@@ -114,6 +114,116 @@ describe('prepareResolvedContent — csv binding', () => {
     });
 });
 
+describe('prepareResolvedContent — field binding', () => {
+    const fieldDoc = (name: string, fallback = 'F'): LabelDoc =>
+        docWith([leaf('f1', 'text', { kind: 'field', name, fallback })]);
+
+    it('binds a value injected for the field name', async () => {
+        const map = await prepareResolvedContent({
+            doc: fieldDoc('price'),
+            csv: null,
+            rowIndex: 0,
+            fields: { price: '9.99' },
+        });
+        expect(map.get('f1')).toEqual({ text: '9.99', placeholder: false });
+    });
+
+    it('uses the fallback for an absent name or no map at all', async () => {
+        const absent = await prepareResolvedContent({
+            doc: fieldDoc('price'),
+            csv: null,
+            rowIndex: 0,
+            fields: { other: 'x' },
+        });
+        expect(absent.get('f1')).toEqual({ text: 'F', placeholder: false });
+
+        const noMap = await prepareResolvedContent({ doc: fieldDoc('price'), csv: null, rowIndex: 0 });
+        expect(noMap.get('f1')).toEqual({ text: 'F', placeholder: false });
+    });
+
+    it('treats an injected empty string as no value, and an empty fallback as the placeholder', async () => {
+        const doc = docWith([
+            leaf('f1', 'text', { kind: 'field', name: 'price', fallback: 'F' }),
+            leaf('f2', 'text', { kind: 'field', name: 'price', fallback: '' }),
+        ]);
+        const map = await prepareResolvedContent({ doc, csv: null, rowIndex: 0, fields: { price: '' } });
+        expect(map.get('f1')).toEqual({ text: 'F', placeholder: false });
+        expect(map.get('f2')).toEqual({ text: DEFAULT_EMPTY_TEXT, placeholder: true });
+    });
+
+    it('never reads a field value from the prototype chain', async () => {
+        // A hostile prototype carrying own `__proto__`/`constructor` data props:
+        // a naive `fields[name]` lookup would return 'LEAK' for both.
+        const proto: Record<string, string> = {};
+        Object.defineProperty(proto, '__proto__', {
+            value: 'LEAK',
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        });
+        proto['constructor'] = 'LEAK';
+        const fields = Object.create(proto) as Record<string, string>;
+
+        const doc = docWith([
+            leaf('f1', 'text', { kind: 'field', name: '__proto__', fallback: 'F' }),
+            leaf('f2', 'text', { kind: 'field', name: 'constructor', fallback: 'F' }),
+        ]);
+        const map = await prepareResolvedContent({ doc, csv: null, rowIndex: 0, fields });
+
+        expect(fields['__proto__']).toBe('LEAK');
+        expect(fields['constructor']).toBe('LEAK');
+        expect(map.get('f1')).toEqual({ text: 'F', placeholder: false });
+        expect(map.get('f2')).toEqual({ text: 'F', placeholder: false });
+    });
+
+    it('exposes fields, row and globals together as ctx.fields / ctx.row / ctx.globals', async () => {
+        // The fake engine evaluates the expression against the context it gets,
+        // so this is the end-to-end pass, not just a context-shape assertion.
+        const { engine, calls } = createFakeEngine(
+            (_source, ctx) => `${ctx.fields.price}|${ctx.row.sku}|${ctx.globals.rate}`,
+        );
+        const doc = docWith([
+            leaf('t1', 'text', {
+                kind: 'template',
+                code: 'return `${ctx.fields.price}|${ctx.row.sku}|${ctx.globals.rate}`',
+                fallback: 'F',
+            }),
+        ]);
+
+        const map = await prepareResolvedContent({
+            doc,
+            csv: csv([['A1', 'Bolt']]),
+            rowIndex: 0,
+            engine,
+            fields: { price: '9.99' },
+            ctx: { globals: { rate: '0.2' } },
+        });
+
+        expect(map.get('t1')).toEqual({ text: '9.99|A1|0.2', placeholder: false });
+        expect(calls).toHaveLength(1);
+        expect(calls[0]!.context.fields).toEqual({ price: '9.99' });
+        expect(calls[0]!.context.row).toEqual({ sku: 'A1', name: 'Bolt' });
+        expect(calls[0]!.context.globals).toEqual({ rate: '0.2' });
+    });
+
+    it('never writes field values into the document', async () => {
+        const doc = fieldDoc('price');
+        const snapshot = structuredClone(doc);
+        deepFreeze(doc);
+
+        const map = await prepareResolvedContent({
+            doc,
+            csv: null,
+            rowIndex: 0,
+            fields: { price: '9.99' },
+        });
+
+        expect(map.get('f1')).toEqual({ text: '9.99', placeholder: false });
+        expect(doc).toEqual(snapshot);
+        expect(JSON.stringify(doc)).not.toContain('9.99');
+    });
+});
+
 describe('prepareResolvedContent — template binding', () => {
     it('evaluates via the injected engine with the plan context', async () => {
         vi.spyOn(Date, 'now').mockReturnValue(NOW_MS);
@@ -143,6 +253,7 @@ describe('prepareResolvedContent — template binding', () => {
             now: NOW_MS,
             label: { name: 'L' },
             globals: { greet: 'hi' },
+            fields: {},
             fmt: { locale: 'en-US' },
             seeds: { docSeed: 'doc-1' },
         });

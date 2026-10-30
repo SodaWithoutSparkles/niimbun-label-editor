@@ -19,6 +19,9 @@ import { DEFAULT_EMPTY_TEXT, type ResolvedContent } from './resolve';
  * - `csv` binds by **column name** via `CsvRecord.columns`. An absent CSV, an
  *   absent column, an absent row, or an empty cell degrades to the source
  *   `fallback` (an empty fallback becomes the `{empty}` placeholder).
+ * - `field` binds by **field name** from the injected `fields` map (own
+ *   properties only). An absent map, an absent name, or an empty value
+ *   degrades to the source `fallback`, exactly like an empty CSV cell.
  * - `template` runs **only** through an injected {@link TemplateEngine}; this
  *   module never fetches. A rejected evaluation, `undefined`, or an empty
  *   string degrades to the source `fallback`. With no engine, a template source
@@ -58,6 +61,12 @@ export interface PrepareContentInput {
     rowIndex: number;
     /** Injected template executor (W3). Absent → template sources degrade. */
     engine?: TemplateEngine;
+    /**
+     * Injected preset field values keyed by field name exactly as stored on a
+     * `{ kind: 'field' }` source. Absent → field sources render their
+     * `fallback`. Lives only for this pass; never written to the document.
+     */
+    fields?: Record<string, string>;
     /** Static context pieces (label/globals/fmt); `now` is read internally. */
     ctx?: PrepareContentContext;
 }
@@ -94,12 +103,25 @@ const csvCell = (csv: CsvRecord | null, column: string, rowIndex: number): strin
 };
 
 /**
+ * Value for the named field in the injected map, or `undefined` when unbindable.
+ * Own properties only, so a field named `__proto__`/`constructor`/`toString`
+ * reads nothing from the prototype chain.
+ */
+const ownField = (
+    fields: Readonly<Record<string, string>> | undefined,
+    name: string,
+): string | undefined => {
+    if (fields === undefined || !Object.hasOwn(fields, name)) return undefined;
+    return fields[name];
+};
+
+/**
  * Evaluate every csv/template source in `doc.nodes` for `rowIndex` (decision 24:
  * the clock is read **once per call**, and one row context is shared by all
  * nodes). Returns an override map for `resolve`; static sources are omitted.
  */
 export const prepareResolvedContent = async (input: PrepareContentInput): Promise<ResolvedContentMap> => {
-    const { doc, csv, rowIndex, engine, ctx } = input;
+    const { doc, csv, rowIndex, engine, fields, ctx } = input;
     const overrides: ResolvedContentMap = new Map();
 
     // Decision 24: the host reads the clock at resolve time, once per pass.
@@ -110,6 +132,7 @@ export const prepareResolvedContent = async (input: PrepareContentInput): Promis
         index: rowIndex,
         ...(ctx?.label === undefined ? {} : { label: ctx.label }),
         ...(ctx?.globals === undefined ? {} : { globals: ctx.globals }),
+        ...(fields === undefined ? {} : { fields }),
         ...(ctx?.fmt === undefined ? {} : { fmt: ctx.fmt }),
         seeds: { docSeed: doc.meta.id },
         now,
@@ -130,10 +153,8 @@ export const prepareResolvedContent = async (input: PrepareContentInput): Promis
                         : coerceText(await engine.evaluate(source.code, rowCtx));
                 resolved = finalize(raw, source.fallback);
             } else {
-                // `field` values are injected by P2 of this run; until then the
-                // node renders its `fallback` through `resolveContent`'s existing
-                // non-static path, so no override is produced here.
-                continue;
+                // `field` sources bind by name from the injected values map.
+                resolved = finalize(ownField(fields, source.name), source.fallback);
             }
         } catch {
             // A hostile/rejecting engine must never break the render.

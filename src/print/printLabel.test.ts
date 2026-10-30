@@ -12,6 +12,7 @@ import {
     type RenderLabelPageOptions,
     type ResolveContext,
 } from '../editor/render';
+import { prepareResolvedContent } from '../editor/render/prepareContent';
 import { MockTransport } from './mockTransport';
 import type { PrintJob, PrintPage } from './transport';
 import {
@@ -38,6 +39,19 @@ const text = (id: string, x: number, y: number, value: string): Node =>
         locked: false,
         transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
         text: { kind: 'static', value },
+        size: { w: 1900, h: 700 },
+        fontSize: 500,
+    });
+
+const textField = (id: string, x: number, y: number, name: string, fallback = 'FB'): Node =>
+    node({
+        id,
+        parentId: null,
+        type: 'text',
+        visible: true,
+        locked: false,
+        transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        text: { kind: 'field', name, fallback },
         size: { w: 1900, h: 700 },
         fontSize: 500,
     });
@@ -432,6 +446,55 @@ describe('buildCsvPrintJob', () => {
 
         const rendered = await renderLabelPage(doc, {}, overrides);
         const oriented = orientForPrint(rendered, doc.label.printDirection);
+        const expected = ImageEncoder.encodeCanvas(
+            oriented.canvas,
+            PageColorType.SingleColor,
+            oriented.direction,
+        );
+        expect(page!.data).toEqual(expected);
+    });
+
+    it('P2 golden: a field-bound leaf renders byte-identically in the editor and the print job', async () => {
+        const doc = createLabelDoc({
+            paperTypeId: 'ftagSpare-25x78',
+            nodes: [rect('r', 300, 300, 1900, 1400), textField('f', 300, 2000, 'price')],
+        });
+        const fields = { price: 'A1-9.99' };
+
+        // Editor/preview: the one pre-pass, then the shared raster.
+        const editorOverrides = await prepareResolvedContent({
+            doc,
+            csv: null,
+            rowIndex: 0,
+            fields,
+        });
+        const editor = await renderLabelPage(doc, { overrides: editorOverrides });
+
+        // Print: `prepareRow` is the dialog's seam over that same pre-pass.
+        let printed: ResolveContext | undefined;
+        const prepareRow = async (): Promise<ResolveContext> => {
+            const overrides = await prepareResolvedContent({
+                doc,
+                csv: null,
+                rowIndex: 0,
+                fields,
+            });
+            printed = { overrides };
+            return printed;
+        };
+        const job = buildCsvPrintJob(
+            doc,
+            null,
+            { order: 'grouped', copies: 1 },
+            { prepareRow },
+        );
+        const [page] = await collectPages(job);
+
+        // Same content on both sides, and the same bytes for the same page.
+        expect(printed!.overrides).toEqual(editorOverrides);
+        expect(printed!.overrides?.get('f')).toEqual({ text: 'A1-9.99', placeholder: false });
+
+        const oriented = orientForPrint(editor, doc.label.printDirection);
         const expected = ImageEncoder.encodeCanvas(
             oriented.canvas,
             PageColorType.SingleColor,

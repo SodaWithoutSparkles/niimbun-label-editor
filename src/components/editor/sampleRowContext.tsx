@@ -12,8 +12,16 @@ import { useSampleRow, type SampleRowState } from './useSampleRow';
  */
 export const SampleRowContext = createContext<SampleRowState | null>(null);
 
-export const SampleRowProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const state = useSampleRow();
+export const SampleRowProvider: React.FC<{
+    children: React.ReactNode;
+    /**
+     * Injected preset field values keyed by field name. Lives only in memory:
+     * the provider never writes them to the document. Absent → field sources
+     * render their fallback.
+     */
+    fields?: Record<string, string>;
+}> = ({ children, fields }) => {
+    const state = useSampleRow(fields);
     return <SampleRowContext.Provider value={state}>{children}</SampleRowContext.Provider>;
 };
 

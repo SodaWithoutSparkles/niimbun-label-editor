@@ -92,6 +92,12 @@ export interface PrintJobDeps {
 export interface UsePrintJobOptions {
     /** True while the print dialog is open; scopes the engine + globals cache. */
     open: boolean;
+    /**
+     * Injected preset field values keyed by field name. Read at `prepareRow`
+     * time, so every page (dialog thumbnails and the job) resolves the same
+     * values. Lives only in memory — never written to the document.
+     */
+    fields?: Record<string, string>;
 }
 
 /** Read the attached CSV table; `null` on failure (gone, throw or no repo). */
@@ -122,7 +128,7 @@ interface CsvSettle {
     readonly revision: number;
 }
 
-export const usePrintJob = ({ open }: UsePrintJobOptions): PrintJobDeps => {
+export const usePrintJob = ({ open, fields }: UsePrintJobOptions): PrintJobDeps => {
     const doc = useStore((state) => state.currentDoc);
     const csvRepo = useStore((state) => state.csvRepo);
     const trustRepo = useStore((state) => state.trustRepo);
@@ -141,6 +147,11 @@ export const usePrintJob = ({ open }: UsePrintJobOptions): PrintJobDeps => {
     trustRepoRef.current = trustRepo;
     const storeGateRef = useRef(storeGate);
     storeGateRef.current = storeGate;
+
+    // Latest injected field values, read at call time so `prepareRow` stays
+    // identity-stable across a fields edit.
+    const fieldsRef = useRef<Record<string, string>>(fields ?? {});
+    fieldsRef.current = fields ?? {};
 
     // One engine + one globals cache per open dialog session.
     const engineRef = useRef<JavaScriptTemplateEngine | null>(null);
@@ -293,7 +304,14 @@ export const usePrintJob = ({ open }: UsePrintJobOptions): PrintJobDeps => {
         if (!globalsCacheRef.current) globalsCacheRef.current = createGlobalsCache();
 
         const result = await runResolvePass(
-            { doc: currentDoc, csv: csvRef.current, rowIndex, trust, engine },
+            {
+                doc: currentDoc,
+                csv: csvRef.current,
+                rowIndex,
+                trust,
+                engine,
+                fields: fieldsRef.current,
+            },
             globalsCacheRef.current,
         );
         return { overrides: result.overrides };

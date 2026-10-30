@@ -81,6 +81,16 @@ const csvNode = (): Node => ({
     text: { kind: 'csv', column: 'name', fallback: 'FB' },
 });
 
+const textFieldNode = (id = 'f1', name = 'price'): Node => ({
+    id,
+    parentId: null,
+    type: 'text',
+    visible: true,
+    locked: false,
+    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+    text: { kind: 'field', name, fallback: 'FB' },
+});
+
 const makeDoc = (nodes: Node[]): LabelDoc =>
     createLabelDoc({ id: 'doc-1', now: 1_700_000_000, backingW: 3000, backingH: 2000, nodes });
 
@@ -283,6 +293,25 @@ describe('usePrintJob — serial-use engine (single-flight)', () => {
         expect(maxActive).toBe(1);
         expect(textAt(doc, first)).toBe('EVALUATED');
         expect(textAt(doc, second)).toBe('EVALUATED');
+    });
+});
+
+describe('usePrintJob — injected field values', () => {
+    it('resolves field sources from the injected map for prepareRow(0)', async () => {
+        const doc = makeDoc([textFieldNode()]);
+        useStore.setState({ currentDoc: doc, trustRepo: makeTrustRepo() });
+
+        const { result } = renderHook(() =>
+            usePrintJob({ open: true, fields: { price: '9.99' } }),
+        );
+
+        const ctx = await result.current.prepareRow(0);
+
+        expect(ctx.overrides?.get('f1')).toEqual({ text: '9.99', placeholder: false });
+        expect(textAt(doc, ctx)).toBe('9.99');
+        // A field-only doc is not a template doc: no gate, engine or prompt.
+        expect(createEngineMock).not.toHaveBeenCalled();
+        expect(promptMock).not.toHaveBeenCalled();
     });
 });
 
