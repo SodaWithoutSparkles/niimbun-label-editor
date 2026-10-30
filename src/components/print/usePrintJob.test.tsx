@@ -582,3 +582,132 @@ describe('usePrintJob — csv', () => {
         expect(result.current.csv?.rows).toEqual([['Bee']]);
     });
 });
+
+describe('usePrintJob — explicit CSV source', () => {
+    const override = (): CsvRecord => ({
+        id: 'single',
+        name: 'one.csv',
+        columns: ['name'],
+        rows: [['Override']],
+    });
+
+    it('uses the supplied record verbatim, reports `ready` and never reads the repo', async () => {
+        const get = vi.fn(async (): Promise<CsvRecord | null> => {
+            throw new Error('the repo must not be read');
+        });
+        const doc = attachCsv(makeDoc([csvNode()]), 'repo-csv');
+        useStore.setState({
+            currentDoc: doc,
+            csvRepo: { get } as never,
+            trustRepo: makeTrustRepo(),
+        });
+
+        const table = override();
+        const { result } = renderHook(() =>
+            usePrintJob({ open: true, csv: { kind: 'ready', record: table } }),
+        );
+
+        expect(result.current.csvStatus).toBe('ready');
+        expect(result.current.csv).toBe(table);
+        expect(result.current.csvRevision).toBe(0);
+
+        const ctx = await result.current.prepareRow(0);
+        expect(textAt(doc, ctx)).toBe('Override');
+        expect(get).not.toHaveBeenCalled();
+    });
+
+    it('reports `none` for a `none` source without reading the repo', async () => {
+        const get = vi.fn(async (): Promise<CsvRecord | null> => {
+            throw new Error('the repo must not be read');
+        });
+        const doc = attachCsv(makeDoc([csvNode()]), 'repo-csv');
+        useStore.setState({
+            currentDoc: doc,
+            csvRepo: { get } as never,
+            trustRepo: makeTrustRepo(),
+        });
+
+        const { result } = renderHook(() => usePrintJob({ open: true, csv: { kind: 'none' } }));
+
+        expect(result.current.csvStatus).toBe('none');
+        expect(result.current.csv).toBeNull();
+        expect(result.current.csvRevision).toBe(0);
+        // No source table: the attached CSV is not consulted either.
+        expect(get).not.toHaveBeenCalled();
+    });
+
+    it('reports `error` for an `error` source and resolves without a table', async () => {
+        const get = vi.fn(async (): Promise<CsvRecord | null> => {
+            throw new Error('the repo must not be read');
+        });
+        const doc = attachCsv(makeDoc([csvNode()]), 'repo-csv');
+        useStore.setState({
+            currentDoc: doc,
+            csvRepo: { get } as never,
+            trustRepo: makeTrustRepo(),
+        });
+
+        const { result } = renderHook(() => usePrintJob({ open: true, csv: { kind: 'error' } }));
+
+        expect(result.current.csvStatus).toBe('error');
+        expect(result.current.csv).toBeNull();
+        expect(result.current.csvRevision).toBe(0);
+        const ctx = await result.current.prepareRow(0);
+        expect(textAt(doc, ctx)).toBe('FB');
+        expect(get).not.toHaveBeenCalled();
+    });
+
+    it('never reads the repo for a present `ready` source', async () => {
+        const adapter = createMemoryAdapter();
+        const csvRepo = createCsvRepo(adapter);
+        // The attachment is readable, so a fallback read would succeed and
+        // hand the full table to PrintDialog — the race the source prevents.
+        await csvRepo.put({ id: 'repo-csv', name: 'x.csv', columns: ['name'], rows: [['Full']] });
+        const getSpy = vi.spyOn(csvRepo, 'get');
+        const doc = attachCsv(makeDoc([csvNode()]), 'repo-csv');
+        useStore.setState({ currentDoc: doc, csvRepo, trustRepo: makeTrustRepo() });
+
+        const { result, rerender } = renderHook(() =>
+            usePrintJob({ open: true, csv: { kind: 'ready', record: override() } }),
+        );
+        rerender();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(getSpy).not.toHaveBeenCalled();
+        expect(result.current.csvStatus).toBe('ready');
+        expect(result.current.csv?.rows).toEqual([['Override']]);
+    });
+
+    it('never reads the repo for a present `loading` source', async () => {
+        const adapter = createMemoryAdapter();
+        const csvRepo = createCsvRepo(adapter);
+        await csvRepo.put({ id: 'repo-csv', name: 'x.csv', columns: ['name'], rows: [['Full']] });
+        const getSpy = vi.spyOn(csvRepo, 'get');
+        const doc = attachCsv(makeDoc([csvNode()]), 'repo-csv');
+        useStore.setState({ currentDoc: doc, csvRepo, trustRepo: makeTrustRepo() });
+
+        const { result, rerender } = renderHook(() =>
+            usePrintJob({ open: true, csv: { kind: 'loading' } }),
+        );
+        rerender();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(getSpy).not.toHaveBeenCalled();
+        expect(result.current.csvStatus).toBe('loading');
+        expect(result.current.csv).toBeNull();
+    });
+
+    it('keeps the repo read when the option is absent', async () => {
+        const adapter = createMemoryAdapter();
+        const csvRepo = createCsvRepo(adapter);
+        await csvRepo.put({ id: 'csv-1', name: 'x.csv', columns: ['name'], rows: [['Repo']] });
+        const doc = attachCsv(makeDoc([csvNode()]), 'csv-1');
+        useStore.setState({ currentDoc: doc, csvRepo, trustRepo: makeTrustRepo() });
+
+        const { result } = renderHook(() => usePrintJob({ open: true }));
+        await waitFor(() => expect(result.current.csvStatus).toBe('ready'));
+
+        const ctx = await result.current.prepareRow(0);
+        expect(textAt(doc, ctx)).toBe('Repo');
+    });
+});

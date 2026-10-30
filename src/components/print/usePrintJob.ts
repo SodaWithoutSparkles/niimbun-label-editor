@@ -77,10 +77,34 @@ import type { AssetDeps, ResolveContext } from '../../editor/render';
  * key is present: a document resolves, `null` keeps the hook inert (no gate, no
  * engine, no `prepareRow` output). When the key is absent the hook keeps
  * reading `state.currentDoc`, so `EditorShell`'s call site is untouched.
+ *
+ * ## Explicit CSV (P6b)
+ *
+ * `csv` is the preset fill dialog's **pre-resolved** table state. Present wins
+ * over the document's attachment: no `csvRepo.get` runs at all, `csvStatus` is
+ * the source's own kind, `csv` is the record (`ready` only, else `null`) and
+ * `csvRevision` stays `0`. The source is total — `loading`/`error` are states
+ * too — so a caller can never fall back to a repo read of the full table while
+ * its own read is pending. That is what makes a key-matched preset print
+ * exactly one page. Absent keeps the repo-backed read above, so the editor is
+ * unchanged.
  */
 
 /** Readiness of the document's attached CSV table (P12). */
 export type PrintCsvStatus = 'none' | 'loading' | 'ready' | 'error';
+
+/**
+ * Pre-resolved table state (P6b): when present no repo read happens.
+ *
+ * The union is **total** on purpose — a caller that reads its own table can
+ * report `loading`/`error` explicitly instead of leaving `csv` absent, which
+ * would let this hook read the document's full table in the meantime.
+ */
+export type CsvJobSource =
+    | { kind: 'ready'; record: CsvRecord }
+    | { kind: 'loading' }
+    | { kind: 'error' }
+    | { kind: 'none' };
 
 /** The subset of `PrintDialog`'s props this hook supplies. */
 export interface PrintJobDeps {
@@ -114,6 +138,16 @@ export interface UsePrintJobOptions {
      * editor's `PrintDialog` call site is unchanged.
      */
     doc?: LabelDoc | null;
+    /**
+     * A pre-resolved table state to use instead of reading the document's
+     * attached CSV. Present wins: nothing is read from the repo, `csvStatus`
+     * is the source's `kind`, `csv` is its record only for `ready` (else
+     * `null`) and `csvRevision` stays `0`. The preset fill dialog passes the
+     * state of its own read here, so preview and print share the same
+     * one-row record and a pending/failed read can never fall back to the
+     * document's full table. Absent keeps today's repo-backed read.
+     */
+    csv?: CsvJobSource;
 }
 
 /** Read the attached CSV table; `null` on failure (gone, throw or no repo). */
@@ -144,7 +178,12 @@ interface CsvSettle {
     readonly revision: number;
 }
 
-export const usePrintJob = ({ open, fields, doc: docOption }: UsePrintJobOptions): PrintJobDeps => {
+export const usePrintJob = ({
+    open,
+    fields,
+    doc: docOption,
+    csv: csvOption,
+}: UsePrintJobOptions): PrintJobDeps => {
     const storeDoc = useStore((state) => state.currentDoc);
     // An explicitly passed document (even `null`) wins over the store's open
     // document; absent keeps the editor's existing behavior.
@@ -206,7 +245,11 @@ export const usePrintJob = ({ open, fields, doc: docOption }: UsePrintJobOptions
         trustRef.current = null;
     }, [trustRevision]);
 
-    const csvId = doc?.data.csv?.csvId;
+    // An explicitly supplied source wins over the attached CSV: the caller
+    // already read it, so the hook must not read the repo again (`csvId` stays
+    // undefined) — not even while the caller reports `loading`.
+    const hasCsvOption = csvOption !== undefined;
+    const csvId = hasCsvOption ? undefined : doc?.data.csv?.csvId;
     /**
      * Settled read for the current attachment. `null` while a read is in
      * flight (or none was started): the status is then `loading` when a CSV is
@@ -244,18 +287,27 @@ export const usePrintJob = ({ open, fields, doc: docOption }: UsePrintJobOptions
     // session's table as `ready`, leaking it past the close. A closed dialog
     // therefore can never report `ready`.
     const currentSettle = open && settled !== null && settled.csvId === csvId ? settled : null;
-    const csvStatus: PrintCsvStatus =
-        csvId === undefined
-            ? 'none'
-            : currentSettle === null
-              ? 'loading'
-              : currentSettle.csv !== null
-                ? 'ready'
-                : 'error';
+    // The explicit source is total: its own kind *is* the status, so a caller's
+    // pending/failed read is reported honestly instead of being derived from a
+    // repo settle this hook never started.
+    const csvStatus: PrintCsvStatus = hasCsvOption
+        ? csvOption.kind
+        : csvId === undefined
+          ? 'none'
+          : currentSettle === null
+            ? 'loading'
+            : currentSettle.csv !== null
+              ? 'ready'
+              : 'error';
     // Non-null only while the status is `ready`: `currentSettle` already excludes
-    // a closed dialog, so no extra `open` gate is needed here.
-    const csv = currentSettle?.csv ?? null;
-    const csvRevision = currentSettle?.revision ?? 0;
+    // a closed dialog, so no extra `open` gate is needed here. An explicit
+    // source hands over its record only for `ready`, never a half-loaded table.
+    const csv = hasCsvOption
+        ? csvOption.kind === 'ready'
+            ? csvOption.record
+            : null
+        : (currentSettle?.csv ?? null);
+    const csvRevision = hasCsvOption ? 0 : (currentSettle?.revision ?? 0);
 
     const csvRef = useRef(csv);
     csvRef.current = csv;

@@ -7,13 +7,14 @@ import { FillPresetDialog } from './FillPresetDialog';
 import { useStore } from '../../store/useStore';
 import { createMemoryAdapter } from '../../data/db';
 import { createLabelRepo, type LabelRepo } from '../../data/labelRepo';
+import { createCsvRepo, type CsvRecord } from '../../data/csvRepo';
 import { createLabelDoc } from '../../core/doc/factory';
-import type { ContentSource, LabelDoc, Node, TextNode } from '../../core/doc/types';
+import type { ContentSource, FieldDef, LabelDoc, Node, TextNode } from '../../core/doc/types';
 import type { ResolveContext } from '../../editor/render';
 import type { PrintJobDeps } from '../print/usePrintJob';
 
 /**
- * P5 — the preset fill dialog: one input per field, the live preview through
+ * P5/P6b — the preset fill dialog: one input per field, the live preview through
  * the shared content pass, Print through the same job, and "Open in editor"
  * as a `kind: 'label'` copy. happy-dom has no canvas, so `renderDocPreview` is
  * mocked; the dialog's scheduling and content are what this test owns.
@@ -21,6 +22,7 @@ import type { PrintJobDeps } from '../print/usePrintJob';
 
 interface CapturedPrintProps {
     doc: LabelDoc;
+    csv?: CsvRecord | null;
     csvStatus?: string;
     csvRevision?: number;
     prepareRow?: (rowIndex: number) => Promise<ResolveContext>;
@@ -127,9 +129,40 @@ const field = (name: string, fallback = ''): ContentSource => ({
 const valueOf = (ctx: ResolveContext): string =>
     (ctx.overrides?.get('f1') as { text?: string } | undefined)?.text ?? 'empty';
 
-const seedPreset = async (nodes: Node[], id = 'preset-1', name = 'Shipping'): Promise<LabelRepo> => {
+interface SeedOptions {
+    fields?: FieldDef[];
+    /** Attach this table to the document and seed the store's CSV repo. */
+    csv?: CsvRecord;
+    sampleRowIndex?: number;
+}
+
+const seedPreset = async (
+    nodes: Node[],
+    id = 'preset-1',
+    name = 'Shipping',
+    options: SeedOptions = {},
+): Promise<LabelRepo> => {
     const repo = createLabelRepo(createMemoryAdapter());
-    await repo.save(createLabelDoc({ id, name, kind: 'preset', nodes, now: 1_000_000 }));
+    const doc = createLabelDoc({ id, name, kind: 'preset', nodes, now: 1_000_000 });
+    if (options.fields !== undefined) doc.data.fields = options.fields;
+    if (options.sampleRowIndex !== undefined) doc.data.sampleRowIndex = options.sampleRowIndex;
+    if (options.csv !== undefined) {
+        doc.data.csv = {
+            csvId: options.csv.id,
+            name: options.csv.name,
+            source: {
+                kind: 'local',
+                mediaType: 'text/csv',
+                resourceId: options.csv.id,
+            },
+        };
+        const csvRepo = createCsvRepo(createMemoryAdapter());
+        await csvRepo.put(options.csv);
+        useStore.setState({ csvRepo });
+    } else {
+        useStore.setState({ csvRepo: null });
+    }
+    await repo.save(doc);
     useStore.setState({ labelRepo: repo, currentDoc: null, notifications: [] });
     return repo;
 };
@@ -162,6 +195,7 @@ afterEach(() => {
     useStore.setState({
         labelRepo: null,
         currentDoc: null,
+        csvRepo: null,
         gallery: [],
         galleryLoading: false,
         storageError: false,
@@ -468,5 +502,301 @@ describe('FillPresetDialog', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Print' }));
         expect(await screen.findByTestId('print-dialog')).toBeInTheDocument();
+    });
+});
+
+describe('FillPresetDialog — declarations (P6b)', () => {
+    it('builds rows from declarations with defaults and keeps leftover bound ids', async () => {
+        await seedPreset(
+            [
+                textNode('f1', field('price', '0.00')),
+                textNode('f2', field('sku', 'SKU-000')),
+                textNode('f3', field('secret', 'secret-fallback')),
+            ],
+            'preset-1',
+            'Shipping',
+            {
+                fields: [
+                    { id: 'price', default: '9.99' },
+                    { id: 'lot' },
+                    { id: 'secret', default: 'hidden-default', hidden: true },
+                ],
+            },
+        );
+        openDialog();
+
+        expect(await screen.findByLabelText('price')).toHaveValue('9.99');
+        expect(screen.getByLabelText('price')).toHaveAttribute('placeholder', '0.00');
+        expect(screen.getByLabelText('lot')).toHaveValue('');
+        expect(screen.getByLabelText('sku')).toHaveValue('');
+        // Hidden declarations are absent from the default list ...
+        expect(screen.queryByLabelText('secret')).not.toBeInTheDocument();
+        // ... but their default still applies to the content pass.
+        await waitFor(() => {
+            const ctx = renderPreviewMock.mock.calls.at(-1)?.[2] as ResolveContext | undefined;
+            expect(ctx?.overrides?.get('f3')).toEqual({
+                text: 'hidden-default',
+                placeholder: false,
+            });
+        });
+    });
+
+    it('adds a hidden required declaration through Add field and unblocks printing', async () => {
+        await seedPreset(
+            [textNode('f1', field('secret', 'S-000'))],
+            'preset-1',
+            'Shipping',
+            { fields: [{ id: 'secret', hidden: true, required: true }] },
+        );
+        openDialog();
+
+        expect(await screen.findByTestId('preset-required-missing')).toHaveTextContent(
+            'Fill in the required fields: secret',
+        );
+        expect(
+            screen.queryByText('This preset has no fields. Print it as it is.'),
+        ).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Print' })).toBeDisabled();
+        expect(screen.getByRole('button', { name: 'Open in editor' })).toBeDisabled();
+
+        fireEvent.change(screen.getByLabelText('Field'), { target: { value: 'secret' } });
+        fireEvent.change(screen.getByLabelText('Value'), { target: { value: 'S-42' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Add field' }));
+
+        expect(screen.getByLabelText('secret')).toHaveValue('S-42');
+        await waitFor(() =>
+            expect(screen.getByTestId('preset-live-preview')).toHaveAttribute(
+                'src',
+                'data:image/png;base64,S-42',
+            ),
+        );
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Print' })).toBeEnabled());
+        expect(screen.getByRole('button', { name: 'Open in editor' })).toBeEnabled();
+        expect(screen.queryByTestId('preset-required-missing')).not.toBeInTheDocument();
+    });
+
+    it('blocks Print and Open in editor while a visible required field is empty', async () => {
+        await seedPreset(
+            [textNode('f1', field('price', '0.00'))],
+            'preset-1',
+            'Shipping',
+            { fields: [{ id: 'price', required: true }] },
+        );
+        openDialog();
+
+        const input = await screen.findByLabelText('price');
+        expect(screen.getByTestId('preset-required-missing')).toHaveTextContent(
+            'Fill in the required fields: price',
+        );
+        expect(screen.getByRole('button', { name: 'Print' })).toBeDisabled();
+        expect(screen.getByRole('button', { name: 'Open in editor' })).toBeDisabled();
+
+        fireEvent.change(input, { target: { value: '9.99' } });
+
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Print' })).toBeEnabled());
+        expect(screen.getByRole('button', { name: 'Open in editor' })).toBeEnabled();
+        expect(screen.queryByTestId('preset-required-missing')).not.toBeInTheDocument();
+    });
+});
+
+describe('FillPresetDialog — CSV row lookup (P6b)', () => {
+    const itemTable = (): CsvRecord => ({
+        id: 'csv-1',
+        name: 'items.csv',
+        columns: ['sku', 'name'],
+        rows: [
+            ['A', 'Alpha'],
+            ['B', 'Beta'],
+        ],
+    });
+
+    it('offers the row selector only with csv.row declared and a readable attached CSV', async () => {
+        await seedPreset(
+            [textNode('f1', { kind: 'csv', column: 'name', fallback: 'FB' })],
+            'preset-1',
+            'Shipping',
+            { fields: [{ id: 'csv.row' }], csv: itemTable() },
+        );
+        openDialog();
+
+        expect(await screen.findByTestId('preset-row-selector')).toBeInTheDocument();
+        await waitFor(() => expect(screen.getByLabelText('Key column')).toHaveValue('sku'));
+        expect(screen.getByLabelText('Key')).toHaveValue('');
+    });
+
+    it('does not render the row selector when csv.row is not declared', async () => {
+        await seedPreset(
+            [textNode('f1', { kind: 'csv', column: 'name', fallback: 'FB' })],
+            'preset-1',
+            'Shipping',
+            { fields: [{ id: 'sku' }], csv: itemTable() },
+        );
+        openDialog();
+
+        await screen.findByLabelText('sku');
+        expect(screen.queryByTestId('preset-row-selector')).not.toBeInTheDocument();
+    });
+
+    it('does not render the row selector when no CSV is attached', async () => {
+        await seedPreset(
+            [textNode('f1', field('sku', 'S-000'))],
+            'preset-1',
+            'Shipping',
+            { fields: [{ id: 'csv.row' }] },
+        );
+        openDialog();
+
+        await screen.findByLabelText('sku');
+        expect(screen.queryByTestId('preset-row-selector')).not.toBeInTheDocument();
+    });
+
+    it('prints exactly one CSV record for the sample, matched and missed key', async () => {
+        await seedPreset(
+            [textNode('f1', { kind: 'csv', column: 'name', fallback: 'MISS-FB' })],
+            'preset-1',
+            'Shipping',
+            { fields: [{ id: 'csv.row' }], csv: itemTable(), sampleRowIndex: 0 },
+        );
+        openDialog();
+
+        // No key typed: the stored sample row is both previewed and printed.
+        await screen.findByTestId('preset-row-selector');
+        await waitFor(() => expect(screen.getByLabelText('Key column')).toHaveValue('sku'));
+        await waitFor(() =>
+            expect(screen.getByTestId('preset-live-preview')).toHaveAttribute(
+                'src',
+                'data:image/png;base64,Alpha',
+            ),
+        );
+        expect(screen.getByTestId('preset-row-status')).toHaveTextContent(
+            'No key typed — showing the sample row.',
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        expect(await screen.findByTestId('print-dialog')).toBeInTheDocument();
+        await waitFor(() => expect(printProps.at(-1)?.csv?.rows).toEqual([['A', 'Alpha']]));
+        expect(printProps.at(-1)?.csv?.rows).toHaveLength(1);
+
+        // A key match resolves that record into the preview and the print.
+        const keyInput = screen.getByLabelText('Key');
+        fireEvent.change(keyInput, { target: { value: 'B' } });
+
+        await waitFor(() =>
+            expect(screen.getByTestId('preset-live-preview')).toHaveAttribute(
+                'src',
+                'data:image/png;base64,Beta',
+            ),
+        );
+        expect(screen.getByTestId('preset-row-status')).toHaveTextContent('Showing row 2.');
+        const matchedCtx = renderPreviewMock.mock.calls.at(-1)?.[2] as ResolveContext;
+        expect(matchedCtx.overrides?.get('f1')).toEqual({ text: 'Beta', placeholder: false });
+        await waitFor(() => expect(printProps.at(-1)?.csv?.rows).toEqual([['B', 'Beta']]));
+        expect(printProps.at(-1)?.csv?.rows).toHaveLength(1);
+
+        // A miss is explicit: fallback preview and one all-empty printed row.
+        fireEvent.change(keyInput, { target: { value: 'ZZZ' } });
+
+        await waitFor(() =>
+            expect(screen.getByTestId('preset-live-preview')).toHaveAttribute(
+                'src',
+                'data:image/png;base64,MISS-FB',
+            ),
+        );
+        expect(screen.getByTestId('preset-row-status')).toHaveTextContent(
+            'No row matches this key — showing an empty row.',
+        );
+        await waitFor(() => expect(printProps.at(-1)?.csv?.rows).toEqual([['', '']]));
+        expect(printProps.at(-1)?.csv?.rows).toHaveLength(1);
+    });
+
+    it('reports `loading` and never a full table while its own CSV read is pending', async () => {
+        await seedPreset(
+            [textNode('f1', { kind: 'csv', column: 'name', fallback: 'FB' })],
+            'preset-1',
+            'Shipping',
+            { fields: [{ id: 'csv.row' }], csv: itemTable() },
+        );
+        // Defer only the dialog's own read: any *fallback* read the hook might
+        // start would resolve immediately with the full two-row table — the
+        // exact race the pre-resolved source rules out.
+        const base = useStore.getState().csvRepo!;
+        let calls = 0;
+        let releaseRead: (() => void) | null = null;
+        useStore.setState({
+            csvRepo: {
+                ...base,
+                get: (id) => {
+                    calls += 1;
+                    if (calls === 1) {
+                        return new Promise<CsvRecord | null>((resolve, reject) => {
+                            releaseRead = () => {
+                                void base.get(id).then(resolve, reject);
+                            };
+                        });
+                    }
+                    return base.get(id);
+                },
+            },
+        });
+        openDialog();
+
+        await waitFor(() =>
+            expect(screen.getByRole('button', { name: 'Print' })).toBeEnabled(),
+        );
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        expect(await screen.findByTestId('print-dialog')).toBeInTheDocument();
+
+        await waitFor(() => expect(printProps.at(-1)?.csvStatus).toBe('loading'));
+        expect(printProps.at(-1)?.csv).toBeNull();
+        // Only the dialog's own read exists: the hook never read the repo, so
+        // the full table could not win the race.
+        expect(calls).toBe(1);
+        expect(releaseRead).not.toBeNull();
+
+        await act(async () => {
+            releaseRead!();
+            await Promise.resolve();
+        });
+
+        await waitFor(() => expect(printProps.at(-1)?.csvStatus).toBe('ready'));
+        expect(printProps.at(-1)?.csv?.rows).toEqual([['A', 'Alpha']]);
+        // Whatever the frames showed, PrintDialog was never handed a multi-row
+        // table: preview and print share the same single record.
+        for (const props of printProps) {
+            if (props.csv !== null && props.csv !== undefined) {
+                expect(props.csv.rows).toHaveLength(1);
+            }
+        }
+    });
+
+    it('reports `error` and no table when its own CSV read fails', async () => {
+        await seedPreset(
+            [textNode('f1', { kind: 'csv', column: 'name', fallback: 'FB' })],
+            'preset-1',
+            'Shipping',
+            { fields: [{ id: 'csv.row' }], csv: itemTable() },
+        );
+        const base = useStore.getState().csvRepo!;
+        useStore.setState({
+            csvRepo: {
+                ...base,
+                get: async (): Promise<CsvRecord | null> => {
+                    throw new Error('idb down');
+                },
+            },
+        });
+        openDialog();
+
+        // The existing hint stays: an attached table that could not be read is
+        // explicit, never "no row selector".
+        await screen.findByTestId('preset-row-unavailable');
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        expect(await screen.findByTestId('print-dialog')).toBeInTheDocument();
+
+        await waitFor(() => expect(printProps.at(-1)?.csvStatus).toBe('error'));
+        expect(printProps.at(-1)?.csv).toBeNull();
+        // PrintDialog blocks Print on `error`; the dialog must never hand it a
+        // table to print instead.
+        for (const props of printProps) expect(props.csv).toBeNull();
     });
 });

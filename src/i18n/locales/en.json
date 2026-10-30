@@ -359,7 +359,21 @@
     "loading": "Loading preset…",
     "loadFailed": "Could not load this preset.",
     "openCopyFailed": "Could not open a copy in the editor.",
-    "noFields": "This preset has no fields. Print it as it is."
+    "noFields": "This preset has no fields. Print it as it is.",
+    "addField": "Add field",
+    "fieldId": "Field",
+    "fieldValue": "Value",
+    "requiredMissing": "Fill in the required fields: {{fields}}",
+    "row": {
+      "label": "CSV row",
+      "column": "Key column",
+      "key": "Key",
+      "keyPlaceholder": "Type a key…",
+      "noKey": "No key typed — showing the sample row.",
+      "noMatch": "No row matches this key — showing an empty row.",
+      "matched": "Showing row {{row}}.",
+      "csvUnavailable": "The attached CSV could not be read, so the row selector is unavailable."
+    }
   },
   "connection": {
     "connected": "Connected",
