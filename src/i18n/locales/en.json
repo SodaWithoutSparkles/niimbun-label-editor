@@ -814,6 +814,7 @@
         "cornerRadius": "Corner radius",
         "stroke": "Stroke",
         "fill": "Fill",
+        "tint": "Tint",
         "strokeWidth": "Stroke width",
         "strokeWidthHint": "Hundredths of a millimetre (50 = 0.5 mm).",
         "visible": "Visible",

@@ -131,12 +131,26 @@ export interface TextNode extends BaseNode {
      * each hard `\n` line is cut at the box edge (no ellipsis, no shrink).
      */
     wrap?: TextWrap;
+    /**
+     * Glyph colour in `ColorPicker`'s emitted format (`#rgb`/`#rrggbb`/
+     * `#rrggbbaa`/`transparent`). Absent ⇒ `DEFAULT_TEXT_FILL` (black). The
+     * authored ink colour — not a print mode — used by both print and preview.
+     */
+    fill?: string;
 }
 export interface ImageNode extends BaseNode {
     type: 'image';
     imageId: string;
     /** Fit within the node box; the resolution cap is derived, never stored. */
     fit?: ImageFit;
+    /**
+     * Optional luminance tint (CSS colour, same format as {@link ShapeNode.fill}).
+     * Absent or `'transparent'` ⇒ no tint; otherwise every source pixel is
+     * recoloured by its darkness toward the tint, preserving alpha (see
+     * `core/render/tint`). Selects the ink colour; the source luminance still
+     * selects ink density.
+     */
+    tint?: string;
 }
 export interface ShapeNode extends BaseNode {
     type: 'shape';

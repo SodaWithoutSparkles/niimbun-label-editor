@@ -350,6 +350,134 @@ describe('shape style defaults shown by the inspector (#8)', () => {
     });
 });
 
+describe('ObjectTab — text fill + image tint (P4)', () => {
+    /** Open the swatch of the colour row labelled `label`, return the panel. */
+    const openColorRow = (label: string): HTMLElement => {
+        const row = screen.getByText(label).closest('.items-center.justify-between') as HTMLElement;
+        fireEvent.click(row.querySelector('.cursor-pointer') as HTMLElement);
+        return screen.getByTestId('color-picker-panel');
+    };
+    const hexInput = (panel: HTMLElement): HTMLInputElement =>
+        panel.querySelector('input[type="text"]') as HTMLInputElement;
+    const alphaInput = (panel: HTMLElement): HTMLInputElement =>
+        panel.querySelector('input[type="range"]') as HTMLInputElement;
+    /**
+     * Pick `hex` from the colour row: raise opacity first, because the shared
+     * alpha picker seeded `transparent` opens at alpha 0 and then emits
+     * `transparent` for every hue. (Tint has no alpha channel, so it uses the
+     * preset click below instead.)
+     */
+    const writeColor = (label: string, hex: string): void => {
+        const panel = openColorRow(label);
+        fireEvent.change(alphaInput(panel), { target: { value: '1' } });
+        fireEvent.change(hexInput(panel), { target: { value: hex } });
+    };
+    /**
+     * The opaque-red preset swatch inside an open picker panel (preset order:
+     * black, white, red, green, blue, … — the alpha swatch is appended last, so
+     * index 2 is always red).
+     */
+    const redPreset = (panel: HTMLElement): HTMLElement => {
+        const swatch = panel.querySelectorAll<HTMLElement>('.flex-wrap > .cursor-pointer')[2];
+        if (!swatch) throw new Error('red preset swatch not found');
+        return swatch;
+    };
+    const nodeById = (id: string): Node =>
+        useStore.getState().currentDoc!.nodes.find((n) => n.id === id)!;
+
+    it('shows a Fill row on a text node seeded with the default black', () => {
+        const selected = textNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        expect(screen.getByText('Fill')).toBeTruthy();
+        expect(hexInput(openColorRow('Fill')).value).toBe('#000000');
+    });
+
+    it('seeds the Fill row from the authored node fill', () => {
+        const selected = textNode({ fill: '#ff0000' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        expect(hexInput(openColorRow('Fill')).value).toBe('#FF0000');
+    });
+
+    it('writes text fill to the node', () => {
+        const selected = textNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        writeColor('Fill', '#ff0000');
+
+        expect((nodeById('t') as { fill?: string }).fill).toBe('#ff0000');
+    });
+
+    it('shows a Tint row on an image node seeded transparent', () => {
+        expect(colorDefault(imageNode(), 'tint')).toBe('transparent');
+        const selected = imageNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['a'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        expect(screen.getByText('Tint')).toBeTruthy();
+        const panel = openColorRow('Tint');
+        // Opaque-only tint: no alpha channel, so the `transparent` default is
+        // shown as black rather than a picker stuck at alpha 0.
+        expect(alphaInput(panel)).toBeNull();
+        expect(hexInput(panel).value).toBe('#000000');
+        // Nothing to clear while no tint is set.
+        expect(screen.queryByRole('button', { name: 'None' })).toBeNull();
+    });
+
+    it('shows an alpha-bearing tint as its opaque RGB in the swatch', () => {
+        // Tint rendering ignores alpha, so a `#rrggbbaa` import must not open
+        // the picker at half opacity: the swatch shows the RGB it renders with.
+        const selected = imageNode({ tint: '#ff000080' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['a'] });
+        render(<ObjectTab selected={[selected]} />);
+
+        const panel = openColorRow('Tint');
+        expect(alphaInput(panel)).toBeNull();
+        expect(hexInput(panel).value).toBe('#FF0000');
+    });
+
+    it('writes image tint to the node and clears it back to an absent key', () => {
+        const selected = imageNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['a'] });
+        const view = render(<ObjectTab selected={[selected]} />);
+
+        // The tint picker is opaque-only, so with no tint seeded the picker has
+        // no alpha channel: clicking a preset writes the colour straight away
+        // (no opacity raise needed, and `transparent` can never be emitted by
+        // the picker itself).
+        const panel = openColorRow('Tint');
+        expect(alphaInput(panel)).toBeNull();
+        fireEvent.click(redPreset(panel));
+        expect((nodeById('a') as { tint?: string }).tint).toBe('#FF0000');
+
+        // The tab renders the selection it is handed, so feed it the committed
+        // node to see the row's new `None` action.
+        view.rerender(<ObjectTab selected={[nodeById('a')]} />);
+
+        // `None` clears the optional field: the key is gone (absent ≡ no tint),
+        // not stored as a redundant 'transparent'.
+        fireEvent.click(screen.getByRole('button', { name: 'None' }));
+        expect('tint' in nodeById('a')).toBe(false);
+    });
+
+    it('hides the opacity slider for tint but keeps it for a shape fill', () => {
+        const image = imageNode();
+        useStore.setState({ currentDoc: doc([image]), selectedNodeIds: ['a'] });
+        const tinted = render(<ObjectTab selected={[image]} />);
+        expect(alphaInput(openColorRow('Tint'))).toBeNull();
+        tinted.unmount();
+
+        const shape = shapeNode();
+        useStore.setState({ currentDoc: doc([shape]), selectedNodeIds: ['s'] });
+        render(<ObjectTab selected={[shape]} />);
+        expect(alphaInput(openColorRow('Fill'))).not.toBeNull();
+    });
+});
+
 describe('per-node quantizer params', () => {
     const paramsOf = (id: string) =>
         useStore.getState().currentDoc!.nodes.find((n) => n.id === id)!.quantizerParams;

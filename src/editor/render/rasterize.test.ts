@@ -4,7 +4,7 @@ import Konva from 'konva';
 import { installCanvasShim } from '../../test/canvasHarness';
 import { createLabelDoc } from '../../core/doc/factory';
 import type { LabelDoc, Node } from '../../core/doc/types';
-import { rasterDimensions } from '../../core/render';
+import { rasterDimensions, type RgbaBuffer } from '../../core/render';
 import { resolve } from './resolve';
 import { rasterizeResolved } from './rasterize';
 import { createKonvaNode } from './konvaFactory';
@@ -267,5 +267,57 @@ describe('rasterizeResolved — offscreen Konva on a real canvas', () => {
         } finally {
             Konva.pixelRatio = previous;
         }
+    });
+
+    it('rasterises text ink from the resolved fill (P4 A9)', async () => {
+        const textOnly = (fill?: string) =>
+            smallDoc([
+                node({
+                    id: 't',
+                    parentId: null,
+                    type: 'text',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 100, y: 200, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    text: { kind: 'static', value: 'INK' },
+                    size: { w: 2800, h: 1200 },
+                    fontSize: 1000,
+                    ...(fill !== undefined ? { fill } : {}),
+                }),
+            ]);
+
+        const render = async (doc: LabelDoc): Promise<RgbaBuffer> => {
+            const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+            const { imageData } = await rasterizeResolved(resolve(doc), {
+                ...dims,
+                dpi: doc.label.dpi,
+            });
+            return imageData;
+        };
+        const count = (
+            data: Uint8ClampedArray,
+            predicate: (r: number, g: number, b: number) => boolean,
+        ): number => {
+            let n = 0;
+            for (let i = 0; i < data.length; i += 4) {
+                if (predicate(data[i]!, data[i + 1]!, data[i + 2]!)) n++;
+            }
+            return n;
+        };
+
+        // Authored red fill: glyph pixels are red, never black.
+        const red = await render(textOnly('#ff0000'));
+        expect(
+            count(red.data, (r, g, b) => r > 200 && g < 80 && b < 80),
+            'red text deposits red ink',
+        ).toBeGreaterThan(100);
+        expect(count(red.data, (r, g, b) => r < 40 && g < 40 && b < 40)).toBe(0);
+
+        // Default fill stays black (the mono-world default; unchanged output).
+        const black = await render(textOnly());
+        expect(
+            count(black.data, (r, g, b) => r < 40 && g < 40 && b < 40),
+            'default text stays black',
+        ).toBeGreaterThan(100);
     });
 });

@@ -18,6 +18,7 @@ import {
     DEFAULT_SHAPE_STROKE,
     DEFAULT_SHAPE_STROKE_WIDTH,
     DEFAULT_SYMBOL_FILL,
+    DEFAULT_TEXT_FILL,
     DEFAULT_TEXT_WRAP,
     barcodeQuietModules,
     codeQuietModules,
@@ -130,6 +131,11 @@ export interface ResolvedText extends ResolvedBase {
     lineHeight: number;
     /** Extra inter-character spacing in px (already defaulted to `0`). */
     letterSpacing: number;
+    /**
+     * Glyph colour, always a real string (already defaulted to
+     * `DEFAULT_TEXT_FILL`). Used by both print and the editor preview.
+     */
+    fill: string;
 }
 
 /**
@@ -174,7 +180,8 @@ export interface ResolvedPolygon extends ResolvedBase, ResolvedShapeStyle {
 /**
  * Image leaf. `resolve` emits geometry + the resource id only; the real pixels
  * are produced by the async `prepareResolvedAssets` step (P5 §2.2). `fit`
- * defaults to `DEFAULT_IMAGE_FIT`.
+ * defaults to `DEFAULT_IMAGE_FIT`. `tint` is passed through only when the node
+ * authored one; the asset step applies it to the prepared raster.
  */
 export interface ResolvedImage extends ResolvedBase {
     type: 'image';
@@ -182,6 +189,7 @@ export interface ResolvedImage extends ResolvedBase {
     w: hm;
     h: hm;
     fit: ImageFit;
+    tint?: string;
 }
 
 /** QR leaf. `text` is the resolved payload; empty content becomes the placeholder. */
@@ -487,6 +495,7 @@ export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[]
                     wrap: node.wrap ?? DEFAULT_TEXT_WRAP,
                     lineHeight: node.lineHeight ?? 1,
                     letterSpacing: node.letterSpacing ?? 0,
+                    fill: node.fill ?? DEFAULT_TEXT_FILL,
                     bounds: transformedBounds(rectCorners(0, 0, w, h), base.transform),
                 };
             }
@@ -544,6 +553,7 @@ export const resolve = (doc: LabelDoc, ctx: ResolveContext = {}): ResolvedNode[]
                     w,
                     h,
                     fit: node.fit ?? DEFAULT_IMAGE_FIT,
+                    ...(node.tint !== undefined ? { tint: node.tint } : {}),
                     bounds: transformedBounds(rectCorners(0, 0, w, h), base.transform),
                 };
             }

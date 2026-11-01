@@ -18,8 +18,10 @@ import {
     DEFAULT_SHAPE_STROKE,
     DEFAULT_SHAPE_STROKE_WIDTH,
     DEFAULT_SYMBOL_FILL,
+    DEFAULT_TEXT_FILL,
     DEFAULT_TEXT_WRAP,
     MAX_QUIET_ZONE,
+    TRANSPARENT_COLOR,
     barcodeQuietModules,
     codeQuietModules,
     type CodeFormat,
@@ -97,6 +99,7 @@ const FIELD_LABEL_KEYS = {
     stroke: 'editor.mfp.field.stroke',
     fill: 'editor.mfp.field.fill',
     strokeWidth: 'editor.mfp.field.strokeWidth',
+    tint: 'editor.mfp.field.tint',
     visible: 'editor.mfp.field.visible',
     locked: 'editor.mfp.field.locked',
     imageId: 'editor.mfp.field.imageId',
@@ -371,20 +374,35 @@ const stringValue = (
 /**
  * Effective colour shown by a `kind:'color'` field when the node omits it. The
  * render path applies these defaults, so the swatch mirrors them instead of
- * falling back to black. A qr/barcode symbol's default fill is the opaque
- * `DEFAULT_SYMBOL_FILL`; a shape's no-fill value is the explicit
- * `DEFAULT_SHAPE_FILL` (`'transparent'`) — for every shape, closed or open. Any
+ * falling back to black. A text node's glyph fill defaults to
+ * `DEFAULT_TEXT_FILL` (black); a qr/barcode symbol's default fill is the opaque
+ * `DEFAULT_SYMBOL_FILL`; any other shape's no-fill value is the explicit
+ * `DEFAULT_SHAPE_FILL` (`'transparent'`) — closed or open. An image `tint`
+ * defaults to `TRANSPARENT_COLOR` (no tint); because tint is opaque-only (its
+ * picker has no alpha channel), that seed means "no tint" rather than an
+ * alpha-0 colour, and the tint row's `None` button is the way to clear it. Any
  * other colour field has no default and is a programming error, so it throws
  * rather than showing black.
  */
 export const colorDefault = (node: Node, key: string): string => {
     if (key === 'fill') {
+        if (node.type === 'text') return DEFAULT_TEXT_FILL;
         return node.type === 'qr' || node.type === 'barcode' || node.type === 'code'
             ? DEFAULT_SYMBOL_FILL
             : DEFAULT_SHAPE_FILL;
     }
     if (key === 'stroke') return DEFAULT_SHAPE_STROKE;
+    if (key === 'tint') return TRANSPARENT_COLOR;
     throw new Error(`colorDefault: no default colour for field "${key}" on ${node.type}`);
+};
+
+/** Tint rendering ignores alpha; show the opaque RGB so the swatch is honest. */
+const opaqueColorHex = (color: string): string => {
+    if (color.length === 5 && color.startsWith('#')) {
+        return `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}`;
+    }
+    if (color.length === 9 && color.startsWith('#')) return color.slice(0, 7);
+    return color;
 };
 
 const booleanValue = (node: Node, key: string): boolean => {
@@ -903,8 +921,16 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
         }
     };
 
+    /**
+     * Write a `kind:'color'` field. The picker's fully-transparent value clears
+     * an image tint (absent ≡ no tint) by deleting the key, keeping the optional
+     * field absent rather than storing a redundant `'transparent'`. Other colour
+     * fields keep the value: a transparent text fill means "no ink", not "use the
+     * default", and shape fills store the explicit no-fill colour.
+     */
     const setColor = (key: string, value: string) => {
-        commitAll(() => ({ [key]: value }) as never);
+        const next = key === 'tint' && value === TRANSPARENT_COLOR ? undefined : value;
+        commitAll(() => ({ [key]: next }) as never);
     };
 
     const disabledReason = (field: FieldDescriptor): string =>
@@ -1183,17 +1209,37 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                     </SettingRow>
                 );
             }
-            case 'color':
+            case 'color': {
+                // Tint is opaque-only: an alpha channel would open the picker at
+                // alpha 0 (`transparent` seed) and every hue would then emit
+                // `transparent`, changing nothing. Tint is cleared with the
+                // `None` button instead, which deletes the optional key.
+                const tint = field.key === 'tint';
+                const value = stringValue(first, field.key, quantizerContext);
+                const fallback = value || colorDefault(first, field.key);
+                const pickerColor = tint ? opaqueColorHex(fallback) : fallback;
                 return (
                     <SettingRow key={field.key} label={label}>
-                        <ColorPicker
-                            color={stringValue(first, field.key, quantizerContext) || colorDefault(first, field.key)}
-                            onChange={(value) => setColor(field.key, value)}
-                            supportsAlpha
-                            menuAlign="right"
-                        />
+                        <div className="flex items-center gap-2">
+                            <ColorPicker
+                                color={pickerColor}
+                                onChange={(next) => setColor(field.key, next)}
+                                supportsAlpha={!tint}
+                                menuAlign="right"
+                            />
+                            {tint && value !== '' && (
+                                <button
+                                    type="button"
+                                    onClick={() => setColor(field.key, TRANSPARENT_COLOR)}
+                                    className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                                >
+                                    {t('editor.mfp.none')}
+                                </button>
+                            )}
+                        </div>
                     </SettingRow>
                 );
+            }
             default:
                 return (
                     <SettingRow key={field.key} label={label} description={t('editor.mfp.contentSourceDisabled')}>
@@ -1361,9 +1407,10 @@ const AssetRenameFields: React.FC<AssetRenameFieldsProps> = ({ name, alt, onComm
 
 /**
  * The Object tab's TEXT block: the fields that only a text node owns
- * (`scope === 'text'`: content, font, wrap, letter-spacing, direction, the text
- * `align`) plus the `contentSource` kind switcher (action-plan D1). Everything
- * else — style, colour, geometry, symbol and dither fields — is APPEARANCE.
+ * (`scope === 'text'`: content, font, wrap, letter-spacing, the glyph `fill`,
+ * direction, the text `align`) plus the `contentSource` kind switcher
+ * (action-plan D1). Everything else — shape/symbol colours, geometry, symbol and
+ * dither fields — is APPEARANCE.
  */
 const isTextField = (field: FieldDescriptor): boolean =>
     field.scope === 'text' || field.key === 'contentSource';

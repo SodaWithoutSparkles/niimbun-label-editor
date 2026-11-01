@@ -229,6 +229,14 @@ describe('ResolvedShape — text wrap preview (P5)', () => {
         expect(renderText({ letterSpacing: 1.5 }).letterSpacing()).toBe(1.5);
     });
 
+    it('paints the resolved fill; the placeholder stays grey (P4 A9)', () => {
+        // Absent node fill resolves to the mono-world black default.
+        expect(renderText({}).fill()).toBe('#000000');
+        expect(renderText({ fill: '#ff0000' }).fill()).toBe('#ff0000');
+        // The empty-content placeholder is a UI hint, not authored ink.
+        expect(renderText({ text: { kind: 'static', value: '' } }).fill()).toBe('#9ca3af');
+    });
+
     it('clips a cut text in a group carrying the node transform (P17)', () => {
         const stage = renderStage({
             wrap: 'cut',

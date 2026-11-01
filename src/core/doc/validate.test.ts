@@ -1634,3 +1634,47 @@ describe('migrate', () => {
         expect(migrate('x')).toBe('x');
     });
 });
+
+describe('isNode — text fill & image tint (P4 A3)', () => {
+    const textNode = (over: Record<string, unknown> = {}) =>
+        baseNode({ type: 'text', shape: undefined, text: 'hi', ...over });
+    const imageNode = (over: Record<string, unknown> = {}) =>
+        baseNode({ type: 'image', shape: undefined, imageId: 'i1', ...over });
+
+    it('round-trips text fill (including transparent)', () => {
+        const red = isNode(textNode({ fill: '#ff0000' }));
+        expect(red?.type === 'text' && red.fill).toBe('#ff0000');
+        const clear = isNode(textNode({ fill: 'transparent' }));
+        expect(clear?.type === 'text' && clear.fill).toBe('transparent');
+    });
+
+    it('drops an invalid text fill with a repair', () => {
+        const repairs: string[] = [];
+        const node = isNode(textNode({ fill: 'red' }), repairs);
+        expect(node?.type).toBe('text');
+        expect(node?.type === 'text' && node.fill).toBeUndefined();
+        expect(repairs).toContain('node.fill: invalid colour dropped');
+    });
+
+    it('round-trips image tint', () => {
+        const node = isNode(imageNode({ tint: '#00ff0080' }));
+        expect(node?.type === 'image' && node.tint).toBe('#00ff0080');
+    });
+
+    it('drops an invalid image tint with a repair', () => {
+        const repairs: string[] = [];
+        const node = isNode(imageNode({ tint: 7 }), repairs);
+        expect(node?.type).toBe('image');
+        expect(node?.type === 'image' && node.tint).toBeUndefined();
+        expect(repairs).toContain('node.tint: invalid colour dropped');
+    });
+
+    it('leaves absent fill/tint absent (no key added)', () => {
+        const text = isNode(textNode());
+        expect(text).toBeDefined();
+        expect(text && 'fill' in text).toBe(false);
+        const image = isNode(imageNode());
+        expect(image).toBeDefined();
+        expect(image && 'tint' in image).toBe(false);
+    });
+});

@@ -186,6 +186,12 @@ export const DEFAULT_SHAPE_STROKE = '#374151';
 export const DEFAULT_SHAPE_STROKE_WIDTH = 50;
 
 /**
+ * The default text glyph colour: black. The mono-world black that used to be
+ * hardcoded in the rasterizer; an authored `TextNode.fill` overrides it.
+ */
+export const DEFAULT_TEXT_FILL = '#000000';
+
+/**
  * True when a fill colour deposits ink. The single source of the no-fill rule
  * for the render path: `'transparent'`, an absent fill, or an empty string all
  * deposit nothing (Konva reads `''` as no fill too — `!!this.fill()`). Note the

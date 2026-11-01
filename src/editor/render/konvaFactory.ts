@@ -412,6 +412,10 @@ export const createKonvaNode = (
                 wrap: konvaTextWrap(node.wrap),
                 lineHeight: node.lineHeight,
                 letterSpacing: node.letterSpacing,
+                // Authored glyph ink (resolved, always a real colour). Absent
+                // used to mean Konva's default; it now resolves to black, so a
+                // default document renders byte-identically.
+                fill: node.fill,
             });
             if (node.wrap === 'shrink') {
                 // Shrink scale composes with the node's own transform scale

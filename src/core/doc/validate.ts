@@ -590,6 +590,8 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
             if (isFiniteNumber(value.lineHeight)) node.lineHeight = value.lineHeight;
             if (isOneOf(value.direction, TEXT_DIRECTIONS)) node.direction = value.direction;
             if (isOneOf(value.wrap, TEXT_WRAPS)) node.wrap = value.wrap;
+            const fill = toOptionalColor(value.fill, repairs, 'node.fill: invalid colour dropped');
+            if (fill !== undefined) node.fill = fill;
             return node;
         }
         case 'image': {
@@ -602,6 +604,8 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
                 'node.fit: unknown fit dropped',
             );
             if (fit !== undefined) node.fit = fit;
+            const tint = toOptionalColor(value.tint, repairs, 'node.tint: invalid colour dropped');
+            if (tint !== undefined) node.tint = tint;
             return node;
         }
         case 'shape': {

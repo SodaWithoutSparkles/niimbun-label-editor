@@ -8,7 +8,12 @@ import { createResourceRepo } from '../../data/resourceRepo';
 import { resolve } from '../../editor/render/resolve';
 import type { FontRef, ImageRef, LabelDoc, Node } from '../../core/doc/types';
 import type { PreparedAsset } from '../../editor/render/assets';
-import type { ResolvedBarcode, ResolvedNode, ResolvedQr } from '../../editor/render/resolve';
+import type {
+    ResolvedBarcode,
+    ResolvedImage,
+    ResolvedNode,
+    ResolvedQr,
+} from '../../editor/render/resolve';
 
 /**
  * The render seam is mocked so these tests exercise the hook's orchestration
@@ -548,6 +553,21 @@ describe('assetSignatureOf — per-field coverage', () => {
         expect(flip({ fill: barcode.fill === '#000000' ? '#ffffff' : '#000000' })).not.toBe(key);
         expect(flip({ w: barcode.w + 1 })).not.toBe(key);
         expect(flip({ h: barcode.h + 1 })).not.toBe(key);
+    });
+
+    it('covers the image fields the prepare reads, including tint (P4 A8)', () => {
+        const doc = makeDoc([imageNode()], { images: [localImage('r1')] });
+        const leaves = resolveDoc(doc);
+        const image = leaves[0] as ResolvedImage;
+        const key = assetSignatureOf(leaves, doc).key;
+        const flip = (patch: Partial<ResolvedImage>): string =>
+            assetSignatureOf([{ ...image, ...patch }], doc).key;
+
+        expect(flip({ tint: '#ff0000' })).not.toBe(key);
+        // Two different tints must not collide.
+        expect(flip({ tint: '#00ff00' })).not.toBe(flip({ tint: '#ff0000' }));
+        expect(flip({ w: image.w + 1 })).not.toBe(key);
+        expect(flip({ h: image.h + 1 })).not.toBe(key);
     });
 
     it('reaches an asset leaf nested inside a group', () => {

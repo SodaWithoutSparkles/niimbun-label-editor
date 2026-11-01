@@ -262,11 +262,11 @@ const rgb = (color: readonly [number, number, number]): string => `rgb(${color[0
  * Paint a node's **actual coverage** (glyphs / filled shape / stroked outline) in
  * `color`, matching the raster exactly.
  *
- * Text fills its glyphs. A shape mirrors its resolved style: the stroke and the
- * fill are each painted only when they deposit ink — a `'transparent'` (no-fill
- * or no-stroke) shape must claim just the parts the raster actually deposits, or
- * the mask would cover pixels the raster leaves white (M2: mask-topmost ==
- * raster-topmost).
+ * Text fills only its glyphs, and only when the authored fill deposits ink. A
+ * shape mirrors its resolved style: the stroke and the fill are each painted
+ * only when they deposit ink — a `'transparent'` (no-fill or no-stroke) shape
+ * must claim just the parts the raster actually deposits, or the mask would
+ * cover pixels the raster leaves white (M2: mask-topmost == raster-topmost).
  */
 const paintCoverage = (node: Konva.Node, color: string): void => {
     // A `cut` text is drawn inside a clipping group (Konva's `wrap: 'none'`
@@ -279,7 +279,11 @@ const paintCoverage = (node: Konva.Node, color: string): void => {
     }
     if (node instanceof Konva.Text) {
         node.strokeEnabled(false);
-        node.fill(color);
+        // Text owns only the glyphs it actually inks. A transparent (or absent)
+        // fill deposits nothing, so it must leave the pixels beneath to the leaf
+        // below — same presence rule as a shape's fill (see `hasFill`).
+        if (hasFill(node.fill() as string | undefined)) node.fill(color);
+        else node.fillEnabled(false);
         return;
     }
     const shape = node as Konva.Shape;

@@ -90,3 +90,5 @@ export {
 } from './policy';
 
 export { quantizeRgba, type QuantizeRequest } from './pipeline';
+
+export { parseHexColor, tintRgbaByLuminance } from './tint';

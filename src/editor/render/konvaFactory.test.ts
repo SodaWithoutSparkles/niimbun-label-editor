@@ -744,3 +744,68 @@ describe('createKonvaNode — cut wrap (P17)', () => {
         expect(text.textArr.map((line) => line.text)).toEqual(['a'.repeat(10), 'b']);
     });
 });
+
+describe('text paint from the resolved fill (P4 A9)', () => {
+    const textDoc = (fill?: string) =>
+        createLabelDoc({
+            backingW: 3000,
+            backingH: 2000,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 3000, h: 2000 }],
+            nodes: [
+                node({
+                    id: 'txt',
+                    parentId: null,
+                    type: 'text',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    text: { kind: 'static', value: 'ink' },
+                    size: { w: 400, h: 100 },
+                    ...(fill !== undefined ? { fill } : {}),
+                }),
+            ],
+        });
+
+    it('paints the default black fill on Konva.Text', () => {
+        const resolved = resolve(textDoc())[0]!;
+        expect(resolved).toMatchObject({ type: 'text', fill: '#000000' });
+        const text = createKonvaNode(resolved) as Konva.Text;
+        expect(text).toBeInstanceOf(Konva.Text);
+        expect(text.fill()).toBe('#000000');
+    });
+
+    it('paints an authored fill on Konva.Text', () => {
+        const resolved = resolve(textDoc('#ff0000'))[0]!;
+        const text = createKonvaNode(resolved) as Konva.Text;
+        expect(text.fill()).toBe('#ff0000');
+    });
+
+    it('still paints an image leaf from its prepared asset (tint is baked in)', () => {
+        const imageDoc = createLabelDoc({
+            backingW: 3000,
+            backingH: 2000,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 3000, h: 2000 }],
+            nodes: [
+                node({
+                    id: 'img',
+                    parentId: null,
+                    type: 'image',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    imageId: 'i1',
+                    size: { w: 1000, h: 1000 },
+                    tint: '#ff0000',
+                }),
+            ],
+        });
+        const surface = {} as CanvasImageSource;
+        const asset: PreparedAsset = { image: surface, widthPx: 10, heightPx: 10 };
+        const resolved = resolve(imageDoc)[0]!;
+        expect(resolved).toMatchObject({ type: 'image', tint: '#ff0000' });
+        const group = createKonvaNode(resolved, new Map([['img', asset]])) as Konva.Group;
+        const image = group.getChildren()[0] as Konva.Image;
+        expect(image).toBeInstanceOf(Konva.Image);
+        expect(image.image()).toBe(surface);
+    });
+});

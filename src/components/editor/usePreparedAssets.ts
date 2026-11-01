@@ -155,6 +155,11 @@ const leafSignature = (
                 node.h,
                 node.imageId,
                 ref ? sourceKey(ref.source) : null,
+                // `prepareAssets.image` applies `node.tint` after the decode, so
+                // a tint edit must re-prepare the leaf (and a tint clear must
+                // bring back the untinted raster). `null` keeps absent distinct
+                // from any real colour string.
+                node.tint ?? null,
             ];
         }
         case 'qr':
@@ -207,9 +212,10 @@ const leafSignature = (
  * The leaf fields mirror `prepareResolvedAssets` (`prepareAssets.ts:206-263`)
  * exactly — `id` (the asset/warning map keys), `w`/`h` (the required px), and,
  * per type, only the fields that case reads. The referenced `ImageRef.source` is
- * included so replacing an image's bytes re-prepares; sources (and the fonts'
- * `source`) go through {@link sourceKey} so the payload is keyed once per source
- * object, never serialized per render.
+ * included so replacing an image's bytes re-prepares, and an image's `tint` is
+ * included so recolouring it (or clearing the tint) re-prepares. Sources (and
+ * the fonts' `source`) go through {@link sourceKey} so the payload is keyed once
+ * per source object, never serialized per render.
  *
  * `doc.meta.id` makes a real document switch clear (must-fix #6); `doc.label.dpi`
  * feeds the default decode scale; the fonts are the effect's other input
