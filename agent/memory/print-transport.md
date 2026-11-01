@@ -9,7 +9,26 @@ Foundation for talking to NIIMBOT printers. Added in P1 (commit `380be10`).
 - `src/print/mockTransport.ts` — offline/dev transport + reference impl. No runtime import of `@mmote/niimbluelib` (type-only). Validates quantities/over-total, reports the **actual** printed count, records quantities not payloads.
 - `src/print/niimbotAdapter.ts` — `NiimbotTransport implements PrinterTransport`, wraps `@mmote/niimbluelib`. Injectable `createClient` for tests.
 
-## Verified print flow (niimbluelib 0.47.1)
+## Verified print flow (niimbluelib 0.49.0)
+
+**2026-11-02: bumped 0.47.1 → 0.49.0** (grayscale enablement; `5f9722e`).
+Consumer-relevant changes, audited against our code:
+- `PageColorType.MultiorderColor` → **`Grayscale`** (same value 3). Unused here
+  until the print-time-colours run; see [`grayscale.md`](grayscale.md).
+- `printerInfo.autoShutdownTime` moved to `printerInfo.settings.autoShutdownTime`
+  and `setAutoShutdownTime()` was added — neither used here.
+- `firmwareExchangePackets` renamed `crc32Packets` — unused here.
+- `NiimbotPacket.toBytes()` / `NiimbotCrc32Packet.toBytes()` now **throw** above
+  255 data bytes instead of silently truncating the length byte. We never build
+  packets by hand, so no impact; any future test that hand-builds a packet must
+  use `NiimbotPacket16` for long payloads.
+- **`PrintProgressEvent` argument order fixed** upstream (0.48): it now emits
+  `(pagesPrinted, totalPages, …)` into a `(page, pagesTotal, …)` constructor
+  correctly. Our adapter already normalises the inverted signature defensively
+  (`niimbotAdapter.ts:77-92` only swaps when it recognises the swap), so it
+  self-heals — re-verify with a progress regression test when the mode changes.
+- `isHeartbeatStarted()` is **still inverted** in 0.48/0.49 despite the
+  changelog (the fix commit is not in either tag). Do not trust the name.
 
 **2026-10-25: bumped 0.47.0 → 0.47.1** (upstream survey). 0.47.1 adds the
 `findPrintTask` protocol-4 fallback (our adapter previously threw "printer model
@@ -209,5 +228,5 @@ Printing a **25 mm** label on the **567-dot (~48 mm)** printhead left-aligns con
 
 ## Conventions
 
-- Deps are added with `bun add` in the phase that needs them (`@mmote/niimbluelib` was P1; now pinned at 0.47.1). Never npm.
+- Deps are added with `bun add` in the phase that needs them (`@mmote/niimbluelib` was P1; now pinned at 0.49.0). Never npm.
 - Transport status is the P3 connection chip's source; a mid-job `disconnect` must not be overwritten by a bogus `connected`.
