@@ -41,6 +41,18 @@ export {
 } from './quantize';
 
 export {
+    diffuseToPalette,
+    GRAYSCALE_LEVELS,
+    grayscaleRampPalette,
+    grayLevelColor,
+    nearestPaletteEntry,
+    redBlackPalette,
+    type Palette,
+    type PaletteDiffuseOptions,
+    type PaletteEntry,
+} from './palette';
+
+export {
     screentone,
     screentoneSnap,
     isScreentoneAngle,
