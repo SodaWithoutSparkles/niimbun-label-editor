@@ -204,3 +204,17 @@ encoder canvas → offset → orient+encode.
   Out of scope for the dual-color run.
 - **`SingleColorAlt=2`**: undocumented; guard it explicitly rather than
   letting it silently degrade.
+- **UNPARKED 2026-11-02:** `@mmote/niimbluelib` **0.49.0** now ships
+  **16-level grayscale** — `PageColorType.MultiorderColor` was renamed to
+  `Grayscale`, and `ImageEncoder` implements the conversion for the
+  D110M_V4 task family (the previously rejected `MultiorderColor=3` path).
+  Our dependency is bumped (`5f9722e`, gate green). Nothing is wired yet.
+  Findings, our seams, the shared print-time-colours design and the test plan
+  are in [`grayscale.md`](grayscale.md) — the grayscale and red/black work
+  share one page-colour selector and one run. The RFID/texture question is
+  still open (the roll still reports as black over RFID), so manual selection
+  remains the rule.
+- **Re-check on the 0.49 source:** whether `printBitmapRowDoubleColor` emits
+  the `PrintBitmapRow` (133) sub-command byte that
+  `printBitmapRowWithColor` does. The 0.48/0.49 changelogs do **not** mention
+  it, so it is probably unchanged; verify before the red run relies on it.
