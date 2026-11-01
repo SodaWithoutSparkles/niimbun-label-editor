@@ -577,6 +577,18 @@ describe('buildCsvPrintJob', () => {
         ).toThrow(RangeError);
     });
 
+    it('rejects SingleColorAlt pageColor (not implemented by the v1 render path)', () => {
+        const build = () =>
+            buildCsvPrintJob(ftagDoc(), null, {
+                order: 'grouped',
+                copies: 1,
+                overrides: { pageColor: PageColorType.SingleColorAlt },
+            });
+
+        expect(build).toThrow(RangeError);
+        expect(build).toThrow(/not implemented/);
+    });
+
     it('hands the render seam a fresh options object per page', async () => {
         const seen: RenderLabelPageOptions[] = [];
         const invertPerPage: Array<boolean | undefined> = [];

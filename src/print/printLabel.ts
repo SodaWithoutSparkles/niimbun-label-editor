@@ -51,7 +51,7 @@ export interface PrintOverrides {
      * hint (`doc.label.dpi`) when no caller/printer dpi is supplied.
      */
     dpi?: number;
-    /** Post-quantize: flip every RGB channel so black ↔ white. */
+    /** Post-quantize: invert luminance, keeping hue (neutral: black ↔ white). */
     invert?: boolean;
     /** Post-quantize: flip the raster horizontally. */
     mirror?: boolean;
@@ -184,6 +184,15 @@ export function buildCsvPrintJob(
     if (opts.overrides?.pageColor === PageColorType.DoubleColor) {
         throw new RangeError(
             'buildCsvPrintJob: pageColor DoubleColor is not supported by the single-plane v1 render path',
+        );
+    }
+    // SingleColorAlt is a second single-plane mode this path does not
+    // implement. Reject it here: silently mono-encoding would print the wrong
+    // label, and letting the library throw during encoding would surface as a
+    // late, opaque failure.
+    if (opts.overrides?.pageColor === PageColorType.SingleColorAlt) {
+        throw new RangeError(
+            'buildCsvPrintJob: pageColor SingleColorAlt is not implemented by the v1 render path',
         );
     }
 

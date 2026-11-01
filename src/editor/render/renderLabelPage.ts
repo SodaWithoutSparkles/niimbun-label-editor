@@ -7,6 +7,7 @@ import {
     DEFAULT_SCREENTONE,
     HM_PER_INCH,
     MonoColorSpace,
+    monoLuminance,
     QUANTIZERS,
     policyKeyOf,
     quantizeRgba,
@@ -130,7 +131,11 @@ export interface RenderLabelPageOptions {
      * through this same path (O1).
      */
     dpi?: number;
-    /** Post-quantize: flip every RGB channel (`v → 255 - v`), so black ↔ white. */
+    /**
+     * Post-quantize: invert luminance while keeping hue. For neutral pixels
+     * this is exactly `v → 255 - v` (black ↔ white); palette colours keep
+     * their hue (red stays red, never cyan).
+     */
     invert?: boolean;
     /** Post-quantize: flip the raster horizontally. */
     mirror?: boolean;
@@ -621,16 +626,54 @@ const buildQuantizeOptions = (
 };
 
 /**
- * Post-quantize invert: `v → 255 - v` on R/G/B. Alpha (opacity) is left intact
- * so the raster stays opaque — the reference `effects.invert` only touches the
- * colour channels.
+ * Post-quantize invert: invert **luminance** and keep hue, instead of flipping
+ * every channel.
+ *
+ * The input domain is post-quantize: every pixel is already an exact palette
+ * colour — black, a grayscale-ramp level, or `#ff0000` — never an arbitrary RGB
+ * triple.
+ *
+ * For a neutral pixel this is exactly the old `v → 255 - v`: `L = v`, so the
+ * scale `(255 - L) / L` turns `v` into `255 - v`, and the existing 1-bit output
+ * stays **byte-identical** — the mono goldens are unaffected. Alpha (opacity)
+ * is never touched, so the raster stays opaque; the reference `effects.invert`
+ * only touches the colour channels.
+ *
+ * A per-channel flip would be wrong once pixels are not R=G=B: it maps
+ * `#ff0000` to `#00ffff` (cyan), and cyan is not a printable ink — thermal red
+ * is heat-selected, not a subtractive primary. Scaling all three channels by
+ * one factor preserves hue and saturation, so red stays red: `L(#ff0000) ≈ 76`,
+ * `scale ≈ 2.34`, R overflows and clamps at 255, G/B stay 0. Black and white
+ * still swap exactly (`L === 0` → white, the division guard; `L === 255` →
+ * all channels 0).
+ *
+ * Exact for the 16-level grayscale ramp: the band centre `255 - 17k` has
+ * `L = 255 - 17k`, so it scales to `17k`, which
+ * `ImageEncoder.colorToGrayLevel` maps back to level `15 - k`. A grayscale
+ * negative is therefore exact at every level, not approximated — no rounding
+ * slack anywhere in the ramp.
+ *
+ * Exported so the pigment goldens can call it directly.
  */
-const invertRgb = (rgba: RgbaBuffer): void => {
+export const invertRgb = (rgba: RgbaBuffer): void => {
     const { data } = rgba;
     for (let i = 0; i < data.length; i += 4) {
-        data[i] = 255 - data[i]!;
-        data[i + 1] = 255 - data[i + 1]!;
-        data[i + 2] = 255 - data[i + 2]!;
+        const r = data[i]!;
+        const g = data[i + 1]!;
+        const b = data[i + 2]!;
+        const luminance = monoLuminance(r, g, b);
+        if (luminance === 0) {
+            data[i] = 255;
+            data[i + 1] = 255;
+            data[i + 2] = 255;
+            continue;
+        }
+        // One scale factor for all three channels: hue and saturation survive.
+        // The clamps/rounding happen in the `Uint8ClampedArray` write.
+        const scale = (255 - luminance) / luminance;
+        data[i] = r * scale;
+        data[i + 1] = g * scale;
+        data[i + 2] = b * scale;
     }
 };
 
@@ -652,15 +695,28 @@ const mirrorRgba = (rgba: RgbaBuffer): void => {
 };
 
 /**
- * Count dark (ink) pixels. Only the mirror path pays for this: the region clip
- * can silently erase ink the flip moved outside the printable union, so the
- * before/after counts become a {@link RenderNotice} instead of vanishing.
+ * Count ink (non-paper) pixels. Only the mirror path pays for this: the region
+ * clip can silently erase ink the flip moved outside the printable union, so
+ * the before/after counts become a {@link RenderNotice} instead of vanishing.
+ *
+ * "Ink" means **not paper-white**: `r !== 255 || g !== 255 || b !== 255`, with
+ * alpha ignored. After quantization every pixel is an exact palette colour —
+ * black, a grey ramp level, or `#ff0000` — and all of those deposit pigment, so
+ * the paper test is exact and needs no threshold to calibrate.
+ *
+ * The old red-channel test (`r < 128`) was a mono-only artifact: it assumed ink
+ * is neutral, so red (`r = 255`) counted as paper and vanished from the notice.
+ * Every post-quantize pixel is an exact palette colour, so "not white"
+ * classifies all inks correctly without a luminance test. Alpha is ignored on
+ * purpose: it is opacity metadata, never pigment.
+ *
+ * Exported so the pigment goldens can call it directly.
  */
-const countInkPx = (rgba: RgbaBuffer): number => {
+export const countInkPx = (rgba: RgbaBuffer): number => {
     const { data } = rgba;
     let count = 0;
     for (let i = 0; i < data.length; i += 4) {
-        if (data[i]! < 128) count++;
+        if (data[i] !== 255 || data[i + 1] !== 255 || data[i + 2] !== 255) count++;
     }
     return count;
 };
