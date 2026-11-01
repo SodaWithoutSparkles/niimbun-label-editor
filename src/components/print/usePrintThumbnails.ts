@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LabelDoc } from '../../core/doc/types';
-import { quantizerSettingsKey, type QuantizerByType, type QuantizerDefaults } from '../../core/render';
+import {
+    quantizerSettingsKey,
+    type PageColorMode,
+    type QuantizerByType,
+    type QuantizerDefaults,
+} from '../../core/render';
 import type { CsvRecord } from '../../data/csvRepo';
 import {
     renderLabelPage,
@@ -56,6 +61,12 @@ export interface PrintThumbnailOverrides {
      */
     quantizerDefaults?: QuantizerDefaults;
     defaultQuantizerByType?: QuantizerByType;
+    /**
+     * Print-time page colour. Pixel-changing: forwarded to the shared render
+     * path and appended to the rebuild key **only when non-mono**, so every
+     * existing mono thumbnail key stays stable.
+     */
+    pageColor?: PageColorMode;
 }
 
 export interface UsePrintThumbnailsOptions {
@@ -149,7 +160,14 @@ const overridesContentKey = (overrides: PrintThumbnailOverrides | undefined): st
         overrides.quantizerDefaults,
         overrides.defaultQuantizerByType,
     );
-    return `${invert}|${mirror}|${offset}|${quantizer}`;
+    // Only a non-mono page colour changes the raster in a way the existing
+    // segments do not express. Mono (and absent) append nothing, so every
+    // existing key string stays byte-identical.
+    const pageColor =
+        overrides.pageColor !== undefined && overrides.pageColor !== 'mono'
+            ? `|${overrides.pageColor}`
+            : '';
+    return `${invert}|${mirror}|${offset}|${quantizer}${pageColor}`;
 };
 
 export const usePrintThumbnails = (
@@ -241,6 +259,9 @@ export const usePrintThumbnails = (
                     : {}),
                 ...(currentOverrides?.defaultQuantizerByType !== undefined
                     ? { defaultQuantizerByType: currentOverrides.defaultQuantizerByType }
+                    : {}),
+                ...(currentOverrides?.pageColor !== undefined
+                    ? { pageColor: currentOverrides.pageColor }
                     : {}),
             });
 

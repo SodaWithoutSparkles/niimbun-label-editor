@@ -444,7 +444,7 @@ describe('buildCsvPrintJob', () => {
             buildCsvPrintJob(doc, null, { order: 'grouped', copies: 1, overrides }),
         );
 
-        const rendered = await renderLabelPage(doc, {}, overrides);
+        const rendered = await renderLabelPage(doc, {}, renderOptionsOf(overrides, undefined));
         const oriented = orientForPrint(rendered, doc.label.printDirection);
         const expected = ImageEncoder.encodeCanvas(
             oriented.canvas,
@@ -589,6 +589,28 @@ describe('buildCsvPrintJob', () => {
         expect(build).toThrow(/not implemented/);
     });
 
+    it('accepts Grayscale and pins the encoder page-colour invariant', async () => {
+        const job = buildCsvPrintJob(ftagDoc(), null, {
+            order: 'grouped',
+            copies: 1,
+            overrides: { pageColor: PageColorType.Grayscale },
+        });
+
+        expect(job.pageColor).toBe(PageColorType.Grayscale);
+
+        const [page] = await collectPages(job);
+        // The real render seam received the mode (through `renderOptionsOf`) and
+        // the encoder stamped the same page colour on the payload.
+        expect(page!.data.pageColor).toBe(job.pageColor);
+        // Grayscale payloads carry the 4-bit nibble plane, never the 1-bit planes.
+        expect(
+            page!.data.rowsData.some(
+                (row) => row.dataType === 'pixels' && row.rowDataGray !== undefined,
+            ),
+        ).toBe(true);
+        expect(page!.data.rowsData.every((row) => row.rowDataBlack === undefined)).toBe(true);
+    });
+
     it('hands the render seam a fresh options object per page', async () => {
         const seen: RenderLabelPageOptions[] = [];
         const invertPerPage: Array<boolean | undefined> = [];
@@ -671,6 +693,19 @@ describe('buildCsvPrintJob', () => {
         expect(options).not.toHaveProperty('speed');
         expect(options).not.toHaveProperty('labelType');
         expect(options).not.toHaveProperty('pageColor');
+    });
+
+    it('forwards a non-mono pageColor only (mono stays an absent key)', () => {
+        expect(renderOptionsOf({ pageColor: PageColorType.Grayscale }, undefined)).toMatchObject({
+            pageColor: 'grayscale',
+        });
+        // Mono is the absent-key default: both spellings keep the option object
+        // (and therefore the preview cache key) byte-identical.
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.SingleColor }, undefined),
+        ).not.toHaveProperty('pageColor');
+        expect(renderOptionsOf({}, undefined)).not.toHaveProperty('pageColor');
+        expect(renderOptionsOf(undefined, undefined)).not.toHaveProperty('pageColor');
     });
 });
 

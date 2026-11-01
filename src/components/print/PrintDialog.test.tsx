@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StrictMode, useState } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { LabelType, type EncodedImage } from '@mmote/niimbluelib';
+import { LabelType, PageColorType, type EncodedImage } from '@mmote/niimbluelib';
 import '../../i18n';
 import { rasterDimensions } from '../../core/render';
 import { createLabelDoc } from '../../core/doc/factory';
@@ -1400,5 +1400,75 @@ describe('PrintDialog — label type defaults to the reported roll (P19)', () =>
         fireEvent.click(printButton());
         await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
         expect(jobOverrides()?.labelType).toBeUndefined();
+    });
+});
+
+describe('PrintDialog — page colour', () => {
+    const pageColorSelect = () => screen.getByLabelText('Page colour');
+    const grayscaleOption = () =>
+        screen.getByRole('option', { name: 'Grayscale (16 levels)' });
+
+    const lastThumbnailOverrides = (): { pageColor?: string } | undefined => {
+        const options = usePrintThumbnailsMock.mock.calls.at(-1)![0] as {
+            overrides?: { pageColor?: string };
+        };
+        return options.overrides;
+    };
+
+    const jobPageColor = (): PageColorType | undefined => {
+        const opts = buildCsvPrintJobMock.mock.calls[0]![2] as {
+            overrides?: { pageColor?: PageColorType };
+        };
+        return opts.overrides?.pageColor;
+    };
+
+    it('offers grayscale when supported and threads the mode into preview, thumbnails and job', async () => {
+        const runner = new FakeRunner();
+        renderDialog({ runner, printerStatus: statusOf({ ...B1_PRO, grayscale: true }) });
+
+        expect(pageColorSelect()).toHaveValue('mono');
+        expect(grayscaleOption()).toBeEnabled();
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'grayscale' } });
+        expect(pageColorSelect()).toHaveValue('grayscale');
+
+        // The doc-dpi preview re-renders through the shared path with the mode.
+        await waitFor(() =>
+            expect(
+                renderLabelPageMock.mock.calls.some(
+                    ([, , opts]) =>
+                        (opts as { pageColor?: string } | undefined)?.pageColor ===
+                        'grayscale',
+                ),
+            ).toBe(true),
+        );
+        // The queue thumbnails get the same pixel-changing override.
+        expect(lastThumbnailOverrides()).toMatchObject({ pageColor: 'grayscale' });
+
+        // The job receives the library enum, not the render-level mode.
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobPageColor()).toBe(PageColorType.Grayscale);
+    });
+
+    it('disables grayscale and keeps mono when the printer reports no support', async () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, grayscale: false }),
+        });
+
+        expect(pageColorSelect()).toHaveValue('mono');
+        expect(grayscaleOption()).toBeDisabled();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobPageColor()).toBe(PageColorType.SingleColor);
+    });
+
+    it('treats unreported capabilities as unsupported', () => {
+        renderDialog({ runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+
+        expect(pageColorSelect()).toHaveValue('mono');
+        expect(grayscaleOption()).toBeDisabled();
     });
 });

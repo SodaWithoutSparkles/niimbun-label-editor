@@ -47,6 +47,7 @@ export {
     grayLevelColor,
     nearestPaletteEntry,
     redBlackPalette,
+    type PageColorMode,
     type Palette,
     type PaletteDiffuseOptions,
     type PaletteEntry,

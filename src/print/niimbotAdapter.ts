@@ -584,6 +584,7 @@ function capabilitiesOf(client: NiimbotAbstractClient): PrinterCapabilities | un
     const taskCaps = printTasksCapabilities[taskType] ?? [];
     capabilities.taskType = taskType;
     capabilities.doubleColor = taskCaps.includes(PrintTaskCapability.SupportDoubleColor);
+    capabilities.grayscale = taskCaps.includes(PrintTaskCapability.SupportGrayscale);
     capabilities.tubePrinting = taskCaps.includes(PrintTaskCapability.SupportTubePrinting);
     // Placeholder: the library exposes no speed capability bit; replace when it does.
     capabilities.supportsSpeed = taskType === 'D110M_V4';

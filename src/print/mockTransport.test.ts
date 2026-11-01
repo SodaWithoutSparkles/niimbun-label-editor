@@ -339,6 +339,7 @@ describe('MockTransport capabilities', () => {
       densityDefault: 3,
       paperTypes: [1, 2, 5],
       doubleColor: true,
+      grayscale: true,
       tubePrinting: true,
       supportsSpeed: true,
     });

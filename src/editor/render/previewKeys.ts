@@ -27,6 +27,11 @@ import type { RenderLabelPageOptions } from './renderLabelPage';
  * The dither settings are folded in through the shared, order-independent
  * `quantizerSettingsKey`: a settings edit must never show a stale raster, while
  * an equal-but-fresh options object must not re-render.
+ *
+ * A **page-colour** change also changes the pixels, so a non-mono `pageColor`
+ * appends its own segment. Mono (or an absent `pageColor`) adds nothing, so
+ * every existing mono key stays byte-identical and its cache/test expectations
+ * do not churn.
  */
 export const previewOptionsKey = (options: RenderLabelPageOptions): string => {
     const offset = options.offset;
@@ -34,13 +39,17 @@ export const previewOptionsKey = (options: RenderLabelPageOptions): string => {
         options.quantizerDefaults,
         options.defaultQuantizerByType,
     );
-    return [
+    const parts = [
         options.dpi ?? '-',
         options.invert === true ? 1 : 0,
         options.mirror === true ? 1 : 0,
         offset === undefined ? '-' : `${offset.x},${offset.y},${offset.type}`,
         quantizer,
-    ].join('|');
+    ];
+    if (options.pageColor !== undefined && options.pageColor !== 'mono') {
+        parts.push(options.pageColor);
+    }
+    return parts.join('|');
 };
 
 /**

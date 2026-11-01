@@ -37,6 +37,7 @@ const DEFAULT_CAPABILITIES: PrinterCapabilities = {
   densityDefault: 3,
   paperTypes: DEFAULT_PAPER_TYPES,
   doubleColor: true,
+  grayscale: true,
   tubePrinting: true,
   supportsSpeed: true,
 };

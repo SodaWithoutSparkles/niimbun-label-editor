@@ -5,6 +5,8 @@ import type { LabelDoc, Node } from '../../core/doc/types';
 import {
     DEFAULT_GAMMA_BY_STRATEGY,
     DEFAULT_SCREENTONE,
+    diffuseToPalette,
+    grayscaleRampPalette,
     HM_PER_INCH,
     MonoColorSpace,
     monoLuminance,
@@ -15,6 +17,7 @@ import {
     resolveQuantizer,
     resolveQuantizerParams,
     type ColorSpace,
+    type PageColorMode,
     type RasterDimensions,
     type PolicyMask,
     type QuantizerByType,
@@ -41,8 +44,17 @@ import { flattenResolved, resolve, type ResolvedNode, type ResolveContext } from
  *
  * Pipeline (plan §5):
  *   `resolve(doc)` → `rasterizeResolved` → build policy mask → `applyRegionClip`
- *   → `quantizeRgba` → `invert` → `mirror` → `applyRegionClip` again → `offset`
+ *   → quantize → `invert` → `mirror` → `applyRegionClip` again → `offset`
  *   → final encoder canvas.
+ *
+ * Page-colour branch (`opts.pageColor`):
+ *   - `'mono'` (default) — the pipeline above: per-object 1-bit policies plus
+ *     `quantizeRgba`.
+ *   - `'grayscale'` — **no** policy mask and no 1-bit quantize; the tone-mapped
+ *     raster goes through {@link diffuseToPalette} with the 16-level ramp, so
+ *     the encoder receives exact band-centre greys.
+ *   - `'redBlack'` — rejected with a `RangeError` until P5 wires the two-ink
+ *     conversion.
  *
  * The clip runs **both before and after** quantization: pre-quantize so the
  * diffusion sees a white surround, post-quantize so error diffused across the
@@ -118,6 +130,14 @@ export interface RenderLabelPageOptions {
     /** Per-pixel projection. Defaults to Mono (the only v1 color space). */
     colorSpace?: ColorSpace;
     /**
+     * Print-time page colour. Absent = `'mono'` (the 1-bit path, byte-identical).
+     *
+     * `'grayscale'` skips the per-object 1-bit policies and runs the 16-level
+     * ramp diffuser on the tone-mapped raster; `'redBlack'` throws until P5
+     * implements the two-ink conversion.
+     */
+    pageColor?: PageColorMode;
+    /**
      * Async asset dependencies (image bytes, fonts, resolution cap). When
      * present, image/qr/barcode leaves are prepared first; absent, those leaves
      * simply draw nothing.
@@ -148,9 +168,15 @@ export interface RenderLabelPageOptions {
 }
 
 export interface RenderedLabelPage {
-    /** Number of nodes that used the global policy after exceeding the eight-policy palette. */
+    /**
+     * Number of nodes that used the global policy after exceeding the eight-policy
+     * palette. Absent in grayscale, which builds no policy mask.
+     */
     policyOverflowCount?: number;
-    /** Final 1-bit black/white RGBA (exact `0`/`255` channels). */
+    /**
+     * Final palette RGBA. Mono yields exact `0`/`255` channels (1-bit); grayscale
+     * yields the exact band-centre bytes of the 16-level ramp.
+     */
     rgba: RgbaBuffer;
     widthPx: number;
     heightPx: number;
@@ -592,7 +618,7 @@ export const buildPolicyMask = async (
 const buildQuantizeOptions = (
     opts: RenderLabelPageOptions,
     dpi: number,
-): Parameters<typeof quantizeRgba>[2] => {
+): NonNullable<Parameters<typeof quantizeRgba>[2]> => {
     const colorSpace = opts.colorSpace ?? MonoColorSpace;
     const globalId = opts.quantizer ?? 'threshold';
     const strategyDefaults = opts.quantizerDefaults?.[globalId];
@@ -801,7 +827,8 @@ export const renderPageBase = async (
 };
 
 /**
- * Render a label page to final 1-bit RGBA. The single entry point for both the
+ * Render a label page to final palette RGBA (1-bit mono by default, 16-level
+ * grayscale when `pageColor: 'grayscale'`). The single entry point for both the
  * preview and the print path; only encoding differs downstream (invariant 7).
  */
 export const renderLabelPage = async (
@@ -822,34 +849,58 @@ export const renderLabelPage = async (
         ...(opts.assets !== undefined ? { assets: opts.assets } : {}),
     });
 
+    // Page colour dispatch. `redBlack` is the P5 placeholder: fail before any
+    // mask/Konva work, but after `renderPageBase` so dpi validation still runs
+    // first. Grayscale owns the raster's palette mapping end to end, so it skips
+    // the per-object 1-bit policy mask entirely.
+    const pageColor = opts.pageColor ?? 'mono';
+    if (pageColor === 'redBlack') {
+        throw new RangeError('renderLabelPage: pageColor redBlack is not implemented yet');
+    }
+
     const byId = nodeLookup(doc.nodes);
-    const policy = await buildPolicyMask(nodes, byId, { widthPx, heightPx }, dpi, assets, {
-        threshold: opts.threshold,
-        strength: opts.strength,
-        serpentine: opts.serpentine,
-        gamma: opts.gamma,
-        screentoneLevels: opts.screentoneLevels,
-        screentonePitchMm: opts.screentonePitchMm,
-        screentoneAngle: opts.screentoneAngle,
-        screentoneBoldness: opts.screentoneBoldness,
-        quantizerDefaults: opts.quantizerDefaults,
-        defaultQuantizerByType: opts.defaultQuantizerByType,
-    });
+    const policy =
+        pageColor === 'mono'
+            ? await buildPolicyMask(nodes, byId, { widthPx, heightPx }, dpi, assets, {
+                  threshold: opts.threshold,
+                  strength: opts.strength,
+                  serpentine: opts.serpentine,
+                  gamma: opts.gamma,
+                  screentoneLevels: opts.screentoneLevels,
+                  screentonePitchMm: opts.screentonePitchMm,
+                  screentoneAngle: opts.screentoneAngle,
+                  screentoneBoldness: opts.screentoneBoldness,
+                  quantizerDefaults: opts.quantizerDefaults,
+                  defaultQuantizerByType: opts.defaultQuantizerByType,
+              })
+            : undefined;
 
     const hmPerPx = HM_PER_INCH / dpi;
     // Pre-clip: the diffusion pass sees a white surround outside the union.
     applyRegionClip(imageData, { widthPx, heightPx }, doc.label.regions, hmPerPx);
 
     const quantizeOptions = buildQuantizeOptions(opts, dpi);
-    quantizeRgba(
-        imageData,
-        {
-            globalQuantizer: QUANTIZERS[opts.quantizer ?? 'threshold'],
-            ...(policy ? { policies: policy.policies, mask: policy.mask } : {}),
-            colorSpace: opts.colorSpace ?? MonoColorSpace,
-        },
-        quantizeOptions,
-    );
+    if (pageColor === 'grayscale') {
+        // One palette pass over the tone-mapped raster. The diffuser knobs come
+        // from the selected global quantizer's effective settings, so the
+        // render-level gamma/strength/serpentine still apply; the default
+        // `threshold` strategy resolves to the neutral gamma 1.
+        diffuseToPalette(imageData, grayscaleRampPalette(), {
+            gamma: quantizeOptions.gamma,
+            strength: quantizeOptions.strength,
+            serpentine: quantizeOptions.serpentine,
+        });
+    } else {
+        quantizeRgba(
+            imageData,
+            {
+                globalQuantizer: QUANTIZERS[opts.quantizer ?? 'threshold'],
+                ...(policy ? { policies: policy.policies, mask: policy.mask } : {}),
+                colorSpace: opts.colorSpace ?? MonoColorSpace,
+            },
+            quantizeOptions,
+        );
+    }
 
     // Post-quantize overrides, applied **before** the post-clip: invert must not
     // blacken the guaranteed-white margin, and mirror must not move ink outside

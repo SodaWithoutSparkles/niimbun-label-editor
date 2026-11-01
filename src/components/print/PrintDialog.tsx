@@ -22,7 +22,7 @@ import {
     type LabelPrintDirection,
 } from '../../editor/render/printOrientation';
 import { planSequence, type PrintOrder } from '../../print/sequence';
-import { buildCsvPrintJob, renderOptionsOf, type PrintOverrides } from '../../print/printLabel';
+import { buildCsvPrintJob, pageColorModeOf, renderOptionsOf, type PrintOverrides } from '../../print/printLabel';
 import { resolvePrintDpi } from '../../print/resolvedDpi';
 import { LABEL_TYPE_OPTIONS, labelTypeEnumName, labelTypeNameKey } from '../../print/labelTypeNames';
 import type { JobProgress, JobRunner } from '../../print/jobRunner';
@@ -152,12 +152,16 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     const quantizerDefaults = useStore((state) => state.quantizerDefaults);
     const defaultQuantizerByType = useStore((state) => state.defaultQuantizerByType);
     const capabilities = printerStatus.capabilities;
+    /** 16-level grayscale pages are supported only by tasks that report it. */
+    const grayscaleSupported = capabilities?.grayscale === true;
 
     const [order, setOrder] = useState<PrintOrder>('grouped');
     const [copies, setCopies] = useState(1);
     const [density, setDensity] = useState<number | undefined>(undefined);
     const [speed, setSpeed] = useState<0 | 1>(0);
     const [labelType, setLabelType] = useState<LabelType | undefined>(undefined);
+    /** Print-time page colour. Session state: reset on every open. */
+    const [pageColor, setPageColor] = useState<PageColorType>(PageColorType.SingleColor);
     const [invert, setInvert] = useState(false);
     const [mirror, setMirror] = useState(false);
     const [offsetX, setOffsetX] = useState('0');
@@ -183,6 +187,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         setDensity(undefined);
         setSpeed(0);
         setLabelType(undefined);
+        setPageColor(PageColorType.SingleColor);
         setInvert(false);
         setMirror(false);
         setProgress(null);
@@ -391,8 +396,20 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             ...(parsedOffset ? { offset: parsedOffset } : {}),
             quantizerDefaults,
             defaultQuantizerByType,
+            // Mono is the absent key (today's render); only another mode is
+            // forwarded, keeping the rebuild key stable for existing sessions.
+            ...(pageColor !== PageColorType.SingleColor
+                ? { pageColor: pageColorModeOf(pageColor) }
+                : {}),
         }),
-        [invert, mirror, parsedOffset, quantizerDefaults, defaultQuantizerByType],
+        [
+            invert,
+            mirror,
+            parsedOffset,
+            quantizerDefaults,
+            defaultQuantizerByType,
+            pageColor,
+        ],
     );
 
     // The `Page` view renders **one** record at the **resolved print** dpi
@@ -471,8 +488,9 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             ...(densityEnabled ? { density: densityValue } : {}),
             ...(speedEnabled ? { speed } : {}),
             ...(labelTypeEnabled ? { labelType: effectiveLabelType } : {}),
-            // v1 prints single-colour only (spike: B1_PRO supports Single|Double).
-            pageColor: PageColorType.SingleColor,
+            // Print-time page colour selected in this dialog session. Red/black
+            // stays gated in `buildCsvPrintJob` until P5.
+            pageColor,
             // Always set: the job AND the ink check render at the resolved dpi
             // (in off mode it equals the hint, so today's output is unchanged).
             dpi: resolved.dpi,
@@ -489,6 +507,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             speed,
             labelTypeEnabled,
             effectiveLabelType,
+            pageColor,
             resolved.dpi,
             invert,
             mirror,
@@ -929,10 +948,21 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                         </SettingRow>
                         <SettingRow label={t('print.pageColor')}>
                             <Select
-                                value="single"
-                                onChange={() => undefined}
+                                value={pageColor === PageColorType.Grayscale ? 'grayscale' : 'mono'}
+                                onChange={(value) =>
+                                    setPageColor(
+                                        value === 'grayscale'
+                                            ? PageColorType.Grayscale
+                                            : PageColorType.SingleColor,
+                                    )
+                                }
                                 options={[
-                                    { value: 'single', label: t('print.pageColorSingle') },
+                                    { value: 'mono', label: t('print.pageColorSingle') },
+                                    {
+                                        value: 'grayscale',
+                                        label: t('print.pageColorGrayscale'),
+                                        disabled: !grayscaleSupported,
+                                    },
                                 ]}
                                 className="w-32"
                                 aria-label={t('print.pageColor')}

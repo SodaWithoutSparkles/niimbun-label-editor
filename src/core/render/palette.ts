@@ -24,6 +24,18 @@ import { buildToneLut, normalizeGamma, toByte } from './preprocess';
  */
 
 /**
+ * Print-time page colour. The document itself stays colour-agnostic: the same
+ * authored pixels are mapped to a different printable palette when the page is
+ * rendered for a given mode.
+ *
+ * - `'mono'` — the 1-bit black/white page (the pre-existing path).
+ * - `'grayscale'` — the printer's 16-level grey ramp ({@link grayscaleRampPalette}).
+ * - `'redBlack'` — a two-ink page; wired in P5, so the render path rejects it
+ *   with a `RangeError` for now.
+ */
+export type PageColorMode = 'mono' | 'grayscale' | 'redBlack';
+
+/**
  * One printable output colour. Values are the **exact** bytes written to RGB,
  * so they must stay integral: the encoder matches output by exact
  * `0xffffff` / `0xff0000` / everything-else-is-black.
