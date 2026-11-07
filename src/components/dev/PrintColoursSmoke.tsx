@@ -24,7 +24,13 @@ import { MockTransport } from '../../print/mockTransport';
 import { NiimbotTransport } from '../../print/niimbotAdapter';
 import { buildCsvPrintJob, renderOptionsOf } from '../../print/printLabel';
 import type { PrintProgress, PrinterStatus, PrinterTransport } from '../../print/transport';
-import { buildColourPatterns, type ColourPatternId } from './printColoursPatterns';
+import {
+    buildColourPatterns,
+    buildDensitySweep,
+    buildRedBlackCalibrationPattern,
+    type ColourPattern,
+    type ColourPatternId,
+} from './printColoursPatterns';
 
 type TransportKind = 'mock' | 'niimbot';
 type LogLine = { kind: 'info' | 'error'; text: string };
@@ -91,6 +97,16 @@ export function PrintColoursSmoke() {
         (_, index) => densityMin + index,
     );
 
+    // Same rebuild as the print path: the calibration pattern stamps the chosen
+    // density into its caption, so the preview must show that doc, not `pattern.doc`.
+    const previewDoc = useMemo(
+        () =>
+            pattern.id === 'redBlackCalibration'
+                ? buildRedBlackCalibrationPattern(density ?? densityDefault).doc
+                : pattern.doc,
+        [pattern, density, densityDefault],
+    );
+
     const selectPattern = (id: ColourPatternId): void => {
         setPatternId(id);
         const next = patterns.find((candidate) => candidate.id === id);
@@ -137,7 +153,7 @@ export function PrintColoursSmoke() {
                 ?.clearRect(0, 0, staleCanvas.width, staleCanvas.height);
         }
         renderLabelPage(
-            pattern.doc,
+            previewDoc,
             {},
             { ...renderOptionsOf({ pageColor }, ASSETS), dpi: PREVIEW_DPI },
         )
@@ -166,7 +182,7 @@ export function PrintColoursSmoke() {
         return () => {
             cancelled = true;
         };
-    }, [pattern, pageColor]);
+    }, [previewDoc, pageColor]);
 
     const connect = async (): Promise<void> => {
         const transport = transportRef.current;
@@ -194,8 +210,15 @@ export function PrintColoursSmoke() {
             );
             // NOT `buildLabelPrintJob`: that hardcodes SingleColor, so the page
             // colour has to arrive as an override here.
+            //
+            // The calibration pattern stamps the chosen density into its caption,
+            // so rebuild that doc with the same density the job carries.
+            const doc =
+                pattern.id === 'redBlackCalibration'
+                    ? buildRedBlackCalibrationPattern(density ?? densityDefault).doc
+                    : pattern.doc;
             const job = buildCsvPrintJob(
-                pattern.doc,
+                doc,
                 null,
                 {
                     order: 'grouped',
@@ -212,6 +235,60 @@ export function PrintColoursSmoke() {
             const text = messageOf(error);
             setLastResult(`ERROR ${text}`);
             fail(`ERROR ${text}`);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const printDensitySweep = async (): Promise<void> => {
+        const transport = transportRef.current;
+        if (!transport || busy || previewPending) return;
+        const total = densityOptions.length;
+        let printed = 0;
+        setBusy(true);
+        try {
+            info(`density sweep: ${total} calibration label(s), densities ${densityMin}–${densityMax}`);
+            let sweep: ColourPattern[];
+            try {
+                // Build inside the try: a build throw must log and abort cleanly,
+                // never escape as an unhandled rejection.
+                sweep = buildDensitySweep(densityOptions);
+            } catch (error) {
+                const text = messageOf(error);
+                fail(`density sweep: ERROR ${text} — sweep aborted`);
+                setLastResult(`density sweep ERROR: ${text}`);
+                return;
+            }
+            for (const [index, calibration] of sweep.entries()) {
+                const sweepDensity = densityOptions[index]!;
+                try {
+                    const job = buildCsvPrintJob(
+                        calibration.doc,
+                        null,
+                        {
+                            order: 'grouped',
+                            copies: 1,
+                            overrides: {
+                                pageColor: PageColorType.DoubleColor,
+                                density: sweepDensity,
+                            },
+                        },
+                        { assets: ASSETS },
+                    );
+                    const result = await transport.print(job);
+                    printed += 1;
+                    info(
+                        `density ${sweepDensity}: printed ${result.pagesPrinted}/${job.totalPages}`,
+                    );
+                } catch (error) {
+                    const text = messageOf(error);
+                    fail(`density ${sweepDensity}: ERROR ${text} — sweep aborted`);
+                    setLastResult(`density sweep ERROR at ${sweepDensity}: ${printed}/${total} printed`);
+                    return;
+                }
+            }
+            info(`density sweep done (${total} labels)`);
+            setLastResult(`density sweep printed ${printed}/${total} labels`);
         } finally {
             setBusy(false);
         }
@@ -322,7 +399,20 @@ export function PrintColoursSmoke() {
                     >
                         Print 1 page
                     </button>
+                    <button
+                        type="button"
+                        onClick={() => void printDensitySweep()}
+                        disabled={busy || previewPending}
+                        className="rounded bg-red-700 px-4 py-2 text-sm text-white disabled:opacity-50"
+                    >
+                        Print density sweep ({densityOptions.length})
+                    </button>
                 </div>
+
+                <p className="text-xs text-gray-500">
+                    Prints one calibration label per density in the reported range (red/black tape
+                    is expensive).
+                </p>
 
                 <div className="rounded border border-amber-300 bg-amber-50 p-3 text-xs text-gray-800">
                     <div className="font-semibold">Physical questions these prints answer</div>

@@ -2,12 +2,18 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { PageColorType } from '@mmote/niimbluelib';
 import { isLabelDoc } from '../../core/doc/validate';
+import type { Node } from '../../core/doc/types';
 import { parseDoc } from '../../core/doc/serialize';
 import { rasterDimensions } from '../../core/render';
 import { MAX_RASTER_PIXELS } from '../../editor/render';
 import { grayLevelColor } from '../../core/render/palette';
 import { installCanvasShim } from '../../test/canvasHarness';
-import { buildColourPatterns, type ColourPattern } from './printColoursPatterns';
+import {
+    buildColourPatterns,
+    buildDensitySweep,
+    buildRedBlackCalibrationPattern,
+    type ColourPattern,
+} from './printColoursPatterns';
 
 /**
  * P7 wave A — the generated print-pattern fixtures.
@@ -45,12 +51,13 @@ const hexByte = (value: number): string => value.toString(16).padStart(2, '0');
 const hexOf = (value: number): string => `#${hexByte(value)}${hexByte(value)}${hexByte(value)}`;
 
 describe('buildColourPatterns', () => {
-    it('builds three valid docs with no validation repairs', async () => {
+    it('builds four valid docs with no validation repairs', async () => {
         const patterns = buildColourPatterns();
         expect(patterns.map((pattern) => pattern.id)).toEqual([
             'grayscale',
             'redBlack',
             'grayscaleLong',
+            'redBlackCalibration',
         ]);
 
         for (const pattern of patterns) {
@@ -166,7 +173,7 @@ describe('buildColourPatterns', () => {
         const patterns = buildColourPatterns();
         const expectedShort = rasterDimensions(5000, 3000, 300);
 
-        for (const id of ['grayscale', 'redBlack'] as const) {
+        for (const id of ['grayscale', 'redBlack', 'redBlackCalibration'] as const) {
             const { label } = patternOf(patterns, id).doc;
             expect(rasterDimensions(label.backingW, label.backingH, label.dpi)).toEqual(
                 expectedShort,
@@ -200,11 +207,264 @@ describe('buildColourPatterns', () => {
         expect(checked).toBeGreaterThanOrEqual(5);
     });
 
-    it('page colours are Grayscale / DoubleColor / Grayscale', () => {
+    it('page colours are Grayscale / DoubleColor / Grayscale / DoubleColor', () => {
         expect(buildColourPatterns().map((pattern) => pattern.pageColor)).toEqual([
             PageColorType.Grayscale,
             PageColorType.DoubleColor,
             PageColorType.Grayscale,
+            PageColorType.DoubleColor,
         ]);
+    });
+});
+
+const nodeById = (pattern: ColourPattern, id: string) =>
+    pattern.doc.nodes.find((node) => node.id === id);
+
+const textValueOf = (pattern: ColourPattern, id: string): string | undefined => {
+    const node = nodeById(pattern, id);
+    return node?.type === 'text' && node.text.kind === 'static' ? node.text.value : undefined;
+};
+
+interface PlacedShape {
+    fill: string | undefined;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+}
+
+const placedShapes = (pattern: ColourPattern): PlacedShape[] =>
+    pattern.doc.nodes.flatMap((node) => {
+        if (node.type !== 'shape' || !node.size) return [];
+        return [
+            {
+                fill: node.fill,
+                x: node.transform.x,
+                y: node.transform.y,
+                w: node.size.w,
+                h: node.size.h,
+            },
+        ];
+    });
+
+interface Box {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+}
+
+/**
+ * Assert the ramp's white margin physically exists: every node box stays on the
+ * 50×30 mm page and nothing but the ramp itself enters its band (x 200…4800,
+ * y 400…700).
+ */
+const assertRampBoxHasMargins = (
+    pattern: ColourPattern,
+    rampNode: Node,
+    rampBox: Box,
+): void => {
+    const { backingW, backingH } = pattern.doc.label;
+
+    for (const node of pattern.doc.nodes) {
+        const { x, y } = node.transform;
+        if (!node.size) throw new Error(`node ${node.id} has no size`);
+        const { w, h } = node.size;
+        const box: Box = { left: x, top: y, right: x + w, bottom: y + h };
+
+        // On-page for text, shape and image nodes alike.
+        expect(box.left).toBeGreaterThanOrEqual(0);
+        expect(box.top).toBeGreaterThanOrEqual(0);
+        expect(box.right).toBeLessThanOrEqual(backingW);
+        expect(box.bottom).toBeLessThanOrEqual(backingH);
+
+        if (node.id === rampNode.id) continue;
+
+        const overlaps =
+            box.left < rampBox.right &&
+            box.right > rampBox.left &&
+            box.top < rampBox.bottom &&
+            box.bottom > rampBox.top;
+        expect(overlaps).toBe(false);
+    }
+};
+
+describe('red/black calibration pattern', () => {
+    it('validates with no repairs and carries the density caption', async () => {
+        const fallback = buildRedBlackCalibrationPattern();
+        const atFour = buildRedBlackCalibrationPattern(4);
+
+        for (const pattern of [fallback, atFour]) {
+            expect(pattern.pageColor).toBe(PageColorType.DoubleColor);
+
+            const validated = isLabelDoc(pattern.doc);
+            expect(validated.ok).toBe(true);
+            if (validated.ok) expect(validated.repairs).toEqual([]);
+
+            const parsed = await parseDoc(JSON.stringify(pattern.doc));
+            expect(parsed.ok).toBe(true);
+            if (parsed.ok) {
+                expect(parsed.repairs).toEqual([]);
+                expect(parsed.doc).toEqual(pattern.doc);
+            }
+        }
+
+        expect(textValueOf(fallback, 'pc-cal-density')).toBe('DENSITY —');
+        expect(textValueOf(atFour, 'pc-cal-density')).toBe('DENSITY 4');
+
+        const caption = nodeById(atFour, 'pc-cal-density');
+        if (caption?.type !== 'text') throw new Error('pc-cal-density missing');
+        expect(caption.align).toBe('right');
+        expect(caption.fill).toBe('#000000');
+    });
+
+    it('has one isolated red ramp, five red coverage bars and registration pairs', () => {
+        const pattern = buildRedBlackCalibrationPattern();
+        const nodes = pattern.doc.nodes;
+        const images = nodes.filter((node) => node.type === 'image');
+
+        // The isolated ramp is the only image in its band, tinted red, with no
+        // black element above or below it (the white-margin test checks overlap).
+        expect(images.filter((node) => node.transform.y === 400)).toHaveLength(1);
+        const ramp = nodeById(pattern, 'pc-cal-ramp-node');
+        if (ramp?.type !== 'image') throw new Error('pc-cal-ramp-node missing');
+        expect(ramp.tint).toBe('#ff0000');
+
+        // Coverage ladder: five red-tinted flat bars, 8 mm wide, 1 mm apart.
+        const coverage = images
+            .filter((node) => node.id.startsWith('pc-cal-cover-'))
+            .sort((a, b) => a.transform.x - b.transform.x);
+        expect(coverage).toHaveLength(5);
+        expect(coverage.map((node) => (node.type === 'image' ? node.tint : undefined))).toEqual([
+            '#ff0000',
+            '#ff0000',
+            '#ff0000',
+            '#ff0000',
+            '#ff0000',
+        ]);
+        expect(coverage.map((node) => node.transform.x)).toEqual([200, 1100, 2000, 2900, 3800]);
+        expect(coverage.map((node) => node.size?.w)).toEqual([800, 800, 800, 800, 800]);
+        expect(coverage.map((node) => node.transform.y)).toEqual([850, 850, 850, 850, 850]);
+
+        // Authored tones in x order: 64/128/192/224/240 of 255, all distinct.
+        const coverageRefs = coverage.map((node) => {
+            const imageId = node.type === 'image' ? node.imageId : undefined;
+            const ref = pattern.doc.resources.images.find(
+                (candidate) => candidate.imageId === imageId,
+            );
+            if (!ref) throw new Error(`coverage resource ${imageId} missing`);
+            return ref;
+        });
+        expect(coverageRefs.map((ref) => ref.name)).toEqual([
+            'red coverage 64/255',
+            'red coverage 128/255',
+            'red coverage 192/255',
+            'red coverage 224/255',
+            'red coverage 240/255',
+        ]);
+        const coverageUrls = coverageRefs.map((ref) =>
+            ref.source.kind === 'inline' ? ref.source.dataUrl : undefined,
+        );
+        expect(new Set(coverageUrls).size).toBe(5);
+
+        // Tone captions sit in the 1 mm gap between the ladder and the band.
+        expect(
+            [0, 1, 2, 3, 4].map((index) => textValueOf(pattern, `pc-cal-cover-label-${index}`)),
+        ).toEqual(['75', '50', '25', '12', '6']);
+        for (const index of [0, 1, 2, 3, 4]) {
+            const label = nodeById(pattern, `pc-cal-cover-label-${index}`);
+            if (label?.type !== 'text' || !label.size) throw new Error('coverage label missing');
+            expect(label.transform.y).toBeGreaterThanOrEqual(1650);
+            expect(label.transform.y + label.size.h).toBeLessThanOrEqual(1750);
+            expect(label.transform.x).toBe(200 + index * 900);
+            expect(label.size).toEqual({ w: 800, h: 90 });
+            expect(label.fontSize).toBe(80);
+            expect(label.align).toBe('center');
+            expect(label.fill).toBe('#000000');
+        }
+
+        // Image nodes ↔ resources one-to-one for this pattern.
+        const nodeImageIds = images.map((node) =>
+            node.type === 'image' ? node.imageId : undefined,
+        );
+        expect(new Set(pattern.doc.resources.images.map((ref) => ref.imageId))).toEqual(
+            new Set(nodeImageIds),
+        );
+
+        const shapes = placedShapes(pattern);
+        const vertical = shapes.filter((shape) => shape.y === 1750).sort((a, b) => a.x - b.x);
+        expect(vertical.map((shape) => shape.fill)).toEqual([
+            '#000000',
+            '#ff0000',
+            '#ff0000',
+            '#000000',
+        ]);
+        expect(vertical.map((shape) => shape.x)).toEqual([200, 1200, 2400, 3400]);
+        // The two reds are separated by a white 2 mm gap.
+        expect(vertical[1]!.x + vertical[1]!.w).toBe(2200);
+        expect(vertical[2]!.x - (vertical[1]!.x + vertical[1]!.w)).toBe(200);
+        expect(vertical.map((shape) => shape.h)).toEqual([600, 600, 600, 600]);
+
+        // Horizontal pairs: red over black (left), black over red (right), the
+        // two blocks in each pair touching at the boundary.
+        const top = shapes.filter((shape) => shape.y === 2450).sort((a, b) => a.x - b.x);
+        const bottom = shapes.filter((shape) => shape.y === 2650).sort((a, b) => a.x - b.x);
+        expect(top.map((shape) => shape.fill)).toEqual(['#ff0000', '#000000']);
+        expect(bottom.map((shape) => shape.fill)).toEqual(['#000000', '#ff0000']);
+        expect(top.map((shape) => shape.x)).toEqual([200, 2200]);
+        for (let index = 0; index < 2; index++) {
+            expect(top[index]!.x).toBe(bottom[index]!.x);
+            expect(top[index]!.w).toBe(bottom[index]!.w);
+            expect(top[index]!.y + top[index]!.h).toBe(bottom[index]!.y);
+            expect(top[index]!.h).toBe(200);
+            expect(bottom[index]!.y + bottom[index]!.h).toBe(2850);
+        }
+    });
+
+    it('keeps the isolated ramp white-margined and every node box on-page', () => {
+        const pattern = buildRedBlackCalibrationPattern();
+        const ramp = nodeById(pattern, 'pc-cal-ramp-node');
+        const title = nodeById(pattern, 'pc-cal-title');
+        if (ramp?.type !== 'image' || !ramp.size) throw new Error('pc-cal-ramp-node missing');
+        if (title?.type !== 'text' || !title.size) throw new Error('pc-cal-title missing');
+
+        // Identity: the ramp is the one isolated red resource.
+        const rampRef = pattern.doc.resources.images.find((ref) => ref.imageId === ramp.imageId);
+        if (!rampRef) throw new Error('ramp resource missing');
+        expect(rampRef.name).toBe('isolated red ramp');
+
+        // Geometry: title ends at 240, ramp 400…700, ladder starts at 850.
+        expect(ramp.transform).toMatchObject({ x: 200, y: 400 });
+        expect(ramp.size).toEqual({ w: 4600, h: 300 });
+        expect(ramp.transform.y - (title.transform.y + title.size.h)).toBe(160);
+        expect(850 - (ramp.transform.y + ramp.size.h)).toBe(150);
+
+        const box = {
+            left: ramp.transform.x,
+            top: ramp.transform.y,
+            right: ramp.transform.x + ramp.size.w,
+            bottom: ramp.transform.y + ramp.size.h,
+        };
+
+        assertRampBoxHasMargins(pattern, ramp, box);
+    });
+
+    it('buildDensitySweep: one DoubleColor pattern per density, distinct docs/captions', () => {
+        const sweep = buildDensitySweep([1, 3]);
+
+        expect(sweep).toHaveLength(2);
+        expect(sweep.map((pattern) => pattern.id)).toEqual([
+            'redBlackCalibration',
+            'redBlackCalibration',
+        ]);
+        expect(sweep.map((pattern) => pattern.pageColor)).toEqual([
+            PageColorType.DoubleColor,
+            PageColorType.DoubleColor,
+        ]);
+        expect(sweep.map((pattern) => textValueOf(pattern, 'pc-cal-density'))).toEqual([
+            'DENSITY 1',
+            'DENSITY 3',
+        ]);
+        expect(sweep[0]!.doc).not.toBe(sweep[1]!.doc);
     });
 });

@@ -19,7 +19,11 @@ import { createLabelDoc } from '../../core/doc/factory';
 import type { ImageRef, LabelDoc, Node } from '../../core/doc/types';
 import { grayLevelColor } from '../../core/render/palette';
 
-export type ColourPatternId = 'grayscale' | 'redBlack' | 'grayscaleLong';
+export type ColourPatternId =
+    | 'grayscale'
+    | 'redBlack'
+    | 'grayscaleLong'
+    | 'redBlackCalibration';
 
 export interface ColourPattern {
     id: ColourPatternId;
@@ -90,6 +94,12 @@ const pngDataUrl = (
     paint(ctx, widthPx, heightPx);
     return canvas.toDataURL('image/png');
 };
+
+/** Uniform grey fill — a flat tone for coverage-ladder bars. */
+const flatGreyPng = (grey: number, widthPx = 2, heightPx = 2): string =>
+    pngDataUrl(widthPx, heightPx, (ctx, w, h) =>
+        writePixels(ctx, w, h, () => [clampChannel(grey), clampChannel(grey), clampChannel(grey), 255]),
+    );
 
 /** Horizontal black → white strip. */
 const greyGradientPng = (widthPx: number, heightPx: number): string =>
@@ -455,9 +465,99 @@ const grayscaleLongPattern = (): ColourPattern => {
     };
 };
 
+/**
+ * Red/black calibration: separate the three physical effects the P7 print mixed
+ * together — ink density, red coverage linearity, and black/red registration.
+ *
+ * - An isolated red-tinted ramp with white above and below: no black art touches
+ *   it, so any black in the result is red overheat, not misregistration.
+ * - Five flat grey bars tinted red: red coverage ≈ 75/50/25/12/6 % after
+ *   diffusion, straight from authored tone to printed dot coverage.
+ * - Black/red vertical and horizontal boundaries: registration only (each side
+ *   is solid ink, so density plays no part).
+ */
+export const buildRedBlackCalibrationPattern = (density?: number): ColourPattern => {
+    const ramp = imageRef('pc-cal-ramp', 'isolated red ramp', 460, 40, greyGradientPng(460, 40));
+    const coverageGreys = [64, 128, 192, 224, 240] as const;
+    const coveragePercent = [75, 50, 25, 12, 6] as const;
+    const coverage = coverageGreys.map((grey, index) =>
+        imageRef(`pc-cal-cover-${index}`, `red coverage ${grey}/255`, 2, 2, flatGreyPng(grey)),
+    );
+
+    const nodes: Node[] = [
+        textNode('pc-cal-title', 200, 40, 2000, 200, 'RED / BLACK CAL', 160, { fill: '#000000' }),
+        textNode('pc-cal-density', 2400, 40, 2400, 200, `DENSITY ${density ?? '—'}`, 160, {
+            fill: '#000000',
+            align: 'right',
+        }),
+        // White margin above (title ends at 240 → 1.6 mm) and below (ladder
+        // starts at 850 → 1.5 mm): no black art can bleed onto the ramp.
+        imageNode('pc-cal-ramp-node', ramp.imageId, 200, 400, 4600, 300, '#ff0000'),
+    ];
+
+    // Coverage ladder: 8 mm bars with 1 mm gaps, x 200…4600, y 850…1650.
+    coverage.forEach((ref, index) => {
+        const x = 200 + index * 900;
+        nodes.push(
+            imageNode(`pc-cal-cover-${index}-node`, ref.imageId, x, 850, 800, 800, '#ff0000'),
+        );
+        // Tone caption in the 1 mm gap between the ladder (ends 1650) and the
+        // vertical band (starts 1750).
+        nodes.push(
+            textNode(
+                `pc-cal-cover-label-${index}`,
+                x,
+                1655,
+                800,
+                90,
+                String(coveragePercent[index]),
+                80,
+                { fill: '#000000', align: 'center' },
+            ),
+        );
+    });
+
+    // Vertical registration band: black | red | 2 mm white gap | red | black.
+    nodes.push(
+        rectNode('pc-cal-v-black-0', 200, 1750, 1000, 600, { fill: '#000000' }),
+        rectNode('pc-cal-v-red-0', 1200, 1750, 1000, 600, { fill: '#ff0000' }),
+        rectNode('pc-cal-v-red-1', 2400, 1750, 1000, 600, { fill: '#ff0000' }),
+        rectNode('pc-cal-v-black-1', 3400, 1750, 1000, 600, { fill: '#000000' }),
+        // Horizontal registration: red over black, then black over red. The two
+        // 2 mm blocks in each pair touch, so a fringe lands on the seam.
+        rectNode('pc-cal-h-left-red', 200, 2450, 1800, 200, { fill: '#ff0000' }),
+        rectNode('pc-cal-h-left-black', 200, 2650, 1800, 200, { fill: '#000000' }),
+        rectNode('pc-cal-h-right-black', 2200, 2450, 1800, 200, { fill: '#000000' }),
+        rectNode('pc-cal-h-right-red', 2200, 2650, 1800, 200, { fill: '#ff0000' }),
+    );
+
+    const doc = createLabelDoc({
+        id: 'pc-red-black-calibration',
+        name: 'Print colours — red/black calibration',
+        paperTypeId: 'rounded50x30',
+        backingW: SHORT_W,
+        backingH: SHORT_H,
+        dpi: 300,
+        now: FIXED_TIME,
+        nodes,
+    });
+    doc.resources.images.push(ramp, ...coverage);
+    return {
+        id: 'redBlackCalibration',
+        label: 'Red & black — calibration',
+        doc,
+        pageColor: PageColorType.DoubleColor,
+    };
+};
+
+/** One calibration label per density, in the given order (sweep helper). */
+export const buildDensitySweep = (densities: readonly number[]): ColourPattern[] =>
+    densities.map((density) => buildRedBlackCalibrationPattern(density));
+
 /** Build all patterns, fresh docs + fresh PNGs on every call. */
 export const buildColourPatterns = (): ColourPattern[] => [
     grayscalePattern(),
     redBlackPattern(),
     grayscaleLongPattern(),
+    buildRedBlackCalibrationPattern(),
 ];
