@@ -11,9 +11,9 @@ generated images (no photo fixture in the repo).
 > settled by goldens and preview ≡ print; this run answers only the physical
 > questions.
 >
-> **Status: pending owner print.** The harness preview is not hardware evidence.
-> Every Record cell below is blank on purpose — fill it from the physical output,
-> never from the preview.
+> **Status: grayscale 16-step printed (2026-11-08, density 3); long page and
+> red/black still pending.** The harness preview is not hardware evidence. Fill
+> the remaining Record rows from the physical output, never from the preview.
 
 ## A. Mock dry run (no printer)
 
@@ -55,7 +55,12 @@ generated images (no photo fixture in the repo).
      library uses the printer-reported roll type. If the stock needs a different
      label type, use the normal `File → Print…` flow
      (RFID dims/type are printer advice, not a measurement).
-6. Do **not** re-print the red/black page to "improve" it; record what came out.
+6. **Density** (added after the first print): the harness offers the
+   printer-reported range with `Printer default (n)` first. Print the grayscale
+   16-step pattern at the default, then at a higher density if light steps look
+   faint. Density is the printer's heat/energy setting; it does **not** change the
+   ramp's level mapping. Record the density for every row.
+7. Do **not** re-print the red/black page to "improve" it; record what came out.
    One pass is the plan's tape decision.
 
 ## What to look for
@@ -78,11 +83,11 @@ generated images (no photo fixture in the repo).
 | | A (Mock) | Grayscale — 16 steps | Grayscale | Mock | | |
 | | A (Mock) | Red & black — flat / diffuse | Red & black | Mock | | |
 | | A (Mock) | Grayscale — 50×160 long | Grayscale | Mock | | |
-| | B (hardware) | Grayscale — 16 steps | Grayscale | | | |
+| 2026-11-08 | B (hardware) | Grayscale — 16 steps | Grayscale | owner printer, density 3 (default) | Levels **0–2 indistinguishable from paper**, **3 very faint**, usable ≈ **4–14**; on some stock **15 merges with 14 (sometimes 13)**. Density control added after this print. | **Partial** — ramp spans more than paper shows; **dynamic range requested (D-75)** |
 | | B (hardware) | Grayscale — 50×160 long | Grayscale | | | |
 | | B (hardware) | Red & black — flat / diffuse | Red & black | | | |
 
-**Owner verdict:** *(pending owner print)*
+**Owner verdict:** *(grayscale 16-step: usable 4–14 at density 3; dynamic-range option to be added later — D-75. Long-page and red/black rows still pending.)*
 
 When the rows are filled: only a clean long-page print can retire **D-73**; only
 the red/black row can confirm the palette calibration (weights are all `1` until

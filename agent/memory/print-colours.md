@@ -10,9 +10,15 @@ and is capability-gated.
   D110M_V4 task family) and [`dual-color.md`](dual-color.md) (library mechanics,
   the 133-byte history). Do not re-derive them here.
 - Engine split from the 1-bit quantizer: [`dithering.md`](dithering.md) §11.
-- Physical verification is **pending owner print** — checklist:
-  [`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md). No hardware result
-  is claimed in this file.
+- **Physical verification (owner, 2026-11-08, density 3 default):** the 16-level
+  ramp is **not fully usable on paper** — levels **0–2 are indistinguishable from
+  the background**, level **3 is very faint**, and on some stock level **15 merges
+  with 14 (sometimes 13)**. Usable range is roughly **4–14**. A later **dynamic
+  range** option (map the authored tone range onto the physically usable band) is
+  requested — see **D-75**. Red/black physical calibration is still pending. Owner
+  checklist: [`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md); the harness
+  has a **Density** select for heat/energy tests (density does not change the ramp
+  mapping).
 
 ## Modes and seams
 
@@ -173,6 +179,11 @@ non-white pixel, so red ink is ink in the mirror-loss notice.
 - **Long grayscale buffer unverified.** `PrinterCapabilities.sixteenGrayMaxBuffer`
   is parsed but never enforced by 0.49. The 50×160 mm harness pattern covers it.
   See **D-73**.
+- **Grayscale dynamic range requested** (owner, 2026-11-08): at density 3 the
+  paper shows roughly levels 4–14; 0–2 sit on paper white, 3 is very faint, and on
+  some stock 15 merges into 14/13. A later option should map the authored tone
+  range onto the physically usable band (bounds depend on density/paper). Recorded
+  as **D-75**; the current ramp stays the library-defined 0–15.
 - **D-05 seam drift** still applies — in red/black the palette pass adds a
   flat-beside-diffuse border where deposited error is discarded, on top of the
   existing diffuse-beside-diffuse seam.
