@@ -987,6 +987,141 @@ describe('isNode', () => {
     });
 });
 
+describe('isLabelDoc — meta.kind (preset flag)', () => {
+    it('keeps a preset kind through isLabelDoc', () => {
+        const result = isLabelDoc(
+            validRaw({
+                meta: {
+                    id: 'doc-1',
+                    name: 'Label',
+                    createdAt: 1,
+                    updatedAt: 2,
+                    kind: 'preset',
+                },
+            }),
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.meta.kind).toBe('preset');
+        // The produced doc validates again unchanged: the flag is stable.
+        const again = isLabelDoc(result.doc);
+        expect(again.ok).toBe(true);
+        if (!again.ok) return;
+        expect(again.doc.meta.kind).toBe('preset');
+    });
+
+    it('keeps an explicit label kind', () => {
+        const result = isLabelDoc(
+            validRaw({
+                meta: { id: 'doc-1', name: 'Label', createdAt: 1, updatedAt: 1, kind: 'label' },
+            }),
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.meta.kind).toBe('label');
+    });
+
+    it('leaves an absent kind absent — legacy docs are not rewritten', () => {
+        const result = isLabelDoc(validRaw());
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.meta.kind).toBeUndefined();
+        expect('kind' in result.doc.meta).toBe(false);
+        expect(result.repairs).toEqual([]);
+    });
+
+    it('drops an unknown kind and reports a repair', () => {
+        const result = isLabelDoc(
+            validRaw({
+                meta: { id: 'doc-1', name: 'Label', createdAt: 1, updatedAt: 1, kind: 'template' },
+            }),
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.meta.kind).toBeUndefined();
+        expect('kind' in result.doc.meta).toBe(false);
+        expect(result.repairs).toContain('meta.kind: unknown value dropped');
+    });
+});
+
+describe('isNode — field content source', () => {
+    it('keeps a field source on a text node without trimming the name', () => {
+        const node = isNode(
+            baseNode({
+                type: 'text',
+                shape: undefined,
+                text: { kind: 'field', name: ' price ', fallback: '$0' },
+            }),
+        );
+        expect(node).toMatchObject({
+            text: { kind: 'field', name: ' price ', fallback: '$0' },
+        });
+    });
+
+    it('keeps a field source on qr/code/text nodes and defaults a missing fallback', () => {
+        const qr = isNode(
+            baseNode({
+                type: 'qr',
+                shape: undefined,
+                data: { kind: 'field', name: 'sku', fallback: '—' },
+            }),
+        );
+        expect(qr).toMatchObject({ data: { kind: 'field', name: 'sku', fallback: '—' } });
+
+        const code = isNode(
+            baseNode({
+                type: 'code',
+                shape: undefined,
+                data: { kind: 'field', name: 'sku', fallback: 7 },
+            }),
+        );
+        expect(code).toMatchObject({ data: { kind: 'field', name: 'sku', fallback: '' } });
+
+        const missing = isNode(
+            baseNode({
+                type: 'text',
+                shape: undefined,
+                text: { kind: 'field', name: 'sku' },
+            }),
+        );
+        expect(missing).toMatchObject({ text: { kind: 'field', name: 'sku', fallback: '' } });
+    });
+
+    it('keeps an empty or whitespace-only name (half-authored field is valid data)', () => {
+        for (const name of ['', '   ']) {
+            expect(
+                isNode(baseNode({ type: 'text', shape: undefined, text: { kind: 'field', name, fallback: '$0' } })),
+            ).toMatchObject({ text: { kind: 'field', name, fallback: '$0' } });
+        }
+    });
+
+    it('falls back to an empty static source for a missing or non-string name', () => {
+        for (const text of [
+            { kind: 'field', fallback: '$0' },
+            { kind: 'field', name: 5, fallback: '$0' },
+        ]) {
+            expect(isNode(baseNode({ type: 'text', shape: undefined, text }))).toMatchObject({
+                text: { kind: 'static', value: '' },
+            });
+        }
+    });
+
+    it('falls back to an empty static source for a non-record carrier', () => {
+        expect(isNode(baseNode({ type: 'text', shape: undefined, text: 42 }))).toMatchObject({
+            text: { kind: 'static', value: '' },
+        });
+        expect(isNode(baseNode({ type: 'qr', shape: undefined, data: null }))).toMatchObject({
+            data: { kind: 'static', value: '' },
+        });
+    });
+
+    it('still drops an unknown source kind', () => {
+        expect(
+            isNode(baseNode({ type: 'text', shape: undefined, text: { kind: 'mystery' } })),
+        ).toMatchObject({ text: { kind: 'static', value: '' } });
+    });
+});
+
 describe('isLabelDoc — acceptance and repair', () => {
     it('accepts a structurally valid document', () => {
         const result = isLabelDoc(validRaw());
@@ -1218,6 +1353,46 @@ describe('isGlobalSpec — remote/static union (P6)', () => {
     it('rejects a document whose global spec is an invalid remote', () => {
         const result = isLabelDoc(validRaw({ data: { sampleRowIndex: 0, globals: [{ name: 'bad' }] } }));
         expect(result.ok).toBe(false);
+    });
+});
+
+describe('isLabelDoc — data.fields (P6a)', () => {
+    it('round-trips declarations (order, flags, reserved id)', () => {
+        const fields = [
+            { id: 'price', default: '$0', required: true, hidden: true },
+            { id: 'sku' },
+            { id: 'csv.row', default: '1', required: true },
+        ];
+        const result = isLabelDoc(validRaw({ data: { sampleRowIndex: 0, globals: [], fields } }));
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.data.fields).toEqual(fields);
+        expect(result.repairs).toEqual([]);
+    });
+
+    it('leaves an absent list absent (legacy docs are not rewritten)', () => {
+        const result = isLabelDoc(validRaw());
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect('fields' in result.doc.data).toBe(false);
+    });
+
+    it('drops a bad entry with a repair and keeps the rest', () => {
+        const result = isLabelDoc(
+            validRaw({
+                data: {
+                    sampleRowIndex: 0,
+                    globals: [],
+                    fields: [{ id: 'price' }, { id: '' }, { id: 'price', default: 'dup' }],
+                },
+            }),
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.doc.data.fields).toEqual([{ id: 'price' }]);
+        const repairs = result.repairs.join(' ');
+        expect(repairs).toContain('data.fields[1]');
+        expect(repairs).toContain('data.fields[2]');
     });
 });
 
@@ -1457,5 +1632,49 @@ describe('migrate', () => {
     it('passes non-objects through', () => {
         expect(migrate(null)).toBeNull();
         expect(migrate('x')).toBe('x');
+    });
+});
+
+describe('isNode — text fill & image tint (P4 A3)', () => {
+    const textNode = (over: Record<string, unknown> = {}) =>
+        baseNode({ type: 'text', shape: undefined, text: 'hi', ...over });
+    const imageNode = (over: Record<string, unknown> = {}) =>
+        baseNode({ type: 'image', shape: undefined, imageId: 'i1', ...over });
+
+    it('round-trips text fill (including transparent)', () => {
+        const red = isNode(textNode({ fill: '#ff0000' }));
+        expect(red?.type === 'text' && red.fill).toBe('#ff0000');
+        const clear = isNode(textNode({ fill: 'transparent' }));
+        expect(clear?.type === 'text' && clear.fill).toBe('transparent');
+    });
+
+    it('drops an invalid text fill with a repair', () => {
+        const repairs: string[] = [];
+        const node = isNode(textNode({ fill: 'red' }), repairs);
+        expect(node?.type).toBe('text');
+        expect(node?.type === 'text' && node.fill).toBeUndefined();
+        expect(repairs).toContain('node.fill: invalid colour dropped');
+    });
+
+    it('round-trips image tint', () => {
+        const node = isNode(imageNode({ tint: '#00ff0080' }));
+        expect(node?.type === 'image' && node.tint).toBe('#00ff0080');
+    });
+
+    it('drops an invalid image tint with a repair', () => {
+        const repairs: string[] = [];
+        const node = isNode(imageNode({ tint: 7 }), repairs);
+        expect(node?.type).toBe('image');
+        expect(node?.type === 'image' && node.tint).toBeUndefined();
+        expect(repairs).toContain('node.tint: invalid colour dropped');
+    });
+
+    it('leaves absent fill/tint absent (no key added)', () => {
+        const text = isNode(textNode());
+        expect(text).toBeDefined();
+        expect(text && 'fill' in text).toBe(false);
+        const image = isNode(imageNode());
+        expect(image).toBeDefined();
+        expect(image && 'tint' in image).toBe(false);
     });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { createFtagSpareDoc, createLabelDoc, newLabelId } from './factory';
+import { copyLabelDoc, createFtagSpareDoc, createLabelDoc, newLabelId } from './factory';
 import { isLabelDoc } from './validate';
+import type { LabelDoc, Node } from './types';
 
 /** Keys that carry hm (integer hundredths of a mm) geometry. */
 const GEOMETRY_KEYS = new Set([
@@ -80,6 +81,20 @@ describe('createLabelDoc', () => {
         expect(createFtagSpareDoc().meta.paperTypeId).toBe('ftagSpare-25x78');
         expect(createLabelDoc({ paperTypeId: 'rounded30x20' }).meta.paperTypeId).toBe('rounded30x20');
         expect(createLabelDoc().meta.paperTypeId).toBeUndefined();
+    });
+
+    it('writes an explicit label kind by default', () => {
+        expect(createLabelDoc().meta.kind).toBe('label');
+        expect(createFtagSpareDoc().meta.kind).toBe('label');
+    });
+
+    it('honours kind: "preset"', () => {
+        const doc = createLabelDoc({ kind: 'preset', name: 'Price tag' });
+        expect(doc.meta.kind).toBe('preset');
+        expect(isLabelDoc(doc).ok).toBe(true);
+        const validated = isLabelDoc(doc);
+        if (!validated.ok) return;
+        expect(validated.doc.meta.kind).toBe('preset');
     });
 
     it('records an unknown user-authored paperTypeId (no built-in preset)', () => {
@@ -190,6 +205,11 @@ describe('createLabelDoc', () => {
         const owned = createLabelDoc({ printOffset: source });
         source.xHm = 999;
         expect(owned.label.printOffset?.xHm).toBe(5);
+    });
+
+    it('creates no field declarations by default (P6a)', () => {
+        expect('fields' in createLabelDoc().data).toBe(false);
+        expect('fields' in createFtagSpareDoc().data).toBe(false);
     });
 });
 
@@ -353,5 +373,128 @@ describe('integer hm invariant', () => {
         expect(result.ok).toBe(true);
         if (!result.ok) return;
         assertIntegerGeometry(result.doc);
+    });
+});
+
+describe('copyLabelDoc', () => {
+    const textNode: Node = {
+        id: 'n1',
+        parentId: null,
+        type: 'text',
+        visible: true,
+        locked: false,
+        transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        text: { kind: 'field', name: '', fallback: '—' },
+    };
+
+    /** A preset carrying every field a `createLabelDoc` rebuild would drop. */
+    const sourceDoc = (): LabelDoc => {
+        const doc = createLabelDoc({
+            id: 'src-1',
+            name: 'Price tag',
+            kind: 'preset',
+            paperTypeId: 'ftagSpare-25x78',
+            now: 1_600_000_000,
+            nodes: [textNode],
+        });
+        doc.meta.thumb = {
+            mediaType: 'image/png',
+            dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAF0lEQVR42mNgYGD4//8/FhK7KAQMPh0AXXNfoWyFCAcAAAAASUVORK5CYII=',
+            at: 1_600_000_000,
+        };
+        doc.data.csv = {
+            csvId: 'c1',
+            name: 'prices.csv',
+            source: { kind: 'local', mediaType: 'text/csv', resourceId: 'c1' },
+        };
+        doc.data.sampleRowIndex = 3;
+        doc.data.globals = [{ name: 'rate', kind: 'static', value: '0.2' }];
+        doc.resources.fonts.push({
+            fontId: 'f1',
+            familyName: 'Fam',
+            name: 'Fam File',
+            source: { kind: 'system', descriptor: 'Fam' },
+        });
+        doc.resources.images.push({
+            imageId: 'i1',
+            name: 'logo.png',
+            source: { kind: 'inline', mediaType: 'image/png', dataUrl: 'data:image/png;base64,AAAA' },
+            widthPx: 8,
+            heightPx: 8,
+        });
+        return doc;
+    };
+
+    it('takes a fresh id, or the injected one', () => {
+        const source = sourceDoc();
+        const copy = copyLabelDoc(source, { kind: 'label', now: 1 });
+        expect(copy.meta.id).not.toBe(source.meta.id);
+        expect(copy.meta.id.length).toBeGreaterThan(0);
+        expect(copyLabelDoc(source, { kind: 'label', id: 'copy-1' }).meta.id).toBe('copy-1');
+    });
+
+    it('uses an explicit kind, never the source kind', () => {
+        const preset = sourceDoc();
+        expect(copyLabelDoc(preset, { kind: 'label', now: 1 }).meta.kind).toBe('label');
+        const label = createLabelDoc({ id: 'l1', kind: 'label', now: 1 });
+        expect(copyLabelDoc(label, { kind: 'preset', now: 1 }).meta.kind).toBe('preset');
+        expect(label.meta.kind).toBe('label');
+    });
+
+    it('defaults the name to the source and accepts an override', () => {
+        const source = sourceDoc();
+        expect(copyLabelDoc(source, { kind: 'label', now: 1 }).meta.name).toBe('Price tag');
+        expect(copyLabelDoc(source, { kind: 'preset', name: 'Mine', now: 1 }).meta.name).toBe('Mine');
+    });
+
+    it('stamps both timestamps with now and clears the thumb', () => {
+        const source = sourceDoc();
+        const copy = copyLabelDoc(source, { kind: 'label', now: 1_700_000_000 });
+        expect(copy.meta.createdAt).toBe(1_700_000_000);
+        expect(copy.meta.updatedAt).toBe(1_700_000_000);
+        expect('thumb' in copy.meta).toBe(false);
+        // The source keeps its own thumb.
+        expect(source.meta.thumb).toBeDefined();
+    });
+
+    it('preserves the CSV, globals, resources and paper provenance', () => {
+        const source = sourceDoc();
+        const copy = copyLabelDoc(source, { kind: 'label', now: 1_700_000_000 });
+
+        expect(copy.meta.paperTypeId).toBe('ftagSpare-25x78');
+        expect(copy.data.csv).toEqual(source.data.csv);
+        expect(copy.data.sampleRowIndex).toBe(3);
+        expect(copy.data.globals).toEqual(source.data.globals);
+        expect(copy.resources.fonts).toEqual(source.resources.fonts);
+        expect(copy.resources.images).toEqual(source.resources.images);
+        expect(copy.label).toEqual(source.label);
+    });
+
+    it('deep-clones the nodes (equal but not shared)', () => {
+        const source = sourceDoc();
+        const copy = copyLabelDoc(source, { kind: 'label', now: 1 });
+        expect(copy.nodes).toEqual(source.nodes);
+        expect(copy.nodes[0]).not.toBe(source.nodes[0]);
+    });
+
+    it('never mutates the source document', () => {
+        const source = sourceDoc();
+        const snapshot = structuredClone(source);
+        const copy = copyLabelDoc(source, { kind: 'label', name: 'Other', now: 1_700_000_000 });
+
+        expect(source).toEqual(snapshot);
+        // Mutating the copy must not leak back either.
+        copy.nodes[0]!.transform.x = 999;
+        copy.data.globals.push({ name: 'extra', kind: 'static', value: '1' });
+        expect(source).toEqual(snapshot);
+    });
+
+    it('produces a document the validator accepts', () => {
+        const copy = copyLabelDoc(sourceDoc(), { kind: 'label', now: 1_700_000_000 });
+        const result = isLabelDoc(copy);
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.repairs).toEqual([]);
+        expect(result.doc.meta.kind).toBe('label');
     });
 });

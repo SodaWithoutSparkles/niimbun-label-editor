@@ -617,18 +617,20 @@ describe('NiimbotTransport capabilities', () => {
       densityDefault: 3,
       paperTypes: [1, 2, 5],
       doubleColor: true,
+      grayscale: true,
       tubePrinting: true,
       supportsSpeed: true,
     });
   });
 
   it('reflects printTasksCapabilities for the detected task', async () => {
-    // B1 supports double colour but not tube printing, and not speed.
+    // B1 supports double colour but not tube printing, speed or grayscale.
     const fake = makeFakeClient({ taskType: 'B1', metadata });
 
     const connected = await connectAndCollect(fake);
 
     expect(connected?.capabilities?.doubleColor).toBe(true);
+    expect(connected?.capabilities?.grayscale).toBe(false);
     expect(connected?.capabilities?.tubePrinting).toBe(false);
     expect(connected?.capabilities?.supportsSpeed).toBe(false);
   });
@@ -643,6 +645,7 @@ describe('NiimbotTransport capabilities', () => {
     expect(connected?.state).toBe('connected');
     expect(connected?.capabilities?.taskType).toBe('UNKNOWN_TASK');
     expect(connected?.capabilities?.doubleColor).toBe(false);
+    expect(connected?.capabilities?.grayscale).toBe(false);
     expect(connected?.capabilities?.tubePrinting).toBe(false);
     expect(connected?.capabilities?.supportsSpeed).toBe(false);
   });
@@ -666,6 +669,7 @@ describe('NiimbotTransport capabilities', () => {
     });
     expect(connected?.capabilities).not.toHaveProperty('taskType');
     expect(connected?.capabilities).not.toHaveProperty('doubleColor');
+    expect(connected?.capabilities).not.toHaveProperty('grayscale');
     expect(connected?.capabilities).not.toHaveProperty('tubePrinting');
     expect(connected?.capabilities).not.toHaveProperty('supportsSpeed');
   });

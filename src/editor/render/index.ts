@@ -9,6 +9,7 @@ export * from './renderLabelPage';
 export * from './printOrientation';
 export * from './assets';
 export * from './prepareAssets';
+export * from './tint';
 export * from './imageAssets';
 export * from './qrImage';
 export * from './barcodeImage';

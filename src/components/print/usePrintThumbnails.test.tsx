@@ -272,4 +272,55 @@ describe('usePrintThumbnails', () => {
         expect(renderPage).toHaveBeenCalledTimes(2);
         expect(renderPage.mock.calls[1]![2]).toMatchObject({ invert: true });
     });
+
+    it('forwards a grayscale page colour to the render seam', async () => {
+        const renderPage = makeRender(fakePage());
+
+        const { result } = renderHook(() =>
+            usePrintThumbnails({
+                doc,
+                csv: null,
+                overrides: { pageColor: 'grayscale' },
+                renderPage,
+            }),
+        );
+
+        await waitFor(() =>
+            expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub'),
+        );
+        expect(renderPage.mock.calls[0]![2]).toMatchObject({ pageColor: 'grayscale' });
+    });
+
+    it('rebuilds the cache when the page colour changes, but not for mono', async () => {
+        const renderPage = makeRender(fakePage());
+        const { result, rerender } = renderHook(
+            ({ pageColor }: { pageColor?: 'mono' | 'grayscale' }) =>
+                usePrintThumbnails({
+                    doc,
+                    csv: null,
+                    overrides: { ...(pageColor !== undefined ? { pageColor } : {}) },
+                    renderPage,
+                }),
+            { initialProps: {} as { pageColor?: 'mono' | 'grayscale' } },
+        );
+
+        await waitFor(() =>
+            expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub'),
+        );
+
+        // Absent and explicit mono append nothing to the key: the cache and its
+        // resolved thumbnail survive.
+        rerender({ pageColor: 'mono' });
+        expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub');
+        expect(renderPage).toHaveBeenCalledTimes(1);
+
+        // A real mode change drops the stale mono thumbnail and re-renders.
+        rerender({ pageColor: 'grayscale' });
+        expect(result.current.urlFor(0)).toBeUndefined();
+        await waitFor(() =>
+            expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub'),
+        );
+        expect(renderPage).toHaveBeenCalledTimes(2);
+        expect(renderPage.mock.calls[1]![2]).toMatchObject({ pageColor: 'grayscale' });
+    });
 });

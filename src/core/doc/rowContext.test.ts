@@ -20,6 +20,7 @@ describe('buildRowContext', () => {
             now: 1_700_000_000_000,
             label: {},
             globals: {},
+            fields: {},
             seeds: { docSeed: '' },
         });
     });
@@ -52,6 +53,15 @@ describe('buildRowContext', () => {
         expect(ctx.label).toEqual({ name: 'L' });
         expect(ctx.globals).toEqual({ greeting: 'hi' });
         expect(ctx.fmt).toBe(fmt);
+    });
+
+    it('defaults fields to {} and carries a supplied map through', () => {
+        const defaulted = buildRowContext({ columns: [], rows: [], index: 0, now: 1 });
+        expect(defaulted.fields).toEqual({});
+
+        const fields = { price: '9.99' };
+        const supplied = buildRowContext({ columns: [], rows: [], index: 0, now: 1, fields });
+        expect(supplied.fields).toBe(fields);
     });
 
     it('yields an empty row for an out-of-range index (never clamps)', () => {

@@ -22,7 +22,7 @@ import {
     type LabelPrintDirection,
 } from '../../editor/render/printOrientation';
 import { planSequence, type PrintOrder } from '../../print/sequence';
-import { buildCsvPrintJob, renderOptionsOf, type PrintOverrides } from '../../print/printLabel';
+import { buildCsvPrintJob, pageColorModeOf, renderOptionsOf, type PrintOverrides } from '../../print/printLabel';
 import { resolvePrintDpi } from '../../print/resolvedDpi';
 import { LABEL_TYPE_OPTIONS, labelTypeEnumName, labelTypeNameKey } from '../../print/labelTypeNames';
 import type { JobProgress, JobRunner } from '../../print/jobRunner';
@@ -152,12 +152,18 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     const quantizerDefaults = useStore((state) => state.quantizerDefaults);
     const defaultQuantizerByType = useStore((state) => state.defaultQuantizerByType);
     const capabilities = printerStatus.capabilities;
+    /** 16-level grayscale pages are supported only by tasks that report it. */
+    const grayscaleSupported = capabilities?.grayscale === true;
+    /** Red/black (two-ink) pages are supported only by tasks that report it. */
+    const redBlackSupported = capabilities?.doubleColor === true;
 
     const [order, setOrder] = useState<PrintOrder>('grouped');
     const [copies, setCopies] = useState(1);
     const [density, setDensity] = useState<number | undefined>(undefined);
     const [speed, setSpeed] = useState<0 | 1>(0);
     const [labelType, setLabelType] = useState<LabelType | undefined>(undefined);
+    /** Print-time page colour. Session state: reset on every open. */
+    const [pageColor, setPageColor] = useState<PageColorType>(PageColorType.SingleColor);
     const [invert, setInvert] = useState(false);
     const [mirror, setMirror] = useState(false);
     const [offsetX, setOffsetX] = useState('0');
@@ -183,6 +189,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         setDensity(undefined);
         setSpeed(0);
         setLabelType(undefined);
+        setPageColor(PageColorType.SingleColor);
         setInvert(false);
         setMirror(false);
         setProgress(null);
@@ -391,8 +398,20 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             ...(parsedOffset ? { offset: parsedOffset } : {}),
             quantizerDefaults,
             defaultQuantizerByType,
+            // Mono is the absent key (today's render); only another mode is
+            // forwarded, keeping the rebuild key stable for existing sessions.
+            ...(pageColor !== PageColorType.SingleColor
+                ? { pageColor: pageColorModeOf(pageColor) }
+                : {}),
         }),
-        [invert, mirror, parsedOffset, quantizerDefaults, defaultQuantizerByType],
+        [
+            invert,
+            mirror,
+            parsedOffset,
+            quantizerDefaults,
+            defaultQuantizerByType,
+            pageColor,
+        ],
     );
 
     // The `Page` view renders **one** record at the **resolved print** dpi
@@ -471,8 +490,10 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             ...(densityEnabled ? { density: densityValue } : {}),
             ...(speedEnabled ? { speed } : {}),
             ...(labelTypeEnabled ? { labelType: effectiveLabelType } : {}),
-            // v1 prints single-colour only (spike: B1_PRO supports Single|Double).
-            pageColor: PageColorType.SingleColor,
+            // Print-time page colour selected in this dialog session. The
+            // red/black mode is capability-gated by the select above; the job
+            // renders it through the dedicated palette path.
+            pageColor,
             // Always set: the job AND the ink check render at the resolved dpi
             // (in off mode it equals the hint, so today's output is unchanged).
             dpi: resolved.dpi,
@@ -489,6 +510,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             speed,
             labelTypeEnabled,
             effectiveLabelType,
+            pageColor,
             resolved.dpi,
             invert,
             mirror,
@@ -650,6 +672,45 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             label: supported ? name : t('print.labelTypeUnsupported', { name }),
         };
     });
+    /**
+     * Page-colour options (P6). An unsupported mode stays **visible** — the
+     * user must see that the mode exists and why it is off — so it is disabled
+     * and its label carries the same `(unsupported)` suffix as label types.
+     * Mono is always offered: every task can print one ink plane.
+     */
+    const pageColorOptions = [
+        { value: 'mono', label: t('print.pageColorSingle') },
+        {
+            value: 'grayscale',
+            label: grayscaleSupported
+                ? t('print.pageColorGrayscale')
+                : t('print.pageColorUnsupported', { name: t('print.pageColorGrayscale') }),
+            disabled: !grayscaleSupported,
+        },
+        {
+            value: 'double',
+            label: redBlackSupported
+                ? t('print.pageColorDouble')
+                : t('print.pageColorUnsupported', { name: t('print.pageColorDouble') }),
+            disabled: !redBlackSupported,
+        },
+    ];
+    /**
+     * Why the page-colour control is limited (P6). The selected red/black mode
+     * wins: its honest limitation is more useful than "this printer does not
+     * support it", and the mode is unreachable when unsupported anyway. With
+     * every mode available and a mono/grayscale pick there is nothing to say.
+     */
+    const pageColorDescription =
+        pageColor === PageColorType.DoubleColor
+            ? t('print.pageColorDoubleHint')
+            : !grayscaleSupported && !redBlackSupported
+              ? t('print.pageColorUnsupportedHint')
+              : !grayscaleSupported
+                ? t('print.pageColorGrayscaleUnsupportedHint')
+                : !redBlackSupported
+                  ? t('print.pageColorDoubleUnsupportedHint')
+                  : undefined;
     /** Display name for a `LabelType` in the mismatch notice (same wording as the select). */
     const labelTypeName = (type: LabelType): string => {
         const key = labelTypeNameKey(type);
@@ -927,13 +988,28 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                 aria-label={t('print.printDirection')}
                             />
                         </SettingRow>
-                        <SettingRow label={t('print.pageColor')}>
+                        <SettingRow
+                            label={t('print.pageColor')}
+                            description={pageColorDescription}
+                        >
                             <Select
-                                value="single"
-                                onChange={() => undefined}
-                                options={[
-                                    { value: 'single', label: t('print.pageColorSingle') },
-                                ]}
+                                value={
+                                    pageColor === PageColorType.DoubleColor
+                                        ? 'double'
+                                        : pageColor === PageColorType.Grayscale
+                                          ? 'grayscale'
+                                          : 'mono'
+                                }
+                                onChange={(value) =>
+                                    setPageColor(
+                                        value === 'double'
+                                            ? PageColorType.DoubleColor
+                                            : value === 'grayscale'
+                                              ? PageColorType.Grayscale
+                                              : PageColorType.SingleColor,
+                                    )
+                                }
+                                options={pageColorOptions}
                                 className="w-32"
                                 aria-label={t('print.pageColor')}
                             />

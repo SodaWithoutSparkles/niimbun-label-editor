@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LabelDoc, Node } from '../../core/doc/types';
 import { createFtagSpareDoc, createLabelDoc } from '../../core/doc/factory';
+import { DEFAULT_TEXT_FILL } from '../../core/doc/objects';
 import type { ResolvedNode } from './resolve';
 import { DEFAULT_EMPTY_TEXT, DEFAULT_CONTENT_SIZE, DEFAULT_FONT_SIZE, resolve, resolveContent } from './resolve';
 import { resolveGuides } from './guides';
@@ -505,5 +506,50 @@ describe('resolve — text wrap + lineHeight (P5 D2)', () => {
         for (const wrap of ['word', 'char', 'clip', 'shrink', 'cut'] as const) {
             expect(resolve(textDoc({ wrap }))[0], wrap).toMatchObject({ wrap });
         }
+    });
+});
+
+describe('resolve — text fill & image tint (P4 A4)', () => {
+    const docWith = (over: Record<string, unknown>) =>
+        createLabelDoc({
+            id: 'doc-paint',
+            now: 1_700_000_000,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 1000, h: 1000 }],
+            nodes: [
+                node({
+                    id: 'n1',
+                    parentId: null,
+                    type: 'text',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    size: { w: 200, h: 100 },
+                    ...over,
+                }),
+            ],
+        });
+
+    it('defaults a text fill to DEFAULT_TEXT_FILL', () => {
+        const resolved = resolve(docWith({ text: { kind: 'static', value: 'hi' } }))[0];
+        expect(DEFAULT_TEXT_FILL).toBe('#000000');
+        expect(resolved).toMatchObject({ type: 'text', fill: DEFAULT_TEXT_FILL });
+    });
+
+    it('passes an explicit text fill through', () => {
+        const resolved = resolve(
+            docWith({ text: { kind: 'static', value: 'hi' }, fill: '#ff0000' }),
+        )[0];
+        expect(resolved).toMatchObject({ type: 'text', fill: '#ff0000' });
+    });
+
+    it('passes an image tint through only when set', () => {
+        const tinted = resolve(
+            docWith({ type: 'image', imageId: 'i1', text: undefined, tint: '#ff0000' }),
+        )[0];
+        expect(tinted).toMatchObject({ type: 'image', tint: '#ff0000' });
+
+        const plain = resolve(docWith({ type: 'image', imageId: 'i1', text: undefined }))[0];
+        expect(plain?.type).toBe('image');
+        expect(plain && 'tint' in plain).toBe(false);
     });
 });

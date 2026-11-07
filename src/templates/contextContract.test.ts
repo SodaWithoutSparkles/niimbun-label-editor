@@ -32,6 +32,7 @@ const DOCUMENTED_MEMBERS = [
     'now',
     'label',
     'globals',
+    'fields',
     'fmt',
     'seeds',
 ] as const satisfies readonly (keyof TemplateContext)[];
@@ -50,6 +51,7 @@ const REQUIRED_MEMBERS = [
     'now',
     'label',
     'globals',
+    'fields',
     'seeds',
 ] as const;
 

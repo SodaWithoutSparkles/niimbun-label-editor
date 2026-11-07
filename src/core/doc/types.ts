@@ -131,12 +131,26 @@ export interface TextNode extends BaseNode {
      * each hard `\n` line is cut at the box edge (no ellipsis, no shrink).
      */
     wrap?: TextWrap;
+    /**
+     * Glyph colour in `ColorPicker`'s emitted format (`#rgb`/`#rrggbb`/
+     * `#rrggbbaa`/`transparent`). Absent ⇒ `DEFAULT_TEXT_FILL` (black). The
+     * authored ink colour — not a print mode — used by both print and preview.
+     */
+    fill?: string;
 }
 export interface ImageNode extends BaseNode {
     type: 'image';
     imageId: string;
     /** Fit within the node box; the resolution cap is derived, never stored. */
     fit?: ImageFit;
+    /**
+     * Optional luminance tint (CSS colour, same format as {@link ShapeNode.fill}).
+     * Absent or `'transparent'` ⇒ no tint; otherwise every source pixel is
+     * recoloured by its darkness toward the tint, preserving alpha (see
+     * `core/render/tint`). Selects the ink colour; the source luminance still
+     * selects ink density.
+     */
+    tint?: string;
 }
 export interface ShapeNode extends BaseNode {
     type: 'shape';
@@ -202,7 +216,12 @@ export type Node = GroupNode | TextNode | ImageNode | ShapeNode | QrNode | Barco
 export type ContentSource =
     | { kind: 'static'; value: string }
     | { kind: 'csv'; column: string; fallback: string }
-    | { kind: 'template'; code: string; fallback: string };
+    | { kind: 'template'; code: string; fallback: string }
+    /**
+     * A named field left for the user to fill in. Field names are a namespace of
+     * their own — they never collide with a CSV `column` or a template.
+     */
+    | { kind: 'field'; name: string; fallback: string };
 
 export interface FontRef {
     fontId: string;
@@ -293,6 +312,27 @@ export interface PrintOffset {
     type: 'inner' | 'outer';
 }
 
+/**
+ * What a document is for. Absent on the wire/doc means `'label'` (legacy docs
+ * are never rewritten just to add it).
+ */
+export type DocKind = 'label' | 'preset';
+
+/**
+ * A field the document declares for its `{ kind: 'field' }` bindings (P6a).
+ * Additive: a document without declarations has no `data.fields` key.
+ */
+export interface FieldDef {
+    /** Binding id referenced by `{ kind: 'field', name }`. Never empty. */
+    id: string;
+    /** Value pre-filled in the fill form. */
+    default?: string;
+    /** The fill form refuses to print while this is empty. */
+    required?: boolean;
+    /** Not shown in the default form; reachable via "add field". */
+    hidden?: boolean;
+}
+
 export interface LabelDoc {
     version: 1;
     meta: {
@@ -300,6 +340,11 @@ export interface LabelDoc {
         name: string;
         createdAt: number; // epoch seconds (UTC)
         updatedAt: number; // epoch seconds (UTC)
+        /**
+         * Absent / `'label'` = a normal label; `'preset'` = a user-designed label
+         * with data left to fill in. Additive optional field — `version` stays 1.
+         */
+        kind?: DocKind;
         // Cosmetic preview. RASTER ONLY (PNG/WebP/JPG) — never SVG, never HTML,
         // never a data URL that could script. May be stale; never used for
         // measurement or rendering. Validation: raster mime only, ≤ 512 px
@@ -328,6 +373,15 @@ export interface LabelDoc {
         printOffset?: PrintOffset;
     };
     nodes: Node[];
-    data: { csv?: CsvRef; sampleRowIndex: number; globals: GlobalSpec[] };
+    data: {
+        csv?: CsvRef;
+        sampleRowIndex: number;
+        globals: GlobalSpec[];
+        /**
+         * Declared fill-in fields. Absent means no declarations (legacy docs are
+         * never rewritten); a binding does not need a declaration to resolve.
+         */
+        fields?: FieldDef[];
+    };
     resources: { fonts: FontRef[]; images: ImageRef[] };
 }

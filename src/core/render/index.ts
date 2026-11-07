@@ -41,6 +41,23 @@ export {
 } from './quantize';
 
 export {
+    classifyFlatRedBlack,
+    diffuseToPalette,
+    GRAYSCALE_LEVELS,
+    grayscaleRampPalette,
+    grayLevelColor,
+    nearestPaletteEntry,
+    redBlackPalette,
+    RED_BLACK_BLACK,
+    RED_BLACK_RED,
+    RED_BLACK_WHITE,
+    type PageColorMode,
+    type Palette,
+    type PaletteDiffuseOptions,
+    type PaletteEntry,
+} from './palette';
+
+export {
     screentone,
     screentoneSnap,
     isScreentoneAngle,
@@ -77,3 +94,5 @@ export {
 } from './policy';
 
 export { quantizeRgba, type QuantizeRequest } from './pipeline';
+
+export { parseHexColor, tintRgbaByLuminance } from './tint';

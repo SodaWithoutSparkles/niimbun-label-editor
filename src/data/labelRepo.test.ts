@@ -68,6 +68,34 @@ describe('createLabelRepo', () => {
         expect(await repo.get(doc.meta.id)).toEqual(doc);
     });
 
+    it('round-trips meta.kind and exposes it on the summary', async () => {
+        const repo = createLabelRepo(createMemoryAdapter());
+        const preset = createFtagSpareDoc({ name: 'Preset', now: 1, kind: 'preset' });
+        const plain = createFtagSpareDoc({ name: 'Plain', now: 2 });
+
+        await repo.save(preset);
+        await repo.save(plain);
+
+        const list = await repo.list();
+        expect(list.find((s) => s.id === preset.meta.id)?.kind).toBe('preset');
+        expect(list.find((s) => s.id === plain.meta.id)?.kind).toBe('label');
+        expect((await repo.get(preset.meta.id))?.meta.kind).toBe('preset');
+    });
+
+    it('yields a summary with kind undefined for a record written without one', async () => {
+        const repo = createLabelRepo(createMemoryAdapter());
+        const legacy = createFtagSpareDoc({ name: 'Legacy', now: 3 });
+        // Simulate a pre-`kind` document on disk.
+        delete legacy.meta.kind;
+
+        await repo.save(legacy);
+
+        const summary = (await repo.list()).find((s) => s.id === legacy.meta.id);
+        expect(summary?.kind).toBeUndefined();
+        expect(summary !== undefined && 'kind' in summary).toBe(false);
+        expect((await repo.get(legacy.meta.id))?.meta.kind).toBeUndefined();
+    });
+
     it('lists newest updatedAt first', async () => {
         const repo = createLabelRepo(createMemoryAdapter());
         const older = createFtagSpareDoc({ name: 'Older', now: 100 });

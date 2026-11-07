@@ -14,8 +14,9 @@ import { createKonvaNode } from './konvaFactory';
  * measured it. A white background covers the full raster.
  *
  * Konva/`createKonvaNode` carry each resolved shape's `fill`/`stroke`/
- * `strokeWidth` (all in hm) and text's resolved geometry. `applyInkDefaults` only
- * supplies the missing **text** ink default (text is created without a `fill`).
+ * `strokeWidth` (all in hm) and text's resolved geometry **and fill**. Text now
+ * carries its authored colour (defaulted to black by `resolve`), so
+ * `applyInkDefaults` only supplies a defensive fallback if a fill is ever empty.
  * Shapes keep their resolved style: a shape with no `fill` stays unfilled, and a
  * stroke width is in hm and scaled by the stage exactly as the preview scales it
  * (preview ≡ print).
@@ -92,8 +93,8 @@ export const prepareTextFonts = async (nodes: readonly ResolvedNode[]): Promise<
 
 /**
  * Give an unstyled plain-Konva node the default ink it still needs. Only **text**
- * needs one: `createKonvaNode` builds a `Konva.Text` without a `fill`, so an
- * empty fill becomes black (the documented text default).
+ * needs one: `createKonvaNode` supplies the resolved fill, so this is a defence
+ * only (an empty fill would otherwise fall back to black).
  *
  * Shapes are deliberately left alone: they carry their resolved `fill` (possibly
  * `'transparent'`) and `stroke`/`strokeWidth` (in hm) from the factory. Forcing a

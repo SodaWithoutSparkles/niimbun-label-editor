@@ -745,6 +745,28 @@ describe('importBundle', () => {
         });
     });
 
+    it('round-trips field declarations verbatim (P6a)', async () => {
+        const source = setup();
+        const doc = makeDoc('doc-1');
+        doc.data.fields = [
+            { id: 'price', default: '$0', required: true, hidden: true },
+            { id: 'csv.row', required: true },
+        ];
+        const { bundle, missing } = await buildBundle([doc], {
+            resourceRepo: source.resourceRepo,
+            csvRepo: source.csvRepo,
+            now: NOW,
+        });
+        expect(missing).toBe(0);
+
+        const destination = setup();
+        const result = await importBundle(bundle, writeDeps(destination));
+        expect(result.imported).toBe(1);
+
+        const imported = await onlyDoc(destination.labelRepo);
+        expect(imported.data.fields).toEqual(doc.data.fields);
+    });
+
     it('round-trips a pruned registry and every node still resolves', async () => {
         const source = setup();
         await seedAssets(source);

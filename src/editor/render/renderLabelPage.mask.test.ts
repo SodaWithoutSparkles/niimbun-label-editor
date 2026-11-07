@@ -4,7 +4,7 @@ import { installCanvasShim } from '../../test/canvasHarness';
 import { createLabelDoc } from '../../core/doc/factory';
 import { nodeLookup } from '../../core/doc/derive';
 import type { LabelDoc, Node, Region } from '../../core/doc/types';
-import { floydSteinberg, rasterDimensions, stucki, type RgbaBuffer } from '../../core/render';
+import { floydSteinberg, rasterDimensions, stucki, threshold, type RgbaBuffer } from '../../core/render';
 import type { PreparedAsset } from './assets';
 import { renderBarcode } from './barcodeImage';
 import { clearAssetCache } from './prepareAssets';
@@ -94,6 +94,21 @@ const barcodeNode = (id: string, x: number, y: number, w: number, h: number): No
         transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
         data: { kind: 'static', value: '123456789012' },
         size: { w, h },
+    });
+
+/** A text leaf; `x`/`y` are hm, `fill` is the authored glyph ink. */
+const textNode = (id: string, x: number, y: number, fill: string): Node =>
+    node({
+        id,
+        parentId: null,
+        type: 'text',
+        visible: true,
+        locked: false,
+        transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        text: { kind: 'static', value: 'HH' },
+        size: { w: 800, h: 700 },
+        fontSize: 500,
+        fill,
     });
 
 /** A doc with a single inline image resource `i1` (decoded via `resolveImage`). */
@@ -576,6 +591,44 @@ describe('renderLabelPage — R8 stacking / ink-aware policy mask', () => {
         const bPolicies = b.policies.get(2);
         expect(bPolicies && typeof bPolicies !== 'function' ? bPolicies.quantizer : bPolicies)
             .toBe(floydSteinberg);
+    });
+
+    it('transparent text fill claims no mask coverage: glyph pixels keep the image policy', async () => {
+        const gray = grayAsset();
+        const maskFor = async (fill: string) => {
+            const doc = imageDoc([
+                imageNode('img', 0, 0, 4000, 2000),
+                textNode('t', 1500, 500, fill),
+            ]);
+            const built = await buildMask(doc, new Map<string, PreparedAsset>([['img', gray]]));
+            if (!built) throw new Error('expected a policy mask');
+            return built;
+        };
+        const countOf = (built: { mask: { data: Uint8Array } }, value: number): number => {
+            let count = 0;
+            for (const cell of built.mask.data) if (cell === value) count++;
+            return count;
+        };
+
+        const opaque = await maskFor('#000000');
+        expect(opaque.policies.size, 'image policy + text policy').toBe(2);
+        // Tree order puts the image on index 1 and the text on index 2; confirm
+        // the slot by its quantizer rather than relying on that convention.
+        const entry = opaque.policies.get(2);
+        expect(entry && typeof entry !== 'function' ? entry.quantizer : entry).toBe(threshold);
+
+        // Opaque glyphs do claim the text policy somewhere on the page.
+        const glyphPixels = countOf(opaque, 2);
+        expect(glyphPixels, 'opaque text inks glyph pixels').toBeGreaterThan(0);
+
+        // A transparent fill deposits nothing, so it must leave every pixel to
+        // the image below (index 1) — including inside the glyph boxes.
+        const clear = await maskFor('transparent');
+        expect(clear.policies.size).toBe(2);
+        expect(countOf(clear, 2), 'transparent text claims no coverage').toBe(0);
+        expect(countOf(clear, 1), 'the image policy covers the whole page').toBe(
+            clear.mask.data.length,
+        );
     });
 
     it('regression: a plain opaque image alone still claims its whole drawn rect', async () => {

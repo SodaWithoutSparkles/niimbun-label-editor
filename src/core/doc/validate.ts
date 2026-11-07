@@ -18,11 +18,13 @@ import {
     QR_ERROR_CORRECTIONS,
     TEXT_WRAPS,
 } from './objects';
+import { normalizeFieldDefs } from './fieldDefs';
 import type {
     AssetRef,
     BaseNode,
     CsvRef,
     ContentSource,
+    DocKind,
     FontRef,
     GlobalSpec,
     Guide,
@@ -291,6 +293,20 @@ const toContentSource = (value: unknown): ContentSource | undefined => {
                       fallback: isString(value.fallback) ? value.fallback : '',
                   }
                 : undefined;
+        case 'field': {
+            // A field name is an opaque key. An **empty** name is valid data: it
+            // is the half-authored state ("switched to Field, name not typed
+            // yet"), resolves to `fallback`, and can never execute — exactly
+            // like an empty CSV `column`. Never trim the stored value. A
+            // missing/non-string name still falls back (undefined) so the
+            // carrier uses `{ kind: 'static', value: '' }`.
+            if (!isString(value.name)) return undefined;
+            return {
+                kind: 'field',
+                name: value.name,
+                fallback: isString(value.fallback) ? value.fallback : '',
+            };
+        }
         default:
             return undefined;
     }
@@ -574,6 +590,8 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
             if (isFiniteNumber(value.lineHeight)) node.lineHeight = value.lineHeight;
             if (isOneOf(value.direction, TEXT_DIRECTIONS)) node.direction = value.direction;
             if (isOneOf(value.wrap, TEXT_WRAPS)) node.wrap = value.wrap;
+            const fill = toOptionalColor(value.fill, repairs, 'node.fill: invalid colour dropped');
+            if (fill !== undefined) node.fill = fill;
             return node;
         }
         case 'image': {
@@ -586,6 +604,8 @@ export const isNode = (value: unknown, repairs?: string[]): Node | undefined => 
                 'node.fit: unknown fit dropped',
             );
             if (fit !== undefined) node.fit = fit;
+            const tint = toOptionalColor(value.tint, repairs, 'node.tint: invalid colour dropped');
+            if (tint !== undefined) node.tint = tint;
             return node;
         }
         case 'shape': {
@@ -1017,6 +1037,16 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
     if (updatedAt === undefined) errors.push('meta.updatedAt: must be a finite epoch-seconds number');
     const thumb = toThumb(metaRaw.thumb);
     const paperTypeId = isString(metaRaw.paperTypeId) ? metaRaw.paperTypeId : undefined;
+    // `kind` is additive: absent stays absent (legacy docs are not rewritten).
+    // A present-but-unknown value is dropped as a non-fatal repair.
+    let kind: DocKind | undefined;
+    if (metaRaw.kind !== undefined) {
+        if (metaRaw.kind === 'label' || metaRaw.kind === 'preset') {
+            kind = metaRaw.kind;
+        } else {
+            repairs.push('meta.kind: unknown value dropped');
+        }
+    }
 
     if (!isRecord(raw.label)) return { ok: false, errors: [...errors, 'label: must be an object'] };
     const labelRaw = raw.label;
@@ -1062,6 +1092,14 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
         ? Math.round(dataRaw.sampleRowIndex)
         : 0;
     const globals = toArray(dataRaw.globals, isGlobalSpec, 'data.globals', errors);
+    // `data.fields` is additive: absent stays absent. The shared normalizer is
+    // the single validation rule (dedupe first-wins, drop malformed entries) and
+    // its repairs join the document repair log.
+    const normalizedFields = dataRaw.fields === undefined ? undefined : normalizeFieldDefs(dataRaw.fields);
+    if (normalizedFields) {
+        for (const repair of normalizedFields.repairs) repairs.push(`data.${repair}`);
+    }
+    const fields = normalizedFields?.fields;
 
     if (raw.resources !== undefined && !isRecord(raw.resources)) {
         errors.push('resources: must be an object');
@@ -1084,6 +1122,7 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
                 updatedAt: updatedAt!,
                 ...(thumb ? { thumb } : {}),
                 ...(paperTypeId !== undefined ? { paperTypeId } : {}),
+                ...(kind !== undefined ? { kind } : {}),
             },
             label: {
                 backingW: backingW!,
@@ -1095,7 +1134,7 @@ export const isLabelDoc = (raw: unknown): ValidationResult => {
                 ...(printOffset ? { printOffset } : {}),
             },
             nodes,
-            data: { ...(csv ? { csv } : {}), sampleRowIndex, globals },
+            data: { ...(csv ? { csv } : {}), sampleRowIndex, globals, ...(fields ? { fields } : {}) },
             resources: { fonts, images },
         },
     };

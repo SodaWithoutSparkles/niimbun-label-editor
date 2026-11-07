@@ -13,6 +13,8 @@ const source = (kind: ContentSource['kind']): ContentSource => {
             return { kind: 'csv', column: 'name', fallback: '' };
         case 'static':
             return { kind: 'static', value: 'hello' };
+        case 'field':
+            return { kind: 'field', name: 'price', fallback: '' };
     }
 };
 
@@ -270,6 +272,10 @@ describe('docHasTemplateSources', () => {
         expect(docHasTemplateSources(makeDoc('csv'))).toBe(false);
     });
 
+    it('is false for a field-bound document (pure data)', () => {
+        expect(docHasTemplateSources(makeDoc('field'))).toBe(false);
+    });
+
     it('is true for a document with a template source', () => {
         expect(docHasTemplateSources(makeDoc('template'))).toBe(true);
     });
@@ -310,7 +316,7 @@ describe('docHasTemplateSources', () => {
         expect(docHasTemplateSources(doc)).toBe(true);
     });
 
-    it('does not gate csv/static qr or barcode sources', () => {
+    it('does not gate csv/static/field qr or barcode sources', () => {
         const doc = createLabelDoc();
         doc.nodes = [
             {
@@ -330,6 +336,16 @@ describe('docHasTemplateSources', () => {
                 locked: false,
                 transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
                 data: source('static'),
+            },
+            {
+                id: 'c1',
+                parentId: null,
+                type: 'code',
+                visible: true,
+                locked: false,
+                transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                data: source('field'),
+                format: 'datamatrix',
             },
         ];
         expect(docHasTemplateSources(doc)).toBe(false);

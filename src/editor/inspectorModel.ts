@@ -125,6 +125,9 @@ export const TEXT_FIELDS: readonly FieldDescriptor[] = [
     // How the text fills its box (P5): both renderers read `node.wrap`.
     { key: 'wrap', scope: 'text', kind: 'select', wired: true, options: ['word', 'char', 'clip', 'shrink', 'cut'] },
     { key: 'letterSpacing', scope: 'text', kind: 'number', wired: true },
+    // Authored ink colour (P4): the resolver defaults an absent fill to
+    // `DEFAULT_TEXT_FILL` (black) and both renderers read it.
+    { key: 'fill', scope: 'text', kind: 'color', wired: true },
     { key: 'direction', scope: 'text', kind: 'select', wired: false, options: ['ltr', 'rtl'], reason: 'style' },
 ];
 
@@ -147,13 +150,17 @@ export const SHAPE_FIELDS: readonly FieldDescriptor[] = [
 
 
 /**
- * Image fields (P5). `imageId` selects a `doc.resources.images` entry (options
- * resolved by the panel); `fit` chooses the draw policy. The resolution cap is
- * derived by the render path, so there is no editable `resolution` field.
+ * Image fields (P5, tint in P4). `imageId` selects a `doc.resources.images`
+ * entry (options resolved by the panel); `fit` chooses the draw policy; `tint`
+ * is an optional luminance ink colour. The resolution cap is derived by the
+ * render path, so there is no editable `resolution` field.
  */
 export const IMAGE_FIELDS: readonly FieldDescriptor[] = [
     { key: 'imageId', scope: 'image', kind: 'imageRef', wired: true },
     { key: 'fit', scope: 'image', kind: 'select', wired: true, options: IMAGE_FITS },
+    // Optional luminance tint (P4): absent/`transparent` means no tint, so the
+    // prepared asset is drawn unchanged; the asset path applies the tint.
+    { key: 'tint', scope: 'image', kind: 'color', wired: true },
 ];
 
 /** QR fields (P5). `data` is the static payload; `errorCorrection` the EC level. */
@@ -217,13 +224,13 @@ export const quantizerParamVisibility = (
 /**
  * Extra fields whose owning engine ships later, plus the wired per-object
  * quantizer policy. Kept in one list so the Object tab has a stable shape.
- *   - `contentSource`  — static/csv/template kind switcher, wired (P6)
+ *   - `contentSource`  — static/csv/field/template kind switcher, wired (P6)
  *   - `quantizerHint`  — per-object dither policy, wired (P4)
  *   - `templateTrust`  — read-only trust state, wired (P6)
  */
 export const RESERVED_FIELDS: readonly FieldDescriptor[] = [
-    // Explicit static/csv/template switch: the ONLY place a source is rewritten.
-    { key: 'contentSource', scope: 'reserved', kind: 'contentSource', wired: true, options: ['static', 'csv', 'template'] },
+    // Explicit static/csv/field/template switch: the ONLY place a source is rewritten.
+    { key: 'contentSource', scope: 'reserved', kind: 'contentSource', wired: true, options: ['static', 'csv', 'field', 'template'] },
     // Per-object dither policy: absent ⇒ the node type's default policy.
     { key: 'quantizerHint', scope: 'reserved', kind: 'select', wired: true, options: QUANTIZER_HINT_OPTIONS },
     { key: 'quantizerThreshold', scope: 'reserved', kind: 'number', wired: true },

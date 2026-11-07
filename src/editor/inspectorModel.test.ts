@@ -198,6 +198,21 @@ describe('inspectorModel — field descriptors', () => {
         expect(barcode.size).toBeUndefined();
     });
 
+    it('wires text fill and image tint as colour fields (P4)', () => {
+        // Text ink is an authored colour; an absent fill resolves to black.
+        const text = Object.fromEntries(TEXT_FIELDS.map((f) => [f.key, f]));
+        expect(text.fill).toMatchObject({ scope: 'text', kind: 'color', wired: true });
+
+        // Image tint is an optional ink colour; absent/transparent means none.
+        const image = Object.fromEntries(IMAGE_FIELDS.map((f) => [f.key, f]));
+        expect(image.tint).toMatchObject({ scope: 'image', kind: 'color', wired: true });
+
+        // The new colours are type props, never reserved fields (the exact-key
+        // list above stays the pinned source of truth).
+        expect(keys(RESERVED_FIELDS)).not.toContain('fill');
+        expect(keys(RESERVED_FIELDS)).not.toContain('tint');
+    });
+
     it('wires the P11 code options (format select over CODE_FORMATS)', () => {
         const code = Object.fromEntries(CODE_FIELDS.map((f) => [f.key, f]));
         expect(code.data?.wired).toBe(true);
@@ -239,7 +254,7 @@ describe('inspectorModel — field descriptors', () => {
         const contentSource = RESERVED_FIELDS.find((f) => f.key === 'contentSource');
         expect(contentSource?.wired).toBe(true);
         expect(contentSource?.kind).toBe('contentSource');
-        expect(contentSource?.options).toEqual(['static', 'csv', 'template']);
+        expect(contentSource?.options).toEqual(['static', 'csv', 'field', 'template']);
         const trust = RESERVED_FIELDS.find((f) => f.key === 'templateTrust');
         expect(trust?.wired).toBe(true);
         expect(trust?.kind).toBe('templateTrust');

@@ -51,6 +51,17 @@ describe('previewOptionsKey', () => {
         );
         expect(a).toBe(b);
     });
+
+    it('adds a page-colour segment only when the mode is non-mono', () => {
+        const mono = previewOptionsKey(options());
+        // Absent and explicit `'mono'` are the same raster: no new segment.
+        expect(previewOptionsKey(options({ pageColor: 'mono' }))).toBe(mono);
+
+        const grayscale = previewOptionsKey(options({ pageColor: 'grayscale' }));
+        expect(grayscale).toBe(`${mono}|grayscale`);
+        expect(grayscale).not.toBe(mono);
+        expect(previewOptionsKey(options({ pageColor: 'redBlack' }))).toBe(`${mono}|redBlack`);
+    });
 });
 
 describe('previewOverridesKey', () => {

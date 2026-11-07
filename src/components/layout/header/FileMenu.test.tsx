@@ -16,6 +16,8 @@ const renderMenu = (overrides: Partial<Props> = {}): Props => {
         onCloseMenu: vi.fn(),
         autoSave: false,
         onSave: noop,
+        onSaveAsPreset: vi.fn(),
+        showSaveAsPreset: true,
         onToggleAutoSave: noop,
         onPrint: vi.fn(),
         saveDisabled: false,
@@ -34,6 +36,35 @@ const renderMenu = (overrides: Partial<Props> = {}): Props => {
 };
 
 afterEach(cleanup);
+
+describe('FileMenu — Save as preset item', () => {
+    it('sits directly after Save and copies through its handler', () => {
+        const props = renderMenu();
+
+        const save = screen.getByText('Save Label');
+        const saveAsPreset = screen.getByText('Save as preset');
+        expect(
+            save.compareDocumentPosition(saveAsPreset) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+
+        fireEvent.click(saveAsPreset);
+        expect(props.onSaveAsPreset).toHaveBeenCalledTimes(1);
+        expect(props.onCloseMenu).toHaveBeenCalledTimes(1);
+    });
+
+    it('is absent when the prop says it cannot do anything', () => {
+        renderMenu({ showSaveAsPreset: false });
+        expect(screen.queryByText('Save as preset')).toBeNull();
+    });
+
+    it('is disabled while a transfer is running', () => {
+        const props = renderMenu({ transferBusy: true });
+
+        fireEvent.click(screen.getByText('Save as preset'));
+
+        expect(props.onSaveAsPreset).not.toHaveBeenCalled();
+    });
+});
 
 describe('FileMenu — Print item', () => {
     it('is enabled in the editor and opens the print dialog', () => {

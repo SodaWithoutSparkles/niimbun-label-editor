@@ -12,6 +12,7 @@ import {
     type RenderLabelPageOptions,
     type ResolveContext,
 } from '../editor/render';
+import { prepareResolvedContent } from '../editor/render/prepareContent';
 import { MockTransport } from './mockTransport';
 import type { PrintJob, PrintPage } from './transport';
 import {
@@ -42,6 +43,19 @@ const text = (id: string, x: number, y: number, value: string): Node =>
         fontSize: 500,
     });
 
+const textField = (id: string, x: number, y: number, name: string, fallback = 'FB'): Node =>
+    node({
+        id,
+        parentId: null,
+        type: 'text',
+        visible: true,
+        locked: false,
+        transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        text: { kind: 'field', name, fallback },
+        size: { w: 1900, h: 700 },
+        fontSize: 500,
+    });
+
 const rect = (id: string, x: number, y: number, w: number, h: number): Node =>
     node({
         id,
@@ -62,6 +76,39 @@ const ftagDoc = (printDirection?: LabelDoc['label']['printDirection']): LabelDoc
         paperTypeId: 'ftagSpare-25x78',
         ...(printDirection ? { printDirection } : {}),
         nodes: [rect('r', 300, 300, 1900, 1400), text('t', 300, 2000, 'PRINT W4')],
+    });
+
+/** A leaf rectangle with an explicit ink colour (`#ff0000` / `#000000`). */
+const inkRect = (
+    id: string,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    fill: string,
+): Node =>
+    node({
+        id,
+        parentId: null,
+        type: 'shape',
+        shape: 'rectangle',
+        visible: true,
+        locked: false,
+        transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        size: { w, h },
+        fill,
+        stroke: 'transparent',
+    });
+
+/** A doc with one red and one black rect, so both red/black planes carry ink. */
+const redBlackDoc = (printDirection?: LabelDoc['label']['printDirection']): LabelDoc =>
+    createLabelDoc({
+        paperTypeId: 'ftagSpare-25x78',
+        ...(printDirection ? { printDirection } : {}),
+        nodes: [
+            inkRect('red', 300, 300, 900, 1400, '#ff0000'),
+            inkRect('black', 1300, 300, 600, 1400, '#000000'),
+        ],
     });
 
 const collectPages = async (job: PrintJob): Promise<PrintPage[]> => {
@@ -430,8 +477,152 @@ describe('buildCsvPrintJob', () => {
             buildCsvPrintJob(doc, null, { order: 'grouped', copies: 1, overrides }),
         );
 
-        const rendered = await renderLabelPage(doc, {}, overrides);
+        const rendered = await renderLabelPage(doc, {}, renderOptionsOf(overrides, undefined));
         const oriented = orientForPrint(rendered, doc.label.printDirection);
+        const expected = ImageEncoder.encodeCanvas(
+            oriented.canvas,
+            PageColorType.SingleColor,
+            oriented.direction,
+        );
+        expect(page!.data).toEqual(expected);
+    });
+
+    it('P6: a 3-row grayscale job keeps the mode on every page and render call', async () => {
+        const seen: Array<RenderLabelPageOptions['pageColor']> = [];
+        const doc = ftagDoc();
+        const job = buildCsvPrintJob(
+            doc,
+            csvOf(['name'], [['a'], ['b'], ['c']]),
+            { order: 'grouped', copies: 1, overrides: { pageColor: PageColorType.Grayscale } },
+            {
+                render: async (pageDoc, ctx, opts) => {
+                    seen.push(opts.pageColor);
+                    return renderLabelPage(pageDoc, ctx, opts);
+                },
+            },
+        );
+
+        expect(job.totalPages).toBe(3);
+        expect(job.pageColor).toBe(PageColorType.Grayscale);
+        const pages = await collectPages(job);
+
+        // No per-row leakage: every seam call and every page carries the mode.
+        expect(seen).toEqual(['grayscale', 'grayscale', 'grayscale']);
+        expect(pages).toHaveLength(3);
+        for (const page of pages) {
+            expect(page.data.pageColor).toBe(PageColorType.Grayscale);
+            const pixelRows = page.data.rowsData.filter((row) => row.dataType === 'pixels');
+            expect(pixelRows.some((row) => row.rowDataGray !== undefined)).toBe(true);
+            expect(pixelRows.every((row) => row.rowDataBlack === undefined)).toBe(true);
+        }
+    });
+
+    it('P6: a 3-row red/black job keeps the mode and splits both planes on every page', async () => {
+        const seen: Array<RenderLabelPageOptions['pageColor']> = [];
+        const doc = redBlackDoc();
+        const job = buildCsvPrintJob(
+            doc,
+            csvOf(['name'], [['a'], ['b'], ['c']]),
+            { order: 'grouped', copies: 1, overrides: { pageColor: PageColorType.DoubleColor } },
+            {
+                render: async (pageDoc, ctx, opts) => {
+                    seen.push(opts.pageColor);
+                    return renderLabelPage(pageDoc, ctx, opts);
+                },
+            },
+        );
+
+        expect(job.totalPages).toBe(3);
+        expect(job.pageColor).toBe(PageColorType.DoubleColor);
+        const pages = await collectPages(job);
+
+        expect(seen).toEqual(['redBlack', 'redBlack', 'redBlack']);
+        expect(pages).toHaveLength(3);
+        for (const page of pages) {
+            expect(page.data.pageColor).toBe(PageColorType.DoubleColor);
+            const pixelRows = page.data.rowsData.filter((row) => row.dataType === 'pixels');
+            // Both inks reached the split: red ink and black ink on every page.
+            expect(
+                pixelRows.some((row) => (row.redPixelsCount ?? 0) > 0),
+                'the red plane carries content',
+            ).toBe(true);
+            expect(
+                pixelRows.some((row) => (row.blackPixelsCount ?? 0) > 0),
+                'the black plane carries content',
+            ).toBe(true);
+            // Never falls back to the mono/gray plane.
+            expect(pixelRows.every((row) => row.rowDataGray === undefined)).toBe(true);
+        }
+    });
+
+    it('P6: preview ≡ print bytes for grayscale and red/black', async () => {
+        for (const pageColor of [PageColorType.Grayscale, PageColorType.DoubleColor] as const) {
+            const doc = redBlackDoc('right');
+            const overrides: PrintOverrides = { pageColor, dpi: 200 };
+
+            const [page] = await collectPages(
+                buildCsvPrintJob(doc, null, { order: 'grouped', copies: 1, overrides }),
+            );
+            // The preview/dialog path: the same render options from the same
+            // overrides, oriented and encoded. Pin the bytes, not the plumbing.
+            const rendered = await renderLabelPage(
+                doc,
+                {},
+                renderOptionsOf(overrides, undefined),
+            );
+            const oriented = orientForPrint(rendered, doc.label.printDirection);
+            const expected = ImageEncoder.encodeCanvas(
+                oriented.canvas,
+                pageColor,
+                oriented.direction,
+            );
+
+            expect(page!.data.pageColor).toBe(pageColor);
+            expect(page!.data).toEqual(expected);
+        }
+    });
+
+    it('P2 golden: a field-bound leaf renders byte-identically in the editor and the print job', async () => {
+        const doc = createLabelDoc({
+            paperTypeId: 'ftagSpare-25x78',
+            nodes: [rect('r', 300, 300, 1900, 1400), textField('f', 300, 2000, 'price')],
+        });
+        const fields = { price: 'A1-9.99' };
+
+        // Editor/preview: the one pre-pass, then the shared raster.
+        const editorOverrides = await prepareResolvedContent({
+            doc,
+            csv: null,
+            rowIndex: 0,
+            fields,
+        });
+        const editor = await renderLabelPage(doc, { overrides: editorOverrides });
+
+        // Print: `prepareRow` is the dialog's seam over that same pre-pass.
+        let printed: ResolveContext | undefined;
+        const prepareRow = async (): Promise<ResolveContext> => {
+            const overrides = await prepareResolvedContent({
+                doc,
+                csv: null,
+                rowIndex: 0,
+                fields,
+            });
+            printed = { overrides };
+            return printed;
+        };
+        const job = buildCsvPrintJob(
+            doc,
+            null,
+            { order: 'grouped', copies: 1 },
+            { prepareRow },
+        );
+        const [page] = await collectPages(job);
+
+        // Same content on both sides, and the same bytes for the same page.
+        expect(printed!.overrides).toEqual(editorOverrides);
+        expect(printed!.overrides?.get('f')).toEqual({ text: 'A1-9.99', placeholder: false });
+
+        const oriented = orientForPrint(editor, doc.label.printDirection);
         const expected = ImageEncoder.encodeCanvas(
             oriented.canvas,
             PageColorType.SingleColor,
@@ -504,14 +695,56 @@ describe('buildCsvPrintJob', () => {
         );
     });
 
-    it('rejects DoubleColor pageColor (v1 render path is single-plane)', () => {
-        expect(() =>
+    it('accepts DoubleColor pageColor (red/black render path)', async () => {
+        // The v1 single-plane rejection is gone: `pageColorModeOf` maps
+        // DoubleColor to `'redBlack'`, which the shared render path implements.
+        const build = () =>
             buildCsvPrintJob(ftagDoc(), null, {
                 order: 'grouped',
                 copies: 1,
                 overrides: { pageColor: PageColorType.DoubleColor },
-            }),
-        ).toThrow(RangeError);
+            });
+
+        expect(build).not.toThrow();
+        const job = build();
+        expect(job.pageColor).toBe(PageColorType.DoubleColor);
+
+        const [page] = await collectPages(job);
+        expect(page!.data.pageColor).toBe(PageColorType.DoubleColor);
+    });
+
+    it('rejects SingleColorAlt pageColor (not implemented by the v1 render path)', () => {
+        const build = () =>
+            buildCsvPrintJob(ftagDoc(), null, {
+                order: 'grouped',
+                copies: 1,
+                overrides: { pageColor: PageColorType.SingleColorAlt },
+            });
+
+        expect(build).toThrow(RangeError);
+        expect(build).toThrow(/not implemented/);
+    });
+
+    it('accepts Grayscale and pins the encoder page-colour invariant', async () => {
+        const job = buildCsvPrintJob(ftagDoc(), null, {
+            order: 'grouped',
+            copies: 1,
+            overrides: { pageColor: PageColorType.Grayscale },
+        });
+
+        expect(job.pageColor).toBe(PageColorType.Grayscale);
+
+        const [page] = await collectPages(job);
+        // The real render seam received the mode (through `renderOptionsOf`) and
+        // the encoder stamped the same page colour on the payload.
+        expect(page!.data.pageColor).toBe(job.pageColor);
+        // Grayscale payloads carry the 4-bit nibble plane, never the 1-bit planes.
+        expect(
+            page!.data.rowsData.some(
+                (row) => row.dataType === 'pixels' && row.rowDataGray !== undefined,
+            ),
+        ).toBe(true);
+        expect(page!.data.rowsData.every((row) => row.rowDataBlack === undefined)).toBe(true);
     });
 
     it('hands the render seam a fresh options object per page', async () => {
@@ -596,6 +829,19 @@ describe('buildCsvPrintJob', () => {
         expect(options).not.toHaveProperty('speed');
         expect(options).not.toHaveProperty('labelType');
         expect(options).not.toHaveProperty('pageColor');
+    });
+
+    it('forwards a non-mono pageColor only (mono stays an absent key)', () => {
+        expect(renderOptionsOf({ pageColor: PageColorType.Grayscale }, undefined)).toMatchObject({
+            pageColor: 'grayscale',
+        });
+        // Mono is the absent-key default: both spellings keep the option object
+        // (and therefore the preview cache key) byte-identical.
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.SingleColor }, undefined),
+        ).not.toHaveProperty('pageColor');
+        expect(renderOptionsOf({}, undefined)).not.toHaveProperty('pageColor');
+        expect(renderOptionsOf(undefined, undefined)).not.toHaveProperty('pageColor');
     });
 });
 

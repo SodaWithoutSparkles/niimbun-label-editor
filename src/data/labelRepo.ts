@@ -1,6 +1,6 @@
 import i18next from 'i18next';
 import { parseDoc, serializeDoc } from '../core/doc/serialize';
-import type { LabelDoc } from '../core/doc/types';
+import type { DocKind, LabelDoc } from '../core/doc/types';
 import type { BulkError, BulkResult, StorageAdapter } from './db';
 import { errorMessage, isRecord } from './guards';
 import { createThumbRepo, type ThumbRepo } from './thumbRepo';
@@ -29,6 +29,8 @@ export interface LabelSummary {
     updatedAt: number; // epoch seconds
     backingW: number; // hm
     backingH: number; // hm
+    /** Absent / `'label'` = normal label; `'preset'` = user-designed template. */
+    kind?: DocKind;
     thumb?: string; // data URL; resolve order: thumbs store → meta.thumb → undefined
 }
 
@@ -107,6 +109,9 @@ export const createLabelRepo = (adapter: StorageAdapter): LabelRepo => {
     const toSummary = async (record: unknown): Promise<LabelSummary | undefined> => {
         if (!isLabelRecord(record)) return undefined;
         const thumb = await resolveThumb(thumbs, record.meta);
+        // Stored records are read from disk without full validation, so re-check
+        // the discriminator instead of trusting the record's type.
+        const kind = record.meta.kind;
         return {
             id: record.meta.id,
             name: typeof record.meta.name === 'string' ? record.meta.name : '',
@@ -114,6 +119,7 @@ export const createLabelRepo = (adapter: StorageAdapter): LabelRepo => {
             updatedAt: epochSeconds(record.meta.updatedAt),
             backingW: record.backingW,
             backingH: record.backingH,
+            ...(kind === 'label' || kind === 'preset' ? { kind } : {}),
             ...(thumb ? { thumb } : {}),
         };
     };

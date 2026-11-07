@@ -41,6 +41,7 @@ export interface TemplateContext {
     now: number;                   // epoch MILLISECONDS at resolve time, host-supplied
     label: TemplateLabel;          // label metadata
     globals: Record<string, unknown>; // prefetched globals keyed by spec name
+    fields: Record<string, string>; // injected preset field values keyed by field name
     fmt?: TemplateFormat;          // formatting settings; omitted when not supplied
     seeds: TemplateSeeds;          // { docSeed: string }
 }
@@ -57,12 +58,13 @@ Semantics and per-member defaults from `createTemplateContext` / `buildRowContex
 | `now` | `number` | required | Epoch **milliseconds** at resolve time. The **host** reads the clock once per pass; the worker never reads the clock. Never stored (document `meta` timestamps stay epoch seconds; the two clocks are independent by design). |
 | `label` | `TemplateLabel` | `{}` | Label metadata: `{ name?, width?, height?, dpi?, printDirection?, [key: string]: unknown }`. |
 | `globals` | `Record<string, unknown>` | `{}` | Prefetched globals keyed by `GlobalSpec.name` (see *Globals shape*). |
+| `fields` | `Record<string, string>` | `{}` | Injected preset field values keyed by field name, resolved by a `{ kind: 'field' }` source. Never persisted; a preview/print pass only. |
 | `fmt` | `TemplateFormat` | *omitted* | `Record<string, unknown>` formatting **settings** (locale, currency, patterns), not callables — the context is structured-cloned to the worker, so functions cannot cross. Omitted entirely when not supplied. |
 | `seeds` | `TemplateSeeds` | `{ docSeed: '' }` | Host seeds; only `docSeed` today. |
 
-`row` is always present (an empty object when there is no row). `globals` is
-always present. `fmt` is the one optional member, so `'fmt' in ctx` is the test
-for "formatting was supplied".
+`row` is always present (an empty object when there is no row). `globals` and
+`fields` are always present. `fmt` is the one optional member, so `'fmt' in ctx`
+is the test for "formatting was supplied".
 
 ### Row shape
 

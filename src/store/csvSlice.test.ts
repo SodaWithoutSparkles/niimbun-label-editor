@@ -106,6 +106,20 @@ describe('setDocCsv', () => {
         expect(store.getState().currentDoc).toBeNull();
         expect(store.getState().docPast).toHaveLength(0);
     });
+
+    it('declares csv.row in the same undo entry as the attach', () => {
+        const store = createAppStore();
+        store.setState({ currentDoc: createLabelDoc({ id: 'doc-1', now: 1_700_000_000 }) });
+
+        store.getState().setDocCsv(attachInput());
+
+        expect(store.getState().currentDoc?.data.fields).toEqual([{ id: 'csv.row' }]);
+        expect(store.getState().docPast).toHaveLength(1);
+
+        // Clearing the CSV leaves the declaration for a later re-attach.
+        store.getState().setDocCsv(null);
+        expect(store.getState().currentDoc?.data.fields).toEqual([{ id: 'csv.row' }]);
+    });
 });
 
 describe('csvRepo wiring', () => {

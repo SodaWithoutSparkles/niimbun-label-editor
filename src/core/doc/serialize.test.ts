@@ -63,6 +63,34 @@ describe('serializeDoc / parseDoc', () => {
         expect(parsed.doc).toEqual(doc);
     });
 
+    it('round-trips a preset doc with a field binding through gzip', async () => {
+        const doc = createFtagSpareDoc({
+            name: 'Preset',
+            now: 7,
+            kind: 'preset',
+            nodes: [
+                {
+                    id: 'n1',
+                    parentId: null,
+                    type: 'text',
+                    visible: true,
+                    locked: false,
+                    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+                    text: { kind: 'field', name: 'price', fallback: '$0' },
+                },
+            ],
+        });
+
+        const parsed = await parseDoc(await serializeDoc(doc));
+        expect(parsed.ok).toBe(true);
+        if (!parsed.ok) return;
+        expect(parsed.doc.meta.kind).toBe('preset');
+        expect(parsed.doc.nodes[0]).toMatchObject({
+            type: 'text',
+            text: { kind: 'field', name: 'price', fallback: '$0' },
+        });
+    });
+
     it('round-trips nodes and asset provenances', async () => {
         const doc = createFtagSpareDoc({ now: 5 });
         doc.nodes = [

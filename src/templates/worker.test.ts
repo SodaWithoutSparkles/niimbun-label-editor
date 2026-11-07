@@ -11,6 +11,7 @@ const makeContext = (overrides: Partial<TemplateContext> = {}): TemplateContext 
     now: 1_700_000_000_000,
     label: { name: 'Demo', dpi: 300 },
     globals: {},
+    fields: {},
     seeds: { docSeed: 'doc-1' },
     ...overrides,
 });
@@ -132,6 +133,7 @@ describe('createTemplateContext', () => {
             now: 123,
             label: {},
             globals: {},
+            fields: {},
             seeds: { docSeed: '' },
         });
     });
@@ -141,5 +143,14 @@ describe('createTemplateContext', () => {
         const context = createTemplateContext({ index: 0, total: 1, row: {}, rowCount: 9, now: 1, fmt });
         expect(context.rowCount).toBe(9);
         expect(context.fmt).toBe(fmt);
+    });
+
+    it('defaults fields to {} and carries an injected map through', () => {
+        const defaults = createTemplateContext({ index: 0, total: 1, row: {}, now: 1 });
+        expect(defaults.fields).toEqual({});
+
+        const fields = { price: '9.99' };
+        const context = createTemplateContext({ index: 0, total: 1, row: {}, now: 1, fields });
+        expect(context.fields).toBe(fields);
     });
 });

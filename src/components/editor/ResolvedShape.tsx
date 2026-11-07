@@ -174,7 +174,9 @@ export const ResolvedShape = React.memo(function ResolvedShape({
                 lineHeight: node.lineHeight,
                 letterSpacing: node.letterSpacing,
                 listening: false,
-                fill: node.placeholder ? '#9ca3af' : '#111827',
+                // Glyph ink: the authored resolved fill; the empty-content
+                // placeholder stays grey so it reads as "no content yet".
+                fill: node.placeholder ? '#9ca3af' : node.fill,
                 stroke,
                 strokeWidth: selected ? 1 : 0,
                 // Selection outline only: constant screen width.

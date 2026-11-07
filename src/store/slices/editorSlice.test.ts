@@ -1231,6 +1231,97 @@ describe('editorSlice — setDocGlobals (P6 W6)', () => {
     });
 });
 
+describe('editorSlice — setDocFields / ensureFieldDef (P6a)', () => {
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
+    it('replaces declarations as one undoable change and undo restores absence', () => {
+        const store = setupStore();
+        store.getState().setDocFields([{ id: 'price', default: '$0', required: true }]);
+
+        expect(store.getState().currentDoc?.data.fields).toEqual([
+            { id: 'price', default: '$0', required: true },
+        ]);
+        expect(store.getState().docPast).toHaveLength(1);
+
+        store.getState().undoDoc();
+        // Absent stays absent: no empty-array key is introduced by undo.
+        expect('fields' in store.getState().currentDoc!.data).toBe(false);
+
+        store.getState().redoDoc();
+        expect(store.getState().currentDoc?.data.fields).toHaveLength(1);
+    });
+
+    it('does not create a dead undo entry for an identical list', () => {
+        const store = setupStore();
+        const fields = [{ id: 'price' }];
+        store.getState().setDocFields(fields);
+        store.getState().setDocFields([{ id: 'price' }]);
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('normalizes the list before storing (dedupe first-wins, drop bad entries)', () => {
+        const store = setupStore();
+        store.getState().setDocFields([
+            { id: 'price', default: 'first' },
+            { id: '' },
+            { id: 'price', default: 'second' },
+        ]);
+
+        expect(store.getState().currentDoc?.data.fields).toEqual([{ id: 'price', default: 'first' }]);
+    });
+
+    it('removes the key for an empty list', () => {
+        const store = setupStore();
+        store.getState().setDocFields([{ id: 'price' }]);
+        store.getState().setDocFields([]);
+
+        expect('fields' in store.getState().currentDoc!.data).toBe(false);
+    });
+
+    it('autosaves the new declarations', async () => {
+        vi.useFakeTimers();
+        const { repo, save } = makeMemoryRepo();
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo(repo);
+        store.getState().setDocAutosaveDelay(50);
+        store.setState({ currentDoc: makeDoc(), view: 'editor', autoSave: true });
+
+        store.getState().setDocFields([{ id: 'price' }]);
+        await vi.advanceTimersByTimeAsync(50);
+
+        expect(save).toHaveBeenCalledTimes(1);
+        expect(save.mock.calls[0]![0].data.fields).toEqual([{ id: 'price' }]);
+    });
+
+    it('ensureFieldDef appends once, untrimmed, as one undo entry', () => {
+        const store = setupStore();
+
+        store.getState().ensureFieldDef('  price  ');
+        expect(store.getState().currentDoc?.data.fields).toEqual([{ id: '  price  ' }]);
+        expect(store.getState().docPast).toHaveLength(1);
+
+        // A declared id (exact match) is a no-op.
+        store.getState().ensureFieldDef('  price  ');
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('ensureFieldDef is blank-safe and no-op without a document', () => {
+        const store = setupStore();
+        store.getState().ensureFieldDef('');
+        store.getState().ensureFieldDef('   ');
+        expect(store.getState().docPast).toHaveLength(0);
+        expect('fields' in store.getState().currentDoc!.data).toBe(false);
+
+        const empty = setupStore(null);
+        empty.getState().ensureFieldDef('price');
+        expect(empty.getState().currentDoc).toBeNull();
+        expect(empty.getState().docPast).toHaveLength(0);
+    });
+});
+
 describe('editorSlice — nudgeNodes (P4 W1)', () => {
     it('translates a single selected node by the world hm delta (one undo entry)', () => {
         const doc = makeDoc([textNode('a')]);
@@ -1381,6 +1472,41 @@ describe('editorSlice — attachCsv (P6 W6)', () => {
         store.getState().undoDoc();
         expect(store.getState().currentDoc!.data.csv).toBeUndefined();
         expect(store.getState().currentDoc!.data.sampleRowIndex).toBe(3);
+    });
+
+    it('declares csv.row in the same undo entry as the attach', () => {
+        const store = setupStore();
+        store.getState().attachCsv({ csvId: 'csv-1', name: 'x.csv' });
+
+        const doc = store.getState().currentDoc!;
+        expect(doc.data.fields).toEqual([{ id: 'csv.row' }]);
+        // Attach + sample-row reset + declaration are one step.
+        expect(store.getState().docPast).toHaveLength(1);
+
+        store.getState().undoDoc();
+        expect('fields' in store.getState().currentDoc!.data).toBe(false);
+    });
+
+    it('keeps the row-selector declaration when the CSV is cleared', () => {
+        const store = setupStore();
+        store.getState().attachCsv({ csvId: 'csv-1', name: 'x.csv' });
+        store.getState().attachCsv(null);
+
+        expect(store.getState().currentDoc!.data.csv).toBeUndefined();
+        expect(store.getState().currentDoc!.data.fields).toEqual([{ id: 'csv.row' }]);
+    });
+
+    it('preserves an author’s csv.row settings and appends it last', () => {
+        const doc = makeDoc();
+        doc.data.fields = [{ id: 'price' }, { id: 'csv.row', required: true }];
+        const store = setupStore(doc);
+
+        store.getState().attachCsv({ csvId: 'csv-1', name: 'x.csv' });
+
+        expect(store.getState().currentDoc!.data.fields).toEqual([
+            { id: 'price' },
+            { id: 'csv.row', required: true },
+        ]);
     });
 
     it('clearing with null drops the ref only (row untouched)', () => {

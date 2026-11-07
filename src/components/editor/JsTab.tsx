@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store/useStore';
-import type { ContentSource, Node } from '../../core/doc/types';
+import type { ContentSource, LabelDoc, Node } from '../../core/doc/types';
 import type { NodePatch } from '../../store/storeTypes';
 import { contentSourceOf, contentFieldKey } from '../../editor/contentSource';
 import { useSampleRowState } from './sampleRowContext';
@@ -11,7 +11,8 @@ import { Input, Select } from '../common/forms';
  * MFP → JS tab (ui-spec.md §8, P6 W6).
  *
  * Authors the selected text/qr/barcode node's `ContentSource`: a static value, a
- * CSV column binding, or a template (`code` + `fallback`). The kind switcher is
+ * CSV column binding, a named field (filled in later, resolves to its fallback
+ * until then), or a template (`code` + `fallback`). The kind switcher is
  * the ONLY place a source is rewritten to `static` — editing a field for an
  * existing csv/template source never changes its kind (fixes the P3/P5 bug where
  * the Object tab rewrote a bound source on edit).
@@ -30,6 +31,7 @@ type SourceKind = ContentSource['kind'];
 const KIND_LABEL_KEYS = {
     static: 'editor.mfp.contentStatic',
     csv: 'editor.mfp.contentCsv',
+    field: 'editor.mfp.contentField',
     template: 'editor.mfp.contentTemplate',
 } as const satisfies Record<SourceKind, string>;
 
@@ -52,6 +54,17 @@ const TRUST_LABEL_KEYS = {
 const sourceFieldKey = contentFieldKey;
 
 /**
+ * True when `doc` binds `name` as a field source on any node. A declaration is
+ * only meaningful while such a binding exists; blur can be caused by the kind
+ * switcher, whose click discards the binding before the handler runs.
+ */
+const docBindsField = (doc: LabelDoc | null, name: string): boolean =>
+    doc?.nodes.some((node) => {
+        const bound = contentSourceOf(node);
+        return bound?.kind === 'field' && bound.name === name;
+    }) ?? false;
+
+/**
  * One cell in the JS tab's adaptive control grid: a label above its control.
  * The tab used `SettingRow` (label and control on one line, fixed `w-36`/`w-40`
  * control); stacking lets each control fill its grid cell, which is what lets
@@ -67,6 +80,7 @@ const TabField: React.FC<{ label: string; children: React.ReactNode }> = ({ labe
 export const JsTab: React.FC<JsTabProps> = ({ selected }) => {
     const { t } = useTranslation();
     const updateNode = useStore((state) => state.updateNode);
+    const ensureFieldDef = useStore((state) => state.ensureFieldDef);
     const csvRepo = useStore((state) => state.csvRepo);
     const doc = useStore((state) => state.currentDoc);
     const sampleRow = useSampleRowState();
@@ -121,17 +135,54 @@ export const JsTab: React.FC<JsTabProps> = ({ selected }) => {
 
     const write = (patch: NodePatch) => updateNode(first.id, patch);
 
+    /**
+     * Write a `field` source's node patch only (P6a). The declaration is made on
+     * commit (blur / Enter) via {@link declareField}, not per keystroke, so
+     * typing a name does not leave one orphan declaration and undo entry per
+     * character. The name is stored untrimmed, matching the binding's lookup key.
+     */
+    const writeField = (name: string, fallback: string) => {
+        write({ [fieldKey]: { kind: 'field', name, fallback } } as NodePatch);
+    };
+
+    /**
+     * Register a committed field name as a declaration. A blank (whitespace-only)
+     * name is the half-authored state and declares nothing; an already-declared
+     * name is a store no-op. The live document must still bind the name — clicking
+     * the kind select blurs this input and replaces the binding with a static
+     * source, and declaring after that would leave a phantom field in the fill
+     * form for a value nothing reads.
+     */
+    const declareField = (name: string) => {
+        if (name.trim().length === 0) return;
+        if (!docBindsField(useStore.getState().currentDoc, name)) return;
+        ensureFieldDef(name);
+    };
+
+    /**
+     * Blur declares one tick later so a following kind-switch click has committed
+     * its write first; {@link declareField} then sees the live document.
+     */
+    const declareFieldDeferred = (name: string) => {
+        setTimeout(() => declareField(name), 0);
+    };
+
     const currentKind: SourceKind = source?.kind ?? 'static';
     const templateError = sampleRow?.templateErrors.get(first.id);
     const trust = sampleRow?.trust ?? 'ask';
     const templateBlocked = trust === 'never';
     const templateNeedsApproval = trust === 'ask';
 
-    /** Replace the source, preserving the kind's own fields. */
+    /**
+     * Replace the source, preserving the kind's own fields. A `field` source is
+     * pure data (name + fallback) — no trust gate applies to it, and switching
+     * away simply replaces it (the field kind has no payload that maps onto the
+     * other kinds).
+     */
     const switchKind = (kind: SourceKind) => {
         // A select with a filtered-out option reports `''`; ignore anything that
         // is not a real kind rather than falling through to a template source.
-        if (kind !== 'static' && kind !== 'csv' && kind !== 'template') return;
+        if (kind !== 'static' && kind !== 'csv' && kind !== 'field' && kind !== 'template') return;
         if (kind === source?.kind) return;
         // `never` disables authoring a NEW template source; an existing template
         // stays selectable so the user can switch away from it.
@@ -139,13 +190,15 @@ export const JsTab: React.FC<JsTabProps> = ({ selected }) => {
         let next: ContentSource;
         if (kind === 'static') next = { kind: 'static', value: '' };
         else if (kind === 'csv') next = { kind: 'csv', column: '', fallback: '' };
+        else if (kind === 'field') next = { kind: 'field', name: '', fallback: '' };
         else next = { kind: 'template', code: '', fallback: '' };
         write({ [fieldKey]: next } as NodePatch);
     };
 
     // `never` hides the template option unless the node is already a template
     // (so an existing template remains selectable and can be switched away).
-    const kindOptions = (['static', 'csv', 'template'] as const).filter(
+    // `field` is never gated: it is inert data.
+    const kindOptions = (['static', 'csv', 'field', 'template'] as const).filter(
         (kind) => !(kind === 'template' && templateBlocked && source?.kind !== 'template'),
     );
 
@@ -189,6 +242,18 @@ export const JsTab: React.FC<JsTabProps> = ({ selected }) => {
                             value={source?.kind === 'csv' ? source.fallback : ''}
                             onChange={(fallback) =>
                                 write({ [fieldKey]: { kind: 'csv', column: source?.kind === 'csv' ? source.column : '', fallback } } as NodePatch)
+                            }
+                            aria-label={t('editor.mfp.contentFallback')}
+                        />
+                    </TabField>
+                )}
+
+                {currentKind === 'field' && (
+                    <TabField label={t('editor.mfp.contentFallback')}>
+                        <Input
+                            value={source?.kind === 'field' ? source.fallback : ''}
+                            onChange={(fallback) =>
+                                writeField(source?.kind === 'field' ? source.name : '', fallback)
                             }
                             aria-label={t('editor.mfp.contentFallback')}
                         />
@@ -243,6 +308,22 @@ export const JsTab: React.FC<JsTabProps> = ({ selected }) => {
                             aria-label={t('editor.mfp.csvColumn')}
                         />
                     )}
+                </TabField>
+            )}
+
+            {currentKind === 'field' && (
+                <TabField label={t('editor.mfp.fieldName')}>
+                    <Input
+                        value={source?.kind === 'field' ? source.name : ''}
+                        onChange={(name) =>
+                            writeField(name, source?.kind === 'field' ? source.fallback : '')
+                        }
+                        onBlur={(event) => declareFieldDeferred(event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                            if (event.key === 'Enter') declareField(event.currentTarget.value);
+                        }}
+                        aria-label={t('editor.mfp.fieldName')}
+                    />
                 </TabField>
             )}
 

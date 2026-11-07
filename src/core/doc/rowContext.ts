@@ -9,8 +9,8 @@ import type { TemplateContext, TemplateFormat, TemplateLabel, TemplateSeeds } fr
  * edge. `TemplateEngine` instances are injected by the host.
  *
  * The produced shape is the plan's resolve context
- * `{ index, total, row, rowCount, now, label, globals, fmt, seeds }`. It is
- * exactly the {@link TemplateContext} the engine receives, so the two cannot
+ * `{ index, total, row, rowCount, now, label, globals, fields, fmt, seeds }`. It
+ * is exactly the {@link TemplateContext} the engine receives, so the two cannot
  * drift.
  */
 
@@ -25,6 +25,11 @@ export interface BuildRowContextInput {
     label?: TemplateLabel;
     /** Prefetched globals keyed by `GlobalSpec.name`. Defaults to `{}`. */
     globals?: Record<string, unknown>;
+    /**
+     * Injected preset field values keyed by field name exactly as stored on a
+     * `{ kind: 'field' }` source. Defaults to `{}`. Never persisted.
+     */
+    fields?: Record<string, string>;
     /** Formatting settings. Omitted from the result when not supplied. */
     fmt?: TemplateFormat;
     /** Stable per-document seed (`docSeed = doc.meta.id`). Defaults to `{ docSeed: '' }`. */
@@ -88,6 +93,7 @@ export const buildRowContext = (input: BuildRowContextInput): RowContext => {
         now: input.now,
         label: input.label ?? {},
         globals: input.globals ?? {},
+        fields: input.fields ?? {},
         seeds: input.seeds ?? { docSeed: '' },
         ...(input.fmt === undefined ? {} : { fmt: input.fmt }),
     };

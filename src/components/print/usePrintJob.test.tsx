@@ -81,6 +81,16 @@ const csvNode = (): Node => ({
     text: { kind: 'csv', column: 'name', fallback: 'FB' },
 });
 
+const textFieldNode = (id = 'f1', name = 'price'): Node => ({
+    id,
+    parentId: null,
+    type: 'text',
+    visible: true,
+    locked: false,
+    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+    text: { kind: 'field', name, fallback: 'FB' },
+});
+
 const makeDoc = (nodes: Node[]): LabelDoc =>
     createLabelDoc({ id: 'doc-1', now: 1_700_000_000, backingW: 3000, backingH: 2000, nodes });
 
@@ -283,6 +293,78 @@ describe('usePrintJob — serial-use engine (single-flight)', () => {
         expect(maxActive).toBe(1);
         expect(textAt(doc, first)).toBe('EVALUATED');
         expect(textAt(doc, second)).toBe('EVALUATED');
+    });
+});
+
+describe('usePrintJob — injected field values', () => {
+    it('resolves field sources from the injected map for prepareRow(0)', async () => {
+        const doc = makeDoc([textFieldNode()]);
+        useStore.setState({ currentDoc: doc, trustRepo: makeTrustRepo() });
+
+        const { result } = renderHook(() =>
+            usePrintJob({ open: true, fields: { price: '9.99' } }),
+        );
+
+        const ctx = await result.current.prepareRow(0);
+
+        expect(ctx.overrides?.get('f1')).toEqual({ text: '9.99', placeholder: false });
+        expect(textAt(doc, ctx)).toBe('9.99');
+        // A field-only doc is not a template doc: no gate, engine or prompt.
+        expect(createEngineMock).not.toHaveBeenCalled();
+        expect(promptMock).not.toHaveBeenCalled();
+    });
+});
+
+describe('usePrintJob — explicit document option', () => {
+    it('resolves the passed document, not state.currentDoc, with the injected fields', async () => {
+        const storeDoc = makeDoc([textFieldNode('store-field', 'price')]);
+        const presetDoc = createLabelDoc({
+            id: 'preset-doc',
+            now: 1_700_000_100,
+            backingW: 3000,
+            backingH: 2000,
+            nodes: [textFieldNode('preset-field', 'price')],
+        });
+        useStore.setState({ currentDoc: storeDoc, trustRepo: makeTrustRepo() });
+
+        const { result } = renderHook(() =>
+            usePrintJob({ open: true, doc: presetDoc, fields: { price: '7.50' } }),
+        );
+        const ctx = await result.current.prepareRow(0);
+
+        expect(ctx.overrides?.get('preset-field')).toEqual({ text: '7.50', placeholder: false });
+        // The store's open document was never resolved.
+        expect(ctx.overrides?.has('store-field')).toBe(false);
+        expect(textAt(presetDoc, ctx)).toBe('7.50');
+    });
+
+    it('stays inert for an explicit null document even when a doc is open', async () => {
+        const resolveSpy = vi.fn(async () => 'always' as TrustDecision);
+        const gate: TrustGate = {
+            resolve: resolveSpy as unknown as TrustGate['resolve'],
+            allowOnce: vi.fn(),
+            denyOnce: vi.fn(),
+            always: vi.fn(async () => undefined),
+            never: vi.fn(async () => undefined),
+            remove: vi.fn(async () => undefined),
+            clear: vi.fn(async () => undefined),
+            clearSession: vi.fn(),
+            sessionEntries: () => [],
+        };
+        useStore.setState({
+            currentDoc: makeDoc([textTemplateNode()]),
+            trustRepo: null,
+            trustGate: gate,
+        });
+
+        const { result } = renderHook(() => usePrintJob({ open: true, doc: null }));
+        const ctx = await result.current.prepareRow(0);
+
+        expect(ctx).toEqual({});
+        expect(resolveSpy).not.toHaveBeenCalled();
+        expect(createEngineMock).not.toHaveBeenCalled();
+        expect(promptMock).not.toHaveBeenCalled();
+        expect(createGlobalsCacheMock).not.toHaveBeenCalled();
     });
 });
 
@@ -498,5 +580,134 @@ describe('usePrintJob — csv', () => {
         await new Promise((resolve) => setTimeout(resolve, 10));
         expect(result.current.csvStatus).toBe('ready');
         expect(result.current.csv?.rows).toEqual([['Bee']]);
+    });
+});
+
+describe('usePrintJob — explicit CSV source', () => {
+    const override = (): CsvRecord => ({
+        id: 'single',
+        name: 'one.csv',
+        columns: ['name'],
+        rows: [['Override']],
+    });
+
+    it('uses the supplied record verbatim, reports `ready` and never reads the repo', async () => {
+        const get = vi.fn(async (): Promise<CsvRecord | null> => {
+            throw new Error('the repo must not be read');
+        });
+        const doc = attachCsv(makeDoc([csvNode()]), 'repo-csv');
+        useStore.setState({
+            currentDoc: doc,
+            csvRepo: { get } as never,
+            trustRepo: makeTrustRepo(),
+        });
+
+        const table = override();
+        const { result } = renderHook(() =>
+            usePrintJob({ open: true, csv: { kind: 'ready', record: table } }),
+        );
+
+        expect(result.current.csvStatus).toBe('ready');
+        expect(result.current.csv).toBe(table);
+        expect(result.current.csvRevision).toBe(0);
+
+        const ctx = await result.current.prepareRow(0);
+        expect(textAt(doc, ctx)).toBe('Override');
+        expect(get).not.toHaveBeenCalled();
+    });
+
+    it('reports `none` for a `none` source without reading the repo', async () => {
+        const get = vi.fn(async (): Promise<CsvRecord | null> => {
+            throw new Error('the repo must not be read');
+        });
+        const doc = attachCsv(makeDoc([csvNode()]), 'repo-csv');
+        useStore.setState({
+            currentDoc: doc,
+            csvRepo: { get } as never,
+            trustRepo: makeTrustRepo(),
+        });
+
+        const { result } = renderHook(() => usePrintJob({ open: true, csv: { kind: 'none' } }));
+
+        expect(result.current.csvStatus).toBe('none');
+        expect(result.current.csv).toBeNull();
+        expect(result.current.csvRevision).toBe(0);
+        // No source table: the attached CSV is not consulted either.
+        expect(get).not.toHaveBeenCalled();
+    });
+
+    it('reports `error` for an `error` source and resolves without a table', async () => {
+        const get = vi.fn(async (): Promise<CsvRecord | null> => {
+            throw new Error('the repo must not be read');
+        });
+        const doc = attachCsv(makeDoc([csvNode()]), 'repo-csv');
+        useStore.setState({
+            currentDoc: doc,
+            csvRepo: { get } as never,
+            trustRepo: makeTrustRepo(),
+        });
+
+        const { result } = renderHook(() => usePrintJob({ open: true, csv: { kind: 'error' } }));
+
+        expect(result.current.csvStatus).toBe('error');
+        expect(result.current.csv).toBeNull();
+        expect(result.current.csvRevision).toBe(0);
+        const ctx = await result.current.prepareRow(0);
+        expect(textAt(doc, ctx)).toBe('FB');
+        expect(get).not.toHaveBeenCalled();
+    });
+
+    it('never reads the repo for a present `ready` source', async () => {
+        const adapter = createMemoryAdapter();
+        const csvRepo = createCsvRepo(adapter);
+        // The attachment is readable, so a fallback read would succeed and
+        // hand the full table to PrintDialog — the race the source prevents.
+        await csvRepo.put({ id: 'repo-csv', name: 'x.csv', columns: ['name'], rows: [['Full']] });
+        const getSpy = vi.spyOn(csvRepo, 'get');
+        const doc = attachCsv(makeDoc([csvNode()]), 'repo-csv');
+        useStore.setState({ currentDoc: doc, csvRepo, trustRepo: makeTrustRepo() });
+
+        const { result, rerender } = renderHook(() =>
+            usePrintJob({ open: true, csv: { kind: 'ready', record: override() } }),
+        );
+        rerender();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(getSpy).not.toHaveBeenCalled();
+        expect(result.current.csvStatus).toBe('ready');
+        expect(result.current.csv?.rows).toEqual([['Override']]);
+    });
+
+    it('never reads the repo for a present `loading` source', async () => {
+        const adapter = createMemoryAdapter();
+        const csvRepo = createCsvRepo(adapter);
+        await csvRepo.put({ id: 'repo-csv', name: 'x.csv', columns: ['name'], rows: [['Full']] });
+        const getSpy = vi.spyOn(csvRepo, 'get');
+        const doc = attachCsv(makeDoc([csvNode()]), 'repo-csv');
+        useStore.setState({ currentDoc: doc, csvRepo, trustRepo: makeTrustRepo() });
+
+        const { result, rerender } = renderHook(() =>
+            usePrintJob({ open: true, csv: { kind: 'loading' } }),
+        );
+        rerender();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(getSpy).not.toHaveBeenCalled();
+        expect(result.current.csvStatus).toBe('loading');
+        expect(result.current.csv).toBeNull();
+    });
+
+    it('keeps the repo read when the option is absent', async () => {
+        const adapter = createMemoryAdapter();
+        const csvRepo = createCsvRepo(adapter);
+        await csvRepo.put({ id: 'csv-1', name: 'x.csv', columns: ['name'], rows: [['Repo']] });
+        const doc = attachCsv(makeDoc([csvNode()]), 'csv-1');
+        useStore.setState({ currentDoc: doc, csvRepo, trustRepo: makeTrustRepo() });
+
+        const { result } = renderHook(() => usePrintJob({ open: true }));
+        await waitFor(() => expect(result.current.csvStatus).toBe('ready'));
+
+        const ctx = await result.current.prepareRow(0);
+        expect(textAt(doc, ctx)).toBe('Repo');
     });
 });

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '../../i18n';
 import { useStore } from '../../store/useStore';
 import { createLabelDoc } from '../../core/doc/factory';
@@ -98,6 +98,191 @@ describe('JsTab — content source kind switcher', () => {
     });
 });
 
+describe('JsTab — field binding authoring (P4)', () => {
+    const persistedText = (): ContentSource => {
+        const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 't1')! as {
+            text: ContentSource;
+        };
+        return node.text;
+    };
+
+    /** Let the blur handler's deferred (setTimeout 0) declaration tick run. */
+    const flushDeferred = () =>
+        act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+    it('switches the kind select to Field with an empty name and fallback', () => {
+        const selected = textNode({ kind: 'static', value: 'hi' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t1'] });
+        const { rerender } = render(<JsTab selected={[selected]} />);
+
+        fireEvent.change(kindSelect(), { target: { value: 'field' } });
+
+        // The half-authored state is written immediately (and is valid).
+        expect(persistedText()).toEqual({ kind: 'field', name: '', fallback: '' });
+
+        // Re-select the updated node (as the parent would) to see the inputs.
+        const updated = useStore.getState().currentDoc!.nodes[0]!;
+        rerender(<JsTab selected={[updated]} />);
+        expect((screen.getByLabelText('Field name') as HTMLInputElement).value).toBe('');
+        expect((screen.getByLabelText('Fallback') as HTMLInputElement).value).toBe('');
+    });
+
+    it('persists the field name and the fallback, keeping both', () => {
+        const selected = textNode({ kind: 'field', name: '', fallback: '' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t1'] });
+        const { rerender } = render(<JsTab selected={[selected]} />);
+
+        fireEvent.change(screen.getByLabelText('Field name'), { target: { value: 'price' } });
+        expect(persistedText()).toEqual({ kind: 'field', name: 'price', fallback: '' });
+
+        // Re-selected as the parent would after the commit.
+        const afterName = useStore.getState().currentDoc!.nodes[0]!;
+        rerender(<JsTab selected={[afterName]} />);
+        fireEvent.change(screen.getByLabelText('Fallback'), { target: { value: '$0' } });
+
+        expect(persistedText()).toEqual({ kind: 'field', name: 'price', fallback: '$0' });
+    });
+
+    it('declares a field name only on commit (blur), not per keystroke (P6a)', async () => {
+        const selected = textNode({ kind: 'field', name: '', fallback: '' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t1'] });
+        const { rerender } = render(<JsTab selected={[selected]} />);
+
+        // Type character by character, re-selecting as the parent would.
+        const type = (value: string) => {
+            fireEvent.change(screen.getByLabelText('Field name'), { target: { value } });
+            const updated = useStore.getState().currentDoc!.nodes[0]!;
+            rerender(<JsTab selected={[updated]} />);
+        };
+        type('p');
+        type('pr');
+        type('pri');
+        type('price');
+
+        // Typing writes the binding but declares nothing until commit.
+        expect('fields' in useStore.getState().currentDoc!.data).toBe(false);
+        expect(persistedText()).toEqual({ kind: 'field', name: 'price', fallback: '' });
+        expect((screen.getByLabelText('Field name') as HTMLInputElement).value).toBe('price');
+
+        fireEvent.blur(screen.getByLabelText('Field name'));
+        await flushDeferred();
+
+        // Exactly one declaration, for the final name only.
+        expect(useStore.getState().currentDoc!.data.fields).toEqual([{ id: 'price' }]);
+    });
+
+    it('declares a typed non-empty field name exactly once (P6a)', async () => {
+        const selected = textNode({ kind: 'field', name: '', fallback: '' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t1'] });
+        const { rerender } = render(<JsTab selected={[selected]} />);
+
+        fireEvent.change(screen.getByLabelText('Field name'), { target: { value: 'price' } });
+        // Declarations happen on commit, not on the write itself.
+        expect('fields' in useStore.getState().currentDoc!.data).toBe(false);
+        rerender(<JsTab selected={[useStore.getState().currentDoc!.nodes[0]!]} />);
+
+        fireEvent.blur(screen.getByLabelText('Field name'));
+        await flushDeferred();
+        expect(useStore.getState().currentDoc!.data.fields).toEqual([{ id: 'price' }]);
+
+        // Committing the same name again (Enter) is a no-op declaration.
+        fireEvent.change(screen.getByLabelText('Field name'), { target: { value: 'price' } });
+        fireEvent.keyDown(screen.getByLabelText('Field name'), { key: 'Enter' });
+        expect(useStore.getState().currentDoc!.data.fields).toEqual([{ id: 'price' }]);
+    });
+
+    it('does not duplicate an already-declared name', async () => {
+        const source = { kind: 'field' as const, name: 'price', fallback: '' };
+        const selected = textNode(source);
+        const document = doc([selected]);
+        document.data.fields = [{ id: 'price', default: '$0' }];
+        useStore.setState({ currentDoc: document, selectedNodeIds: ['t1'] });
+        const { rerender } = render(<JsTab selected={[selected]} />);
+
+        fireEvent.change(screen.getByLabelText('Field name'), { target: { value: 'price' } });
+        rerender(<JsTab selected={[useStore.getState().currentDoc!.nodes[0]!]} />);
+        fireEvent.blur(screen.getByLabelText('Field name'));
+        await flushDeferred();
+
+        expect(useStore.getState().currentDoc!.data.fields).toEqual([{ id: 'price', default: '$0' }]);
+    });
+
+    it('registers nothing for a blank field name', async () => {
+        const selected = textNode({ kind: 'field', name: '', fallback: '' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t1'] });
+        const { rerender } = render(<JsTab selected={[selected]} />);
+
+        fireEvent.change(screen.getByLabelText('Field name'), { target: { value: '   ' } });
+        rerender(<JsTab selected={[useStore.getState().currentDoc!.nodes[0]!]} />);
+        fireEvent.blur(screen.getByLabelText('Field name'));
+        await flushDeferred();
+
+        expect('fields' in useStore.getState().currentDoc!.data).toBe(false);
+    });
+
+    it('declares nothing when a kind switch discards the typed name (P6a re-review)', async () => {
+        const selected = textNode({ kind: 'field', name: '', fallback: '' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t1'] });
+        const { rerender } = render(<JsTab selected={[selected]} />);
+
+        fireEvent.change(screen.getByLabelText('Field name'), { target: { value: 'price' } });
+        rerender(<JsTab selected={[useStore.getState().currentDoc!.nodes[0]!]} />);
+        // A real click on the select blurs the input before the switch commits.
+        fireEvent.blur(screen.getByLabelText('Field name'));
+        fireEvent.change(kindSelect(), { target: { value: 'static' } });
+        await flushDeferred();
+
+        // The binding is gone, so the deferred declaration must be a no-op.
+        expect('fields' in useStore.getState().currentDoc!.data).toBe(false);
+        expect(persistedText()).toEqual({ kind: 'static', value: '' });
+    });
+
+    it('still declares a typed name when blur moves to another field', async () => {
+        const selected = textNode({ kind: 'field', name: '', fallback: '' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t1'] });
+        const { rerender } = render(<JsTab selected={[selected]} />);
+
+        const nameInput = screen.getByLabelText('Field name');
+        fireEvent.change(nameInput, { target: { value: 'price' } });
+        rerender(<JsTab selected={[useStore.getState().currentDoc!.nodes[0]!]} />);
+        fireEvent.blur(screen.getByLabelText('Field name'), {
+            relatedTarget: screen.getByLabelText('Fallback'),
+        });
+        await flushDeferred();
+
+        // The document still binds `price`, so the declaration stands.
+        expect(useStore.getState().currentDoc!.data.fields).toEqual([{ id: 'price' }]);
+    });
+
+    it('leaves an existing field source untouched when Field is selected again', () => {
+        const source = { kind: 'field' as const, name: 'price', fallback: 'F' };
+        const selected = textNode(source);
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t1'] });
+        render(<JsTab selected={[selected]} />);
+        const before = useStore.getState().currentDoc;
+
+        // The select reports its current value; switchKind must early-return.
+        fireEvent.change(kindSelect(), { target: { value: 'field' } });
+
+        expect(persistedText()).toEqual(source);
+        expect(useStore.getState().currentDoc).toBe(before);
+    });
+
+    it('shows the field name input for an existing field source without rewriting it', () => {
+        const selected = textNode({ kind: 'field', name: 'price', fallback: 'F' });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['t1'] });
+        render(<JsTab selected={[selected]} />);
+
+        expect(kindSelect().value).toBe('field');
+        expect((screen.getByLabelText('Field name') as HTMLInputElement).value).toBe('price');
+        expect((screen.getByLabelText('Fallback') as HTMLInputElement).value).toBe('F');
+        const node = useStore.getState().currentDoc!.nodes[0]! as { text: ContentSource };
+        expect(node.text).toEqual({ kind: 'field', name: 'price', fallback: 'F' });
+    });
+});
+
 const trustState = (trust: 'ask' | 'always' | 'never'): SampleRowState => ({
     overrides: new Map(),
     trust,
@@ -138,7 +323,12 @@ describe('JsTab — never blocks a NEW template source (should-fix)', () => {
         renderWithTrust(node, 'never');
 
         const select = screen.getByLabelText('Content') as HTMLSelectElement;
-        expect(Array.from(select.options).map((option) => option.value)).toEqual(['static', 'csv']);
+        // `field` is inert data, so it stays available even when templates are blocked.
+        expect(Array.from(select.options).map((option) => option.value)).toEqual([
+            'static',
+            'csv',
+            'field',
+        ]);
 
         // A programmatic attempt (the option is gone, so the value is `''`) must
         // not fall through to creating a template source.

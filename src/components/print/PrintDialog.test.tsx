@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StrictMode, useState } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { LabelType, type EncodedImage } from '@mmote/niimbluelib';
+import { LabelType, PageColorType, type EncodedImage } from '@mmote/niimbluelib';
 import '../../i18n';
 import { rasterDimensions } from '../../core/render';
 import { createLabelDoc } from '../../core/doc/factory';
@@ -1400,5 +1400,232 @@ describe('PrintDialog — label type defaults to the reported roll (P19)', () =>
         fireEvent.click(printButton());
         await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
         expect(jobOverrides()?.labelType).toBeUndefined();
+    });
+});
+
+describe('PrintDialog — page colour', () => {
+    const pageColorSelect = () => screen.getByLabelText('Page colour');
+    // Name patterns (not exact strings): an unsupported mode's label carries the
+    // `(unsupported)` suffix, so these must find both the plain and the
+    // suffixed form without changing what the assertion is about.
+    const grayscaleOption = () =>
+        screen.getByRole('option', { name: /^Grayscale \(16 levels\)/ });
+    const doubleColorOption = () => screen.getByRole('option', { name: /^Red & black/ });
+
+    const lastThumbnailOverrides = (): { pageColor?: string } | undefined => {
+        const options = usePrintThumbnailsMock.mock.calls.at(-1)![0] as {
+            overrides?: { pageColor?: string };
+        };
+        return options.overrides;
+    };
+
+    const jobPageColor = (): PageColorType | undefined => {
+        const opts = buildCsvPrintJobMock.mock.calls[0]![2] as {
+            overrides?: { pageColor?: PageColorType };
+        };
+        return opts.overrides?.pageColor;
+    };
+
+    it('offers grayscale when supported and threads the mode into preview, thumbnails and job', async () => {
+        const runner = new FakeRunner();
+        renderDialog({ runner, printerStatus: statusOf({ ...B1_PRO, grayscale: true }) });
+
+        expect(pageColorSelect()).toHaveValue('mono');
+        expect(grayscaleOption()).toBeEnabled();
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'grayscale' } });
+        expect(pageColorSelect()).toHaveValue('grayscale');
+
+        // The doc-dpi preview re-renders through the shared path with the mode.
+        await waitFor(() =>
+            expect(
+                renderLabelPageMock.mock.calls.some(
+                    ([, , opts]) =>
+                        (opts as { pageColor?: string } | undefined)?.pageColor ===
+                        'grayscale',
+                ),
+            ).toBe(true),
+        );
+        // The queue thumbnails get the same pixel-changing override.
+        expect(lastThumbnailOverrides()).toMatchObject({ pageColor: 'grayscale' });
+
+        // The job receives the library enum, not the render-level mode.
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobPageColor()).toBe(PageColorType.Grayscale);
+    });
+
+    it('disables grayscale and keeps mono when the printer reports no support', async () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, grayscale: false }),
+        });
+
+        expect(pageColorSelect()).toHaveValue('mono');
+        expect(grayscaleOption()).toBeDisabled();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobPageColor()).toBe(PageColorType.SingleColor);
+    });
+
+    it('treats unreported capabilities as unsupported', () => {
+        renderDialog({ runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+
+        expect(pageColorSelect()).toHaveValue('mono');
+        expect(grayscaleOption()).toBeDisabled();
+    });
+
+    it('offers red & black when supported and threads DoubleColor into preview, thumbnails and job', async () => {
+        const runner = new FakeRunner();
+        // B1_PRO reports `doubleColor: true`.
+        renderDialog({ runner, printerStatus: statusOf(B1_PRO) });
+
+        expect(pageColorSelect()).toHaveValue('mono');
+        expect(doubleColorOption()).toBeEnabled();
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        expect(pageColorSelect()).toHaveValue('double');
+
+        // The doc-dpi preview re-renders through the shared path in red/black.
+        await waitFor(() =>
+            expect(
+                renderLabelPageMock.mock.calls.some(
+                    ([, , opts]) =>
+                        (opts as { pageColor?: string } | undefined)?.pageColor === 'redBlack',
+                ),
+            ).toBe(true),
+        );
+        // The queue thumbnails get the same pixel-changing override.
+        expect(lastThumbnailOverrides()).toMatchObject({ pageColor: 'redBlack' });
+
+        // The job receives the library enum, not the render-level mode.
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobPageColor()).toBe(PageColorType.DoubleColor);
+    });
+
+    it('disables red & black and keeps mono when the printer reports no double-colour support', async () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, doubleColor: false }),
+        });
+
+        expect(pageColorSelect()).toHaveValue('mono');
+        expect(doubleColorOption()).toBeDisabled();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobPageColor()).toBe(PageColorType.SingleColor);
+    });
+
+    it('disables red & black when the capability is absent', () => {
+        // No `doubleColor` key at all: unreported means unsupported.
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({
+                model: 'B1_PRO',
+                taskType: 'D110M_V4',
+                printheadPixels: 567,
+            }),
+        });
+
+        expect(pageColorSelect()).toHaveValue('mono');
+        expect(doubleColorOption()).toBeDisabled();
+    });
+
+    it('keeps every mode visible and labels both unsupported on a mono-only printer', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({
+                model: 'B1_PRO',
+                taskType: 'D110M_V4',
+                printheadPixels: 567,
+            }),
+        });
+
+        // Visible, not hidden: the user sees the modes exist and why they are off.
+        expect(screen.getByRole('option', { name: 'Single colour' })).toBeEnabled();
+        const grayscale = grayscaleOption();
+        expect(grayscale).toBeDisabled();
+        expect(grayscale).toHaveTextContent('Grayscale (16 levels) (unsupported)');
+        const double = doubleColorOption();
+        expect(double).toBeDisabled();
+        expect(double).toHaveTextContent('Red & black (unsupported)');
+
+        expect(
+            screen.getByText('This printer supports mono pages only.'),
+        ).toBeInTheDocument();
+    });
+
+    it('marks only grayscale unsupported when the printer can do red & black', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, grayscale: false }),
+        });
+
+        const grayscale = grayscaleOption();
+        expect(grayscale).toBeDisabled();
+        expect(grayscale).toHaveTextContent('Grayscale (16 levels) (unsupported)');
+        expect(doubleColorOption()).toBeEnabled();
+        expect(doubleColorOption()).not.toHaveTextContent('unsupported');
+
+        expect(
+            screen.getByText('This printer does not support 16-level grayscale pages.'),
+        ).toBeInTheDocument();
+        expect(
+            screen.queryByText('This printer supports mono pages only.'),
+        ).not.toBeInTheDocument();
+    });
+
+    it('marks only red & black unsupported when the printer supports grayscale', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, grayscale: true, doubleColor: false }),
+        });
+
+        const double = doubleColorOption();
+        expect(double).toBeDisabled();
+        expect(double).toHaveTextContent('Red & black (unsupported)');
+        expect(grayscaleOption()).toBeEnabled();
+        expect(grayscaleOption()).not.toHaveTextContent('unsupported');
+
+        expect(
+            screen.getByText('This printer does not support two-colour (red & black) pages.'),
+        ).toBeInTheDocument();
+    });
+
+    it('shows no description when every mode is supported and mono is selected', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, grayscale: true }),
+        });
+
+        expect(grayscaleOption()).toBeEnabled();
+        expect(doubleColorOption()).toBeEnabled();
+        for (const text of [
+            /This printer supports mono pages only\./,
+            /does not support 16-level grayscale pages\./,
+            /does not support two-colour/,
+            /Images are dithered/,
+        ]) {
+            expect(screen.queryByText(text)).not.toBeInTheDocument();
+        }
+    });
+
+    it('shows the red/black limitation hint only while red & black is selected', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, grayscale: true }),
+        });
+
+        const hint = /Images are dithered; per-object dither strength and gamma do not apply in red & black\./;
+        expect(screen.queryByText(hint)).not.toBeInTheDocument();
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        expect(screen.getByText(hint)).toBeInTheDocument();
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'mono' } });
+        expect(screen.queryByText(hint)).not.toBeInTheDocument();
     });
 });

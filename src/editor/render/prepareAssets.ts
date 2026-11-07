@@ -2,6 +2,7 @@ import { HM_PER_INCH } from '../../core/render';
 import type { ImageRef, LabelDoc } from '../../core/doc/types';
 import type { AssetDeps, AssetWarning, PreparedAsset } from './assets';
 import { capImageAsset, loadImageRef } from './imageAssets';
+import { tintAsset } from './tint';
 import { renderQr } from './qrImage';
 import { renderBarcode } from './barcodeImage';
 import { renderCode } from './codeImage';
@@ -218,7 +219,11 @@ export const prepareResolvedAssets = async (
                     return;
                 }
                 const { w, h } = requiredPx(node.w, node.h, imageScale);
-                assets.set(node.id, capImageAsset(asset, w, h));
+                // The tint is per leaf, applied after the shared decode cache:
+                // `tintAsset` copies into a fresh canvas when a tint is set, so
+                // the cached raster is never mutated (two tinted leaves of the
+                // same image stay independent).
+                assets.set(node.id, tintAsset(capImageAsset(asset, w, h), node.tint));
                 return;
             }
             case 'qr': {

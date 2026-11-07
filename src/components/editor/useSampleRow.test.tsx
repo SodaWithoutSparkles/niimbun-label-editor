@@ -79,6 +79,16 @@ const csvNode = (): Node => ({
     text: { kind: 'csv', column: 'name', fallback: 'FB' },
 });
 
+const textFieldNode = (id = 'f1', name = 'price'): Node => ({
+    id,
+    parentId: null,
+    type: 'text',
+    visible: true,
+    locked: false,
+    transform: { x: 0, y: 0, rotDeg: 0, scaleX: 1, scaleY: 1 },
+    text: { kind: 'field', name, fallback: 'FB' },
+});
+
 const makeDoc = (nodes: Node[]) =>
     createLabelDoc({ id: 'doc-1', now: 1_700_000_000, backingW: 3000, backingH: 2000, nodes });
 
@@ -854,6 +864,73 @@ describe('useSampleRow — refresh tick (D5)', () => {
             resolvePrompt('denyOnce');
             await vi.advanceTimersByTimeAsync(0);
         });
+    });
+});
+
+describe('useSampleRow — injected field values', () => {
+    it('resolves a field source with no CSV attached', async () => {
+        const doc = makeDoc([textFieldNode()]);
+        useStore.setState({ currentDoc: doc, trustRepo: makeTrustRepo() });
+
+        const { result } = renderHook(() => useSampleRow({ price: '9.99' }));
+
+        await waitFor(() =>
+            expect(result.current.overrides.get('f1')).toEqual({ text: '9.99', placeholder: false }),
+        );
+        expect(textAt(doc, result.current)).toBe('9.99');
+        expect(result.current.rowCount).toBe(0);
+        // No template sources: no engine, no gate, no prompt.
+        expect(createEngineMock).not.toHaveBeenCalled();
+        expect(promptMock).not.toHaveBeenCalled();
+    });
+
+    it('re-runs the pass only when a field value changes', async () => {
+        const doc = makeDoc([textFieldNode()]);
+        useStore.setState({ currentDoc: doc, trustRepo: makeTrustRepo() });
+
+        const { result, rerender } = renderHook(
+            ({ fields }: { fields: Record<string, string> }) => useSampleRow(fields),
+            { initialProps: { fields: { price: '9.99' } } },
+        );
+        await waitFor(() => expect(textAt(doc, result.current)).toBe('9.99'));
+        const settled = result.current.overrides;
+
+        // Same values, fresh object identity: the key is unchanged, so the async
+        // pass must not re-run (the override map keeps its identity).
+        await act(async () => {
+            rerender({ fields: { price: '9.99' } });
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        });
+        expect(result.current.overrides).toBe(settled);
+
+        // A changed value re-runs the pass and republishes the override map.
+        await act(async () => {
+            rerender({ fields: { price: '12.50' } });
+        });
+        await waitFor(() => expect(textAt(doc, result.current)).toBe('12.50'));
+        expect(result.current.overrides).not.toBe(settled);
+    });
+
+    it('does not re-run the pass when equal field maps use a different key order', async () => {
+        const doc = makeDoc([textFieldNode()]);
+        useStore.setState({ currentDoc: doc, trustRepo: makeTrustRepo() });
+
+        const { result, rerender } = renderHook(
+            ({ fields }: { fields: Record<string, string> }) => useSampleRow(fields),
+            { initialProps: { fields: { price: '9.99', sku: 'A-1' } } },
+        );
+        await waitFor(() => expect(textAt(doc, result.current)).toBe('9.99'));
+        const settled = result.current.overrides;
+
+        // Same entries, reversed insertion order: the key canonicalises by
+        // sorting, so the async pass must not re-run — the override map keeps
+        // its identity.
+        await act(async () => {
+            rerender({ fields: { sku: 'A-1', price: '9.99' } });
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        });
+        expect(result.current.overrides).toBe(settled);
+        expect(textAt(doc, result.current)).toBe('9.99');
     });
 });
 

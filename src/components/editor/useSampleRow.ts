@@ -43,7 +43,11 @@ import { contentSourceOf } from '../../editor/contentSource';
  * The pass is keyed on the fields that actually affect resolution (doc id,
  * sample row, content sources, CSV ref, globals, trust) — NOT the whole
  * transient document — so a drag (which replaces `currentDoc` every tick) does
- * not re-run it. Geometry/visibility are deliberately excluded: `PreviewStage`
+ * not re-run it. Injected preset field values are not doc-derived, so they join
+ * the deps through their own `fieldsKey` string (a fresh map with the same
+ * values does not re-run the pass, regardless of key order; a changed value
+ * does). Geometry/visibility
+ * are deliberately excluded: `PreviewStage`
  * applies them with a **synchronous** `resolve(doc, { overrides })` on every
  * render, so the preview still repaints live while only the data pre-pass is
  * async. A Settings trust revoke bumps `trustRevision`, which is in the deps,
@@ -190,6 +194,11 @@ export interface ResolvePassInput {
     /** Effective decision; only `always` executes. */
     trust: TrustDecision;
     engine: TemplateEngine | undefined;
+    /**
+     * Injected preset field values keyed by field name. Forwarded to the one
+     * content pre-pass; never stored. Absent → field sources use their fallback.
+     */
+    fields?: Record<string, string>;
 }
 
 export interface ResolvePassResult {
@@ -208,7 +217,7 @@ export const runResolvePass = async (
     input: ResolvePassInput,
     globalsCache: GlobalsCache,
 ): Promise<ResolvePassResult> => {
-    const { doc, csv, rowIndex, trust, engine } = input;
+    const { doc, csv, rowIndex, trust, engine, fields } = input;
     const executable = engine !== undefined && trust === 'always';
     const activeEngine = executable ? engine : undefined;
 
@@ -230,6 +239,7 @@ export const runResolvePass = async (
         csv,
         rowIndex,
         ...(recording === undefined ? {} : { engine: recording }),
+        ...(fields === undefined ? {} : { fields }),
         ctx: { label: labelContext(doc), globals },
     });
 
@@ -241,7 +251,7 @@ export const runResolvePass = async (
     };
 };
 
-export const useSampleRow = (): SampleRowState => {
+export const useSampleRow = (fields?: Record<string, string>): SampleRowState => {
     const doc = useStore((state) => state.currentDoc);
     const csvRepo = useStore((state) => state.csvRepo);
     const trustRepo = useStore((state) => state.trustRepo);
@@ -268,6 +278,11 @@ export const useSampleRow = (): SampleRowState => {
     const docRef = useRef<LabelDoc | null>(doc);
     docRef.current = doc;
 
+    // Latest injected preset field values, read at pass time. The map lives only
+    // in memory for the pass (never in the doc), so it cannot join `resolveKey`.
+    const fieldsRef = useRef<Record<string, string>>(fields ?? {});
+    fieldsRef.current = fields ?? {};
+
     // One engine per session: the worker is expensive to spawn and the engine is
     // serial-use, matching one resolve pass at a time.
     const engineRef = useRef<JavaScriptTemplateEngine | null>(null);
@@ -289,6 +304,18 @@ export const useSampleRow = (): SampleRowState => {
     const resolveKey = useMemo(() => resolveKeyOf(doc), [doc]);
     const docId = doc?.meta.id ?? null;
     const globalsKey = doc ? JSON.stringify(doc.data.globals) : '';
+    // Field values are not doc-derived, so they get their own stable string key:
+    // a fresh object identity with the same values must not re-run the pass, but
+    // a changed value must. Keys are sorted before stringifying because
+    // `JSON.stringify` preserves insertion order — equal maps built in a
+    // different order must still yield the same key, or they would force a
+    // spurious re-resolve (and re-prompt/re-run the engine).
+    const fieldValues = fields ?? {};
+    const fieldsKey = JSON.stringify(
+        Object.keys(fieldValues)
+            .sort()
+            .map((name) => [name, fieldValues[name]]),
+    );
 
     // Refresh tick (D5): a 1 s re-render keeps live data fresh for documents
     // that can change without a store edit — template sources read `ctx.now`, and
@@ -443,7 +470,14 @@ export const useSampleRow = (): SampleRowState => {
 
             try {
                 const result = await runResolvePass(
-                    { doc: currentDoc, csv, rowIndex: currentDoc.data.sampleRowIndex, trust, engine },
+                    {
+                        doc: currentDoc,
+                        csv,
+                        rowIndex: currentDoc.data.sampleRowIndex,
+                        trust,
+                        engine,
+                        fields: fieldsRef.current,
+                    },
                     globalsCache,
                 );
                 if (!isCurrent()) return;
@@ -480,7 +514,7 @@ export const useSampleRow = (): SampleRowState => {
 
         // No cleanup that cancels mid-pass: supersession is handled by `runId`
         // so the serial-use engine is never abandoned with a live request.
-    }, [resolveKey, csvRepo, trustRepo, storeGate, trustRevision, globalsCache, tick]);
+    }, [resolveKey, fieldsKey, csvRepo, trustRepo, storeGate, trustRevision, globalsCache, tick]);
 
     // Reset all state when the document identity changes (undo/open/close).
     // `promptPending` is deliberately NOT cleared here: if a trust prompt is

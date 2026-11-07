@@ -1,6 +1,6 @@
 import { ImageEncoder, PageColorType, type LabelType } from '@mmote/niimbluelib';
 import type { LabelDoc } from '../core/doc/types';
-import type { QuantizerByType, QuantizerDefaults } from '../core/render';
+import type { PageColorMode, QuantizerByType, QuantizerDefaults } from '../core/render';
 import type { CsvRecord } from '../data/csvRepo';
 import {
     renderLabelPage,
@@ -45,13 +45,18 @@ export interface PrintOverrides {
     density?: number;
     speed?: 0 | 1;
     labelType?: LabelType;
+    /**
+     * Page colour for this job. `SingleColor` (mono), `Grayscale` and
+     * `DoubleColor` (red/black, rendered by the dedicated palette path) are
+     * supported; `SingleColorAlt` is not implemented.
+     */
     pageColor?: PageColorType;
     /**
      * Effective render dpi; the resolution chain falls back to the label's dpi
      * hint (`doc.label.dpi`) when no caller/printer dpi is supplied.
      */
     dpi?: number;
-    /** Post-quantize: flip every RGB channel so black ↔ white. */
+    /** Post-quantize: invert luminance, keeping hue (neutral: black ↔ white). */
     invert?: boolean;
     /** Post-quantize: flip the raster horizontally. */
     mirror?: boolean;
@@ -114,9 +119,29 @@ export interface BuildLabelPrintJobDeps {
 }
 
 /**
+ * Convert the library page-colour enum to the render-level {@link PageColorMode}.
+ * The library type lives only at this print boundary; `core/` and `editor/`
+ * never see it.
+ *
+ * `SingleColorAlt` maps to `'mono'` but is **unreachable** in a job: the
+ * `buildCsvPrintJob` guard rejects it before any render options are computed
+ * (silently mono-encoding a second single-plane mode would print the wrong
+ * label). Kept total so this helper never throws.
+ */
+export const pageColorModeOf = (pageColor: PageColorType | undefined): PageColorMode => {
+    if (pageColor === PageColorType.Grayscale) return 'grayscale';
+    if (pageColor === PageColorType.DoubleColor) return 'redBlack';
+    return 'mono';
+};
+
+/**
  * Forward only the render-relevant, defined override keys. Spreading all of
- * `PrintOverrides` would leak print-task options (`density`/`speed`/`labelType`/
- * `pageColor`) into the render options and make the intent unclear.
+ * `PrintOverrides` would leak print-task options (`density`/`speed`/`labelType`)
+ * into the render options and make the intent unclear.
+ *
+ * `pageColor` is forwarded **only when non-mono**: the absent key is today's
+ * mono render, so existing option objects stay identical (and the preview key
+ * unchanged) unless a caller actually selected another page colour.
  *
  * Exported so W4's thumbnail path performs the *same* split as the job: the
  * dialog's preview bytes must equal the print job's page bytes for the same
@@ -125,19 +150,23 @@ export interface BuildLabelPrintJobDeps {
 export const renderOptionsOf = (
     overrides: PrintOverrides | undefined,
     assets: AssetDeps | undefined,
-): RenderLabelPageOptions => ({
-    ...(assets !== undefined ? { assets } : {}),
-    ...(overrides?.dpi !== undefined ? { dpi: overrides.dpi } : {}),
-    ...(overrides?.invert !== undefined ? { invert: overrides.invert } : {}),
-    ...(overrides?.mirror !== undefined ? { mirror: overrides.mirror } : {}),
-    ...(overrides?.offset !== undefined ? { offset: overrides.offset } : {}),
-    ...(overrides?.quantizerDefaults !== undefined
-        ? { quantizerDefaults: overrides.quantizerDefaults }
-        : {}),
-    ...(overrides?.defaultQuantizerByType !== undefined
-        ? { defaultQuantizerByType: overrides.defaultQuantizerByType }
-        : {}),
-});
+): RenderLabelPageOptions => {
+    const pageColor = pageColorModeOf(overrides?.pageColor);
+    return {
+        ...(assets !== undefined ? { assets } : {}),
+        ...(overrides?.dpi !== undefined ? { dpi: overrides.dpi } : {}),
+        ...(overrides?.invert !== undefined ? { invert: overrides.invert } : {}),
+        ...(overrides?.mirror !== undefined ? { mirror: overrides.mirror } : {}),
+        ...(overrides?.offset !== undefined ? { offset: overrides.offset } : {}),
+        ...(overrides?.quantizerDefaults !== undefined
+            ? { quantizerDefaults: overrides.quantizerDefaults }
+            : {}),
+        ...(overrides?.defaultQuantizerByType !== undefined
+            ? { defaultQuantizerByType: overrides.defaultQuantizerByType }
+            : {}),
+        ...(pageColor !== 'mono' ? { pageColor } : {}),
+    };
+};
 
 /**
  * Build a lazy, re-iterable CSV print job.
@@ -178,12 +207,19 @@ export function buildCsvPrintJob(
     opts: CsvPrintJobOptions,
     deps: CsvPrintJobDeps = {},
 ): PrintJob {
-    // v1 renders a single-plane Mono raster; DoubleColor would encode garbage.
-    // W4 gates the control behind `capabilities.doubleColor` (off in v1), but the
-    // job must still reject it loudly rather than send a malformed page.
-    if (opts.overrides?.pageColor === PageColorType.DoubleColor) {
+    // DoubleColor is implemented by the render path: `pageColorModeOf` maps it
+    // to `'redBlack'`, so `renderLabelPage` hands the encoder exact
+    // `#ffffff`/`#000000`/`#ff0000` pixels and the library splits them into the
+    // black/red planes. The library validates the rest at job time — the task
+    // must report double-colour capability and every encoded page's
+    // `pageColor` must match the job's — so no local guard is needed here.
+    // SingleColorAlt is a second single-plane mode this path does not
+    // implement. Reject it here: silently mono-encoding would print the wrong
+    // label, and letting the library throw during encoding would surface as a
+    // late, opaque failure.
+    if (opts.overrides?.pageColor === PageColorType.SingleColorAlt) {
         throw new RangeError(
-            'buildCsvPrintJob: pageColor DoubleColor is not supported by the single-plane v1 render path',
+            'buildCsvPrintJob: pageColor SingleColorAlt is not implemented by the v1 render path',
         );
     }
 

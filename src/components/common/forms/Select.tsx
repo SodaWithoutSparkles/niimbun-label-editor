@@ -4,6 +4,8 @@ import { cn } from '../../../utils/cn';
 interface SelectOption {
     value: string;
     label: string;
+    /** Render the option disabled (e.g. a mode the printer does not support). */
+    disabled?: boolean;
 }
 
 interface SelectProps
@@ -28,7 +30,7 @@ export function Select({ value, onChange, options, className, ...rest }: SelectP
             )}
         >
             {options.map((option) => (
-                <option key={option.value} value={option.value}>
+                <option key={option.value} value={option.value} disabled={option.disabled}>
                     {option.label}
                 </option>
             ))}

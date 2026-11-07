@@ -1,5 +1,5 @@
 import i18next from 'i18next';
-import { createLabelDoc } from '../../core/doc/factory';
+import { createLabelDoc, copyLabelDoc } from '../../core/doc/factory';
 import { isLabelDoc } from '../../core/doc/validate';
 import { createIdbAdapter } from '../../data/db';
 import { createCsvRepo } from '../../data/csvRepo';
@@ -159,6 +159,41 @@ export const createDocSlice: StoreSlice = (set, get) => {
             }
             // The doc is saved; a gallery-refresh failure must not turn a
             // successful create into a reported failure.
+            try {
+                await get().refreshGallery();
+            } catch {
+                // `refreshGallery` owns its error surface; never reject here.
+            }
+            return doc;
+        },
+
+        /**
+         * Persist a **copy** of `source` under a new id, in the kind the caller
+         * asks for (`'preset'` for "Save as preset"; `'label'` for P5's "Open in
+         * editor"). Same fence as `createLabel`: deep-clone via `copyLabelDoc`,
+         * `isLabelDoc`, then `repo.save`, then refresh.
+         *
+         * Deliberately does NOT touch `currentDoc`, `docPast`/`docFuture` or the
+         * autosave chain: a copy is a separate record, so neither flushing nor
+         * re-pointing the editor would be right. Contractually non-throwing —
+         * a missing repo, a bad clone and a rejected write all become `null`;
+         * the caller (UI) owns the notification.
+         */
+        saveCopy: async (source, spec) => {
+            const repo = get().labelRepo;
+            if (!repo) return null;
+            let doc: LabelDoc;
+            try {
+                const built = copyLabelDoc(source, spec);
+                const result = isLabelDoc(built);
+                if (!result.ok) return null;
+                doc = result.doc;
+                await repo.save(doc);
+            } catch {
+                return null;
+            }
+            // The copy is stored; a gallery-refresh failure must not turn a
+            // successful copy into a reported failure.
             try {
                 await get().refreshGallery();
             } catch {

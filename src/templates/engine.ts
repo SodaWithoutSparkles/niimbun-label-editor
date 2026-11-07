@@ -88,6 +88,12 @@ export interface TemplateContext {
     now: number;
     label: TemplateLabel;
     globals: Record<string, unknown>;
+    /**
+     * Injected preset field values, keyed by field name exactly as stored on a
+     * `{ kind: 'field' }` source. Always present (`{}` when none were injected),
+     * so `ctx.fields.price` is safe to read.
+     */
+    fields: Record<string, string>;
     fmt?: TemplateFormat;
     /** Stable per-document seed (`docSeed = doc.meta.id`). */
     seeds: TemplateSeeds;
@@ -108,6 +114,8 @@ export interface TemplateContextInput {
     now: number;
     label?: TemplateLabel;
     globals?: Record<string, unknown>;
+    /** Injected preset field values keyed by field name. Defaults to `{}`. */
+    fields?: Record<string, string>;
     fmt?: TemplateFormat;
     /** Defaults to `{ docSeed: '' }`. */
     seeds?: TemplateSeeds;
@@ -127,6 +135,7 @@ export const createTemplateContext = (input: TemplateContextInput): TemplateCont
     now: input.now,
     label: input.label ?? {},
     globals: input.globals ?? {},
+    fields: input.fields ?? {},
     seeds: input.seeds ?? { docSeed: '' },
     ...(input.fmt === undefined ? {} : { fmt: input.fmt }),
 });

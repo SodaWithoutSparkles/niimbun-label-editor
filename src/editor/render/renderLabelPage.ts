@@ -3,17 +3,23 @@ import { nodeLookup } from '../../core/doc/derive';
 import { hasFill, hasStroke } from '../../core/doc/objects';
 import type { LabelDoc, Node } from '../../core/doc/types';
 import {
+    classifyFlatRedBlack,
     DEFAULT_GAMMA_BY_STRATEGY,
     DEFAULT_SCREENTONE,
+    diffuseToPalette,
+    grayscaleRampPalette,
     HM_PER_INCH,
     MonoColorSpace,
+    monoLuminance,
     QUANTIZERS,
     policyKeyOf,
     quantizeRgba,
     rasterDimensions,
+    redBlackPalette,
     resolveQuantizer,
     resolveQuantizerParams,
     type ColorSpace,
+    type PageColorMode,
     type RasterDimensions,
     type PolicyMask,
     type QuantizerByType,
@@ -40,8 +46,28 @@ import { flattenResolved, resolve, type ResolvedNode, type ResolveContext } from
  *
  * Pipeline (plan §5):
  *   `resolve(doc)` → `rasterizeResolved` → build policy mask → `applyRegionClip`
- *   → `quantizeRgba` → `invert` → `mirror` → `applyRegionClip` again → `offset`
+ *   → quantize → `invert` → `mirror` → `applyRegionClip` again → `offset`
  *   → final encoder canvas.
+ *
+ * Page-colour branch (`opts.pageColor`):
+ *   - `'mono'` (default) — the pipeline above: per-object 1-bit policies plus
+ *     `quantizeRgba`.
+ *   - `'grayscale'` — **no** policy mask and no 1-bit quantize; the tone-mapped
+ *     raster goes through {@link diffuseToPalette} with the 16-level ramp, so
+ *     the encoder receives exact band-centre greys.
+ *   - `'redBlack'` — the policy mask is built as in mono, then turned into a
+ *     per-pixel **flat mask**: pixels covered by a `threshold` policy (the
+ *     global slot included) take the point-op path
+ *     ({@link classifyFlatRedBlack}), everything else diffuses through
+ *     {@link redBlackPalette}. Flat art stays crisp, images dither, and the
+ *     output is exactly `#ffffff` / `#000000` / `#ff0000` (the encoder's
+ *     DoubleColor split depends on the exact bytes).
+ *
+ * `pageColor: 'redBlack'` uses the **page-level** resolved diffuser knobs
+ * (gamma/strength/serpentine), not per-node ones: the per-node strategy still
+ * selects flat vs diffuse, but in this mode every diffusing pixel shares the
+ * page pass. `screentone` and `ostromoukhov` policies are therefore treated as
+ * diffusion here (per-ink screentone is deferred).
  *
  * The clip runs **both before and after** quantization: pre-quantize so the
  * diffusion sees a white surround, post-quantize so error diffused across the
@@ -117,6 +143,15 @@ export interface RenderLabelPageOptions {
     /** Per-pixel projection. Defaults to Mono (the only v1 color space). */
     colorSpace?: ColorSpace;
     /**
+     * Print-time page colour. Absent = `'mono'` (the 1-bit path, byte-identical).
+     *
+     * `'grayscale'` skips the per-object 1-bit policies and runs the 16-level
+     * ramp diffuser on the tone-mapped raster. `'redBlack'` keeps the policy
+     * mask but uses it only to split flat (threshold) pixels — crisp exact
+     * palette entries — from diffused ones, through the two-ink palette.
+     */
+    pageColor?: PageColorMode;
+    /**
      * Async asset dependencies (image bytes, fonts, resolution cap). When
      * present, image/qr/barcode leaves are prepared first; absent, those leaves
      * simply draw nothing.
@@ -130,7 +165,11 @@ export interface RenderLabelPageOptions {
      * through this same path (O1).
      */
     dpi?: number;
-    /** Post-quantize: flip every RGB channel (`v → 255 - v`), so black ↔ white. */
+    /**
+     * Post-quantize: invert luminance while keeping hue. For neutral pixels
+     * this is exactly `v → 255 - v` (black ↔ white); palette colours keep
+     * their hue (red stays red, never cyan).
+     */
     invert?: boolean;
     /** Post-quantize: flip the raster horizontally. */
     mirror?: boolean;
@@ -143,9 +182,16 @@ export interface RenderLabelPageOptions {
 }
 
 export interface RenderedLabelPage {
-    /** Number of nodes that used the global policy after exceeding the eight-policy palette. */
+    /**
+     * Number of nodes that used the global policy after exceeding the eight-policy
+     * palette. Absent in grayscale, which builds no policy mask.
+     */
     policyOverflowCount?: number;
-    /** Final 1-bit black/white RGBA (exact `0`/`255` channels). */
+    /**
+     * Final palette RGBA. Mono yields exact `0`/`255` channels (1-bit); grayscale
+     * yields the exact band-centre bytes of the 16-level ramp; red/black yields
+     * exactly `#ffffff`, `#000000` or `#ff0000`.
+     */
     rgba: RgbaBuffer;
     widthPx: number;
     heightPx: number;
@@ -231,11 +277,11 @@ const rgb = (color: readonly [number, number, number]): string => `rgb(${color[0
  * Paint a node's **actual coverage** (glyphs / filled shape / stroked outline) in
  * `color`, matching the raster exactly.
  *
- * Text fills its glyphs. A shape mirrors its resolved style: the stroke and the
- * fill are each painted only when they deposit ink — a `'transparent'` (no-fill
- * or no-stroke) shape must claim just the parts the raster actually deposits, or
- * the mask would cover pixels the raster leaves white (M2: mask-topmost ==
- * raster-topmost).
+ * Text fills only its glyphs, and only when the authored fill deposits ink. A
+ * shape mirrors its resolved style: the stroke and the fill are each painted
+ * only when they deposit ink — a `'transparent'` (no-fill or no-stroke) shape
+ * must claim just the parts the raster actually deposits, or the mask would
+ * cover pixels the raster leaves white (M2: mask-topmost == raster-topmost).
  */
 const paintCoverage = (node: Konva.Node, color: string): void => {
     // A `cut` text is drawn inside a clipping group (Konva's `wrap: 'none'`
@@ -248,7 +294,11 @@ const paintCoverage = (node: Konva.Node, color: string): void => {
     }
     if (node instanceof Konva.Text) {
         node.strokeEnabled(false);
-        node.fill(color);
+        // Text owns only the glyphs it actually inks. A transparent (or absent)
+        // fill deposits nothing, so it must leave the pixels beneath to the leaf
+        // below — same presence rule as a shape's fill (see `hasFill`).
+        if (hasFill(node.fill() as string | undefined)) node.fill(color);
+        else node.fillEnabled(false);
         return;
     }
     const shape = node as Konva.Shape;
@@ -587,7 +637,7 @@ export const buildPolicyMask = async (
 const buildQuantizeOptions = (
     opts: RenderLabelPageOptions,
     dpi: number,
-): Parameters<typeof quantizeRgba>[2] => {
+): NonNullable<Parameters<typeof quantizeRgba>[2]> => {
     const colorSpace = opts.colorSpace ?? MonoColorSpace;
     const globalId = opts.quantizer ?? 'threshold';
     const strategyDefaults = opts.quantizerDefaults?.[globalId];
@@ -621,16 +671,54 @@ const buildQuantizeOptions = (
 };
 
 /**
- * Post-quantize invert: `v → 255 - v` on R/G/B. Alpha (opacity) is left intact
- * so the raster stays opaque — the reference `effects.invert` only touches the
- * colour channels.
+ * Post-quantize invert: invert **luminance** and keep hue, instead of flipping
+ * every channel.
+ *
+ * The input domain is post-quantize: every pixel is already an exact palette
+ * colour — black, a grayscale-ramp level, or `#ff0000` — never an arbitrary RGB
+ * triple.
+ *
+ * For a neutral pixel this is exactly the old `v → 255 - v`: `L = v`, so the
+ * scale `(255 - L) / L` turns `v` into `255 - v`, and the existing 1-bit output
+ * stays **byte-identical** — the mono goldens are unaffected. Alpha (opacity)
+ * is never touched, so the raster stays opaque; the reference `effects.invert`
+ * only touches the colour channels.
+ *
+ * A per-channel flip would be wrong once pixels are not R=G=B: it maps
+ * `#ff0000` to `#00ffff` (cyan), and cyan is not a printable ink — thermal red
+ * is heat-selected, not a subtractive primary. Scaling all three channels by
+ * one factor preserves hue and saturation, so red stays red: `L(#ff0000) ≈ 76`,
+ * `scale ≈ 2.34`, R overflows and clamps at 255, G/B stay 0. Black and white
+ * still swap exactly (`L === 0` → white, the division guard; `L === 255` →
+ * all channels 0).
+ *
+ * Exact for the 16-level grayscale ramp: the band centre `255 - 17k` has
+ * `L = 255 - 17k`, so it scales to `17k`, which
+ * `ImageEncoder.colorToGrayLevel` maps back to level `15 - k`. A grayscale
+ * negative is therefore exact at every level, not approximated — no rounding
+ * slack anywhere in the ramp.
+ *
+ * Exported so the pigment goldens can call it directly.
  */
-const invertRgb = (rgba: RgbaBuffer): void => {
+export const invertRgb = (rgba: RgbaBuffer): void => {
     const { data } = rgba;
     for (let i = 0; i < data.length; i += 4) {
-        data[i] = 255 - data[i]!;
-        data[i + 1] = 255 - data[i + 1]!;
-        data[i + 2] = 255 - data[i + 2]!;
+        const r = data[i]!;
+        const g = data[i + 1]!;
+        const b = data[i + 2]!;
+        const luminance = monoLuminance(r, g, b);
+        if (luminance === 0) {
+            data[i] = 255;
+            data[i + 1] = 255;
+            data[i + 2] = 255;
+            continue;
+        }
+        // One scale factor for all three channels: hue and saturation survive.
+        // The clamps/rounding happen in the `Uint8ClampedArray` write.
+        const scale = (255 - luminance) / luminance;
+        data[i] = r * scale;
+        data[i + 1] = g * scale;
+        data[i + 2] = b * scale;
     }
 };
 
@@ -652,15 +740,28 @@ const mirrorRgba = (rgba: RgbaBuffer): void => {
 };
 
 /**
- * Count dark (ink) pixels. Only the mirror path pays for this: the region clip
- * can silently erase ink the flip moved outside the printable union, so the
- * before/after counts become a {@link RenderNotice} instead of vanishing.
+ * Count ink (non-paper) pixels. Only the mirror path pays for this: the region
+ * clip can silently erase ink the flip moved outside the printable union, so
+ * the before/after counts become a {@link RenderNotice} instead of vanishing.
+ *
+ * "Ink" means **not paper-white**: `r !== 255 || g !== 255 || b !== 255`, with
+ * alpha ignored. After quantization every pixel is an exact palette colour —
+ * black, a grey ramp level, or `#ff0000` — and all of those deposit pigment, so
+ * the paper test is exact and needs no threshold to calibrate.
+ *
+ * The old red-channel test (`r < 128`) was a mono-only artifact: it assumed ink
+ * is neutral, so red (`r = 255`) counted as paper and vanished from the notice.
+ * Every post-quantize pixel is an exact palette colour, so "not white"
+ * classifies all inks correctly without a luminance test. Alpha is ignored on
+ * purpose: it is opacity metadata, never pigment.
+ *
+ * Exported so the pigment goldens can call it directly.
  */
-const countInkPx = (rgba: RgbaBuffer): number => {
+export const countInkPx = (rgba: RgbaBuffer): number => {
     const { data } = rgba;
     let count = 0;
     for (let i = 0; i < data.length; i += 4) {
-        if (data[i]! < 128) count++;
+        if (data[i] !== 255 || data[i + 1] !== 255 || data[i + 2] !== 255) count++;
     }
     return count;
 };
@@ -745,7 +846,8 @@ export const renderPageBase = async (
 };
 
 /**
- * Render a label page to final 1-bit RGBA. The single entry point for both the
+ * Render a label page to final palette RGBA (1-bit mono by default, 16-level
+ * grayscale when `pageColor: 'grayscale'`). The single entry point for both the
  * preview and the print path; only encoding differs downstream (invariant 7).
  */
 export const renderLabelPage = async (
@@ -766,34 +868,97 @@ export const renderLabelPage = async (
         ...(opts.assets !== undefined ? { assets: opts.assets } : {}),
     });
 
+    // Page colour dispatch. Grayscale owns the raster's palette mapping end to
+    // end, so it skips the per-object policy mask entirely. Mono and red/black
+    // both build it: mono runs one 1-bit pass per slot, red/black only reads the
+    // slots to decide which pixels are flat point ops.
+    const pageColor = opts.pageColor ?? 'mono';
+
     const byId = nodeLookup(doc.nodes);
-    const policy = await buildPolicyMask(nodes, byId, { widthPx, heightPx }, dpi, assets, {
-        threshold: opts.threshold,
-        strength: opts.strength,
-        serpentine: opts.serpentine,
-        gamma: opts.gamma,
-        screentoneLevels: opts.screentoneLevels,
-        screentonePitchMm: opts.screentonePitchMm,
-        screentoneAngle: opts.screentoneAngle,
-        screentoneBoldness: opts.screentoneBoldness,
-        quantizerDefaults: opts.quantizerDefaults,
-        defaultQuantizerByType: opts.defaultQuantizerByType,
-    });
+    const policy =
+        pageColor !== 'grayscale'
+            ? await buildPolicyMask(nodes, byId, { widthPx, heightPx }, dpi, assets, {
+                  threshold: opts.threshold,
+                  strength: opts.strength,
+                  serpentine: opts.serpentine,
+                  gamma: opts.gamma,
+                  screentoneLevels: opts.screentoneLevels,
+                  screentonePitchMm: opts.screentonePitchMm,
+                  screentoneAngle: opts.screentoneAngle,
+                  screentoneBoldness: opts.screentoneBoldness,
+                  quantizerDefaults: opts.quantizerDefaults,
+                  defaultQuantizerByType: opts.defaultQuantizerByType,
+              })
+            : undefined;
 
     const hmPerPx = HM_PER_INCH / dpi;
     // Pre-clip: the diffusion pass sees a white surround outside the union.
     applyRegionClip(imageData, { widthPx, heightPx }, doc.label.regions, hmPerPx);
 
     const quantizeOptions = buildQuantizeOptions(opts, dpi);
-    quantizeRgba(
-        imageData,
-        {
-            globalQuantizer: QUANTIZERS[opts.quantizer ?? 'threshold'],
-            ...(policy ? { policies: policy.policies, mask: policy.mask } : {}),
-            colorSpace: opts.colorSpace ?? MonoColorSpace,
-        },
-        quantizeOptions,
-    );
+    if (pageColor === 'grayscale') {
+        // One palette pass over the tone-mapped raster. The diffuser knobs come
+        // from the selected global quantizer's effective settings, so the
+        // render-level gamma/strength/serpentine still apply; the default
+        // `threshold` strategy resolves to the neutral gamma 1.
+        diffuseToPalette(imageData, grayscaleRampPalette(), {
+            gamma: quantizeOptions.gamma,
+            strength: quantizeOptions.strength,
+            serpentine: quantizeOptions.serpentine,
+        });
+    } else if (pageColor === 'redBlack') {
+        // Per-slot flat/diffuse classification: slot 0 is the global strategy,
+        // every masked slot is its own resolved policy. `threshold` is the
+        // point-op path (flat art); every diffuser — and, deliberately,
+        // `screentone`/`ostromoukhov` in this mode — diffs through the two-ink
+        // palette.
+        const flatBySlot: boolean[] = [(opts.quantizer ?? 'threshold') === 'threshold'];
+        if (policy) {
+            for (const [index, entry] of policy.policies) {
+                flatBySlot[index] =
+                    typeof entry === 'function'
+                        ? entry === QUANTIZERS.threshold
+                        : entry.quantizer === QUANTIZERS.threshold;
+            }
+        }
+
+        // One flag per device pixel (`0` = diffuse, `1` = flat). Uncovered
+        // pixels read mask slot 0, i.e. the global strategy.
+        const pixelCount = widthPx * heightPx;
+        const flat = new Uint8Array(pixelCount);
+        if (policy) {
+            const maskData = policy.mask.data;
+            for (let p = 0; p < pixelCount; p++) {
+                if (flatBySlot[maskData[p]]) flat[p] = 1;
+            }
+        } else if (flatBySlot[0]) {
+            flat.fill(1);
+        }
+
+        // Flat pixels classify the raw source bytes with the same gamma and
+        // cutoff the global strategy resolves, so authored red is exact and
+        // mid-greys do not turn into dither noise.
+        const resolvedThreshold = quantizeOptions.threshold ?? 128;
+        const resolvedGamma = quantizeOptions.gamma;
+        diffuseToPalette(imageData, redBlackPalette(), {
+            gamma: resolvedGamma,
+            strength: quantizeOptions.strength,
+            serpentine: quantizeOptions.serpentine,
+            flat,
+            flatNearest: (r, g, b) =>
+                classifyFlatRedBlack(r, g, b, resolvedThreshold, resolvedGamma),
+        });
+    } else {
+        quantizeRgba(
+            imageData,
+            {
+                globalQuantizer: QUANTIZERS[opts.quantizer ?? 'threshold'],
+                ...(policy ? { policies: policy.policies, mask: policy.mask } : {}),
+                colorSpace: opts.colorSpace ?? MonoColorSpace,
+            },
+            quantizeOptions,
+        );
+    }
 
     // Post-quantize overrides, applied **before** the post-clip: invert must not
     // blacken the guaranteed-white margin, and mirror must not move ink outside

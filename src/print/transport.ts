@@ -76,6 +76,8 @@ export interface PrinterCapabilities {
   paperTypes?: LabelType[];
   /** Print task supports double-colour pages. */
   doubleColor?: boolean;
+  /** Print task supports 16-level grayscale pages. Only the `D110M_V4` family. */
+  grayscale?: boolean;
   /** Print task supports tube printing. */
   tubePrinting?: boolean;
   /**
