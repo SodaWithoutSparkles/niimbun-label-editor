@@ -24,11 +24,11 @@ and is capability-gated.
   media; page colour must match the loaded stock. RFID cannot infer the colour
   (red/black stock reports as ordinary gap labels), so this stays a manual
   selection.
-- **Red/black tape** (owner, 2026-11-08): solid black/red rows are correct, but
-  colour boundaries show **~1–1.5 mm ink misregistration**, dense red can
-  overheat into black (red-tinted gradient came out red–black), and a grayscale
-  page on this stock prints almost entirely red (usable ≈ levels 5–15). See
-  [Red/black paper physics](#redblack-paper-physics-owner-2026-11-08).
+- **Red/black tape** (owner, 2026-11-08): solid black/red rows are correct; a
+  grayscale page on this stock prints almost entirely red (usable ≈ 5–15). The
+  bars at colour boundaries are a **library Mixed-row bug** (official app prints
+  the same raster clean — D-77); the red coverage floor is physical (D-78). See
+  [Red/black paper physics](#redblack-paper-physics-and-the-library-bug-owner-2026-11-08).
 
 ## Modes and seams
 
@@ -187,49 +187,37 @@ non-white pixel, so red ink is ink in the mirror-loss notice.
   packets and untested printer configuration — do not wire it blind; ask
   upstream first.
 
-## Red/black paper physics (owner, 2026-11-08)
+## Red/black paper physics and the library bug (owner, 2026-11-08)
 
 Red/black stock is **heat-selected**: red needs little heat, black needs a lot;
-black therefore bleeds a faint red fringe. Observed on the P7 pattern at density 3:
+black therefore bleeds a faint red fringe.
 
 - Solid black and solid red rows print correctly (the flat classifier is right).
-- At a black↔red boundary the two inks are **misregistered by ~1–1.5 mm**: the
-  first strip of each bar carries the previous bar's ink (alternating row, bars
-  2/4/6 black-then-red; bars 3/5 red-then-black). Top/bottom uniform rows hide it.
-- The **red-tinted gradient** — whose software output is red/white only — printed
-  ~1.2 mm of black bars at one edge and then **red–black mixed** in its darker
-  half; the colour-photo gradient is correspondingly messy. Dense/adjacent red
-  appears to overheat into black on this stock.
 - A **grayscale** page on red/black tape prints almost entirely **red**: usable
   ≈ levels 5–15 (4 is paper/faint), 13–14 pure red, 15 red with slight black.
+  Page colour must match the stock.
+- **Red coverage floor ≈ 50 %** (calibration sweep, densities 1–3): the 75/50
+  coverage bars print, the 25/12/6 bars are invisible. The **official app shows
+  the same floor**, so this is printer/stock physics (**D-78**); sparse red dots
+  do not develop. Red images lose their highlight half.
+- **The ~0.5–1.5 mm bars at every colour transition are a library bug, not the
+  stock** (cross-check 2026-11-08): the **same raster** prints clean from the
+  official NIIMBOT desktop app, while niim.blue (same `@mmote/niimbluelib`)
+  reproduces the bars. The artefact is one byte wide (8 px = 0.68 mm at 300 dpi):
+  in `BitmapColorMode.Mixed` rows the first byte of a red run prints black, and
+  the first byte of a black run after red prints red. Solid/single-colour rows
+  are unaffected. Suspect `printBitmapRowDoubleColor` (command 138) omitting the
+  `PrintBitmapRow` (133) sub-command byte that `printBitmapRowWithColor`
+  includes, or a one-byte colour-stream alignment (**D-77**, repro in
+  [`../2026-11-02_print-colours/repro/`](../2026-11-02_print-colours/repro/)).
+- The isolated red ramp is **clean** — no red→black overheat. The earlier
+  "red-black gradient mess" was the library boundary artefact plus the colour
+  gradient, not the red-only dither path.
 
-**Calibration sweep (densities 1–3, 2026-11-08):**
-
-- **Isolated red ramp is clean** — no black at any density; red fades to paper
-  around the middle of the ramp. The earlier red→black "mess" in the full pattern
-  was therefore not the red-only dither path; it was the colour gradient and/or
-  edge artefacts from adjacent black.
-- **Red coverage floor ≈ 50 %**: the 75 % and 50 % coverage bars print, but the
-  25/12/6 % bars are invisible (paper). Sparse red dots do not develop on this
-  stock — red images lose their highlight half. This is the red analogue of the
-  grayscale dynamic-range problem (**D-78**), independent of density.
-- **Edge artefact ≈0.5–1.5 mm at every ink transition**: black intrudes into the
-  following red bar; a red region after paper starts with a thin black line (seen
-  in the 2 mm gap and at the horizontal stripe leading edge). It is present at
-  all densities and in both directions — thermal history/heat overshoot, not a
-  software plane offset (**D-77**).
-
-Implications:
-- Page colour must match the loaded stock **both ways**: mono/grayscale on
-  red/black tape is not a greyscale print (it is a red print), and red/black on
-  mono stock is a grey print (≈ levels 11–12). RFID cannot infer colour.
-- The palette is still uncalibrated (`weight` all `1`). The misregistration and
-  red-overheat behaviour are **printer physics**, not a software bug (solid rows
-  are correct); tuning needs a controlled coverage/density sweep, not a blind
-  constant change. Tracked as **D-77**. The `?printcolours` harness now has a
-  **Red & black — calibration** pattern (isolated red ramp, 75/50/25/12/6 %
-  coverage ladder, vertical + horizontal registration blocks) plus a **Print
-  density sweep** button that stamps `DENSITY n` and prints one label per density.
+Implications: page colour must match the stock; do **not** compensate the library
+artefact in our renderer — wait for upstream. Palette `weight`s remain `1`. The
+`?printcolours` harness has the calibration pattern + density sweep; `repro/`
+holds the exact 300 dpi raster and split panes for the library author.
 
 ## v1 limitations / open items
 
