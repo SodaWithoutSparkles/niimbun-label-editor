@@ -7,7 +7,7 @@ P13 landed the configurable per-strategy defaults, the per-node `serpentine` and
 fix (§7). P14 landed the gamma tone curve and the `ostromoukhov` strategy, and the owner **dropped**
 ordered/Bayer, screentone and ScreenStyle/ScreenVAE (2026-10-17). **P1 of the 2026-10-19 run landed
 §9** (the named grey preprocess stage + per-object gamma; **D-58 retired**); **P4 of that run landed
-§10** (head-locked screentone; D-64 measured). **Read §7–§10 first.**
+§10** (head-locked screentone; D-64 measured). **Read §7–§11 first.**
 Companion file: [`screenstyle-quantization.md`](screenstyle-quantization.md) (procedural
 screentone design, K-level tone ramp). Read both before touching `src/core/render/quantize.ts`.
 
@@ -335,3 +335,31 @@ Commits `2b0f70a` (W1 gamma), `f2d3bc9` (W2 Ostromoukhov), `8468b54` (W3 live pr
   beats a tool mapped to the same key.
 - The rectangle tool default moved `q` → `r`; persisted settings are migrated in
   `normalizeKeyboardShortcuts` (see `settings-store.md`).
+
+## 11. Print-time colour palettes (shipped 2026-11-02 — [`print-colours.md`](print-colours.md))
+
+- **A separate engine, not wider `quantize.ts`.** `src/core/render/palette.ts`
+  owns `diffuseToPalette`: serpentine Floyd–Steinberg over an N-entry palette
+  with a **full RGB error vector** on three `Float32Array` planes (≈12 bytes/px
+  on top of the RGBA buffer; scoped to the call, never cached). The 1-bit
+  strategies and their goldens are untouched and stay **byte-identical** — that
+  was the reason for the split.
+- **Palettes:** `grayscaleRampPalette()` (16 entries at `255 − 17k`, index =
+  library level, `nearest` mirrors `ImageEncoder.colorToGrayLevel` on BT.601
+  luminance) and `redBlackPalette()` (`[white, black, red]`, default weighted
+  RGB distance; per-entry `weight` is the future heat-selected-ink calibration
+  knob, all `1` today).
+- **Flat/diffuse dispatch** reuses the existing per-object policies: a pixel is
+  flat when its mask slot resolves to `threshold` (point op, classify the raw
+  source, no error in or out — crisp text/symbols), otherwise it diffuses.
+  `screentone` and `ostromoukhov` count as diffusion in this mode (per-ink
+  screentone is deferred). Flat classification is `classifyFlatRedBlack`: red
+  dominance (`r > g && r > b`) first, then gamma-curved BT.601 luminance against
+  the cutoff.
+- **Tint** (`core/render/tint.ts`) is upstream of the palette: luminance selects
+  ink density, the tint selects ink colour, so a red-tinted grey image dithers
+  red/white with no black. Applied per leaf after the shared asset cache.
+- **Knobs are page-level** in red/black (and grayscale builds no mask), so
+  per-node diffuser params are inert in those modes — D-74.
+- **Related debt:** D-05 seam drift now also covers flat-beside-diffuse
+  neighbours; D-73 long-grayscale buffer unverified.

@@ -1,5 +1,10 @@
 # Grayscale printing (16 levels) — findings for the next run
 
+> **Shipped 2026-11-02 — see [`print-colours.md`](print-colours.md).** The
+> research below is kept as written; statements that "nothing is implemented"
+> or that the render path "still quantizes to 1 bit" describe the pre-run state
+> and are superseded.
+
 Phase-0 research for the **print-time colours** work, written for the Build agent
 that plans it. Read with [`dual-color.md`](dual-color.md) (red/black research,
 parked) — the two features share the same seam and should probably ship in one

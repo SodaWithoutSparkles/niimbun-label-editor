@@ -1,5 +1,9 @@
 # Dual-color (red/black) printing — parked-feature research
 
+> **Shipped 2026-11-02 — see [`print-colours.md`](print-colours.md).** Red/black
+> printing is implemented as the `redBlack` page colour; the research below
+> (including the 133-byte check and the parked notes) is kept as written.
+
 Phase 0 investigation for the deferred **RedBlack color space** (v1 plan
 decision 2, 2026-09-29; owner reconfirmed as next feature run after label
 presets, 2026-10-29). This file holds the findings so the eventual run's
