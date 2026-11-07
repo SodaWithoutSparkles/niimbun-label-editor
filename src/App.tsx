@@ -5,6 +5,7 @@ import { MainLayout } from './components/layout/MainLayout';
 import { HardwareSmoke } from './components/dev/HardwareSmoke';
 import { PrintSmoke } from './components/dev/PrintSmoke';
 import { PrintCsvSmoke } from './components/dev/PrintCsvSmoke';
+import { PrintColoursSmoke } from './components/dev/PrintColoursSmoke';
 import { useUrlSync } from './components/layout/useUrlSync';
 import { useDocThumbnail } from './components/editor/useDocThumbnail';
 
@@ -17,6 +18,7 @@ function App() {
     const showHardwareSmoke = params.has('hardware');
     const showPrintSmoke = params.has('print');
     const showPrintCsvSmoke = params.has('printcsv');
+    const showPrintColoursSmoke = params.has('printcolours');
     return (
         <>
             <NotificationCenter />
@@ -26,6 +28,7 @@ function App() {
             {showHardwareSmoke && <HardwareSmoke />}
             {showPrintSmoke && <PrintSmoke />}
             {showPrintCsvSmoke && <PrintCsvSmoke />}
+            {showPrintColoursSmoke && <PrintColoursSmoke />}
         </>
     );
 }
