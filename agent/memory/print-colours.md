@@ -203,6 +203,22 @@ black therefore bleeds a faint red fringe. Observed on the P7 pattern at density
 - A **grayscale** page on red/black tape prints almost entirely **red**: usable
   ≈ levels 5–15 (4 is paper/faint), 13–14 pure red, 15 red with slight black.
 
+**Calibration sweep (densities 1–3, 2026-11-08):**
+
+- **Isolated red ramp is clean** — no black at any density; red fades to paper
+  around the middle of the ramp. The earlier red→black "mess" in the full pattern
+  was therefore not the red-only dither path; it was the colour gradient and/or
+  edge artefacts from adjacent black.
+- **Red coverage floor ≈ 50 %**: the 75 % and 50 % coverage bars print, but the
+  25/12/6 % bars are invisible (paper). Sparse red dots do not develop on this
+  stock — red images lose their highlight half. This is the red analogue of the
+  grayscale dynamic-range problem (**D-78**), independent of density.
+- **Edge artefact ≈0.5–1.5 mm at every ink transition**: black intrudes into the
+  following red bar; a red region after paper starts with a thin black line (seen
+  in the 2 mm gap and at the horizontal stripe leading edge). It is present at
+  all densities and in both directions — thermal history/heat overshoot, not a
+  software plane offset (**D-77**).
+
 Implications:
 - Page colour must match the loaded stock **both ways**: mono/grayscale on
   red/black tape is not a greyscale print (it is a red print), and red/black on
