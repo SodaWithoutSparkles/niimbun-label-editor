@@ -30,8 +30,8 @@ import { buildToneLut, normalizeGamma, toByte } from './preprocess';
  *
  * - `'mono'` — the 1-bit black/white page (the pre-existing path).
  * - `'grayscale'` — the printer's 16-level grey ramp ({@link grayscaleRampPalette}).
- * - `'redBlack'` — a two-ink page; wired in P5, so the render path rejects it
- *   with a `RangeError` for now.
+ * - `'redBlack'` — a two-ink page ({@link redBlackPalette}); flat art takes the
+ *   point-op mask path, images diffuse.
  */
 export type PageColorMode = 'mono' | 'grayscale' | 'redBlack';
 
@@ -86,6 +86,28 @@ export interface PaletteDiffuseOptions {
      * curve). Default 1.
      */
     gamma?: number;
+    /**
+     * Per-pixel **point-op mask**: a zero byte diffuses normally, a non-zero
+     * byte takes the flat path — one exact palette entry, classified from the
+     * **raw source** bytes, with no error emitted. Any error a diffuse neighbour
+     * already deposited on a flat pixel is discarded (the energy is lost at the
+     * seam, exactly like a clipped tap). Length must equal `width * height`;
+     * anything else throws a `RangeError` before any pixel is touched.
+     *
+     * This is what keeps authored flat colour (text, symbols) crisp while an
+     * image beside it still dithers — see {@link classifyFlatRedBlack}. The
+     * mask is built from the existing per-object quantizer policies, so
+     * `policyKeyOf` and the policy vocabulary are unchanged (page colour is
+     * already keyed separately).
+     */
+    flat?: Uint8Array;
+    /**
+     * Palette index for a flat pixel, or `undefined` for
+     * {@link nearestPaletteEntry}. It receives the **source** RGB — assumed
+     * `0..255` bytes, before tone mapping and before any diffusion error — so a
+     * classifier such as {@link classifyFlatRedBlack} sees the authored colour.
+     */
+    flatNearest?: (r: number, g: number, b: number) => number;
 }
 
 /**
@@ -146,6 +168,47 @@ export const redBlackPalette = (): Palette => ({
         { r: 255, g: 0, b: 0 },
     ],
 });
+
+/** `redBlackPalette()` index of white paper. */
+export const RED_BLACK_WHITE = 0;
+/** `redBlackPalette()` index of black ink. */
+export const RED_BLACK_BLACK = 1;
+/** `redBlackPalette()` index of red ink. */
+export const RED_BLACK_RED = 2;
+
+/**
+ * Flat-pixel classifier for the red/black page: one exact palette index, no
+ * diffusion.
+ *
+ * 1. **Red dominance first**: `r > g && r > b` → red. Colour is truth — any
+ *    red-dominant authored pixel is red ink, at any luminance. That also keeps
+ *    antialiased red glyph edges red (their edge pixels blend red with paper and
+ *    stay red-dominant), so flat red text prints crisp rather than ragged. Red
+ *    dominance is gamma-independent: the tone curve only moves the grey axis.
+ * 2. Otherwise threshold the **luminance** (BT.601, gamma-curved): `< threshold`
+ *    → black, else white. A plain nearest-RGB test would send mid grey to white
+ *    (white is marginally closer than black in RGB), which would make mid-grey
+ *    text vanish; luminance keeps the authored cut.
+ *
+ * `gamma` uses the same `buildToneLut`/`toByte` curve as the diffusion path, so
+ * a flat and a diffuse region authored at the same grey stay consistent.
+ */
+export const classifyFlatRedBlack = (
+    r: number,
+    g: number,
+    b: number,
+    threshold = 128,
+    gamma = 1,
+): number => {
+    if (r > g && r > b) return RED_BLACK_RED;
+    // Round into the LUT's byte domain first: the BT.601 weights sum to
+    // 0.9999999999999999 in floats, so an authored `#808080` would otherwise
+    // measure 127.999… and fall *below* a 128 cutoff. `toByte` makes the
+    // classifier agree with the authored byte ("luminance 128 is not < 128").
+    const luminance = toByte(monoLuminance(r, g, b));
+    const mapped = normalizeGamma(gamma) === 1 ? luminance : buildToneLut(gamma)[luminance];
+    return mapped < threshold ? RED_BLACK_BLACK : RED_BLACK_WHITE;
+};
 
 /** Clamp one channel to the 8-bit domain the palettes are expressed in. */
 const clampChannel = (value: number): number => Math.min(255, Math.max(0, value));
@@ -233,6 +296,13 @@ const FS_DENOM = 16;
  *     blended, so every output pixel is a palette colour — the encoder relies
  *     on exact `#ffffff` / `#ff0000` matches.
  *
+ * With `flat`, a masked pixel is a **point op** instead: its entry comes from
+ * `flatNearest` applied to the raw source bytes, it emits no error, and any
+ * error already deposited on it by a diffuse neighbour is discarded. Flat art
+ * (authored text/symbols) therefore stays crisp while an image in the same page
+ * still dithers. A `flat` plane of the wrong length is a `RangeError` — the
+ * caller's mask must be one byte per pixel.
+ *
  * D-05 (cross-policy seam drift): a page palette is a page-level decision while
  * per-object quantizer policies stay 1-bit, so where the two meet the seam
  * drifts exactly as it does between two policies. Recorded here deliberately;
@@ -243,9 +313,15 @@ export const diffuseToPalette = (
     palette: Palette,
     options: PaletteDiffuseOptions = {},
 ): RgbaBuffer => {
-    const { strength = 1, serpentine = true, gamma = 1 } = options;
+    const { strength = 1, serpentine = true, gamma = 1, flat, flatNearest } = options;
     const { data, width, height } = rgba;
     const count = width * height;
+
+    if (flat !== undefined && flat.length !== count) {
+        throw new RangeError(
+            `diffuseToPalette: flat mask length ${flat.length} does not match ${width}×${height} = ${count}`,
+        );
+    }
 
     const red = new Float32Array(count);
     const green = new Float32Array(count);
@@ -286,14 +362,35 @@ export const diffuseToPalette = (
             const r = red[p];
             const g = green[p];
             const b = blue[p];
-            const entry = palette.entries[nearestPaletteEntry(palette, r, g, b)];
-
             const offset = p * 4;
+            const isFlat = flat !== undefined && flat[p] !== 0;
+
+            let entry: PaletteEntry;
+            if (isFlat) {
+                // Classify the **raw source** bytes: `data` at this pixel is
+                // still unmodified, while `red`/`green`/`blue` may already carry
+                // error a diffuse neighbour deposited. Flat art is authored
+                // colour, not a diffusion estimate, so the error is discarded
+                // below rather than allowed to move the entry.
+                const sr = data[offset];
+                const sg = data[offset + 1];
+                const sb = data[offset + 2];
+                entry = palette.entries[
+                    flatNearest
+                        ? flatNearest(sr, sg, sb)
+                        : nearestPaletteEntry(palette, sr, sg, sb)
+                ];
+            } else {
+                entry = palette.entries[nearestPaletteEntry(palette, r, g, b)];
+            }
+
             data[offset] = entry.r;
             data[offset + 1] = entry.g;
             data[offset + 2] = entry.b;
 
-            if (diffusionStrength === 0) continue;
+            // A flat pixel emits no error: it is a point op, so it neither
+            // diffuses its own residual nor forwards a neighbour's.
+            if (isFlat || diffusionStrength === 0) continue;
 
             const errorR = (r - entry.r) * diffusionStrength;
             const errorG = (g - entry.g) * diffusionStrength;

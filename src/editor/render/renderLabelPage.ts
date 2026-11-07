@@ -3,6 +3,7 @@ import { nodeLookup } from '../../core/doc/derive';
 import { hasFill, hasStroke } from '../../core/doc/objects';
 import type { LabelDoc, Node } from '../../core/doc/types';
 import {
+    classifyFlatRedBlack,
     DEFAULT_GAMMA_BY_STRATEGY,
     DEFAULT_SCREENTONE,
     diffuseToPalette,
@@ -14,6 +15,7 @@ import {
     policyKeyOf,
     quantizeRgba,
     rasterDimensions,
+    redBlackPalette,
     resolveQuantizer,
     resolveQuantizerParams,
     type ColorSpace,
@@ -53,8 +55,19 @@ import { flattenResolved, resolve, type ResolvedNode, type ResolveContext } from
  *   - `'grayscale'` — **no** policy mask and no 1-bit quantize; the tone-mapped
  *     raster goes through {@link diffuseToPalette} with the 16-level ramp, so
  *     the encoder receives exact band-centre greys.
- *   - `'redBlack'` — rejected with a `RangeError` until P5 wires the two-ink
- *     conversion.
+ *   - `'redBlack'` — the policy mask is built as in mono, then turned into a
+ *     per-pixel **flat mask**: pixels covered by a `threshold` policy (the
+ *     global slot included) take the point-op path
+ *     ({@link classifyFlatRedBlack}), everything else diffuses through
+ *     {@link redBlackPalette}. Flat art stays crisp, images dither, and the
+ *     output is exactly `#ffffff` / `#000000` / `#ff0000` (the encoder's
+ *     DoubleColor split depends on the exact bytes).
+ *
+ * `pageColor: 'redBlack'` uses the **page-level** resolved diffuser knobs
+ * (gamma/strength/serpentine), not per-node ones: the per-node strategy still
+ * selects flat vs diffuse, but in this mode every diffusing pixel shares the
+ * page pass. `screentone` and `ostromoukhov` policies are therefore treated as
+ * diffusion here (per-ink screentone is deferred).
  *
  * The clip runs **both before and after** quantization: pre-quantize so the
  * diffusion sees a white surround, post-quantize so error diffused across the
@@ -133,8 +146,9 @@ export interface RenderLabelPageOptions {
      * Print-time page colour. Absent = `'mono'` (the 1-bit path, byte-identical).
      *
      * `'grayscale'` skips the per-object 1-bit policies and runs the 16-level
-     * ramp diffuser on the tone-mapped raster; `'redBlack'` throws until P5
-     * implements the two-ink conversion.
+     * ramp diffuser on the tone-mapped raster. `'redBlack'` keeps the policy
+     * mask but uses it only to split flat (threshold) pixels — crisp exact
+     * palette entries — from diffused ones, through the two-ink palette.
      */
     pageColor?: PageColorMode;
     /**
@@ -175,7 +189,8 @@ export interface RenderedLabelPage {
     policyOverflowCount?: number;
     /**
      * Final palette RGBA. Mono yields exact `0`/`255` channels (1-bit); grayscale
-     * yields the exact band-centre bytes of the 16-level ramp.
+     * yields the exact band-centre bytes of the 16-level ramp; red/black yields
+     * exactly `#ffffff`, `#000000` or `#ff0000`.
      */
     rgba: RgbaBuffer;
     widthPx: number;
@@ -853,18 +868,15 @@ export const renderLabelPage = async (
         ...(opts.assets !== undefined ? { assets: opts.assets } : {}),
     });
 
-    // Page colour dispatch. `redBlack` is the P5 placeholder: fail before any
-    // mask/Konva work, but after `renderPageBase` so dpi validation still runs
-    // first. Grayscale owns the raster's palette mapping end to end, so it skips
-    // the per-object 1-bit policy mask entirely.
+    // Page colour dispatch. Grayscale owns the raster's palette mapping end to
+    // end, so it skips the per-object policy mask entirely. Mono and red/black
+    // both build it: mono runs one 1-bit pass per slot, red/black only reads the
+    // slots to decide which pixels are flat point ops.
     const pageColor = opts.pageColor ?? 'mono';
-    if (pageColor === 'redBlack') {
-        throw new RangeError('renderLabelPage: pageColor redBlack is not implemented yet');
-    }
 
     const byId = nodeLookup(doc.nodes);
     const policy =
-        pageColor === 'mono'
+        pageColor !== 'grayscale'
             ? await buildPolicyMask(nodes, byId, { widthPx, heightPx }, dpi, assets, {
                   threshold: opts.threshold,
                   strength: opts.strength,
@@ -893,6 +905,48 @@ export const renderLabelPage = async (
             gamma: quantizeOptions.gamma,
             strength: quantizeOptions.strength,
             serpentine: quantizeOptions.serpentine,
+        });
+    } else if (pageColor === 'redBlack') {
+        // Per-slot flat/diffuse classification: slot 0 is the global strategy,
+        // every masked slot is its own resolved policy. `threshold` is the
+        // point-op path (flat art); every diffuser — and, deliberately,
+        // `screentone`/`ostromoukhov` in this mode — diffs through the two-ink
+        // palette.
+        const flatBySlot: boolean[] = [(opts.quantizer ?? 'threshold') === 'threshold'];
+        if (policy) {
+            for (const [index, entry] of policy.policies) {
+                flatBySlot[index] =
+                    typeof entry === 'function'
+                        ? entry === QUANTIZERS.threshold
+                        : entry.quantizer === QUANTIZERS.threshold;
+            }
+        }
+
+        // One flag per device pixel (`0` = diffuse, `1` = flat). Uncovered
+        // pixels read mask slot 0, i.e. the global strategy.
+        const pixelCount = widthPx * heightPx;
+        const flat = new Uint8Array(pixelCount);
+        if (policy) {
+            const maskData = policy.mask.data;
+            for (let p = 0; p < pixelCount; p++) {
+                if (flatBySlot[maskData[p]]) flat[p] = 1;
+            }
+        } else if (flatBySlot[0]) {
+            flat.fill(1);
+        }
+
+        // Flat pixels classify the raw source bytes with the same gamma and
+        // cutoff the global strategy resolves, so authored red is exact and
+        // mid-greys do not turn into dither noise.
+        const resolvedThreshold = quantizeOptions.threshold ?? 128;
+        const resolvedGamma = quantizeOptions.gamma;
+        diffuseToPalette(imageData, redBlackPalette(), {
+            gamma: resolvedGamma,
+            strength: quantizeOptions.strength,
+            serpentine: quantizeOptions.serpentine,
+            flat,
+            flatNearest: (r, g, b) =>
+                classifyFlatRedBlack(r, g, b, resolvedThreshold, resolvedGamma),
         });
     } else {
         quantizeRgba(

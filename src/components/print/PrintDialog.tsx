@@ -154,6 +154,8 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     const capabilities = printerStatus.capabilities;
     /** 16-level grayscale pages are supported only by tasks that report it. */
     const grayscaleSupported = capabilities?.grayscale === true;
+    /** Red/black (two-ink) pages are supported only by tasks that report it. */
+    const redBlackSupported = capabilities?.doubleColor === true;
 
     const [order, setOrder] = useState<PrintOrder>('grouped');
     const [copies, setCopies] = useState(1);
@@ -488,8 +490,9 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             ...(densityEnabled ? { density: densityValue } : {}),
             ...(speedEnabled ? { speed } : {}),
             ...(labelTypeEnabled ? { labelType: effectiveLabelType } : {}),
-            // Print-time page colour selected in this dialog session. Red/black
-            // stays gated in `buildCsvPrintJob` until P5.
+            // Print-time page colour selected in this dialog session. The
+            // red/black mode is capability-gated by the select above; the job
+            // renders it through the dedicated palette path.
             pageColor,
             // Always set: the job AND the ink check render at the resolved dpi
             // (in off mode it equals the hint, so today's output is unchanged).
@@ -948,12 +951,20 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                         </SettingRow>
                         <SettingRow label={t('print.pageColor')}>
                             <Select
-                                value={pageColor === PageColorType.Grayscale ? 'grayscale' : 'mono'}
+                                value={
+                                    pageColor === PageColorType.DoubleColor
+                                        ? 'double'
+                                        : pageColor === PageColorType.Grayscale
+                                          ? 'grayscale'
+                                          : 'mono'
+                                }
                                 onChange={(value) =>
                                     setPageColor(
-                                        value === 'grayscale'
-                                            ? PageColorType.Grayscale
-                                            : PageColorType.SingleColor,
+                                        value === 'double'
+                                            ? PageColorType.DoubleColor
+                                            : value === 'grayscale'
+                                              ? PageColorType.Grayscale
+                                              : PageColorType.SingleColor,
                                     )
                                 }
                                 options={[
@@ -962,6 +973,11 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                         value: 'grayscale',
                                         label: t('print.pageColorGrayscale'),
                                         disabled: !grayscaleSupported,
+                                    },
+                                    {
+                                        value: 'double',
+                                        label: t('print.pageColorDouble'),
+                                        disabled: !redBlackSupported,
                                     },
                                 ]}
                                 className="w-32"

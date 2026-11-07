@@ -1407,6 +1407,7 @@ describe('PrintDialog — page colour', () => {
     const pageColorSelect = () => screen.getByLabelText('Page colour');
     const grayscaleOption = () =>
         screen.getByRole('option', { name: 'Grayscale (16 levels)' });
+    const doubleColorOption = () => screen.getByRole('option', { name: 'Red & black' });
 
     const lastThumbnailOverrides = (): { pageColor?: string } | undefined => {
         const options = usePrintThumbnailsMock.mock.calls.at(-1)![0] as {
@@ -1470,5 +1471,63 @@ describe('PrintDialog — page colour', () => {
 
         expect(pageColorSelect()).toHaveValue('mono');
         expect(grayscaleOption()).toBeDisabled();
+    });
+
+    it('offers red & black when supported and threads DoubleColor into preview, thumbnails and job', async () => {
+        const runner = new FakeRunner();
+        // B1_PRO reports `doubleColor: true`.
+        renderDialog({ runner, printerStatus: statusOf(B1_PRO) });
+
+        expect(pageColorSelect()).toHaveValue('mono');
+        expect(doubleColorOption()).toBeEnabled();
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        expect(pageColorSelect()).toHaveValue('double');
+
+        // The doc-dpi preview re-renders through the shared path in red/black.
+        await waitFor(() =>
+            expect(
+                renderLabelPageMock.mock.calls.some(
+                    ([, , opts]) =>
+                        (opts as { pageColor?: string } | undefined)?.pageColor === 'redBlack',
+                ),
+            ).toBe(true),
+        );
+        // The queue thumbnails get the same pixel-changing override.
+        expect(lastThumbnailOverrides()).toMatchObject({ pageColor: 'redBlack' });
+
+        // The job receives the library enum, not the render-level mode.
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobPageColor()).toBe(PageColorType.DoubleColor);
+    });
+
+    it('disables red & black and keeps mono when the printer reports no double-colour support', async () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, doubleColor: false }),
+        });
+
+        expect(pageColorSelect()).toHaveValue('mono');
+        expect(doubleColorOption()).toBeDisabled();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobPageColor()).toBe(PageColorType.SingleColor);
+    });
+
+    it('disables red & black when the capability is absent', () => {
+        // No `doubleColor` key at all: unreported means unsupported.
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({
+                model: 'B1_PRO',
+                taskType: 'D110M_V4',
+                printheadPixels: 567,
+            }),
+        });
+
+        expect(pageColorSelect()).toHaveValue('mono');
+        expect(doubleColorOption()).toBeDisabled();
     });
 });

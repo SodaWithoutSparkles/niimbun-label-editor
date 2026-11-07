@@ -920,6 +920,7 @@
     "pageColor": "Page colour",
     "pageColorSingle": "Single colour",
     "pageColorGrayscale": "Grayscale (16 levels)",
+    "pageColorDouble": "Red & black",
     "invert": "Invert",
     "mirror": "Mirror",
     "usePrinterDpi": "Use printer DPI",

@@ -231,13 +231,4 @@ describe('renderLabelPage — grayscale page colour', () => {
             expect(byte === 0 || byte === 255).toBe(true);
         }
     });
-
-    it('rejects redBlack until P5 implements it', async () => {
-        await expect(
-            renderLabelPage(docWith([]), {}, { pageColor: 'redBlack' }),
-        ).rejects.toThrow(RangeError);
-        await expect(
-            renderLabelPage(docWith([]), {}, { pageColor: 'redBlack' }),
-        ).rejects.toThrow(/not implemented yet/);
-    });
 });

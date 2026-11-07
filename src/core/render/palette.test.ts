@@ -2,12 +2,16 @@ import { ImageEncoder } from '@mmote/niimbluelib';
 import { describe, expect, it } from 'vitest';
 import { monoLuminance, type RgbaBuffer } from './colorspace';
 import {
+    classifyFlatRedBlack,
     diffuseToPalette,
     GRAYSCALE_LEVELS,
     grayscaleRampPalette,
     grayLevelColor,
     nearestPaletteEntry,
     redBlackPalette,
+    RED_BLACK_BLACK,
+    RED_BLACK_RED,
+    RED_BLACK_WHITE,
     type Palette,
 } from './palette';
 
@@ -173,6 +177,96 @@ describe('red/black palette', () => {
         for (const [r, g, b] of rgbList(rgba)) {
             expect([r, g, b]).toEqual([255, 0, 0]);
         }
+    });
+});
+
+describe('classifyFlatRedBlack', () => {
+    it('puts red dominance first, at any luminance', () => {
+        // Authored red is red ink: #ff0000, a dark red #800000, a bright
+        // desaturated red #ff4040 (luminance < 128 would be black) and a very
+        // dark red #400000 all select the red entry.
+        expect(classifyFlatRedBlack(255, 0, 0)).toBe(RED_BLACK_RED);
+        expect(classifyFlatRedBlack(128, 0, 0)).toBe(RED_BLACK_RED);
+        expect(classifyFlatRedBlack(255, 64, 64)).toBe(RED_BLACK_RED);
+        expect(classifyFlatRedBlack(64, 0, 0)).toBe(RED_BLACK_RED);
+    });
+
+    it('thresholds luminance for neutral pixels', () => {
+        expect(classifyFlatRedBlack(0, 0, 0)).toBe(RED_BLACK_BLACK);
+        expect(classifyFlatRedBlack(255, 255, 255)).toBe(RED_BLACK_WHITE);
+        // 128 is not `< 128`, so an exactly-mid grey is paper, not a dither.
+        expect(classifyFlatRedBlack(128, 128, 128)).toBe(RED_BLACK_WHITE);
+        expect(classifyFlatRedBlack(127, 127, 127)).toBe(RED_BLACK_BLACK);
+    });
+
+    it('applies the gamma curve to the luminance cutoff', () => {
+        // 112 is black at gamma 1 and lifts above the 128 cutoff at gamma 4.
+        expect(classifyFlatRedBlack(112, 112, 112, 128, 1)).toBe(RED_BLACK_BLACK);
+        expect(classifyFlatRedBlack(112, 112, 112, 128, 4)).toBe(RED_BLACK_WHITE);
+        // A non-finite gamma normalizes to the neutral curve.
+        expect(classifyFlatRedBlack(112, 112, 112, 128, Number.NaN)).toBe(RED_BLACK_BLACK);
+    });
+});
+
+describe('flat mask', () => {
+    it('keeps the flat half un-dithered while the diffuse half dithers', () => {
+        const width = 16;
+        const height = 8;
+        const rgba = solid(width, height, 128, 128, 128);
+        const flat = new Uint8Array(width * height);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width / 2; x++) flat[y * width + x] = 1;
+        }
+
+        diffuseToPalette(rgba, redBlackPalette(), {
+            flat,
+            flatNearest: (r, g, b) => classifyFlatRedBlack(r, g, b),
+        });
+
+        const pixels = rgbList(rgba);
+        const isFlatColumn = (p: number): boolean => p % width < width / 2;
+
+        // Flat half: mid grey → white exactly, no speckle (and no error can
+        // arrive from the diffuse half, because flat pixels discard it).
+        for (let p = 0; p < width * height; p++) {
+            if (!isFlatColumn(p)) continue;
+            expect(pixels[p], `flat pixel ${p}`).toEqual([255, 255, 255]);
+        }
+        // Diffuse half: the diffuser runs, so black and white both appear.
+        const diffuse = pixels.filter((_, p) => !isFlatColumn(p));
+        expect(diffuse.filter(([r]) => r === 0).length).toBeGreaterThan(0);
+        expect(diffuse.filter(([r]) => r === 255).length).toBeGreaterThan(0);
+    });
+
+    it('classifies flat pixels from the raw source and drops incoming error', () => {
+        const seen: Array<[number, number, number]> = [];
+        const rgba = solid(2, 1, 128, 128, 128);
+        const flat = new Uint8Array([0, 1]);
+
+        diffuseToPalette(rgba, redBlackPalette(), {
+            flat,
+            flatNearest: (r, g, b) => {
+                seen.push([r, g, b]);
+                return classifyFlatRedBlack(r, g, b);
+            },
+        });
+
+        // Pixel 0 diffuses: white, with its −127 error landing on pixel 1's
+        // working plane (128 − 127·7/16 ≈ 72). The flat pixel must still see
+        // the authored 128 — not the error-corrected 72, which would pick black.
+        expect(seen).toEqual([[128, 128, 128]]);
+        expect(rgbList(rgba)).toEqual([
+            [255, 255, 255],
+            [255, 255, 255],
+        ]);
+    });
+
+    it('throws a RangeError when the flat mask does not match the raster', () => {
+        expect(() =>
+            diffuseToPalette(solid(4, 4, 128, 128, 128), redBlackPalette(), {
+                flat: new Uint8Array(15),
+            }),
+        ).toThrow(RangeError);
     });
 });
 

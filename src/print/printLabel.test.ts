@@ -567,14 +567,22 @@ describe('buildCsvPrintJob', () => {
         );
     });
 
-    it('rejects DoubleColor pageColor (v1 render path is single-plane)', () => {
-        expect(() =>
+    it('accepts DoubleColor pageColor (red/black render path)', async () => {
+        // The v1 single-plane rejection is gone: `pageColorModeOf` maps
+        // DoubleColor to `'redBlack'`, which the shared render path implements.
+        const build = () =>
             buildCsvPrintJob(ftagDoc(), null, {
                 order: 'grouped',
                 copies: 1,
                 overrides: { pageColor: PageColorType.DoubleColor },
-            }),
-        ).toThrow(RangeError);
+            });
+
+        expect(build).not.toThrow();
+        const job = build();
+        expect(job.pageColor).toBe(PageColorType.DoubleColor);
+
+        const [page] = await collectPages(job);
+        expect(page!.data.pageColor).toBe(PageColorType.DoubleColor);
     });
 
     it('rejects SingleColorAlt pageColor (not implemented by the v1 render path)', () => {

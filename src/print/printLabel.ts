@@ -46,9 +46,9 @@ export interface PrintOverrides {
     speed?: 0 | 1;
     labelType?: LabelType;
     /**
-     * Page colour for this job. `SingleColor` (mono) and `Grayscale` are
-     * supported; `DoubleColor` stays gated until P5 wires the red/black render
-     * path, and `SingleColorAlt` is not implemented.
+     * Page colour for this job. `SingleColor` (mono), `Grayscale` and
+     * `DoubleColor` (red/black, rendered by the dedicated palette path) are
+     * supported; `SingleColorAlt` is not implemented.
      */
     pageColor?: PageColorType;
     /**
@@ -207,16 +207,12 @@ export function buildCsvPrintJob(
     opts: CsvPrintJobOptions,
     deps: CsvPrintJobDeps = {},
 ): PrintJob {
-    // v1 renders a single-plane Mono raster; Grayscale is a single-plane 4-bit
-    // ramp the same path supports. DoubleColor would need the red/black
-    // colourspace (P5) and would encode garbage today, so the job must reject it
-    // loudly rather than send a malformed page. W4 already gates the control
-    // behind `capabilities.doubleColor`.
-    if (opts.overrides?.pageColor === PageColorType.DoubleColor) {
-        throw new RangeError(
-            'buildCsvPrintJob: pageColor DoubleColor is not supported by the current render path; red/black lands in P5',
-        );
-    }
+    // DoubleColor is implemented by the render path: `pageColorModeOf` maps it
+    // to `'redBlack'`, so `renderLabelPage` hands the encoder exact
+    // `#ffffff`/`#000000`/`#ff0000` pixels and the library splits them into the
+    // black/red planes. The library validates the rest at job time — the task
+    // must report double-colour capability and every encoded page's
+    // `pageColor` must match the job's — so no local guard is needed here.
     // SingleColorAlt is a second single-plane mode this path does not
     // implement. Reject it here: silently mono-encoding would print the wrong
     // label, and letting the library throw during encoding would surface as a
