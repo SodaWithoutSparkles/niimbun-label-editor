@@ -672,6 +672,45 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             label: supported ? name : t('print.labelTypeUnsupported', { name }),
         };
     });
+    /**
+     * Page-colour options (P6). An unsupported mode stays **visible** — the
+     * user must see that the mode exists and why it is off — so it is disabled
+     * and its label carries the same `(unsupported)` suffix as label types.
+     * Mono is always offered: every task can print one ink plane.
+     */
+    const pageColorOptions = [
+        { value: 'mono', label: t('print.pageColorSingle') },
+        {
+            value: 'grayscale',
+            label: grayscaleSupported
+                ? t('print.pageColorGrayscale')
+                : t('print.pageColorUnsupported', { name: t('print.pageColorGrayscale') }),
+            disabled: !grayscaleSupported,
+        },
+        {
+            value: 'double',
+            label: redBlackSupported
+                ? t('print.pageColorDouble')
+                : t('print.pageColorUnsupported', { name: t('print.pageColorDouble') }),
+            disabled: !redBlackSupported,
+        },
+    ];
+    /**
+     * Why the page-colour control is limited (P6). The selected red/black mode
+     * wins: its honest limitation is more useful than "this printer does not
+     * support it", and the mode is unreachable when unsupported anyway. With
+     * every mode available and a mono/grayscale pick there is nothing to say.
+     */
+    const pageColorDescription =
+        pageColor === PageColorType.DoubleColor
+            ? t('print.pageColorDoubleHint')
+            : !grayscaleSupported && !redBlackSupported
+              ? t('print.pageColorUnsupportedHint')
+              : !grayscaleSupported
+                ? t('print.pageColorGrayscaleUnsupportedHint')
+                : !redBlackSupported
+                  ? t('print.pageColorDoubleUnsupportedHint')
+                  : undefined;
     /** Display name for a `LabelType` in the mismatch notice (same wording as the select). */
     const labelTypeName = (type: LabelType): string => {
         const key = labelTypeNameKey(type);
@@ -949,7 +988,10 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                 aria-label={t('print.printDirection')}
                             />
                         </SettingRow>
-                        <SettingRow label={t('print.pageColor')}>
+                        <SettingRow
+                            label={t('print.pageColor')}
+                            description={pageColorDescription}
+                        >
                             <Select
                                 value={
                                     pageColor === PageColorType.DoubleColor
@@ -967,19 +1009,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                               : PageColorType.SingleColor,
                                     )
                                 }
-                                options={[
-                                    { value: 'mono', label: t('print.pageColorSingle') },
-                                    {
-                                        value: 'grayscale',
-                                        label: t('print.pageColorGrayscale'),
-                                        disabled: !grayscaleSupported,
-                                    },
-                                    {
-                                        value: 'double',
-                                        label: t('print.pageColorDouble'),
-                                        disabled: !redBlackSupported,
-                                    },
-                                ]}
+                                options={pageColorOptions}
                                 className="w-32"
                                 aria-label={t('print.pageColor')}
                             />

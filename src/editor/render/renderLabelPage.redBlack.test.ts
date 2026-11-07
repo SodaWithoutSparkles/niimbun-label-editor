@@ -289,6 +289,33 @@ describe('renderLabelPage — red/black page colour', () => {
         expect(tally(page.rgba).other).toBe(0);
     });
 
+    it('counts clipped red ink in the mirror notice (P6)', async () => {
+        // Same asymmetric-union idiom as the mono mirror suite: 4000×2000 hm @254
+        // dpi = 400×200 px, printable only in x 0..1500 hm (0..150 px). The red
+        // rect sits fully inside before the flip, so the flip is the only way ink
+        // leaves the union.
+        const doc = createLabelDoc({
+            backingW: 4000,
+            backingH: 2000,
+            dpi: DPI,
+            regions: [{ kind: 'rect', x: 0, y: 0, w: 1500, h: 2000 }],
+            nodes: [rect('r', 0, 1000, '#ff0000')],
+        });
+
+        const base = await renderLabelPage(doc, {}, { pageColor: 'redBlack' });
+        expect(base.notices, 'no mirror ⇒ no notice').toBeUndefined();
+        // Sanity: the page really carries red pigment, not just white paper.
+        expect(tally(base.rgba).red).toBeGreaterThan(0);
+
+        const mirrored = await renderLabelPage(doc, {}, { pageColor: 'redBlack', mirror: true });
+
+        expect(mirrored.notices).toHaveLength(1);
+        const notice = mirrored.notices?.[0];
+        expect(notice?.kind).toBe('mirror-clipped-ink');
+        // Red ink counts as ink (P2's not-paper-white test), so the loss is real.
+        expect(notice?.lostPx, 'mirrored red ink was outside the union').toBeGreaterThan(0);
+    });
+
     it('leaves mono 1-bit and grayscale 16-level (smoke)', async () => {
         const doc = docWith([rect('r', 0, 1000, '#808080')]);
 

@@ -303,10 +303,13 @@ const FS_DENOM = 16;
  * still dithers. A `flat` plane of the wrong length is a `RangeError` — the
  * caller's mask must be one byte per pixel.
  *
- * D-05 (cross-policy seam drift): a page palette is a page-level decision while
- * per-object quantizer policies stay 1-bit, so where the two meet the seam
- * drifts exactly as it does between two policies. Recorded here deliberately;
- * not fixed in this phase (P3/P5 own the dispatch).
+ * D-05 (cross-policy seam drift): a page palette is still a page-level decision,
+ * but the per-object policies no longer stay 1-bit — in this pass the same
+ * policies choose **flat vs diffuse** per pixel (see `flat` above). The seam
+ * debt stays: two diffusing objects still meet through a shared error field, and
+ * a flat object beside a diffuse one still discards the deposited error, so the
+ * two policies' output drifts at their border. Recorded here deliberately; not
+ * fixed in this phase.
  */
 export const diffuseToPalette = (
     rgba: RgbaBuffer,

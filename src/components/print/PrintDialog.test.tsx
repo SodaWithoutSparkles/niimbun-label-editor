@@ -1405,9 +1405,12 @@ describe('PrintDialog — label type defaults to the reported roll (P19)', () =>
 
 describe('PrintDialog — page colour', () => {
     const pageColorSelect = () => screen.getByLabelText('Page colour');
+    // Name patterns (not exact strings): an unsupported mode's label carries the
+    // `(unsupported)` suffix, so these must find both the plain and the
+    // suffixed form without changing what the assertion is about.
     const grayscaleOption = () =>
-        screen.getByRole('option', { name: 'Grayscale (16 levels)' });
-    const doubleColorOption = () => screen.getByRole('option', { name: 'Red & black' });
+        screen.getByRole('option', { name: /^Grayscale \(16 levels\)/ });
+    const doubleColorOption = () => screen.getByRole('option', { name: /^Red & black/ });
 
     const lastThumbnailOverrides = (): { pageColor?: string } | undefined => {
         const options = usePrintThumbnailsMock.mock.calls.at(-1)![0] as {
@@ -1529,5 +1532,100 @@ describe('PrintDialog — page colour', () => {
 
         expect(pageColorSelect()).toHaveValue('mono');
         expect(doubleColorOption()).toBeDisabled();
+    });
+
+    it('keeps every mode visible and labels both unsupported on a mono-only printer', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({
+                model: 'B1_PRO',
+                taskType: 'D110M_V4',
+                printheadPixels: 567,
+            }),
+        });
+
+        // Visible, not hidden: the user sees the modes exist and why they are off.
+        expect(screen.getByRole('option', { name: 'Single colour' })).toBeEnabled();
+        const grayscale = grayscaleOption();
+        expect(grayscale).toBeDisabled();
+        expect(grayscale).toHaveTextContent('Grayscale (16 levels) (unsupported)');
+        const double = doubleColorOption();
+        expect(double).toBeDisabled();
+        expect(double).toHaveTextContent('Red & black (unsupported)');
+
+        expect(
+            screen.getByText('This printer supports mono pages only.'),
+        ).toBeInTheDocument();
+    });
+
+    it('marks only grayscale unsupported when the printer can do red & black', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, grayscale: false }),
+        });
+
+        const grayscale = grayscaleOption();
+        expect(grayscale).toBeDisabled();
+        expect(grayscale).toHaveTextContent('Grayscale (16 levels) (unsupported)');
+        expect(doubleColorOption()).toBeEnabled();
+        expect(doubleColorOption()).not.toHaveTextContent('unsupported');
+
+        expect(
+            screen.getByText('This printer does not support 16-level grayscale pages.'),
+        ).toBeInTheDocument();
+        expect(
+            screen.queryByText('This printer supports mono pages only.'),
+        ).not.toBeInTheDocument();
+    });
+
+    it('marks only red & black unsupported when the printer supports grayscale', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, grayscale: true, doubleColor: false }),
+        });
+
+        const double = doubleColorOption();
+        expect(double).toBeDisabled();
+        expect(double).toHaveTextContent('Red & black (unsupported)');
+        expect(grayscaleOption()).toBeEnabled();
+        expect(grayscaleOption()).not.toHaveTextContent('unsupported');
+
+        expect(
+            screen.getByText('This printer does not support two-colour (red & black) pages.'),
+        ).toBeInTheDocument();
+    });
+
+    it('shows no description when every mode is supported and mono is selected', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, grayscale: true }),
+        });
+
+        expect(grayscaleOption()).toBeEnabled();
+        expect(doubleColorOption()).toBeEnabled();
+        for (const text of [
+            /This printer supports mono pages only\./,
+            /does not support 16-level grayscale pages\./,
+            /does not support two-colour/,
+            /Images are dithered/,
+        ]) {
+            expect(screen.queryByText(text)).not.toBeInTheDocument();
+        }
+    });
+
+    it('shows the red/black limitation hint only while red & black is selected', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, grayscale: true }),
+        });
+
+        const hint = /Images are dithered; per-object dither strength and gamma do not apply in red & black\./;
+        expect(screen.queryByText(hint)).not.toBeInTheDocument();
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        expect(screen.getByText(hint)).toBeInTheDocument();
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'mono' } });
+        expect(screen.queryByText(hint)).not.toBeInTheDocument();
     });
 });

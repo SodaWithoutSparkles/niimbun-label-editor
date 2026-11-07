@@ -78,6 +78,39 @@ const ftagDoc = (printDirection?: LabelDoc['label']['printDirection']): LabelDoc
         nodes: [rect('r', 300, 300, 1900, 1400), text('t', 300, 2000, 'PRINT W4')],
     });
 
+/** A leaf rectangle with an explicit ink colour (`#ff0000` / `#000000`). */
+const inkRect = (
+    id: string,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    fill: string,
+): Node =>
+    node({
+        id,
+        parentId: null,
+        type: 'shape',
+        shape: 'rectangle',
+        visible: true,
+        locked: false,
+        transform: { x, y, rotDeg: 0, scaleX: 1, scaleY: 1 },
+        size: { w, h },
+        fill,
+        stroke: 'transparent',
+    });
+
+/** A doc with one red and one black rect, so both red/black planes carry ink. */
+const redBlackDoc = (printDirection?: LabelDoc['label']['printDirection']): LabelDoc =>
+    createLabelDoc({
+        paperTypeId: 'ftagSpare-25x78',
+        ...(printDirection ? { printDirection } : {}),
+        nodes: [
+            inkRect('red', 300, 300, 900, 1400, '#ff0000'),
+            inkRect('black', 1300, 300, 600, 1400, '#000000'),
+        ],
+    });
+
 const collectPages = async (job: PrintJob): Promise<PrintPage[]> => {
     const pages: PrintPage[] = [];
     for await (const page of job.pages) {
@@ -452,6 +485,101 @@ describe('buildCsvPrintJob', () => {
             oriented.direction,
         );
         expect(page!.data).toEqual(expected);
+    });
+
+    it('P6: a 3-row grayscale job keeps the mode on every page and render call', async () => {
+        const seen: Array<RenderLabelPageOptions['pageColor']> = [];
+        const doc = ftagDoc();
+        const job = buildCsvPrintJob(
+            doc,
+            csvOf(['name'], [['a'], ['b'], ['c']]),
+            { order: 'grouped', copies: 1, overrides: { pageColor: PageColorType.Grayscale } },
+            {
+                render: async (pageDoc, ctx, opts) => {
+                    seen.push(opts.pageColor);
+                    return renderLabelPage(pageDoc, ctx, opts);
+                },
+            },
+        );
+
+        expect(job.totalPages).toBe(3);
+        expect(job.pageColor).toBe(PageColorType.Grayscale);
+        const pages = await collectPages(job);
+
+        // No per-row leakage: every seam call and every page carries the mode.
+        expect(seen).toEqual(['grayscale', 'grayscale', 'grayscale']);
+        expect(pages).toHaveLength(3);
+        for (const page of pages) {
+            expect(page.data.pageColor).toBe(PageColorType.Grayscale);
+            const pixelRows = page.data.rowsData.filter((row) => row.dataType === 'pixels');
+            expect(pixelRows.some((row) => row.rowDataGray !== undefined)).toBe(true);
+            expect(pixelRows.every((row) => row.rowDataBlack === undefined)).toBe(true);
+        }
+    });
+
+    it('P6: a 3-row red/black job keeps the mode and splits both planes on every page', async () => {
+        const seen: Array<RenderLabelPageOptions['pageColor']> = [];
+        const doc = redBlackDoc();
+        const job = buildCsvPrintJob(
+            doc,
+            csvOf(['name'], [['a'], ['b'], ['c']]),
+            { order: 'grouped', copies: 1, overrides: { pageColor: PageColorType.DoubleColor } },
+            {
+                render: async (pageDoc, ctx, opts) => {
+                    seen.push(opts.pageColor);
+                    return renderLabelPage(pageDoc, ctx, opts);
+                },
+            },
+        );
+
+        expect(job.totalPages).toBe(3);
+        expect(job.pageColor).toBe(PageColorType.DoubleColor);
+        const pages = await collectPages(job);
+
+        expect(seen).toEqual(['redBlack', 'redBlack', 'redBlack']);
+        expect(pages).toHaveLength(3);
+        for (const page of pages) {
+            expect(page.data.pageColor).toBe(PageColorType.DoubleColor);
+            const pixelRows = page.data.rowsData.filter((row) => row.dataType === 'pixels');
+            // Both inks reached the split: red ink and black ink on every page.
+            expect(
+                pixelRows.some((row) => (row.redPixelsCount ?? 0) > 0),
+                'the red plane carries content',
+            ).toBe(true);
+            expect(
+                pixelRows.some((row) => (row.blackPixelsCount ?? 0) > 0),
+                'the black plane carries content',
+            ).toBe(true);
+            // Never falls back to the mono/gray plane.
+            expect(pixelRows.every((row) => row.rowDataGray === undefined)).toBe(true);
+        }
+    });
+
+    it('P6: preview ≡ print bytes for grayscale and red/black', async () => {
+        for (const pageColor of [PageColorType.Grayscale, PageColorType.DoubleColor] as const) {
+            const doc = redBlackDoc('right');
+            const overrides: PrintOverrides = { pageColor, dpi: 200 };
+
+            const [page] = await collectPages(
+                buildCsvPrintJob(doc, null, { order: 'grouped', copies: 1, overrides }),
+            );
+            // The preview/dialog path: the same render options from the same
+            // overrides, oriented and encoded. Pin the bytes, not the plumbing.
+            const rendered = await renderLabelPage(
+                doc,
+                {},
+                renderOptionsOf(overrides, undefined),
+            );
+            const oriented = orientForPrint(rendered, doc.label.printDirection);
+            const expected = ImageEncoder.encodeCanvas(
+                oriented.canvas,
+                pageColor,
+                oriented.direction,
+            );
+
+            expect(page!.data.pageColor).toBe(pageColor);
+            expect(page!.data).toEqual(expected);
+        }
     });
 
     it('P2 golden: a field-bound leaf renders byte-identically in the editor and the print job', async () => {
