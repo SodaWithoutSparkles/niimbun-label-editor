@@ -71,6 +71,7 @@ generated images (no photo fixture in the repo).
 | Banding vs texture | Grayscale gradient strip / photo | Dither texture, not wide flat bands; judge acceptability, not perfection |
 | Flat crispness | Grayscale captions; red/black bar rows + 8-step sweep | Sharp edges, no dither speckle on authored flat art |
 | Red vs black density | Red/black bar rows; `RED` vs `BLACK` text | Note which ink is lighter/darker at the same coverage (thermal red is heat-selected, not pigment) |
+| Cross-ink registration | Alternating row; black↔red boundaries | Edges should be clean; a strip of the previous bar's ink at a boundary means the two inks are misregistered (observed ~1–1.5 mm) |
 | Mixed rows | Alternating row; red+grey gradient | Both inks present, recognisable mix — not mud or one ink only |
 | Red-only dither | Red-tinted grey gradient | Red and white dots only — **no black pixels** |
 | Long-page buffer | 50×160 mm strip, especially the lower half | Completes with no buffer error, stall or truncation; density equals the top |
@@ -85,6 +86,8 @@ generated images (no photo fixture in the repo).
 | | A (Mock) | Grayscale — 50×160 long | Grayscale | Mock | | |
 | 2026-11-08 | B (hardware) | Grayscale — 16 steps | Grayscale | owner printer, density 3 (default) | Levels **0–2 indistinguishable from paper**, **3 very faint**, usable ≈ **4–14**; on some stock **15 merges with 14 (sometimes 13)**. Density control added after this print. | **Partial** — ramp spans more than paper shows; **dynamic range requested (D-75)** |
 | 2026-11-08 | B (hardware) | Red & black — flat / diffuse | Red & black | owner printer, **normal mono stock** | Prints an intermediate **grey ≈ grayscale levels 11–12** — not black/red. Mode assumes red/black media. | **Expected mismatch** — page colour must match the stock; red/black tape row still pending |
+| 2026-11-08 | B (hardware) | Red & black — flat / diffuse | Red & black | owner printer, **red/black tape**, density 3 | Solid black row and solid red row print correctly. Alternating row: bars 2/4/6 show **~1–1.5 mm of the previous bar's ink at the left edge**; bars 3/5 show ~1 mm red then black — the two inks are **misregistered** at colour boundaries. First 4 sweep blocks black (expected). **Red-tinted gradient** (software output is red/white only) printed ~1.2 mm black bars at one edge, then **red–black mixed** in the darker half. Colour gradient correspondingly messy. | **Needs calibration** — see **D-77** (red heat/coverage + plane registration); solid rows prove the flat path |
+| 2026-11-08 | B (hardware) | Grayscale — 16 steps | Grayscale | owner printer, **red/black tape**, density 3 | Prints almost entirely **red**: usable ≈ **5–15**, 4 very faint/paper, 13–14 pure red, 15 red with slight black. Black objects show a faint red fringe. | **Paper mismatch** — grayscale mode on red/black stock is a red print; page colour must match stock |
 | | B (hardware) | Grayscale — 50×160 long | Grayscale | | | |
 | | B (hardware) | Red & black — flat / diffuse | Red & black | | | |
 

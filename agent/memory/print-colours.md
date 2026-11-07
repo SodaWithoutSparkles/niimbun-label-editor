@@ -24,6 +24,11 @@ and is capability-gated.
   media; page colour must match the loaded stock. RFID cannot infer the colour
   (red/black stock reports as ordinary gap labels), so this stays a manual
   selection.
+- **Red/black tape** (owner, 2026-11-08): solid black/red rows are correct, but
+  colour boundaries show **~1–1.5 mm ink misregistration**, dense red can
+  overheat into black (red-tinted gradient came out red–black), and a grayscale
+  page on this stock prints almost entirely red (usable ≈ levels 5–15). See
+  [Red/black paper physics](#redblack-paper-physics-owner-2026-11-08).
 
 ## Modes and seams
 
@@ -181,6 +186,31 @@ non-white pixel, so red ink is ink in the mirror-loss notice.
   `sendCompressMode: 85 85 7 4 b b2 b3 b4` payload, but using it means hand-built
   packets and untested printer configuration — do not wire it blind; ask
   upstream first.
+
+## Red/black paper physics (owner, 2026-11-08)
+
+Red/black stock is **heat-selected**: red needs little heat, black needs a lot;
+black therefore bleeds a faint red fringe. Observed on the P7 pattern at density 3:
+
+- Solid black and solid red rows print correctly (the flat classifier is right).
+- At a black↔red boundary the two inks are **misregistered by ~1–1.5 mm**: the
+  first strip of each bar carries the previous bar's ink (alternating row, bars
+  2/4/6 black-then-red; bars 3/5 red-then-black). Top/bottom uniform rows hide it.
+- The **red-tinted gradient** — whose software output is red/white only — printed
+  ~1.2 mm of black bars at one edge and then **red–black mixed** in its darker
+  half; the colour-photo gradient is correspondingly messy. Dense/adjacent red
+  appears to overheat into black on this stock.
+- A **grayscale** page on red/black tape prints almost entirely **red**: usable
+  ≈ levels 5–15 (4 is paper/faint), 13–14 pure red, 15 red with slight black.
+
+Implications:
+- Page colour must match the loaded stock **both ways**: mono/grayscale on
+  red/black tape is not a greyscale print (it is a red print), and red/black on
+  mono stock is a grey print (≈ levels 11–12). RFID cannot infer colour.
+- The palette is still uncalibrated (`weight` all `1`). The misregistration and
+  red-overheat behaviour are **printer physics**, not a software bug (solid rows
+  are correct); tuning needs a controlled coverage/density sweep, not a blind
+  constant change. Tracked as **D-77**.
 
 ## v1 limitations / open items
 
