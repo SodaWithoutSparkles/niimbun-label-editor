@@ -19,6 +19,11 @@ and is capability-gated.
   checklist: [`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md); the harness
   has a **Density** select for heat/energy tests (density does not change the ramp
   mapping).
+- **Red/black mode on mono stock** (owner, 2026-11-08): prints an intermediate
+  **grey ≈ grayscale levels 11–12**, not black/red. The mode assumes red/black
+  media; page colour must match the loaded stock. RFID cannot infer the colour
+  (red/black stock reports as ordinary gap labels), so this stays a manual
+  selection.
 
 ## Modes and seams
 
@@ -162,6 +167,20 @@ non-white pixel, so red ink is ink in the mirror-loss notice.
 - niim.blue 2026.9.0 ships dual colour on this path, so it has upstream hardware
   mileage. **A dependency bump must re-check these bytes** — if 133 reappears,
   the payload shape changed and red/black printing will be wrong.
+
+## Compression (0.49.1)
+
+- **Grayscale rows are always RLE-compressed** by the library:
+  `PacketGenerator.writeImageDataGray` → `compressGrayRow` (runs of ≥6 equal
+  pixels, whole data bytes, max 252; encoding stops past 250 run bytes).
+- There is **no public "compression mode" API**. `PrintOptions` has no
+  compression field; `GetCompress`/`In_GetCompress` are enum-only;
+  `imageCompressSupport` / `maxImageCompressBytes` / `maxCompressLines` are
+  parsed into the capabilities DTO but never read; `PrinterConfig2` exposes only
+  a typed `Time` setter. The protocol comment documents a raw
+  `sendCompressMode: 85 85 7 4 b b2 b3 b4` payload, but using it means hand-built
+  packets and untested printer configuration — do not wire it blind; ask
+  upstream first.
 
 ## v1 limitations / open items
 

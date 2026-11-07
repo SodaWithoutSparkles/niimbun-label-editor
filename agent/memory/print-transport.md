@@ -9,7 +9,16 @@ Foundation for talking to NIIMBOT printers. Added in P1 (commit `380be10`).
 - `src/print/mockTransport.ts` — offline/dev transport + reference impl. No runtime import of `@mmote/niimbluelib` (type-only). Validates quantities/over-total, reports the **actual** printed count, records quantities not payloads.
 - `src/print/niimbotAdapter.ts` — `NiimbotTransport implements PrinterTransport`, wraps `@mmote/niimbluelib`. Injectable `createClient` for tests.
 
-## Verified print flow (niimbluelib 0.49.0)
+## Verified print flow (niimbluelib 0.49.1)
+
+**2026-11-08: bumped 0.49.0 → 0.49.1** (transport reliability; `8bc97b9`).
+Consumer-relevant changes:
+- Bluetooth connect now retries `gatt.connect()` up to 3× on a Web Bluetooth
+  `NetworkError` (the link can drop right after connect).
+- `Utils.sleep` runs its timer in a **Web Worker** (falls back to `setTimeout`),
+  so background-tab throttling no longer stalls the print sequence.
+- No changes to `ImageEncoder`, `PacketGenerator`, print tasks, or enums; the
+  DoubleColor payload golden and grayscale nibble goldens still pass.
 
 **2026-11-02: bumped 0.47.1 → 0.49.0** (grayscale enablement; `5f9722e`).
 Consumer-relevant changes, audited against our code:
@@ -228,5 +237,5 @@ Printing a **25 mm** label on the **567-dot (~48 mm)** printhead left-aligns con
 
 ## Conventions
 
-- Deps are added with `bun add` in the phase that needs them (`@mmote/niimbluelib` was P1; now pinned at 0.49.0). Never npm.
+- Deps are added with `bun add` in the phase that needs them (`@mmote/niimbluelib` was P1; now pinned at 0.49.1). Never npm.
 - Transport status is the P3 connection chip's source; a mid-job `disconnect` must not be overwritten by a bogus `connected`.

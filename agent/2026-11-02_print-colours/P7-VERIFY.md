@@ -74,7 +74,7 @@ generated images (no photo fixture in the repo).
 | Mixed rows | Alternating row; red+grey gradient | Both inks present, recognisable mix — not mud or one ink only |
 | Red-only dither | Red-tinted grey gradient | Red and white dots only — **no black pixels** |
 | Long-page buffer | 50×160 mm strip, especially the lower half | Completes with no buffer error, stall or truncation; density equals the top |
-| Paper / RFID | Any print on swapped stock | Manual paper selection works; no silent geometry mismatch |
+| Paper / RFID | Any print on swapped stock | Manual paper selection works; no silent geometry mismatch — and **red/black mode on mono stock prints an intermediate grey ≈ levels 11–12** (observed), so page colour must match the stock |
 
 ## Record
 
@@ -84,10 +84,11 @@ generated images (no photo fixture in the repo).
 | | A (Mock) | Red & black — flat / diffuse | Red & black | Mock | | |
 | | A (Mock) | Grayscale — 50×160 long | Grayscale | Mock | | |
 | 2026-11-08 | B (hardware) | Grayscale — 16 steps | Grayscale | owner printer, density 3 (default) | Levels **0–2 indistinguishable from paper**, **3 very faint**, usable ≈ **4–14**; on some stock **15 merges with 14 (sometimes 13)**. Density control added after this print. | **Partial** — ramp spans more than paper shows; **dynamic range requested (D-75)** |
+| 2026-11-08 | B (hardware) | Red & black — flat / diffuse | Red & black | owner printer, **normal mono stock** | Prints an intermediate **grey ≈ grayscale levels 11–12** — not black/red. Mode assumes red/black media. | **Expected mismatch** — page colour must match the stock; red/black tape row still pending |
 | | B (hardware) | Grayscale — 50×160 long | Grayscale | | | |
 | | B (hardware) | Red & black — flat / diffuse | Red & black | | | |
 
-**Owner verdict:** *(grayscale 16-step: usable 4–14 at density 3; dynamic-range option to be added later — D-75. Long-page and red/black rows still pending.)*
+**Owner verdict:** *(grayscale 16-step: usable 4–14 at density 3; dynamic-range option to be added later — D-75. Red/black on mono stock prints grey ≈ 11–12 — expected, page colour must match the stock. Long-page and red/black-tape rows still pending.)*
 
 When the rows are filled: only a clean long-page print can retire **D-73**; only
 the red/black row can confirm the palette calibration (weights are all `1` until
