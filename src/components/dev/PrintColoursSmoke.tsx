@@ -58,6 +58,8 @@ export function PrintColoursSmoke() {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
     const [kind, setKind] = useState<TransportKind>('mock');
+    // undefined = printer default; reset per transport because capabilities differ.
+    const [density, setDensity] = useState<number | undefined>(undefined);
     const [status, setStatus] = useState<PrinterStatus | undefined>(undefined);
     const [progress, setProgress] = useState<PrintProgress | undefined>(undefined);
     const [pageSize, setPageSize] = useState<{ widthPx: number; heightPx: number } | undefined>(undefined);
@@ -72,6 +74,22 @@ export function PrintColoursSmoke() {
     };
     const info = (text: string): void => push('info', text);
     const fail = (text: string): void => push('error', text);
+
+    // Density range from the reported capabilities, with plain fallbacks.
+    const rawDensityMin = status?.capabilities?.densityMin ?? 1;
+    const rawDensityMax = status?.capabilities?.densityMax ?? 5;
+    const densityRangeOk =
+        Number.isFinite(rawDensityMin) &&
+        Number.isFinite(rawDensityMax) &&
+        rawDensityMax >= rawDensityMin &&
+        rawDensityMax - rawDensityMin <= 100;
+    const densityMin = densityRangeOk ? rawDensityMin : 1;
+    const densityMax = densityRangeOk ? rawDensityMax : 5;
+    const densityDefault = densityRangeOk ? (status?.capabilities?.densityDefault ?? 3) : 3;
+    const densityOptions = Array.from(
+        { length: densityMax - densityMin + 1 },
+        (_, index) => densityMin + index,
+    );
 
     const selectPattern = (id: ColourPatternId): void => {
         setPatternId(id);
@@ -92,6 +110,7 @@ export function PrintColoursSmoke() {
         transportRef.current = transport;
         setStatus(undefined);
         setProgress(undefined);
+        setDensity(undefined);
         const offStatus = transport.onStatus(setStatus);
         const offProgress = transport.onProgress(setProgress);
         return () => {
@@ -170,7 +189,7 @@ export function PrintColoursSmoke() {
         setBusy(true);
         try {
             info(
-                `building "${pattern.label}" · pageColor=${pageColorLabel(pageColor)}` +
+                `building "${pattern.label}" · pageColor=${pageColorLabel(pageColor)} · density=${density ?? 'default'}` +
                     (pageSize ? ` · preview ${pageSize.widthPx}×${pageSize.heightPx} px` : ''),
             );
             // NOT `buildLabelPrintJob`: that hardcodes SingleColor, so the page
@@ -178,7 +197,11 @@ export function PrintColoursSmoke() {
             const job = buildCsvPrintJob(
                 pattern.doc,
                 null,
-                { order: 'grouped', copies: 1, overrides: { pageColor } },
+                {
+                    order: 'grouped',
+                    copies: 1,
+                    overrides: { pageColor, ...(density !== undefined ? { density } : {}) },
+                },
                 { assets: ASSETS },
             );
             info(`job totalPages=${job.totalPages} pageColor=${job.pageColor}`);
@@ -254,6 +277,25 @@ export function PrintColoursSmoke() {
                     </select>
                 </label>
 
+                <label className="text-sm">
+                    Density:{' '}
+                    <select
+                        value={density === undefined ? '' : String(density)}
+                        onChange={(event) =>
+                            setDensity(event.target.value === '' ? undefined : Number(event.target.value))
+                        }
+                        disabled={busy}
+                        className="rounded border border-gray-300 px-2 py-1 text-sm"
+                    >
+                        <option value="">Printer default ({densityDefault})</option>
+                        {densityOptions.map((value) => (
+                            <option key={value} value={value}>
+                                {value}
+                            </option>
+                        ))}
+                    </select>
+                </label>
+
                 <div className="text-xs text-gray-600">
                     <div>status: {status ? JSON.stringify(status) : '—'}</div>
                     <div>progress: {progress ? JSON.stringify(progress) : '—'}</div>
@@ -284,6 +326,10 @@ export function PrintColoursSmoke() {
 
                 <div className="rounded border border-amber-300 bg-amber-50 p-3 text-xs text-gray-800">
                     <div className="font-semibold">Physical questions these prints answer</div>
+                    <p className="mt-1">
+                        Density is the printer's heat/energy setting (higher = darker). It does not
+                        change the grayscale ramp mapping.
+                    </p>
                     <ul className="mt-1 list-disc pl-4 leading-5">
                         <li>
                             Grayscale: banding? Are all 16 levels visually distinct, and is the
