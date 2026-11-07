@@ -210,7 +210,10 @@ Implications:
 - The palette is still uncalibrated (`weight` all `1`). The misregistration and
   red-overheat behaviour are **printer physics**, not a software bug (solid rows
   are correct); tuning needs a controlled coverage/density sweep, not a blind
-  constant change. Tracked as **D-77**.
+  constant change. Tracked as **D-77**. The `?printcolours` harness now has a
+  **Red & black — calibration** pattern (isolated red ramp, 75/50/25/12/6 %
+  coverage ladder, vertical + horizontal registration blocks) plus a **Print
+  density sweep** button that stamps `DENSITY n` and prints one label per density.
 
 ## v1 limitations / open items
 

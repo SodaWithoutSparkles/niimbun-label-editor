@@ -60,8 +60,21 @@ generated images (no photo fixture in the repo).
    16-step pattern at the default, then at a higher density if light steps look
    faint. Density is the printer's heat/energy setting; it does **not** change the
    ramp's level mapping. Record the density for every row.
-7. Do **not** re-print the red/black page to "improve" it; record what came out.
-   One pass is the plan's tape decision.
+7. **Red/black calibration** (added after the tape print): select
+   **Red & black — calibration** and print one label at the default density, then
+   press **Print density sweep (N)** — it prints the same calibration label once
+   per density in the reported range, with the density stamped in the caption.
+   - Isolated red ramp (top band): red/white only; any black there is red
+     overheat, not registration.
+   - Coverage ladder (75/50/25/12/6): straight authored tone → printed red
+     coverage; note where it stops being linear and where red starts turning
+     black.
+   - Vertical + horizontal black/red blocks: measure the boundary offset
+     (~1–1.5 mm on the first print); compare across densities and directions.
+   - Record which density keeps red red **and** black black.
+8. Do **not** re-print the red/black page to "improve" it; record what came out.
+   One pass is the plan's tape decision — the calibration sweep is the deliberate
+   exception for D-77.
 
 ## What to look for
 
@@ -72,6 +85,8 @@ generated images (no photo fixture in the repo).
 | Flat crispness | Grayscale captions; red/black bar rows + 8-step sweep | Sharp edges, no dither speckle on authored flat art |
 | Red vs black density | Red/black bar rows; `RED` vs `BLACK` text | Note which ink is lighter/darker at the same coverage (thermal red is heat-selected, not pigment) |
 | Cross-ink registration | Alternating row; black↔red boundaries | Edges should be clean; a strip of the previous bar's ink at a boundary means the two inks are misregistered (observed ~1–1.5 mm) |
+| Red coverage linearity | Calibration coverage ladder (75/50/25/12/6) | Coverage steps down roughly with the label; note where red turns black or disappears |
+| Density window | Calibration sweep labels, caption `DENSITY n` | One density keeps red red **and** black black; note the range and the failure mode outside it |
 | Mixed rows | Alternating row; red+grey gradient | Both inks present, recognisable mix — not mud or one ink only |
 | Red-only dither | Red-tinted grey gradient | Red and white dots only — **no black pixels** |
 | Long-page buffer | 50×160 mm strip, especially the lower half | Completes with no buffer error, stall or truncation; density equals the top |
@@ -88,6 +103,7 @@ generated images (no photo fixture in the repo).
 | 2026-11-08 | B (hardware) | Red & black — flat / diffuse | Red & black | owner printer, **normal mono stock** | Prints an intermediate **grey ≈ grayscale levels 11–12** — not black/red. Mode assumes red/black media. | **Expected mismatch** — page colour must match the stock; red/black tape row still pending |
 | 2026-11-08 | B (hardware) | Red & black — flat / diffuse | Red & black | owner printer, **red/black tape**, density 3 | Solid black row and solid red row print correctly. Alternating row: bars 2/4/6 show **~1–1.5 mm of the previous bar's ink at the left edge**; bars 3/5 show ~1 mm red then black — the two inks are **misregistered** at colour boundaries. First 4 sweep blocks black (expected). **Red-tinted gradient** (software output is red/white only) printed ~1.2 mm black bars at one edge, then **red–black mixed** in the darker half. Colour gradient correspondingly messy. | **Needs calibration** — see **D-77** (red heat/coverage + plane registration); solid rows prove the flat path |
 | 2026-11-08 | B (hardware) | Grayscale — 16 steps | Grayscale | owner printer, **red/black tape**, density 3 | Prints almost entirely **red**: usable ≈ **5–15**, 4 very faint/paper, 13–14 pure red, 15 red with slight black. Black objects show a faint red fringe. | **Paper mismatch** — grayscale mode on red/black stock is a red print; page colour must match stock |
+| | B (hardware) | Red & black — calibration (density sweep) | Red & black | | Per density: isolated ramp black? coverage ladder linearity (75/50/25/12/6), vertical/horizontal boundary offset mm, red→black crossover. | |
 | | B (hardware) | Grayscale — 50×160 long | Grayscale | | | |
 | | B (hardware) | Red & black — flat / diffuse | Red & black | | | |
 
