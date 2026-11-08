@@ -206,9 +206,13 @@ black therefore bleeds a faint red fringe.
   reproduces the bars. The artefact is one byte wide (8 px = 0.68 mm at 300 dpi):
   in `BitmapColorMode.Mixed` rows the first byte of a red run prints black, and
   the first byte of a black run after red prints red. Solid/single-colour rows
-  are unaffected. Suspect `printBitmapRowDoubleColor` (command 138) omitting the
-  `PrintBitmapRow` (133) sub-command byte that `printBitmapRowWithColor`
-  includes, or a one-byte colour-stream alignment (**D-77**, repro in
+  are unaffected. **Root cause (author):** the printer trims the packet to the
+  printable width, and the red colour mask is at the **end** of the
+  `printBitmapRowDoubleColor` (138, Mixed) payload, so a label wider than the
+  printhead loses/shifts the red stream while the mask survives. **48 mm
+  (567 px @300 dpi = head width) makes the artefact disappear**; wider makes it
+  worse. Until upstream fixes it, red/black rasters must stay ≤ printhead px
+  (**D-77**, repro + 48 mm controls in
   [`../2026-11-02_print-colours/repro/`](../2026-11-02_print-colours/repro/)).
 - The isolated red ramp is **clean** — no red→black overheat. The earlier
   "red-black gradient mess" was the library boundary artefact plus the colour

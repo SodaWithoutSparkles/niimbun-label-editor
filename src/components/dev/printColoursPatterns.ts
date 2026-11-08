@@ -475,8 +475,21 @@ const grayscaleLongPattern = (): ColourPattern => {
  *   diffusion, straight from authored tone to printed dot coverage.
  * - Black/red vertical and horizontal boundaries: registration only (each side
  *   is solid ink, so density plays no part).
+ *
+ * The page defaults to **48 mm** — the printhead width at 300 dpi (567 px). The
+ * library author found that a wider `DoubleColor` page is truncated by the
+ * printer at the end of the packet, where the red colour array lives, which
+ * showed up as a red/black artefact along the `Mixed` row's edge (D-77). The
+ * 50 mm red/black pattern stays 50 mm on purpose: it is the bug repro.
  */
-export const buildRedBlackCalibrationPattern = (density?: number): ColourPattern => {
+export const buildRedBlackCalibrationPattern = (
+    density?: number,
+    widthMm = 48,
+): ColourPattern => {
+    const width = widthMm * MM;
+    /** The calibration layout was authored on the 50 mm page; scale its x axis. */
+    const scale = width / SHORT_W;
+    const sx = (value: number): number => Math.round(value * scale);
     const ramp = imageRef('pc-cal-ramp', 'isolated red ramp', 460, 40, greyGradientPng(460, 40));
     const coverageGreys = [64, 128, 192, 224, 240] as const;
     const coveragePercent = [75, 50, 25, 12, 6] as const;
@@ -485,21 +498,24 @@ export const buildRedBlackCalibrationPattern = (density?: number): ColourPattern
     );
 
     const nodes: Node[] = [
-        textNode('pc-cal-title', 200, 40, 2000, 200, 'RED / BLACK CAL', 160, { fill: '#000000' }),
-        textNode('pc-cal-density', 2400, 40, 2400, 200, `DENSITY ${density ?? '—'}`, 160, {
+        textNode('pc-cal-title', sx(200), 40, sx(2000), 200, 'RED / BLACK CAL', 160, {
+            fill: '#000000',
+        }),
+        textNode('pc-cal-density', sx(2400), 40, sx(2400), 200, `DENSITY ${density ?? '—'}`, 160, {
             fill: '#000000',
             align: 'right',
         }),
         // White margin above (title ends at 240 → 1.6 mm) and below (ladder
         // starts at 850 → 1.5 mm): no black art can bleed onto the ramp.
-        imageNode('pc-cal-ramp-node', ramp.imageId, 200, 400, 4600, 300, '#ff0000'),
+        imageNode('pc-cal-ramp-node', ramp.imageId, sx(200), 400, sx(4600), 300, '#ff0000'),
     ];
 
-    // Coverage ladder: 8 mm bars with 1 mm gaps, x 200…4600, y 850…1650.
+    // Coverage ladder (authored at the 50 mm scale: 8 mm bars, 1 mm gaps),
+    // y 850…1650.
     coverage.forEach((ref, index) => {
-        const x = 200 + index * 900;
+        const x = sx(200 + index * 900);
         nodes.push(
-            imageNode(`pc-cal-cover-${index}-node`, ref.imageId, x, 850, 800, 800, '#ff0000'),
+            imageNode(`pc-cal-cover-${index}-node`, ref.imageId, x, 850, sx(800), 800, '#ff0000'),
         );
         // Tone caption in the 1 mm gap between the ladder (ends 1650) and the
         // vertical band (starts 1750).
@@ -508,7 +524,7 @@ export const buildRedBlackCalibrationPattern = (density?: number): ColourPattern
                 `pc-cal-cover-label-${index}`,
                 x,
                 1655,
-                800,
+                sx(800),
                 90,
                 String(coveragePercent[index]),
                 80,
@@ -517,42 +533,49 @@ export const buildRedBlackCalibrationPattern = (density?: number): ColourPattern
         );
     });
 
-    // Vertical registration band: black | red | 2 mm white gap | red | black.
+    // Vertical registration band: black | red | 2 mm white gap (at the authored
+    // 50 mm scale) | red | black.
     nodes.push(
-        rectNode('pc-cal-v-black-0', 200, 1750, 1000, 600, { fill: '#000000' }),
-        rectNode('pc-cal-v-red-0', 1200, 1750, 1000, 600, { fill: '#ff0000' }),
-        rectNode('pc-cal-v-red-1', 2400, 1750, 1000, 600, { fill: '#ff0000' }),
-        rectNode('pc-cal-v-black-1', 3400, 1750, 1000, 600, { fill: '#000000' }),
+        rectNode('pc-cal-v-black-0', sx(200), 1750, sx(1000), 600, { fill: '#000000' }),
+        rectNode('pc-cal-v-red-0', sx(1200), 1750, sx(1000), 600, { fill: '#ff0000' }),
+        rectNode('pc-cal-v-red-1', sx(2400), 1750, sx(1000), 600, { fill: '#ff0000' }),
+        rectNode('pc-cal-v-black-1', sx(3400), 1750, sx(1000), 600, { fill: '#000000' }),
         // Horizontal registration: red over black, then black over red. The two
         // 2 mm blocks in each pair touch, so a fringe lands on the seam.
-        rectNode('pc-cal-h-left-red', 200, 2450, 1800, 200, { fill: '#ff0000' }),
-        rectNode('pc-cal-h-left-black', 200, 2650, 1800, 200, { fill: '#000000' }),
-        rectNode('pc-cal-h-right-black', 2200, 2450, 1800, 200, { fill: '#000000' }),
-        rectNode('pc-cal-h-right-red', 2200, 2650, 1800, 200, { fill: '#ff0000' }),
+        rectNode('pc-cal-h-left-red', sx(200), 2450, sx(1800), 200, { fill: '#ff0000' }),
+        rectNode('pc-cal-h-left-black', sx(200), 2650, sx(1800), 200, { fill: '#000000' }),
+        rectNode('pc-cal-h-right-black', sx(2200), 2450, sx(1800), 200, { fill: '#000000' }),
+        rectNode('pc-cal-h-right-red', sx(2200), 2650, sx(1800), 200, { fill: '#ff0000' }),
     );
 
     const doc = createLabelDoc({
         id: 'pc-red-black-calibration',
-        name: 'Print colours — red/black calibration',
-        paperTypeId: 'rounded50x30',
-        backingW: SHORT_W,
+        name: `Print colours — red/black calibration (${widthMm} mm)`,
+        // The 50 mm variant keeps its preset; narrower pages spell out a
+        // full-page region so the preset's region cannot clip the content.
+        ...(widthMm === 50 ? { paperTypeId: 'rounded50x30' } : {}),
+        backingW: width,
         backingH: SHORT_H,
         dpi: 300,
         now: FIXED_TIME,
+        regions: [{ kind: 'rect', x: 0, y: 0, w: width, h: SHORT_H }],
         nodes,
     });
     doc.resources.images.push(ramp, ...coverage);
     return {
         id: 'redBlackCalibration',
-        label: 'Red & black — calibration',
+        label: `Red & black — calibration (${widthMm} mm)`,
         doc,
         pageColor: PageColorType.DoubleColor,
     };
 };
 
 /** One calibration label per density, in the given order (sweep helper). */
-export const buildDensitySweep = (densities: readonly number[]): ColourPattern[] =>
-    densities.map((density) => buildRedBlackCalibrationPattern(density));
+export const buildDensitySweep = (
+    densities: readonly number[],
+    widthMm = 48,
+): ColourPattern[] =>
+    densities.map((density) => buildRedBlackCalibrationPattern(density, widthMm));
 
 /** Build all patterns, fresh docs + fresh PNGs on every call. */
 export const buildColourPatterns = (): ColourPattern[] => [
