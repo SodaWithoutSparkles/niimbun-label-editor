@@ -6,7 +6,7 @@ import {
     classifyFlatRedBlack,
     DEFAULT_GAMMA_BY_STRATEGY,
     DEFAULT_SCREENTONE,
-    diffuseToPalette,
+    diffuseRamp,
     grayscaleRampPalette,
     HM_PER_INCH,
     MonoColorSpace,
@@ -15,9 +15,9 @@ import {
     policyKeyOf,
     quantizeRgba,
     rasterDimensions,
-    redBlackPalette,
     resolveQuantizer,
     resolveQuantizerParams,
+    separateRedBlack,
     type ColorSpace,
     type PageColorMode,
     type RasterDimensions,
@@ -52,22 +52,27 @@ import { flattenResolved, resolve, type ResolvedNode, type ResolveContext } from
  * Page-colour branch (`opts.pageColor`):
  *   - `'mono'` (default) — the pipeline above: per-object 1-bit policies plus
  *     `quantizeRgba`.
- *   - `'grayscale'` — **no** policy mask and no 1-bit quantize; the tone-mapped
- *     raster goes through {@link diffuseToPalette} with the 16-level ramp, so
- *     the encoder receives exact band-centre greys.
+ *   - `'grayscale'` — **no** policy mask and no 1-bit quantize; the raster's
+ *     BT.601 luminance is diffused as one scalar plane by
+ *     {@link diffuseRamp} through the 16-level ramp, so the encoder receives
+ *     exact band-centre greys.
  *   - `'redBlack'` — the policy mask is built as in mono, then turned into a
  *     per-pixel **flat mask**: pixels covered by a `threshold` policy (the
  *     global slot included) take the point-op path
- *     ({@link classifyFlatRedBlack}), everything else diffuses through
- *     {@link redBlackPalette}. Flat art stays crisp, images dither, and the
- *     output is exactly `#ffffff` / `#000000` / `#ff0000` (the encoder's
- *     DoubleColor split depends on the exact bytes).
+ *     ({@link classifyFlatRedBlack}), everything else goes through the
+ *     **duotone separation** ({@link separateRedBlack}): red is a clustered
+ *     3×3-dot spot separation, black is a lightness separation diffused on the
+ *     free dots, red wins and the masks are exclusive. Flat art stays crisp,
+ *     photos get a developable red screen, and the output is exactly
+ *     `#ffffff` / `#000000` / `#ff0000` (the encoder's DoubleColor split
+ *     depends on the exact bytes).
  *
- * `pageColor: 'redBlack'` uses the **page-level** resolved diffuser knobs
- * (gamma/strength/serpentine), not per-node ones: the per-node strategy still
- * selects flat vs diffuse, but in this mode every diffusing pixel shares the
- * page pass. `screentone` and `ostromoukhov` policies are therefore treated as
- * diffusion here (per-ink screentone is deferred).
+ * `pageColor: 'redBlack'` does **not** use the page-level diffuser knobs
+ * (gamma/strength/serpentine) for photo pixels: the separation has exactly two
+ * knobs, `redIntensity` and `blackDepth` (`opts.redBlack`). The per-node
+ * strategy still selects flat vs diffuse, and the flat classifier keeps the
+ * page's resolved threshold/gamma. `screentone` and `ostromoukhov` policies are
+ * treated as diffusion here (per-ink screentone is deferred).
  *
  * The clip runs **both before and after** quantization: pre-quantize so the
  * diffusion sees a white surround, post-quantize so error diffused across the
@@ -145,12 +150,29 @@ export interface RenderLabelPageOptions {
     /**
      * Print-time page colour. Absent = `'mono'` (the 1-bit path, byte-identical).
      *
-     * `'grayscale'` skips the per-object 1-bit policies and runs the 16-level
-     * ramp diffuser on the tone-mapped raster. `'redBlack'` keeps the policy
-     * mask but uses it only to split flat (threshold) pixels — crisp exact
-     * palette entries — from diffused ones, through the two-ink palette.
+     * `'grayscale'` skips the per-object 1-bit policies and diffuses the
+     * raster's BT.601 luminance as one scalar plane through the 16-level ramp.
+     * `'redBlack'` keeps the policy mask but uses it only to split flat
+     * (threshold) pixels — crisp exact point-op entries — from photo pixels,
+     * which go through the two-ink **duotone separation**, not a palette pass.
      */
     pageColor?: PageColorMode;
+    /**
+     * Page-level duotone knobs for `pageColor: 'redBlack'`; ignored by every
+     * other mode. Both are normalized by the engine: non-finite values fall
+     * back to the defaults, out-of-range values are clamped.
+     *
+     * - `redIntensity` (0..1.5, default 1) multiplies the red (chroma) demand;
+     *   `0` removes red ink entirely.
+     * - `blackDepth` (0..1, default 0.5) scales the black (darkness) demand:
+     *   0.5 → ×1 (the mono/grayscale darkening, apart from the white-speckle
+     *   clip), 0 → ×0.5, 1 → ×2.
+     *
+     * They act on the continuous ink demands **before** halftoning, so they can
+     * never break the red coverage floor. The page-level diffuser knobs
+     * (gamma/strength/serpentine) do not apply to photo pixels in this mode.
+     */
+    redBlack?: { redIntensity?: number; blackDepth?: number };
     /**
      * Async asset dependencies (image bytes, fonts, resolution cap). When
      * present, image/qr/barcode leaves are prepared first; absent, those leaves
@@ -179,6 +201,19 @@ export interface RenderLabelPageOptions {
      * `outer` expands by `|x|`/`|y|` and places the image at `max(x,0)`/`max(y,0)`.
      */
     offset?: { x: number; y: number; type: 'inner' | 'outer' };
+    /**
+     * Printer **printhead width in hm** (hundredths of a millimetre). When the
+     * raster's head-axis size exceeds it — width for `top`/`bottom`, height for
+     * `left`/`right`, matching `printheadOverflow` — the final raster is cropped
+     * on that axis (left/top aligned) to the head width. The crop is an exact
+     * 1:1 pixel copy (no resampling), so kept pixels stay byte-identical.
+     *
+     * Applied **after** the offset stage, on both return paths. This is the
+     * red/black print workaround for D-77 (the library trims the packet tail to
+     * the printable width); callers enable it per page colour. Absent = today's
+     * render, byte-identical. Invalid (non-finite, `<= 0`) throws `RangeError`.
+     */
+    maxHeadHm?: number;
 }
 
 export interface RenderedLabelPage {
@@ -248,6 +283,59 @@ export const offsetRasterDimensions = (
         widthPx: outer ? widthPx + Math.abs(offset.x) : widthPx,
         heightPx: outer ? heightPx + Math.abs(offset.y) : heightPx,
     };
+};
+
+/** The raster after the D-77 head-width crop. */
+interface HeadCroppedRaster {
+    rgba: RgbaBuffer;
+    widthPx: number;
+    heightPx: number;
+    canvas: HTMLCanvasElement;
+}
+
+/**
+ * Crop a composed raster to `limitPx` on the **printhead axis** (D-77 workaround).
+ *
+ * The head spans the raster's cross-feed axis, exactly like
+ * {@link printheadOverflow}: `top`/`bottom` feed the raster unrotated, so the
+ * head spans the width and the kept region is the **left columns**;
+ * `left`/`right` feed it sideways, so the head spans the height and the kept
+ * region is the **top rows**. Left/top aligned, exact 1:1 byte copy — the kept
+ * pixels are identical to the uncropped render, never resampled.
+ *
+ * Returns `undefined` when the raster already fits (no allocation, so the
+ * absent/fitting paths stay byte-identical).
+ */
+const cropHeadAxis = (
+    rgba: RgbaBuffer,
+    direction: LabelDoc['label']['printDirection'],
+    limitPx: number,
+): HeadCroppedRaster | undefined => {
+    const sideways = direction === 'left' || direction === 'right';
+    const { width: sourceWidth, height: sourceHeight } = rgba;
+    const axisPx = sideways ? sourceHeight : sourceWidth;
+    if (axisPx <= limitPx) return undefined;
+
+    const widthPx = sideways ? sourceWidth : limitPx;
+    const heightPx = sideways ? limitPx : sourceHeight;
+    const source = rgba.data;
+    const rowBytes = widthPx * 4;
+    const data = new Uint8ClampedArray(widthPx * heightPx * 4);
+    for (let y = 0; y < heightPx; y++) {
+        const sourceOffset = y * sourceWidth * 4;
+        data.set(source.subarray(sourceOffset, sourceOffset + rowBytes), y * rowBytes);
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = widthPx;
+    canvas.height = heightPx;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('renderLabelPage: no 2D context for the head-crop canvas');
+    const image = ctx.createImageData(widthPx, heightPx);
+    image.data.set(data);
+    ctx.putImageData(image, 0, 0);
+
+    return { rgba: { data, width: widthPx, height: heightPx }, widthPx, heightPx, canvas };
 };
 
 /**
@@ -855,6 +943,13 @@ export const renderLabelPage = async (
     ctx: ResolveContext = {},
     opts: RenderLabelPageOptions = {},
 ): Promise<RenderedLabelPage> => {
+    // Validate the head clamp before resolve/rasterize: a bad value must fail
+    // cheaply, exactly like a bad dpi (invariant 9).
+    const maxHeadHm = opts.maxHeadHm;
+    if (maxHeadHm !== undefined && (!Number.isFinite(maxHeadHm) || maxHeadHm <= 0)) {
+        throw new RangeError(`renderLabelPage: maxHeadHm must be > 0 (got ${maxHeadHm})`);
+    }
+
     const {
         dpi,
         nodes,
@@ -873,6 +968,16 @@ export const renderLabelPage = async (
     // both build it: mono runs one 1-bit pass per slot, red/black only reads the
     // slots to decide which pixels are flat point ops.
     const pageColor = opts.pageColor ?? 'mono';
+
+    // D-77 head-width clamp: the printhead spans a whole number of device dots
+    // at the effective render dpi. A sub-pixel width cannot be cropped to.
+    const headLimitPx =
+        maxHeadHm === undefined ? undefined : Math.round((maxHeadHm * dpi) / HM_PER_INCH);
+    if (headLimitPx !== undefined && headLimitPx < 1) {
+        throw new RangeError(
+            `renderLabelPage: maxHeadHm is narrower than one device pixel at ${dpi} dpi (got ${maxHeadHm})`,
+        );
+    }
 
     const byId = nodeLookup(doc.nodes);
     const policy =
@@ -897,11 +1002,13 @@ export const renderLabelPage = async (
 
     const quantizeOptions = buildQuantizeOptions(opts, dpi);
     if (pageColor === 'grayscale') {
-        // One palette pass over the tone-mapped raster. The diffuser knobs come
-        // from the selected global quantizer's effective settings, so the
-        // render-level gamma/strength/serpentine still apply; the default
-        // `threshold` strategy resolves to the neutral gamma 1.
-        diffuseToPalette(imageData, grayscaleRampPalette(), {
+        // One scalar-luminance pass over the raster: a neutral ramp has no
+        // chroma sink, so diffusing one luminance plane (rather than an RGB
+        // error vector) is what keeps saturated sources at their own tone. The
+        // diffuser knobs come from the selected global quantizer's effective
+        // settings, so the render-level gamma/strength/serpentine still apply;
+        // the default `threshold` strategy resolves to the neutral gamma 1.
+        diffuseRamp(imageData, grayscaleRampPalette(), {
             gamma: quantizeOptions.gamma,
             strength: quantizeOptions.strength,
             serpentine: quantizeOptions.serpentine,
@@ -909,9 +1016,9 @@ export const renderLabelPage = async (
     } else if (pageColor === 'redBlack') {
         // Per-slot flat/diffuse classification: slot 0 is the global strategy,
         // every masked slot is its own resolved policy. `threshold` is the
-        // point-op path (flat art); every diffuser — and, deliberately,
-        // `screentone`/`ostromoukhov` in this mode — diffs through the two-ink
-        // palette.
+        // point-op path (flat art); every other policy — and, deliberately,
+        // `screentone`/`ostromoukhov` in this mode — goes through the two-ink
+        // separation.
         const flatBySlot: boolean[] = [(opts.quantizer ?? 'threshold') === 'threshold'];
         if (policy) {
             for (const [index, entry] of policy.policies) {
@@ -922,8 +1029,9 @@ export const renderLabelPage = async (
             }
         }
 
-        // One flag per device pixel (`0` = diffuse, `1` = flat). Uncovered
-        // pixels read mask slot 0, i.e. the global strategy.
+        // One flag per device pixel (`0` = photo/separation, `1` = flat). The
+        // mask still drives flat-vs-diffuse exactly as before; uncovered pixels
+        // read mask slot 0, i.e. the global strategy.
         const pixelCount = widthPx * heightPx;
         const flat = new Uint8Array(pixelCount);
         if (policy) {
@@ -935,18 +1043,18 @@ export const renderLabelPage = async (
             flat.fill(1);
         }
 
-        // Flat pixels classify the raw source bytes with the same gamma and
-        // cutoff the global strategy resolves, so authored red is exact and
-        // mid-greys do not turn into dither noise.
+        // One duotone pass: flat pixels stay exact point ops (classified from
+        // the raw source bytes with the page's resolved gamma and cutoff), photo
+        // pixels get the clustered red screen + free-dot black diffusion. The
+        // separation has its own two knobs; gamma/strength/serpentine do not
+        // apply to photo pixels here.
         const resolvedThreshold = quantizeOptions.threshold ?? 128;
         const resolvedGamma = quantizeOptions.gamma;
-        diffuseToPalette(imageData, redBlackPalette(), {
-            gamma: resolvedGamma,
-            strength: quantizeOptions.strength,
-            serpentine: quantizeOptions.serpentine,
+        separateRedBlack(imageData, {
             flat,
             flatNearest: (r, g, b) =>
                 classifyFlatRedBlack(r, g, b, resolvedThreshold, resolvedGamma),
+            ...opts.redBlack,
         });
     } else {
         quantizeRgba(
@@ -995,9 +1103,23 @@ export const renderLabelPage = async (
 
     const offset = opts.offset;
     // `{0,0}` is a no-op: skip the extra-canvas round trip and return the base
-    // raster (same `canvas` identity).
+    // raster (same `canvas` identity). The D-77 head clamp still applies, on a
+    // fresh cropped canvas.
     if (!offset || (offset.x === 0 && offset.y === 0)) {
-        return { rgba: imageData, widthPx, heightPx, canvas, warnings, ...(policy?.overflowCount ? { policyOverflowCount: policy.overflowCount } : {}), ...(notices ? { notices } : {}) };
+        const base: RenderedLabelPage = {
+            rgba: imageData,
+            widthPx,
+            heightPx,
+            canvas,
+            warnings,
+            ...(policy?.overflowCount ? { policyOverflowCount: policy.overflowCount } : {}),
+            ...(notices ? { notices } : {}),
+        };
+        const cropped =
+            headLimitPx === undefined
+                ? undefined
+                : cropHeadAxis(imageData, doc.label.printDirection, headLimitPx);
+        return cropped === undefined ? base : { ...base, ...cropped };
     }
     // Offset x/y are device px, so they must be integers (and finite: NaN/
     // Infinity fail `Number.isInteger`). Validate before any offset allocation.
@@ -1049,7 +1171,7 @@ export const renderLabelPage = async (
 
     // Read the composed raster back so `rgba` is exactly the final canvas.
     const finalImage = outCtx.getImageData(0, 0, outWidthPx, outHeightPx);
-    return {
+    const base: RenderedLabelPage = {
         rgba: { data: finalImage.data, width: outWidthPx, height: outHeightPx },
         widthPx: outWidthPx,
         heightPx: outHeightPx,
@@ -1058,4 +1180,11 @@ export const renderLabelPage = async (
         ...(policy?.overflowCount ? { policyOverflowCount: policy.overflowCount } : {}),
         ...(notices ? { notices } : {}),
     };
+    // Head clamp last: crop the composed (offset-expanded) raster on the head
+    // axis so preview == the bytes the printer actually receives.
+    const cropped =
+        headLimitPx === undefined
+            ? undefined
+            : cropHeadAxis(base.rgba, doc.label.printDirection, headLimitPx);
+    return cropped === undefined ? base : { ...base, ...cropped };
 };

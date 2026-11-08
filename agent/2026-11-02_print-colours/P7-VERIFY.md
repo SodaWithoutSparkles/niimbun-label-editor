@@ -11,10 +11,18 @@ generated images (no photo fixture in the repo).
 > settled by goldens and preview ≡ print; this run answers only the physical
 > questions.
 >
-> **Status: grayscale 16-step + red/black calibration printed (2026-11-08); the
-> colour-boundary bars are a confirmed library bug (D-77, repro in `repro/`).
-> Long page still pending.** The harness preview is not hardware evidence. Fill
+> **Status: grayscale + 50 mm red/black calibration printed; the colour-boundary
+> bars are a confirmed library bug — the author traced them to the printer
+> trimming the packet tail, and a **48 mm control** is now in the harness/repro
+> (D-77). Long page and the 48 mm print are pending.** The harness preview is not hardware evidence. Fill
 > the remaining Record rows from the physical output, never from the preview.
+>
+> **P8 follow-up (2026-11-08):** the owner confirmed 48 mm red/black prints
+> clean. The print dialog now **clamps red/black pages to the printhead width by
+> default** (`maxHeadHm` → exact 1:1 crop on the head axis), with a visible
+> "Clamp to print head" toggle as the escape hatch for testing. Preview,
+> thumbnails and the print job all use it (invariant 7); mono/grayscale pages are
+> untouched. The upstream library fix is still pending (D-77).
 
 ## A. Mock dry run (no printer)
 
@@ -105,6 +113,7 @@ generated images (no photo fixture in the repo).
 | 2026-11-08 | B (hardware) | Red & black — flat / diffuse | Red & black | owner printer, **red/black tape**, density 3 | Solid black row and solid red row print correctly. Alternating row: bars 2/4/6 show **~1–1.5 mm of the previous bar's ink at the left edge**; bars 3/5 show ~1 mm red then black — the two inks are **misregistered** at colour boundaries. First 4 sweep blocks black (expected). **Red-tinted gradient** (software output is red/white only) printed ~1.2 mm black bars at one edge, then **red–black mixed** in the darker half. Colour gradient correspondingly messy. | **Needs calibration** — see **D-77** (red heat/coverage + plane registration); solid rows prove the flat path |
 | 2026-11-08 | B (hardware) | Grayscale — 16 steps | Grayscale | owner printer, **red/black tape**, density 3 | Prints almost entirely **red**: usable ≈ **5–15**, 4 very faint/paper, 13–14 pure red, 15 red with slight black. Black objects show a faint red fringe. | **Paper mismatch** — grayscale mode on red/black stock is a red print; page colour must match stock |
 | | B (hardware) | Red & black — calibration (density sweep) | Red & black | owner printer, red/black tape, densities 1–3 | **Isolated red ramp**: no black at any density; red fades to paper around the middle of the ramp. **Coverage ladder**: 75 % and 50 % bars visible, 25/12/6 % bars invisible/paper → **red coverage floor ≈50 %**. **Boundaries**: black intrudes ~1–1.5 mm into the following red bar; a red bar after paper starts with a ~0.5–1 mm black line inside it; the horizontal red stripe shows the same leading-edge black line. **Density**: 1 vs 2 vs 3 near-identical to the eye (75/50 bars only marginally deeper at 3). **Cross-check:** the same raster printed by the **official NIIMBOT desktop app is clean** at every colour boundary; niim.blue (same library) reproduces the bars → **library Mixed-row encoding bug (D-77)**, not the stock. The 75/50 vs 25/12/6 coverage floor also appears in the official app → physical (D-78). | **Library bug for edge bars (D-77)**; coverage floor is physical (D-78); density is not the lever |
+| | B (hardware) | Red & black — calibration **48 mm control** | Red & black | | Harness calibration now defaults to 48 mm (567 px @300 dpi = printhead width; author says the trim artefact disappears). Repro PNG: `repro/red-black-calibration-48mm-300dpi.png`. Expect clean boundaries; the 50 mm raster/pattern is the repro. | |
 | | B (hardware) | Grayscale — 50×160 long | Grayscale | | | |
 | | B (hardware) | Red & black — flat / diffuse | Red & black | | | |
 

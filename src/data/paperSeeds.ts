@@ -19,14 +19,15 @@ export const PAPER_SEED_MARKER_KEY = 'labeleditor.paperTypes.seeded';
 
 /**
  * Seed-set version. A `1` catalogue is implied by the legacy boolean marker;
- * `2` adds the 48×30 stock. Existing installs receive only the ids introduced
+ * `2` adds the 48×30 stock; `3` adds the 40×60 stock. Existing installs receive only the ids introduced
  * after their version, so a deleted v1 seed is never resurrected.
  */
 export const PAPER_SEED_VERSION_KEY = 'labeleditor.paperTypes.seedVersion';
-const PAPER_SEED_VERSION = 2;
+const PAPER_SEED_VERSION = 3;
 
 /** Seed ids introduced after the v1 set; an existing catalogue gets these once. */
 const SEEDS_ADDED_IN_V2: readonly string[] = ['rounded48x30'];
+const SEEDS_ADDED_IN_V3: readonly string[] = ['rounded40x60'];
 
 /** The subset of `Storage` the seeding needs; lets tests inject a fake. */
 export interface PaperSeedStorageLike {
@@ -102,8 +103,13 @@ export const seedPaperTypesIfNeeded = async (
     // Only the ids added since then are candidates, so deleting a v1 built-in
     // still sticks.
     const records = paperSeedRecords();
-    const candidates = legacySeeded
-        ? records.filter((record) => SEEDS_ADDED_IN_V2.includes(record.id))
+    const addedSinceVersion = version < 2
+        ? [...SEEDS_ADDED_IN_V2, ...SEEDS_ADDED_IN_V3]
+        : version < 3
+          ? SEEDS_ADDED_IN_V3
+          : [];
+    const candidates = legacySeeded || version > 0
+        ? records.filter((record) => addedSinceVersion.includes(record.id))
         : records;
 
     let count = 0;

@@ -1629,3 +1629,235 @@ describe('PrintDialog — page colour', () => {
         expect(screen.queryByText(hint)).not.toBeInTheDocument();
     });
 });
+
+describe('PrintDialog — red/black head clamp (D-77)', () => {
+    /** 50 mm wide at 300 dpi; the reported head is 567 px = 48 mm. */
+    const wideRedBlackDoc = () =>
+        createLabelDoc({ backingW: 5000, backingH: 3000, dpi: 300 });
+    const atHeadDoc = () =>
+        createLabelDoc({ backingW: 4800, backingH: 3000, dpi: 300 });
+    // B1_PRO reports the 567-dot head; 300 dpi makes it exactly 48 mm.
+    const headStatus = (over: Partial<PrinterStatus> = {}): PrinterStatus => ({
+        ...statusOf(B1_PRO),
+        dpi: 300,
+        ...over,
+    });
+
+    const pageColorSelect = () => screen.getByLabelText('Page colour');
+    const clampToggle = () => screen.queryByRole('switch', { name: 'Clamp to print head' });
+    const printButton = () => screen.getByRole('button', { name: 'Print' });
+
+    const thumbnailOverrides = (): { maxHeadHm?: number } | undefined =>
+        (usePrintThumbnailsMock.mock.calls.at(-1)![0] as {
+            overrides?: { maxHeadHm?: number };
+        }).overrides;
+
+    const jobOverrides = (callIndex = 0): { maxHeadHm?: number } | undefined =>
+        (
+            buildCsvPrintJobMock.mock.calls[callIndex]![2] as {
+                overrides?: { maxHeadHm?: number };
+            }
+        ).overrides;
+
+    it('shows the toggle, defaults it on and clamps the page, thumbnails and job', async () => {
+        renderDialog({
+            doc: wideRedBlackDoc(),
+            runner: new FakeRunner(),
+            printerStatus: headStatus(),
+        });
+
+        // Only for a red/black page that actually exceeds the head.
+        expect(clampToggle()).not.toBeInTheDocument();
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+
+        const toggle = clampToggle();
+        expect(toggle).toBeInTheDocument();
+        expect(toggle).toBeChecked();
+        expect(
+            screen.getByText(/cropped to the printer's printable width \(48 mm at 300 dpi\)/),
+        ).toBeInTheDocument();
+
+        // The doc-dpi page preview renders through the shared path with the clamp.
+        await waitFor(() =>
+            expect(
+                renderLabelPageMock.mock.calls.some(
+                    ([, , opts]) =>
+                        (opts as { maxHeadHm?: number } | undefined)?.maxHeadHm === 4800,
+                ),
+            ).toBe(true),
+        );
+        expect(thumbnailOverrides()).toMatchObject({ maxHeadHm: 4800 });
+
+        fireEvent.click(printButton());
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobOverrides()).toMatchObject({
+            maxHeadHm: 4800,
+            pageColor: PageColorType.DoubleColor,
+        });
+    });
+
+    it('removes the clamp from every path when the escape hatch is switched off', async () => {
+        renderDialog({
+            doc: wideRedBlackDoc(),
+            runner: new FakeRunner(),
+            printerStatus: headStatus(),
+        });
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+
+        fireEvent.click(clampToggle()!);
+        expect(clampToggle()).not.toBeChecked();
+        expect(thumbnailOverrides()).not.toHaveProperty('maxHeadHm');
+
+        fireEvent.click(printButton());
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobOverrides()).not.toHaveProperty('maxHeadHm');
+        expect(jobOverrides()).toMatchObject({ pageColor: PageColorType.DoubleColor });
+    });
+
+    it('resets the toggle to on for the next open', () => {
+        const doc = wideRedBlackDoc();
+        const onClose = vi.fn();
+        const printerStatus = headStatus();
+        const view = render(
+            <PrintDialog
+                open
+                onClose={onClose}
+                doc={doc}
+                csv={null}
+                runner={new FakeRunner()}
+                printerStatus={printerStatus}
+            />,
+        );
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        fireEvent.click(clampToggle()!);
+        expect(clampToggle()).not.toBeChecked();
+
+        view.rerender(
+            <PrintDialog
+                open={false}
+                onClose={onClose}
+                doc={doc}
+                csv={null}
+                runner={new FakeRunner()}
+                printerStatus={printerStatus}
+            />,
+        );
+        view.rerender(
+            <PrintDialog
+                open
+                onClose={onClose}
+                doc={doc}
+                csv={null}
+                runner={new FakeRunner()}
+                printerStatus={printerStatus}
+            />,
+        );
+        // Page colour is a session value too, so re-select red/black.
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        expect(clampToggle()).toBeChecked();
+    });
+
+    it('converts the head width at the render dpi, not the printer-reported dpi (600 dpi)', async () => {
+        // Off mode renders the 48 mm doc at its 600 dpi hint: 1134 px, past the
+        // 567-dot head. Converting at the printer's 300 dpi would claim 4800 hm
+        // (the whole page) and the printer would trim the tail again.
+        useStore.setState({ usePrinterDpi: false });
+        renderDialog({
+            doc: createLabelDoc({ backingW: 4800, backingH: 3000, dpi: 600 }),
+            runner: new FakeRunner(),
+            printerStatus: headStatus(),
+        });
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+
+        const toggle = clampToggle();
+        expect(toggle).toBeInTheDocument();
+        expect(toggle).toBeChecked();
+        expect(
+            screen.getByText(/cropped to the printer's printable width \(24 mm at 600 dpi\)/),
+        ).toBeInTheDocument();
+        expect(thumbnailOverrides()).toMatchObject({ maxHeadHm: 2400 });
+
+        fireEvent.click(printButton());
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobOverrides()).toMatchObject({ maxHeadHm: 2400 });
+        expect(jobOverrides()?.maxHeadHm).not.toBe(4800);
+    });
+
+    it('shows the toggle when an outer offset expands the head axis past the head', () => {
+        renderDialog({
+            doc: atHeadDoc(),
+            runner: new FakeRunner(),
+            printerStatus: headStatus(),
+        });
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        // 48 mm at 300 dpi = 567 px: exactly the head, so no clamp yet.
+        expect(clampToggle()).not.toBeInTheDocument();
+
+        // An `outer` offset grows the canvas by 50 px on X: 617 > 567.
+        fireEvent.change(screen.getByLabelText('Offset X'), { target: { value: '50' } });
+        fireEvent.change(screen.getByLabelText('Offset type'), { target: { value: 'outer' } });
+
+        const toggle = clampToggle();
+        expect(toggle).toBeInTheDocument();
+        expect(toggle).toBeChecked();
+        expect(thumbnailOverrides()).toMatchObject({ maxHeadHm: 4800 });
+    });
+
+    it('hides the toggle when the page already fits the head (48 mm)', () => {
+        renderDialog({
+            doc: atHeadDoc(),
+            runner: new FakeRunner(),
+            printerStatus: headStatus(),
+        });
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        expect(pageColorSelect()).toHaveValue('double');
+        expect(clampToggle()).not.toBeInTheDocument();
+    });
+
+    it('hides the toggle for mono pages', () => {
+        renderDialog({
+            doc: wideRedBlackDoc(),
+            runner: new FakeRunner(),
+            printerStatus: headStatus(),
+        });
+
+        expect(clampToggle()).not.toBeInTheDocument();
+    });
+
+    it('hides the toggle when the printer reports no head size', () => {
+        renderDialog({
+            doc: wideRedBlackDoc(),
+            runner: new FakeRunner(),
+            printerStatus: headStatus({
+                capabilities: { ...B1_PRO, printheadPixels: undefined },
+            }),
+        });
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        expect(pageColorSelect()).toHaveValue('double');
+        expect(clampToggle()).not.toBeInTheDocument();
+    });
+
+    it('uses the height axis for left/right print directions', () => {
+        const tall = createLabelDoc({
+            backingW: 3000,
+            backingH: 5000,
+            dpi: 300,
+            printDirection: 'left',
+        });
+        renderDialog({
+            doc: tall,
+            runner: new FakeRunner(),
+            printerStatus: headStatus(),
+        });
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        // 50 mm tall > 48 mm head, even though the 30 mm width fits.
+        expect(clampToggle()).toBeInTheDocument();
+        expect(clampToggle()).toBeChecked();
+    });
+});

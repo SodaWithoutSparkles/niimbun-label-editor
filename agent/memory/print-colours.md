@@ -40,8 +40,10 @@ and is capability-gated.
   - `pageColorModeOf`: `Grayscale → 'grayscale'`, `DoubleColor → 'redBlack'`,
     everything else → `'mono'` (`SingleColorAlt` is guarded before this).
   - `renderOptionsOf` forwards `pageColor` **only when non-mono**, alongside
-    `dpi`/`invert`/`mirror`/`offset`/dither settings. Preview, dialog thumbnails
-    and the job use this same split (invariant 7); only the dpi differs.
+    `dpi`/`invert`/`mirror`/`offset`/`maxHeadHm`/dither settings. Preview, dialog
+    thumbnails and the job use this same split (invariant 7); only the dpi differs.
+    `maxHeadHm` (the D-77 head clamp) is forwarded only when set, exactly like a
+    non-mono `pageColor`.
 - Threading: `PrintDialog` state → `PrintOverrides.pageColor` →
   `RenderLabelPageOptions.pageColor` **and** `PrintJob.pageColor` →
   `niimbotAdapter` `newPrintTask` options → `ImageEncoder.encodeCanvas(...)` with
@@ -206,10 +208,23 @@ black therefore bleeds a faint red fringe.
   reproduces the bars. The artefact is one byte wide (8 px = 0.68 mm at 300 dpi):
   in `BitmapColorMode.Mixed` rows the first byte of a red run prints black, and
   the first byte of a black run after red prints red. Solid/single-colour rows
-  are unaffected. Suspect `printBitmapRowDoubleColor` (command 138) omitting the
-  `PrintBitmapRow` (133) sub-command byte that `printBitmapRowWithColor`
-  includes, or a one-byte colour-stream alignment (**D-77**, repro in
+  are unaffected. **Root cause (author):** the printer trims the packet to the
+  printable width, and the red colour mask is at the **end** of the
+  `printBitmapRowDoubleColor` (138, Mixed) payload, so a label wider than the
+  printhead loses/shifts the red stream while the mask survives. **48 mm
+  (567 px @300 dpi = head width) makes the artefact disappear**; wider makes it
+  worse. Until upstream fixes it, red/black rasters must stay ≤ printhead px
+  (**D-77**, repro + 48 mm controls in
   [`../2026-11-02_print-colours/repro/`](../2026-11-02_print-colours/repro/)).
+- **Workaround shipped (P8, 2026-11-08):** `RenderLabelPageOptions.maxHeadHm`
+  (printhead width in hm) crops the final raster on the **head axis** (width for
+  `top`/`bottom`, height for `left`/`right`) after the offset stage, left/top
+  aligned, exact 1:1 copy (no resampling). `PrintDialog` derives it from
+  `capabilities.printheadPixels` at `(printerStatus.dpi ?? resolved.dpi)`, enables
+  it **by default** for a `DoubleColor` page whose head-axis size exceeds it, and
+  shows a visible "Clamp to print head" toggle as the escape hatch. It flows to
+  the page preview, thumbnails and the job (invariant 7). Only red/black pages
+  get the key: mono/grayscale output is byte-identical without it.
 - The isolated red ramp is **clean** — no red→black overheat. The earlier
   "red-black gradient mess" was the library boundary artefact plus the colour
   gradient, not the red-only dither path.

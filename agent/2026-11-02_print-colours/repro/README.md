@@ -20,11 +20,37 @@ the official mobile app. niim.blue (which uses the same library) and our app bot
 reproduce the bars, so the fault is in the library path, not the raster, the
 stock, or the printer.
 
+## Root cause (author, 2026-11-08)
+
+The printer **trims the end of the packet** to the printable width. The red
+colour mask is located at the **end** of the `printBitmapRowDoubleColor`
+payload, so on a label wider than the printhead the red stream is cut/shifted
+while the ink mask survives — producing the wrong-ink bars. The author confirmed:
+
+- **48 mm width → issue disappears** (567 px at 300 dpi = the printhead width).
+- Wider labels (e.g. 608 px) make the black artefact **bigger**.
+- Relevant code: `packet_generator.ts` `printBitmapRowDoubleColor` (`BitmapColorMode.Mixed`).
+
+**Workaround until upstream fixes it:** render red/black pages at **≤48 mm /
+printhead width**. Our 50 mm calibration and the untouched 50 mm red/black
+pattern reproduce the bug; the 48 mm calibration is the control.
+
+The missing `PrintBitmapRow` (133) byte noted below is a separate inconsistency
+worth checking, but the author's trim explanation is the leading cause.
+
+At 300 dpi: **48 mm = 567 px** (the encoder pads to 568), **50 mm = 591 px**
+(pads to 592). The 48 mm packet only loses one padding column to the trim; the
+50 mm packet loses/shifts the tail of the red stream.
+
 ## Fixtures
 
 | File | Purpose |
 | --- | --- |
-| `minimal-mixed-edges-300dpi.png` | Smallest repro: paper→red, black→red, red→black, paper→black, and horizontal red/black pairs. 591×354 px, 50×30 mm @ 300 dpi, exact `#ffffff` / `#ff0000` / `#000000`. |
+| `minimal-mixed-edges-300dpi.png` | Smallest repro at 50 mm: paper→red, black→red, red→black, paper→black, and horizontal red/black pairs. 591×354 px, exact `#ffffff` / `#ff0000` / `#000000`. |
+| `minimal-mixed-edges-48mm-300dpi.png` | Same minimal layout at **48 mm**: 567×354 px — the printhead width. |
+| `red-black-calibration-48mm-300dpi.png` | Full calibration at **48 mm** (567×354 px) — the control that should print clean. |
+| `red-black-calibration-48mm-300dpi-red-pane-black.png` | Its red plane (red → black, white transparent). |
+| `red-black-calibration-48mm-300dpi-black-pane.png` | Its black plane (white transparent). |
 | `red-black-calibration-300dpi.png` | Full calibration page used for the hardware comparison (same size). |
 | `red-black-calibration-300dpi-red-pane-black.png` | Red plane only, red recoloured black, white transparent. |
 | `red-black-calibration-300dpi-black-pane.png` | Black plane only, white transparent. |
@@ -66,8 +92,9 @@ it immediately.
 
 ## Reproduce on our side
 
-- `bun run dev` → `?printcolours` → pattern **Red & black — calibration** (or load
-  `red-black-calibration-300dpi.png` into niim.blue).
+- `bun run dev` → `?printcolours` → pattern **Red & black — calibration (48 mm)**.
+  The 50 mm raster (`red-black-calibration-300dpi.png`) is the repro; load either
+  into niim.blue.
 - Unit pin of the current bytes: `src/print/printLabel.doubleColor.test.ts`.
 - The rendered raster came from the P7 harness (`src/components/dev/`).
 

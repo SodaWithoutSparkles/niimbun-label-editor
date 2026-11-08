@@ -172,14 +172,22 @@ describe('buildColourPatterns', () => {
     it('raster sizes: short docs match rasterDimensions, the long doc is > 1 M px and under the cap', () => {
         const patterns = buildColourPatterns();
         const expectedShort = rasterDimensions(5000, 3000, 300);
+        const expectedCalibration = rasterDimensions(4800, 3000, 300);
 
-        for (const id of ['grayscale', 'redBlack', 'redBlackCalibration'] as const) {
+        for (const id of ['grayscale', 'redBlack'] as const) {
             const { label } = patternOf(patterns, id).doc;
             expect(rasterDimensions(label.backingW, label.backingH, label.dpi)).toEqual(
                 expectedShort,
             );
             expect(expectedShort.widthPx * expectedShort.heightPx).toBeLessThan(1_000_000);
         }
+
+        // The calibration label is 48 mm wide (the printhead width), not 50 mm.
+        const calibration = patternOf(patterns, 'redBlackCalibration').doc.label;
+        expect(rasterDimensions(calibration.backingW, calibration.backingH, calibration.dpi)).toEqual(
+            expectedCalibration,
+        );
+        expect(expectedCalibration.widthPx * expectedCalibration.heightPx).toBeLessThan(1_000_000);
 
         const long = patternOf(patterns, 'grayscaleLong').doc.label;
         const longSize = rasterDimensions(long.backingW, long.backingH, long.dpi);
@@ -256,8 +264,8 @@ interface Box {
 
 /**
  * Assert the ramp's white margin physically exists: every node box stays on the
- * 50×30 mm page and nothing but the ramp itself enters its band (x 200…4800,
- * y 400…700).
+ * label's page (48 mm wide for the calibration) and nothing but the ramp itself
+ * enters its band (y 400…700).
  */
 const assertRampBoxHasMargins = (
     pattern: ColourPattern,
@@ -318,6 +326,28 @@ describe('red/black calibration pattern', () => {
         expect(caption.fill).toBe('#000000');
     });
 
+    it('is 48 mm wide by default with a full-page region, and still builds a 50 mm variant', () => {
+        const at48 = buildRedBlackCalibrationPattern();
+        expect(at48.doc.label.backingW).toBe(4800);
+        expect(at48.doc.label.backingH).toBe(3000);
+        expect(at48.doc.label.regions).toEqual([{ kind: 'rect', x: 0, y: 0, w: 4800, h: 3000 }]);
+        // No 50 mm preset on the narrow page: the preset's region would clip it.
+        expect(at48.doc.meta.paperTypeId).toBeUndefined();
+        expect(at48.doc.meta.name).toBe('Print colours — red/black calibration (48 mm)');
+        expect(at48.label).toBe('Red & black — calibration (48 mm)');
+
+        // The 50 mm comparison variant is the D-77 bug repro: unscaled layout.
+        const at50 = buildRedBlackCalibrationPattern(undefined, 50);
+        expect(at50.doc.label.backingW).toBe(5000);
+        expect(at50.doc.label.regions).toEqual([{ kind: 'rect', x: 0, y: 0, w: 5000, h: 3000 }]);
+        expect(at50.doc.meta.paperTypeId).toBe('rounded50x30');
+        expect(at50.label).toBe('Red & black — calibration (50 mm)');
+        const ramp50 = nodeById(at50, 'pc-cal-ramp-node');
+        if (ramp50?.type !== 'image' || !ramp50.size) throw new Error('pc-cal-ramp-node missing');
+        expect(ramp50.transform.x).toBe(200);
+        expect(ramp50.size.w).toBe(4600);
+    });
+
     it('has one isolated red ramp, five red coverage bars and registration pairs', () => {
         const pattern = buildRedBlackCalibrationPattern();
         const nodes = pattern.doc.nodes;
@@ -330,7 +360,8 @@ describe('red/black calibration pattern', () => {
         if (ramp?.type !== 'image') throw new Error('pc-cal-ramp-node missing');
         expect(ramp.tint).toBe('#ff0000');
 
-        // Coverage ladder: five red-tinted flat bars, 8 mm wide, 1 mm apart.
+        // Coverage ladder: five red-tinted flat bars, 8 mm wide (scaled to
+        // 0.96 → 768 hm), 1 mm apart.
         const coverage = images
             .filter((node) => node.id.startsWith('pc-cal-cover-'))
             .sort((a, b) => a.transform.x - b.transform.x);
@@ -342,8 +373,8 @@ describe('red/black calibration pattern', () => {
             '#ff0000',
             '#ff0000',
         ]);
-        expect(coverage.map((node) => node.transform.x)).toEqual([200, 1100, 2000, 2900, 3800]);
-        expect(coverage.map((node) => node.size?.w)).toEqual([800, 800, 800, 800, 800]);
+        expect(coverage.map((node) => node.transform.x)).toEqual([192, 1056, 1920, 2784, 3648]);
+        expect(coverage.map((node) => node.size?.w)).toEqual([768, 768, 768, 768, 768]);
         expect(coverage.map((node) => node.transform.y)).toEqual([850, 850, 850, 850, 850]);
 
         // Authored tones in x order: 64/128/192/224/240 of 255, all distinct.
@@ -376,8 +407,8 @@ describe('red/black calibration pattern', () => {
             if (label?.type !== 'text' || !label.size) throw new Error('coverage label missing');
             expect(label.transform.y).toBeGreaterThanOrEqual(1650);
             expect(label.transform.y + label.size.h).toBeLessThanOrEqual(1750);
-            expect(label.transform.x).toBe(200 + index * 900);
-            expect(label.size).toEqual({ w: 800, h: 90 });
+            expect(label.transform.x).toBe(192 + index * 864);
+            expect(label.size).toEqual({ w: 768, h: 90 });
             expect(label.fontSize).toBe(80);
             expect(label.align).toBe('center');
             expect(label.fill).toBe('#000000');
@@ -399,11 +430,13 @@ describe('red/black calibration pattern', () => {
             '#ff0000',
             '#000000',
         ]);
-        expect(vertical.map((shape) => shape.x)).toEqual([200, 1200, 2400, 3400]);
-        // The two reds are separated by a white 2 mm gap.
-        expect(vertical[1]!.x + vertical[1]!.w).toBe(2200);
-        expect(vertical[2]!.x - (vertical[1]!.x + vertical[1]!.w)).toBe(200);
+        expect(vertical.map((shape) => shape.x)).toEqual([192, 1152, 2304, 3264]);
+        // The two reds are separated by a white gap (2 mm at the authored 50 mm
+        // scale, 192 hm once scaled to 48 mm).
+        expect(vertical[1]!.x + vertical[1]!.w).toBe(2112);
+        expect(vertical[2]!.x - (vertical[1]!.x + vertical[1]!.w)).toBe(192);
         expect(vertical.map((shape) => shape.h)).toEqual([600, 600, 600, 600]);
+        expect(vertical.map((shape) => shape.w)).toEqual([960, 960, 960, 960]);
 
         // Horizontal pairs: red over black (left), black over red (right), the
         // two blocks in each pair touching at the boundary.
@@ -411,7 +444,8 @@ describe('red/black calibration pattern', () => {
         const bottom = shapes.filter((shape) => shape.y === 2650).sort((a, b) => a.x - b.x);
         expect(top.map((shape) => shape.fill)).toEqual(['#ff0000', '#000000']);
         expect(bottom.map((shape) => shape.fill)).toEqual(['#000000', '#ff0000']);
-        expect(top.map((shape) => shape.x)).toEqual([200, 2200]);
+        expect(top.map((shape) => shape.x)).toEqual([192, 2112]);
+        expect(top.map((shape) => shape.w)).toEqual([1728, 1728]);
         for (let index = 0; index < 2; index++) {
             expect(top[index]!.x).toBe(bottom[index]!.x);
             expect(top[index]!.w).toBe(bottom[index]!.w);
@@ -434,10 +468,13 @@ describe('red/black calibration pattern', () => {
         expect(rampRef.name).toBe('isolated red ramp');
 
         // Geometry: title ends at 240, ramp 400…700, ladder starts at 850.
-        expect(ramp.transform).toMatchObject({ x: 200, y: 400 });
-        expect(ramp.size).toEqual({ w: 4600, h: 300 });
+        expect(ramp.transform).toMatchObject({ x: 192, y: 400 });
+        expect(ramp.size).toEqual({ w: 4416, h: 300 });
         expect(ramp.transform.y - (title.transform.y + title.size.h)).toBe(160);
         expect(850 - (ramp.transform.y + ramp.size.h)).toBe(150);
+        // Title is scaled too: x 192, w 1920, same height.
+        expect(title.transform.x).toBe(192);
+        expect(title.size).toEqual({ w: 1920, h: 200 });
 
         const box = {
             left: ramp.transform.x,

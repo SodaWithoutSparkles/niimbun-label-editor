@@ -323,4 +323,56 @@ describe('usePrintThumbnails', () => {
         expect(renderPage).toHaveBeenCalledTimes(2);
         expect(renderPage.mock.calls[1]![2]).toMatchObject({ pageColor: 'grayscale' });
     });
+
+    it('forwards the head clamp to the render seam', async () => {
+        const renderPage = makeRender(fakePage());
+
+        const { result } = renderHook(() =>
+            usePrintThumbnails({
+                doc,
+                csv: null,
+                overrides: { maxHeadHm: 4800 },
+                renderPage,
+            }),
+        );
+
+        await waitFor(() =>
+            expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub'),
+        );
+        expect(renderPage.mock.calls[0]![2]).toMatchObject({ maxHeadHm: 4800 });
+        // An absent clamp is an absent key, not `undefined`.
+        expect(renderPage.mock.calls[0]![2]).toHaveProperty('maxHeadHm', 4800);
+    });
+
+    it('rebuilds the cache when the head clamp changes', async () => {
+        const renderPage = makeRender(fakePage());
+        const { result, rerender } = renderHook(
+            ({ maxHeadHm }: { maxHeadHm?: number }) =>
+                usePrintThumbnails({
+                    doc,
+                    csv: null,
+                    overrides: { ...(maxHeadHm !== undefined ? { maxHeadHm } : {}) },
+                    renderPage,
+                }),
+            { initialProps: {} as { maxHeadHm?: number } },
+        );
+
+        await waitFor(() =>
+            expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub'),
+        );
+
+        // A set clamp changes the raster: drop the stale thumbnail and re-render.
+        rerender({ maxHeadHm: 4800 });
+        expect(result.current.urlFor(0)).toBeUndefined();
+        await waitFor(() =>
+            expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub'),
+        );
+        expect(renderPage).toHaveBeenCalledTimes(2);
+        expect(renderPage.mock.calls[1]![2]).toMatchObject({ maxHeadHm: 4800 });
+
+        // A fresh-but-equal overrides object still keeps the cache.
+        rerender({ maxHeadHm: 4800 });
+        expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub');
+        expect(renderPage).toHaveBeenCalledTimes(2);
+    });
 });

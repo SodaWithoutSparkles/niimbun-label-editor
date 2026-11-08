@@ -63,6 +63,11 @@ export interface PrintOverrides {
     /** Applied last, on a fresh canvas: shift by device px at the effective dpi. */
     offset?: { x: number; y: number; type: 'inner' | 'outer' };
     /**
+     * Printhead width in hm (hundredths of a millimetre): crop the final raster
+     * on the head axis to it (D-77 red/black workaround). Absent = no crop.
+     */
+    maxHeadHm?: number;
+    /**
      * Per-strategy dither settings defaults. `src/print/` must not import the
      * store, so these arrive through the options object from a store-aware
      * caller (the dialog); absent = the engine defaults.
@@ -158,6 +163,7 @@ export const renderOptionsOf = (
         ...(overrides?.invert !== undefined ? { invert: overrides.invert } : {}),
         ...(overrides?.mirror !== undefined ? { mirror: overrides.mirror } : {}),
         ...(overrides?.offset !== undefined ? { offset: overrides.offset } : {}),
+        ...(overrides?.maxHeadHm !== undefined ? { maxHeadHm: overrides.maxHeadHm } : {}),
         ...(overrides?.quantizerDefaults !== undefined
             ? { quantizerDefaults: overrides.quantizerDefaults }
             : {}),

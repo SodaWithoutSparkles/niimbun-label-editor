@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { LabelType, PageColorType } from '@mmote/niimbluelib';
 import { Modal } from '../common/dialogs/Modal';
 import { Input, Select, SettingRow, Toggle } from '../common/forms';
-import { rasterDimensions } from '../../core/render';
+import { rasterDimensions, HM_PER_INCH } from '../../core/render';
 import { normalizeDpi } from '../../core/doc/validate';
 import type { LabelDoc, PrintOffset } from '../../core/doc/types';
 import { hmToPx, pxToHm } from '../../core/hm';
@@ -164,6 +164,12 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     const [labelType, setLabelType] = useState<LabelType | undefined>(undefined);
     /** Print-time page colour. Session state: reset on every open. */
     const [pageColor, setPageColor] = useState<PageColorType>(PageColorType.SingleColor);
+    /**
+     * D-77 escape hatch: crop a red/black page to the printhead width. Default
+     * **on** (the library trims the packet tail, so a wider page prints wrong-ink
+     * bars); a visible toggle, never a silent setting. Reset on every open.
+     */
+    const [clampRedBlack, setClampRedBlack] = useState(true);
     const [invert, setInvert] = useState(false);
     const [mirror, setMirror] = useState(false);
     const [offsetX, setOffsetX] = useState('0');
@@ -190,6 +196,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         setSpeed(0);
         setLabelType(undefined);
         setPageColor(PageColorType.SingleColor);
+        setClampRedBlack(true);
         setInvert(false);
         setMirror(false);
         setProgress(null);
@@ -391,6 +398,39 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         : dims;
     const rasterCapExceeded = capDims.widthPx * capDims.heightPx > MAX_RASTER_PIXELS;
 
+    /**
+     * D-77: the printable width in hm = head dots converted at the **render**
+     * dpi. The packet columns are raster pixels at `resolved.dpi`, so the limit
+     * must stay `printheadPixels` columns whatever dpi the printer reports;
+     * converting at the printer dpi would let a 600 dpi render through a 300 dpi
+     * / 567-dot head and the printer would trim the tail again. Undefined when
+     * the head size is unreported — then there is nothing to clamp to.
+     */
+    const clampDpi = resolved.dpi;
+    const headWidthHm =
+        capabilities?.printheadPixels !== undefined &&
+        capabilities.printheadPixels > 0 &&
+        Number.isFinite(clampDpi) &&
+        clampDpi > 0
+            ? Math.floor((capabilities.printheadPixels * HM_PER_INCH) / clampDpi)
+            : undefined;
+    // The head spans the cross-feed axis (same rule as `printheadOverflow`),
+    // and the gate must see the **offset-expanded** raster: an `outer` offset
+    // can push an otherwise-fitting page past the head.
+    const headAxisPx =
+        doc.label.printDirection === 'left' || doc.label.printDirection === 'right'
+            ? capDims.heightPx
+            : capDims.widthPx;
+    const headLimitPx =
+        headWidthHm !== undefined ? Math.round((headWidthHm * clampDpi) / HM_PER_INCH) : undefined;
+    const needsHeadClamp =
+        pageColor === PageColorType.DoubleColor &&
+        headLimitPx !== undefined &&
+        headLimitPx > 0 &&
+        headAxisPx > headLimitPx;
+    /** Only a page that needs the clamp, with the escape hatch left on. */
+    const headClampHm = needsHeadClamp && clampRedBlack ? headWidthHm : undefined;
+
     const thumbnailOverrides = useMemo<PrintThumbnailOverrides>(
         () => ({
             ...(invert ? { invert: true } : {}),
@@ -403,6 +443,8 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             ...(pageColor !== PageColorType.SingleColor
                 ? { pageColor: pageColorModeOf(pageColor) }
                 : {}),
+            // D-77: only a page that actually needs the crop carries the key.
+            ...(headClampHm !== undefined ? { maxHeadHm: headClampHm } : {}),
         }),
         [
             invert,
@@ -411,6 +453,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             quantizerDefaults,
             defaultQuantizerByType,
             pageColor,
+            headClampHm,
         ],
     );
 
@@ -500,6 +543,9 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             ...(invert ? { invert: true } : {}),
             ...(mirror ? { mirror: true } : {}),
             ...(parsedOffset ? { offset: parsedOffset } : {}),
+            // D-77: the job MUST crop the same bytes the preview/thumbnails
+            // rendered (invariant 7), so the same conditional key rides here.
+            ...(headClampHm !== undefined ? { maxHeadHm: headClampHm } : {}),
             quantizerDefaults,
             defaultQuantizerByType,
         }),
@@ -515,6 +561,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             invert,
             mirror,
             parsedOffset,
+            headClampHm,
             quantizerDefaults,
             defaultQuantizerByType,
         ],
@@ -1014,6 +1061,21 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                 aria-label={t('print.pageColor')}
                             />
                         </SettingRow>
+                        {needsHeadClamp && headWidthHm !== undefined && (
+                            <SettingRow
+                                label={t('print.clampToHead')}
+                                description={t('print.clampToHeadHint', {
+                                    width: (headWidthHm / 100).toFixed(0),
+                                    dpi: clampDpi,
+                                })}
+                            >
+                                <Toggle
+                                    checked={clampRedBlack}
+                                    onChange={setClampRedBlack}
+                                    aria-label={t('print.clampToHead')}
+                                />
+                            </SettingRow>
+                        )}
                         <SettingRow label={t('print.invert')}>
                             <Toggle
                                 checked={invert}

@@ -8,16 +8,17 @@ import type { PreparedAsset } from './assets';
 import { renderLabelPage } from './renderLabelPage';
 
 /**
- * P5 wave A — red/black page colour end to end through the shared render path.
+ * P9 wave B — red/black page colour end to end through the shared render path.
  *
- * The page is one `diffuseToPalette` pass over `redBlackPalette`, but the
+ * The page is one `separateRedBlack` duotone separation pass, but the
  * per-object policy mask decides each pixel's path:
  *
  *  - `threshold` policies (text / qr / barcode / code, shapes and uncovered
  *    pixels via the global slot) are **flat point ops** classified straight to
  *    one exact entry — authored red stays crisp red, mid-greys stay white;
- *  - every diffusing policy (`image` → `floydSteinberg`) dithers through the
- *    two-ink palette.
+ *  - every other policy (`image` → `floydSteinberg`) goes through the two-ink
+ *    **spot separation**: clustered 3×3 red cells plus black diffused on the
+ *    free dots.
  *
  * The encoder's DoubleColor split matches exact `0xffffff` / `0xff0000`, so the
  * channel contract is asserted on every pixel rather than sampled.
@@ -134,6 +135,15 @@ const grayAsset = (): PreparedAsset => {
     return { image: canvas, widthPx: 100, heightPx: 50 };
 };
 
+/** A uniform saturated-red asset (hue-selective red demand ≈ 1). */
+const redAsset = (): PreparedAsset => {
+    const canvas = canvasOf(100, 50, (ctx) => {
+        ctx.fillStyle = 'rgb(200,40,30)';
+        ctx.fillRect(0, 0, 100, 50);
+    });
+    return { image: canvas, widthPx: 100, heightPx: 50 };
+};
+
 const pixelAt = (rgba: RgbaBuffer, x: number, y: number): number[] => {
     const index = (y * rgba.width + x) * 4;
     return Array.from(rgba.data.slice(index, index + 4));
@@ -236,6 +246,104 @@ describe('renderLabelPage — red/black page colour', () => {
         expect(counts.white, 'the red dots are spaced by paper').toBeGreaterThan(0);
         expect(counts.black, 'black must not mix into a red-only tint').toBe(0);
         expect(counts.other).toBe(0);
+    });
+
+    it('renders a red photo as clustered cells, not isolated red dots', async () => {
+        const page = await renderLabelPage(
+            imageDoc([imageNode('img')]),
+            {},
+            { pageColor: 'redBlack', assets: { resolveImage: () => redAsset() } },
+        );
+
+        const isRed = (x: number, y: number): boolean => {
+            const pixel = pixelAt(page.rgba, x, y);
+            return pixel[0] === 255 && pixel[1] === 0 && pixel[2] === 0;
+        };
+
+        // Full demand inks every dot in every cell that has at least four
+        // available dots. A 100 px-wide raster leaves a one-dot-wide last
+        // column: those cells have n < 4 and are suppressed (an isolated strip
+        // cannot develop), so the page is not wholly red.
+        const counts = tally(page.rgba);
+        expect(counts.black).toBe(0);
+        expect(counts.other).toBe(0);
+
+        // Every cell is either fully inked (n ≥ 4) or has no red at all.
+        for (let cy = 0; cy * 3 < 50; cy++) {
+            for (let cx = 0; cx * 3 < 100; cx++) {
+                let n = 0;
+                let red = 0;
+                for (let dy = 0; dy < 3; dy++) {
+                    const y = cy * 3 + dy;
+                    if (y >= 50) continue;
+                    for (let dx = 0; dx < 3; dx++) {
+                        const x = cx * 3 + dx;
+                        if (x >= 100) continue;
+                        n++;
+                        if (isRed(x, y)) red++;
+                    }
+                }
+                expect(red, `cell (${cx},${cy}) with n=${n}`).toBe(n >= 4 ? n : 0);
+            }
+        }
+        expect(counts.red, 'only the suppressed one-dot edge strip is white').toBe(
+            100 * 50 - 50,
+        );
+
+        // Clustered by construction: every red dot has a red orthogonal
+        // neighbour (activated clusters are connected and ≥ 4 dots).
+        for (let y = 0; y < 50; y++) {
+            for (let x = 0; x < 100; x++) {
+                if (!isRed(x, y)) continue;
+                const neighbours = [
+                    [x - 1, y],
+                    [x + 1, y],
+                    [x, y - 1],
+                    [x, y + 1],
+                ] as const;
+                expect(
+                    neighbours.some(
+                        ([nx, ny]) => nx >= 0 && nx < 100 && ny >= 0 && ny < 50 && isRed(nx, ny),
+                    ),
+                    `(${x},${y}) has a red orthogonal neighbour`,
+                ).toBe(true);
+            }
+        }
+    });
+
+    it('keeps flat red text crisp while an image beside it still dithers', async () => {
+        const page = await renderLabelPage(
+            imageDoc([imageNode('img'), textNode('red', 100, '#ff0000')]),
+            {},
+            { pageColor: 'redBlack', assets: { resolveImage: () => grayAsset() } },
+        );
+
+        const counts = tally(page.rgba);
+        expect(counts.other, 'only exact palette entries are written').toBe(0);
+        expect(counts.red, 'the flat text is red ink').toBeGreaterThan(0);
+        expect(counts.black, 'the grey image still dithers').toBeGreaterThan(0);
+        expect(counts.white).toBeGreaterThan(0);
+    });
+
+    it('threads the redBlack knobs into the raster', async () => {
+        const withRed = await renderLabelPage(
+            imageDoc([imageNode('img')]),
+            {},
+            { pageColor: 'redBlack', assets: { resolveImage: () => redAsset() } },
+        );
+        expect(tally(withRed.rgba).red).toBeGreaterThan(0);
+
+        const noRed = await renderLabelPage(
+            imageDoc([imageNode('img')]),
+            {},
+            {
+                pageColor: 'redBlack',
+                redBlack: { redIntensity: 0 },
+                assets: { resolveImage: () => redAsset() },
+            },
+        );
+        expect(tally(noRed.rgba).red, 'redIntensity 0 removes red').toBe(0);
+        expect(tally(noRed.rgba).other).toBe(0);
     });
 
     it('renders flat shapes solid in the global (threshold) slot', async () => {

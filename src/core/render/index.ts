@@ -42,20 +42,29 @@ export {
 
 export {
     classifyFlatRedBlack,
-    diffuseToPalette,
+    diffuseRamp,
     GRAYSCALE_LEVELS,
     grayscaleRampPalette,
     grayLevelColor,
-    nearestPaletteEntry,
     redBlackPalette,
     RED_BLACK_BLACK,
     RED_BLACK_RED,
     RED_BLACK_WHITE,
     type PageColorMode,
     type Palette,
-    type PaletteDiffuseOptions,
     type PaletteEntry,
+    type RampDiffuseOptions,
 } from './palette';
+
+export {
+    RED_BLACK_CELL,
+    RED_INK_DARKNESS,
+    RED_INK_LUMA,
+    redBlackDemand,
+    rednessOf,
+    separateRedBlack,
+    type RedBlackSeparateOptions,
+} from './duotone';
 
 export {
     screentone,
