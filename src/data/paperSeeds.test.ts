@@ -43,7 +43,7 @@ describe('seedPaperTypesIfNeeded', () => {
         const repo = createPaperRepo(createMemoryAdapter());
         const storage = makeStorage();
         storage.setItem(PAPER_SEED_MARKER_KEY, '1');
-        storage.setItem(PAPER_SEED_VERSION_KEY, '2');
+        storage.setItem(PAPER_SEED_VERSION_KEY, '3');
 
         const result = await seedPaperTypesIfNeeded(repo, storage);
 
@@ -51,46 +51,50 @@ describe('seedPaperTypesIfNeeded', () => {
         expect(await repo.list()).toHaveLength(0);
     });
 
-    it('adds only the v2 seed to a catalogue seeded before the version key existed', async () => {
+    it('adds only newer seeds to a catalogue seeded before the version key existed', async () => {
         const repo = createPaperRepo(createMemoryAdapter());
         const storage = makeStorage();
         // A v1 install: the original seeds are present and the legacy marker is
         // set, but there is no version key.
         for (const record of paperSeedRecords()) {
-            if (record.id !== 'rounded48x30') await repo.put(record);
+            if (record.id !== 'rounded48x30' && record.id !== 'rounded40x60') await repo.put(record);
         }
         storage.setItem(PAPER_SEED_MARKER_KEY, '1');
 
         const result = await seedPaperTypesIfNeeded(repo, storage);
 
-        expect(result).toEqual({ seeded: true, count: 1 });
+        expect(result).toEqual({ seeded: true, count: 2 });
         expect(await repo.get('rounded48x30')).not.toBeNull();
-        expect(storage.getItem(PAPER_SEED_VERSION_KEY)).toBe('2');
+        expect(await repo.get('rounded40x60')).not.toBeNull();
+        expect(storage.getItem(PAPER_SEED_VERSION_KEY)).toBe('3');
 
         // Deleting the new seed later must stick.
         await repo.remove('rounded48x30');
+        await repo.remove('rounded40x60');
         await expect(seedPaperTypesIfNeeded(repo, storage)).resolves.toEqual({
             seeded: false,
             count: 0,
         });
         expect(await repo.get('rounded48x30')).toBeNull();
+        expect(await repo.get('rounded40x60')).toBeNull();
     });
 
-    it('does not resurrect a deleted v1 seed while adding the v2 seed', async () => {
+    it('does not resurrect a deleted v1 seed while adding newer seeds', async () => {
         const repo = createPaperRepo(createMemoryAdapter());
         const storage = makeStorage();
         const deletedV1 = 'ftagSpare-25x78';
         for (const record of paperSeedRecords()) {
-            if (record.id === deletedV1 || record.id === 'rounded48x30') continue;
+            if (record.id === deletedV1 || record.id === 'rounded48x30' || record.id === 'rounded40x60') continue;
             await repo.put(record);
         }
         storage.setItem(PAPER_SEED_MARKER_KEY, '1');
 
         const result = await seedPaperTypesIfNeeded(repo, storage);
 
-        expect(result).toEqual({ seeded: true, count: 1 });
+        expect(result).toEqual({ seeded: true, count: 2 });
         expect(await repo.get(deletedV1)).toBeNull();
         expect(await repo.get('rounded48x30')).not.toBeNull();
+        expect(await repo.get('rounded40x60')).not.toBeNull();
     });
 
     it('does not resurrect a deleted seed on a later run', async () => {
