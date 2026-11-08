@@ -1,6 +1,6 @@
 {
     "name": "niimbun-label-editor",
-    "compatibility_date": "2026-11-09",
+    "compatibility_date": "2026-11-08",
     "assets": {
         "directory": "./dist"
     },
