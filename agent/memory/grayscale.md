@@ -4,6 +4,11 @@
 > research below is kept as written; statements that "nothing is implemented"
 > or that the render path "still quantizes to 1 bit" describe the pre-run state
 > and are superseded.
+>
+> **P9 (2026-11-09):** the shipped grayscale path is **scalar luminance
+> diffusion since P9** (`diffuseRamp`, one BT.601 plane over the 16-level ramp).
+> The old RGB-vector palette engine collapsed saturated photos and was replaced;
+> see [`print-colours.md`](print-colours.md) §Render dispatch.
 
 Phase-0 research for the **print-time colours** work, written for the Build agent
 that plans it. Read with [`dual-color.md`](dual-color.md) (red/black research,

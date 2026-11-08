@@ -338,28 +338,39 @@ Commits `2b0f70a` (W1 gamma), `f2d3bc9` (W2 Ostromoukhov), `8468b54` (W3 live pr
 
 ## 11. Print-time colour palettes (shipped 2026-11-02 — [`print-colours.md`](print-colours.md))
 
-- **A separate engine, not wider `quantize.ts`.** `src/core/render/palette.ts`
-  owns `diffuseToPalette`: serpentine Floyd–Steinberg over an N-entry palette
-  with a **full RGB error vector** on three `Float32Array` planes (≈12 bytes/px
-  on top of the RGBA buffer; scoped to the call, never cached). The 1-bit
-  strategies and their goldens are untouched and stay **byte-identical** — that
-  was the reason for the split.
+- **Three modules, not wider `quantize.ts`.** `src/core/render/quantize.ts` stays
+  the 1-bit path (byte-identical goldens). `src/core/render/palette.ts` owns
+  **`diffuseRamp`**: serpentine Floyd–Steinberg over **one BT.601 scalar
+  luminance plane** for an ordered neutral ramp, entry chosen by the band-centre
+  grey value (`|entry.r − L|`); a neutral ramp has no chroma sink, so an RGB
+  vector would clip and collapse saturated sources. `src/core/render/duotone.ts`
+  owns **`separateRedBlack`**: the two-ink photo separation (clustered OKLab red
+  spot + BT.601 black on free dots). The old `diffuseToPalette` — N-entry
+  palette, full RGB error vector on three planes, `PaletteDiffuseOptions`,
+  `nearestPaletteEntry`, `PaletteEntry.weight` — is **deleted in P9**; nothing
+  imports it.
 - **Palettes:** `grayscaleRampPalette()` (16 entries at `255 − 17k`, index =
   library level, `nearest` mirrors `ImageEncoder.colorToGrayLevel` on BT.601
-  luminance) and `redBlackPalette()` (`[white, black, red]`, default weighted
-  RGB distance; per-entry `weight` is the future heat-selected-ink calibration
-  knob, all `1` today).
+  luminance; `diffuseRamp` deliberately does not call it because the accumulated
+  scalar is already luminance). `redBlackPalette()` is `[white, black, red]` as
+  the **exact output bytes**, no `nearest`/weights — the flat point-op table and
+  the encoder contract, not a photo quantizer.
 - **Flat/diffuse dispatch** reuses the existing per-object policies: a pixel is
   flat when its mask slot resolves to `threshold` (point op, classify the raw
-  source, no error in or out — crisp text/symbols), otherwise it diffuses.
-  `screentone` and `ostromoukhov` count as diffusion in this mode (per-ink
-  screentone is deferred). Flat classification is `classifyFlatRedBlack`: red
-  dominance (`r > g && r > b`) first, then gamma-curved BT.601 luminance against
-  the cutoff.
-- **Tint** (`core/render/tint.ts`) is upstream of the palette: luminance selects
-  ink density, the tint selects ink colour, so a red-tinted grey image dithers
-  red/white with no black. Applied per leaf after the shared asset cache.
-- **Knobs are page-level** in red/black (and grayscale builds no mask), so
-  per-node diffuser params are inert in those modes — D-74.
-- **Related debt:** D-05 seam drift now also covers flat-beside-diffuse
-  neighbours; D-73 long-grayscale buffer unverified.
+  source, no error in or out — crisp text/symbols), otherwise it goes through
+  the duotone separation. `screentone` and `ostromoukhov` count as diffusion in
+  this mode (per-ink screentone is deferred). Flat classification is
+  `classifyFlatRedBlack`: red dominance (`r > g && r > b`) first, then
+  gamma-curved BT.601 luminance against the cutoff.
+- **Tint** (`core/render/tint.ts`) is upstream of the page-colour pass:
+  luminance selects ink density, the tint selects ink colour, so a red-tinted
+  grey image separates to red/white with no black. Applied per leaf after the
+  shared asset cache.
+- **Knobs:** red/black has its own two page-level knobs (`redIntensity`,
+  `blackDepth`) from persisted `redBlackSettings`; page-level
+  gamma/strength/serpentine apply to grayscale but **not** to red/black photo
+  pixels (the flat classifier still takes the page threshold/gamma). Per-node
+  diffuser params are inert in both modes — D-74.
+- **Related debt:** D-05 seam drift also covers flat-beside-diffuse neighbours;
+  D-73 long-grayscale buffer unverified; D-78 calibrated cluster floor still
+  pending; D-79 duotone constants uncalibrated.
