@@ -16,7 +16,7 @@ import type {
     Region,
     GlobalSpec,
 } from '../core/doc/types';
-import type { QuantizerDefaults, QuantizerId } from '../core/render';
+import type { QuantizerDefaults, QuantizerId, RedBlackTuning } from '../core/render';
 import type { ResizeOptions, Size } from '../core/doc/geometry';
 import type { CsvRepo } from '../data/csvRepo';
 import type { LabelRepo, LabelSummary } from '../data/labelRepo';
@@ -95,6 +95,13 @@ export type ConnectMethod = 'bluetooth' | 'serial';
  * `DEFAULT_POLICY_BY_TYPE` (`core/render/policy`). Never document data.
  */
 export type DefaultQuantizerByType = Partial<Record<NodeType, QuantizerId>>;
+
+/**
+ * Persisted red/black tuning (P9 wave C). Both knobs are always present: the
+ * store has a concrete value for every page, unlike the optional engine
+ * `RedBlackTuning` where an absent field means the engine default.
+ */
+export type RedBlackSettings = Required<RedBlackTuning>;
 
 export type NotificationType = 'info' | 'success' | 'warning' | 'error';
 
@@ -213,6 +220,18 @@ export interface AppState {
      */
     defaultQuantizerByType: DefaultQuantizerByType;
     setDefaultQuantizerByType: (defaults: DefaultQuantizerByType) => void;
+    /**
+     * Red/black page tuning (P9 wave C): `redIntensity` (0..1.5) and
+     * `blackDepth` (0..1). Applied to **every** red/black page — preview,
+     * thumbnails and the print job share this one value (invariant 7).
+     * Persisted with the other global settings; never document data.
+     */
+    redBlackSettings: RedBlackSettings;
+    /**
+     * Merge a partial patch into `redBlackSettings` and clamp each knob to its
+     * engine range. A non-finite patch value keeps the current (valid) value.
+     */
+    setRedBlackSettings: (patch: Partial<RedBlackSettings>) => void;
     /**
      * Preferred paper type for a new label, persisted across sessions. Optional
      * on purpose: unset (`undefined`) is valid and means "no preference", so the

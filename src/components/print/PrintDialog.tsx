@@ -151,6 +151,10 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     // (preview, thumbnails and the print job) from here.
     const quantizerDefaults = useStore((state) => state.quantizerDefaults);
     const defaultQuantizerByType = useStore((state) => state.defaultQuantizerByType);
+    // Red/black page tuning (P9 wave C). Persisted global preference; threaded
+    // into the preview, thumbnails and the job from here.
+    const redBlackSettings = useStore((state) => state.redBlackSettings);
+    const setRedBlackSettings = useStore((state) => state.setRedBlackSettings);
     const capabilities = printerStatus.capabilities;
     /** 16-level grayscale pages are supported only by tasks that report it. */
     const grayscaleSupported = capabilities?.grayscale === true;
@@ -431,6 +435,14 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     /** Only a page that needs the clamp, with the escape hatch left on. */
     const headClampHm = needsHeadClamp && clampRedBlack ? headWidthHm : undefined;
 
+    /**
+     * The duotone knobs apply to a red/black page only. `undefined` otherwise,
+     * so mono/grayscale option objects carry no key and their bytes/keys stay
+     * exactly as before.
+     */
+    const redBlackTuning =
+        pageColor === PageColorType.DoubleColor ? redBlackSettings : undefined;
+
     const thumbnailOverrides = useMemo<PrintThumbnailOverrides>(
         () => ({
             ...(invert ? { invert: true } : {}),
@@ -445,6 +457,8 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                 : {}),
             // D-77: only a page that actually needs the crop carries the key.
             ...(headClampHm !== undefined ? { maxHeadHm: headClampHm } : {}),
+            // P9: red/black tuning, only for a red/black page.
+            ...(redBlackTuning !== undefined ? { redBlack: redBlackTuning } : {}),
         }),
         [
             invert,
@@ -454,6 +468,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             defaultQuantizerByType,
             pageColor,
             headClampHm,
+            redBlackTuning,
         ],
     );
 
@@ -469,8 +484,9 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             dpi: resolved.dpi,
             ...(assets !== undefined ? { assets } : {}),
             ...thumbnailOverrides,
+            ...(redBlackTuning !== undefined ? { redBlack: redBlackTuning } : {}),
         }),
-        [resolved.dpi, assets, thumbnailOverrides],
+        [resolved.dpi, assets, thumbnailOverrides, redBlackTuning],
     );
 
     const handlePreviewReport = useCallback(
@@ -548,6 +564,9 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             ...(headClampHm !== undefined ? { maxHeadHm: headClampHm } : {}),
             quantizerDefaults,
             defaultQuantizerByType,
+            // P9: the job renders the same red/black separation as the preview
+            // and thumbnails (invariant 7).
+            ...(redBlackTuning !== undefined ? { redBlack: redBlackTuning } : {}),
         }),
         [
             densityEnabled,
@@ -564,6 +583,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             headClampHm,
             quantizerDefaults,
             defaultQuantizerByType,
+            redBlackTuning,
         ],
     );
 
@@ -1061,6 +1081,61 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                 aria-label={t('print.pageColor')}
                             />
                         </SettingRow>
+                        {pageColor === PageColorType.DoubleColor && redBlackSupported && (
+                            <>
+                                <SettingRow
+                                    label={t('print.redIntensity')}
+                                    description={t('print.redIntensityHint')}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={150}
+                                            step={1}
+                                            value={Math.round(
+                                                redBlackSettings.redIntensity * 100,
+                                            )}
+                                            onChange={(event) =>
+                                                setRedBlackSettings({
+                                                    redIntensity:
+                                                        Number(event.target.value) / 100,
+                                                })
+                                            }
+                                            className="w-40 accent-blue-500"
+                                            aria-label={t('print.redIntensity')}
+                                        />
+                                        <span className="w-10 text-right font-mono text-xs text-gray-400">
+                                            {Math.round(redBlackSettings.redIntensity * 100)}%
+                                        </span>
+                                    </div>
+                                </SettingRow>
+                                <SettingRow
+                                    label={t('print.blackDepth')}
+                                    description={t('print.blackDepthHint')}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={100}
+                                            step={1}
+                                            value={Math.round(redBlackSettings.blackDepth * 100)}
+                                            onChange={(event) =>
+                                                setRedBlackSettings({
+                                                    blackDepth: Number(event.target.value) / 100,
+                                                })
+                                            }
+                                            className="w-40 accent-blue-500"
+                                            aria-label={t('print.blackDepth')}
+                                        />
+                                        <span className="w-10 text-right font-mono text-xs text-gray-400">
+                                            {Math.round(redBlackSettings.blackDepth * 100)}%
+                                        </span>
+                                    </div>
+                                </SettingRow>
+                            </>
+                        )}
                         {needsHeadClamp && headWidthHm !== undefined && (
                             <SettingRow
                                 label={t('print.clampToHead')}

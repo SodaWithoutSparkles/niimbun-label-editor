@@ -28,6 +28,7 @@ import {
     type QuantizerPolicy,
     type QuantizerPolicies,
     type RgbaBuffer,
+    type RedBlackTuning,
     type ScreentoneAngle,
 } from '../../core/render';
 import type { AssetDeps, AssetWarning, PreparedAsset } from './assets';
@@ -172,7 +173,7 @@ export interface RenderLabelPageOptions {
      * never break the red coverage floor. The page-level diffuser knobs
      * (gamma/strength/serpentine) do not apply to photo pixels in this mode.
      */
-    redBlack?: { redIntensity?: number; blackDepth?: number };
+    redBlack?: RedBlackTuning;
     /**
      * Async asset dependencies (image bytes, fonts, resolution cap). When
      * present, image/qr/barcode leaves are prepared first; absent, those leaves

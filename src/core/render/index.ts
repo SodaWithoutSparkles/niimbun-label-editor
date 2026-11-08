@@ -64,6 +64,7 @@ export {
     rednessOf,
     separateRedBlack,
     type RedBlackSeparateOptions,
+    type RedBlackTuning,
 } from './duotone';
 
 export {

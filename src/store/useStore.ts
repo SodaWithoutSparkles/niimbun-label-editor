@@ -15,6 +15,7 @@ import {
     DEFAULT_GRID_SPACING_HM,
     DEFAULT_QUANTIZER_BY_TYPE,
     DEFAULT_QUANTIZER_DEFAULTS,
+    DEFAULT_RED_BLACK_SETTINGS,
     DEFAULT_SCREEN_DPI,
     defaultAutoOrientPortrait,
     defaultAutoSave,
@@ -42,6 +43,7 @@ const persistedDefaults: PersistedSettings = {
     connectMethod: DEFAULT_CONNECT_METHOD,
     quantizerDefaults: DEFAULT_QUANTIZER_DEFAULTS,
     defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
+    redBlackSettings: DEFAULT_RED_BLACK_SETTINGS,
     // Optional: `undefined` is the "no preference" default (see `storeTypes`).
     defaultPaperTypeId: undefined,
 };
@@ -163,6 +165,7 @@ export const createAppStore = (storage?: Storage) => {
                     connectMethod: s.connectMethod,
                     quantizerDefaults: s.quantizerDefaults,
                     defaultQuantizerByType: s.defaultQuantizerByType,
+                    redBlackSettings: s.redBlackSettings,
                     defaultPaperTypeId: s.defaultPaperTypeId,
                 }),
                 migrate: (persisted) => persisted as PersistedSettings,

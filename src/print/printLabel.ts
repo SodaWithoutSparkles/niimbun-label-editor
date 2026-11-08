@@ -1,6 +1,11 @@
 import { ImageEncoder, PageColorType, type LabelType } from '@mmote/niimbluelib';
 import type { LabelDoc } from '../core/doc/types';
-import type { PageColorMode, QuantizerByType, QuantizerDefaults } from '../core/render';
+import type {
+    PageColorMode,
+    QuantizerByType,
+    QuantizerDefaults,
+    RedBlackTuning,
+} from '../core/render';
 import type { CsvRecord } from '../data/csvRepo';
 import {
     renderLabelPage,
@@ -75,6 +80,12 @@ export interface PrintOverrides {
     quantizerDefaults?: QuantizerDefaults;
     /** Per-object-type default-quantizer overrides; absent = `DEFAULT_POLICY_BY_TYPE`. */
     defaultQuantizerByType?: QuantizerByType;
+    /**
+     * Red/black page tuning. Forwarded to the render options **only** when the
+     * page colour is red/black, so mono/grayscale option objects (and therefore
+     * their rendered bytes and preview keys) stay byte-identical.
+     */
+    redBlack?: RedBlackTuning;
 }
 
 export interface CsvPrintJobOptions {
@@ -169,6 +180,12 @@ export const renderOptionsOf = (
             : {}),
         ...(overrides?.defaultQuantizerByType !== undefined
             ? { defaultQuantizerByType: overrides.defaultQuantizerByType }
+            : {}),
+        // The duotone knobs can only change a red/black page. Gating on the
+        // page colour (not just presence) keeps mono/grayscale option objects
+        // byte-identical even when a caller passes a stale tuning value.
+        ...(overrides?.redBlack !== undefined && pageColor === 'redBlack'
+            ? { redBlack: overrides.redBlack }
             : {}),
         ...(pageColor !== 'mono' ? { pageColor } : {}),
     };

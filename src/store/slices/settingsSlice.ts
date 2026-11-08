@@ -1,12 +1,17 @@
-import type { StoreSlice } from '../storeTypes';
+import type { RedBlackSettings, StoreSlice } from '../storeTypes';
 import {
+    BLACK_DEPTH_MAX,
+    BLACK_DEPTH_MIN,
     DEFAULT_CONNECT_METHOD,
     DEFAULT_GRID_SPACING_HM,
     DEFAULT_QUANTIZER_BY_TYPE,
     DEFAULT_QUANTIZER_DEFAULTS,
+    DEFAULT_RED_BLACK_SETTINGS,
     DEFAULT_SCREEN_DPI,
     GRID_SPACING_MAX_HM,
     GRID_SPACING_MIN_HM,
+    RED_INTENSITY_MAX,
+    RED_INTENSITY_MIN,
     SCREEN_DPI_MAX,
     SCREEN_DPI_MIN,
     defaultAutoOrientPortrait,
@@ -16,6 +21,29 @@ import {
     defaultToolSettings,
     defaultUsePrinterDpi,
 } from '../storeDefaults';
+
+/**
+ * Clamp a red/black knob and fall back to `current` when the candidate is not
+ * finite, so a programmatic (or corrupt) write can never poison the setting.
+ */
+const clampKnob = (value: unknown, current: number, min: number, max: number): number =>
+    typeof value === 'number' && Number.isFinite(value)
+        ? Math.min(max, Math.max(min, value))
+        : current;
+
+/** Merge a patch into the settings and clamp both knobs. */
+const mergeRedBlackSettings = (
+    current: RedBlackSettings,
+    patch: Partial<RedBlackSettings>,
+): RedBlackSettings => ({
+    redIntensity: clampKnob(
+        patch.redIntensity,
+        current.redIntensity,
+        RED_INTENSITY_MIN,
+        RED_INTENSITY_MAX,
+    ),
+    blackDepth: clampKnob(patch.blackDepth, current.blackDepth, BLACK_DEPTH_MIN, BLACK_DEPTH_MAX),
+});
 
 /**
  * Preference fields and actions. Moved verbatim out of `preferencesSlice`
@@ -113,6 +141,15 @@ export const createSettingsSlice: StoreSlice = (set) => ({
     defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
     setDefaultQuantizerByType: (defaultQuantizerByType) => set({ defaultQuantizerByType }),
 
+    // Red/black page tuning (P9 wave C). Persisted with the other global
+    // settings; applied to every red/black page (preview, thumbnails, job).
+    // Never document data. A merged setter clamps both knobs to the engine
+    // ranges, so the dialog can write raw slider values.
+    redBlackSettings: DEFAULT_RED_BLACK_SETTINGS,
+    setRedBlackSettings: (patch) => set((state) => ({
+        redBlackSettings: mergeRedBlackSettings(state.redBlackSettings, patch),
+    })),
+
     // Preferred paper type for a new label (§11, P8). Optional on purpose: an
     // unset preference means "no default", so the create-label dialog falls
     // back to the first seed / `custom`. Persisted with the other global
@@ -138,6 +175,7 @@ export const createSettingsSlice: StoreSlice = (set) => ({
         connectMethod: DEFAULT_CONNECT_METHOD,
         quantizerDefaults: DEFAULT_QUANTIZER_DEFAULTS,
         defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
+        redBlackSettings: DEFAULT_RED_BLACK_SETTINGS,
         defaultPaperTypeId: undefined,
     }),
 });

@@ -12,9 +12,14 @@ import {
 } from '../core/render/screentone';
 import type { NodeType } from '../core/doc/types';
 import {
+    BLACK_DEPTH_MAX,
+    BLACK_DEPTH_MIN,
     CONNECT_METHODS,
+    DEFAULT_RED_BLACK_SETTINGS,
     GRID_SPACING_MAX_HM,
     GRID_SPACING_MIN_HM,
+    RED_INTENSITY_MAX,
+    RED_INTENSITY_MIN,
     SCREEN_DPI_MAX,
     SCREEN_DPI_MIN,
 } from './storeDefaults';
@@ -24,6 +29,7 @@ import type {
     DefaultQuantizerByType,
     KeyboardShortcutConfig,
     ModifierKey,
+    RedBlackSettings,
     TextSaveModifier,
 } from './storeTypes';
 
@@ -41,6 +47,7 @@ export type PersistedSettings = Pick<
     | 'connectMethod'
     | 'quantizerDefaults'
     | 'defaultQuantizerByType'
+    | 'redBlackSettings'
     | 'defaultPaperTypeId'
 >;
 
@@ -334,6 +341,31 @@ export const normalizeDefaultQuantizerByType = (
 };
 
 /**
+ * Returns the repaired red/black tuning, or `undefined` when the value is not
+ * an object at all (so the caller falls back to the default). Both knobs are
+ * required in the result: absent/non-finite values fall back to
+ * `DEFAULT_RED_BLACK_SETTINGS`, out-of-range values clamp, and unknown keys are
+ * dropped. An object that cleans to defaults is still returned, matching the
+ * "present value wins over the seed" convention of the other settings.
+ */
+export const normalizeRedBlackSettings = (
+    value: unknown,
+): RedBlackSettings | undefined => {
+    if (!isRecord(value)) return undefined;
+    return {
+        redIntensity: isFiniteNumber(value.redIntensity)
+            ? Math.min(
+                  RED_INTENSITY_MAX,
+                  Math.max(RED_INTENSITY_MIN, value.redIntensity),
+              )
+            : DEFAULT_RED_BLACK_SETTINGS.redIntensity,
+        blackDepth: isFiniteNumber(value.blackDepth)
+            ? Math.min(BLACK_DEPTH_MAX, Math.max(BLACK_DEPTH_MIN, value.blackDepth))
+            : DEFAULT_RED_BLACK_SETTINGS.blackDepth,
+    };
+};
+
+/**
  * Validates the `ui_settings` payload and returns a complete
  * `PersistedSettings`, filling anything absent or malformed from `defaults`.
  */
@@ -372,6 +404,12 @@ export const validatePersistedSettings = (
         defaultQuantizerByType:
             normalizeDefaultQuantizerByType(persisted.defaultQuantizerByType) ??
             defaults.defaultQuantizerByType,
+        // Absent (or a non-object) => the default tuning. A present object
+        // always repairs to both knobs (clamped), so a partial blob cannot
+        // leave an undefined knob in the store.
+        redBlackSettings:
+            normalizeRedBlackSettings(persisted.redBlackSettings) ??
+            defaults.redBlackSettings,
         // Absent (or unusable) => the caller's default, which is `undefined`:
         // "no preference". Never coerced to an empty string.
         defaultPaperTypeId:
@@ -409,6 +447,7 @@ export const pickPersistedKeys = (
     if ('defaultQuantizerByType' in persisted) {
         picked.defaultQuantizerByType = repaired.defaultQuantizerByType;
     }
+    if ('redBlackSettings' in persisted) picked.redBlackSettings = repaired.redBlackSettings;
     // The `in` guard (not a truthiness check) keeps a present-but-empty value
     // distinguishable from an absent key: the former repairs to `undefined`
     // and is allowed to override the seed, the latter falls through to it.

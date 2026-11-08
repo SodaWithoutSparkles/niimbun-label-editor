@@ -88,8 +88,13 @@ import { redBlackPalette, RED_BLACK_BLACK, RED_BLACK_RED } from './palette';
 /** Red-halftone cell size in device dots (0.254 mm at 300 dpi). */
 export const RED_BLACK_CELL = 3;
 
-/** Options for {@link separateRedBlack}. */
-export interface RedBlackSeparateOptions {
+/**
+ * The two page-level duotone knobs, shared by the engine, the render options and
+ * the persisted store settings. Both are optional here because the engine
+ * normalizes an absent value to its default; the store keeps the required form
+ * (`RedBlackSettings`).
+ */
+export interface RedBlackTuning {
     /** 0..1.5, default 1. Multiplies the red (chroma) demand. 0 = no red at all. */
     redIntensity?: number;
     /**
@@ -99,6 +104,10 @@ export interface RedBlackSeparateOptions {
      * the red ink's own darkness).
      */
     blackDepth?: number;
+}
+
+/** Options for {@link separateRedBlack}. */
+export interface RedBlackSeparateOptions extends RedBlackTuning {
     /** Authored-art mask, one byte/px: non-zero = point op, excluded from both planes. */
     flat?: Uint8Array;
     /** Classifier for a flat pixel's raw source bytes → 0 white / 1 black / 2 red. */

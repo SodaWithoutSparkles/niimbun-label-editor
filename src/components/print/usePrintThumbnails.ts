@@ -5,6 +5,7 @@ import {
     type PageColorMode,
     type QuantizerByType,
     type QuantizerDefaults,
+    type RedBlackTuning,
 } from '../../core/render';
 import type { CsvRecord } from '../../data/csvRepo';
 import {
@@ -73,6 +74,12 @@ export interface PrintThumbnailOverrides {
      * rebuild key **only when defined**.
      */
     maxHeadHm?: number;
+    /**
+     * Red/black tuning. Pixel-changing and forwarded to the shared render path;
+     * appended to the rebuild key **only when defined**, so every mono and
+     * grayscale thumbnail key stays stable.
+     */
+    redBlack?: RedBlackTuning;
 }
 
 export interface UsePrintThumbnailsOptions {
@@ -177,7 +184,13 @@ const overridesContentKey = (overrides: PrintThumbnailOverrides | undefined): st
     // change the raster, so only a set value changes the rebuild key.
     const maxHeadHm =
         overrides.maxHeadHm !== undefined ? `|c${overrides.maxHeadHm}` : '';
-    return `${invert}|${mirror}|${offset}|${quantizer}${pageColor}${maxHeadHm}`;
+    // Red/black tuning is pixel-changing, but only a defined value can differ
+    // from the engine default, so an absent key changes nothing.
+    const redBlack =
+        overrides.redBlack !== undefined
+            ? `|rb${overrides.redBlack.redIntensity ?? '-'},${overrides.redBlack.blackDepth ?? '-'}`
+            : '';
+    return `${invert}|${mirror}|${offset}|${quantizer}${pageColor}${maxHeadHm}${redBlack}`;
 };
 
 export const usePrintThumbnails = (
@@ -275,6 +288,9 @@ export const usePrintThumbnails = (
                     : {}),
                 ...(currentOverrides?.maxHeadHm !== undefined
                     ? { maxHeadHm: currentOverrides.maxHeadHm }
+                    : {}),
+                ...(currentOverrides?.redBlack !== undefined
+                    ? { redBlack: currentOverrides.redBlack }
                     : {}),
             });
 

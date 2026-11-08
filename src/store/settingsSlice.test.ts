@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createAppStore } from './useStore';
-import { defaultUsePrinterDpi } from './storeDefaults';
+import { DEFAULT_RED_BLACK_SETTINGS, defaultUsePrinterDpi } from './storeDefaults';
 
 /** Minimal in-memory Storage, mirroring `docSlice.persistence.test.ts`. */
 const makeStorage = (): Storage => {
@@ -80,5 +80,64 @@ describe('autoOrientPortrait setting', () => {
         store.getState().setAutoOrientPortrait(true);
         store.getState().resetSettings();
         expect(store.getState().autoOrientPortrait).toBe(false);
+    });
+});
+
+describe('redBlackSettings', () => {
+    it('defaults to the engine defaults and persists a change', () => {
+        const storage = makeStorage();
+        const store = createAppStore(storage);
+        expect(store.getState().redBlackSettings).toEqual(DEFAULT_RED_BLACK_SETTINGS);
+        expect(DEFAULT_RED_BLACK_SETTINGS).toEqual({ redIntensity: 1, blackDepth: 0.5 });
+
+        store.getState().setRedBlackSettings({ redIntensity: 1.2 });
+        expect(store.getState().redBlackSettings).toEqual({
+            redIntensity: 1.2,
+            blackDepth: 0.5,
+        });
+
+        const reloaded = createAppStore(storage);
+        expect(reloaded.getState().redBlackSettings).toEqual({
+            redIntensity: 1.2,
+            blackDepth: 0.5,
+        });
+    });
+
+    it('merges a partial patch and clamps both knobs', () => {
+        const store = createAppStore(makeStorage());
+        store.getState().setRedBlackSettings({ redIntensity: 1.2, blackDepth: 0.7 });
+        expect(store.getState().redBlackSettings).toEqual({
+            redIntensity: 1.2,
+            blackDepth: 0.7,
+        });
+
+        // One key in the patch leaves the other untouched.
+        store.getState().setRedBlackSettings({ blackDepth: 0.2 });
+        expect(store.getState().redBlackSettings).toEqual({
+            redIntensity: 1.2,
+            blackDepth: 0.2,
+        });
+
+        // Out-of-range values clamp; non-finite keeps the current value.
+        store.getState().setRedBlackSettings({ redIntensity: 9, blackDepth: -4 });
+        expect(store.getState().redBlackSettings).toEqual({
+            redIntensity: 1.5,
+            blackDepth: 0,
+        });
+        store.getState().setRedBlackSettings({
+            redIntensity: Number.NaN,
+            blackDepth: Infinity,
+        });
+        expect(store.getState().redBlackSettings).toEqual({
+            redIntensity: 1.5,
+            blackDepth: 0,
+        });
+    });
+
+    it('resetSettings restores the defaults', () => {
+        const store = createAppStore(makeStorage());
+        store.getState().setRedBlackSettings({ redIntensity: 1.5, blackDepth: 1 });
+        store.getState().resetSettings();
+        expect(store.getState().redBlackSettings).toEqual(DEFAULT_RED_BLACK_SETTINGS);
     });
 });

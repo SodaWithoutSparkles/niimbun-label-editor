@@ -55,6 +55,14 @@ export const previewOptionsKey = (options: RenderLabelPageOptions): string => {
     if (options.maxHeadHm !== undefined) {
         parts.push(`c${options.maxHeadHm}`);
     }
+    // Red/black tuning changes the separation, so it is pixel-changing. It is
+    // only ever set for a red/black page (see `renderOptionsOf`), and appends
+    // nothing when absent, so mono/grayscale keys stay unchanged. The two fixed
+    // fields are emitted in a fixed order, so equal values give equal keys.
+    if (options.redBlack !== undefined) {
+        const { redIntensity, blackDepth } = options.redBlack;
+        parts.push(`rb${redIntensity ?? '-'},${blackDepth ?? '-'}`);
+    }
     return parts.join('|');
 };
 

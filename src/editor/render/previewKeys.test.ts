@@ -75,6 +75,40 @@ describe('previewOptionsKey', () => {
             `${mono}|redBlack|c4800`,
         );
     });
+
+    it('adds a red/black tuning segment only when defined', () => {
+        const mono = previewOptionsKey(options());
+        // Absent (mono/grayscale pages) appends nothing.
+        expect(previewOptionsKey(options({ pageColor: 'mono' }))).toBe(mono);
+        expect(previewOptionsKey(options({ pageColor: 'grayscale' }))).toBe(`${mono}|grayscale`);
+
+        const tuned = previewOptionsKey(
+            options({ redBlack: { redIntensity: 1.2, blackDepth: 0.4 } }),
+        );
+        expect(tuned).toBe(`${mono}|rb1.2,0.4`);
+        expect(tuned).not.toBe(mono);
+        // Equal values give equal keys (a fresh but equal object is not stale).
+        expect(
+            previewOptionsKey(options({ redBlack: { redIntensity: 1.2, blackDepth: 0.4 } })),
+        ).toBe(tuned);
+        // A changed knob changes the key.
+        expect(
+            previewOptionsKey(options({ redBlack: { redIntensity: 1.3, blackDepth: 0.4 } })),
+        ).not.toBe(tuned);
+        expect(
+            previewOptionsKey(options({ redBlack: { redIntensity: 1.2, blackDepth: 0.5 } })),
+        ).not.toBe(tuned);
+        // Composes with the page colour and the head clamp.
+        expect(
+            previewOptionsKey(
+                options({
+                    pageColor: 'redBlack',
+                    maxHeadHm: 4800,
+                    redBlack: { redIntensity: 1.2, blackDepth: 0.4 },
+                }),
+            ),
+        ).toBe(`${mono}|redBlack|c4800|rb1.2,0.4`);
+    });
 });
 
 describe('previewOverridesKey', () => {

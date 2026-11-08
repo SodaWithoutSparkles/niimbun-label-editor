@@ -1,6 +1,12 @@
 import type { SupportedLanguage } from '../i18n/languages';
 import type { QuantizerDefaults } from '../core/render';
-import type { AppState, ConnectMethod, DefaultQuantizerByType, KeyboardShortcutConfig } from './storeTypes';
+import type {
+    AppState,
+    ConnectMethod,
+    DefaultQuantizerByType,
+    KeyboardShortcutConfig,
+    RedBlackSettings,
+} from './storeTypes';
 
 export const defaultAutoSave = true;
 
@@ -67,6 +73,23 @@ export const DEFAULT_QUANTIZER_DEFAULTS: QuantizerDefaults = {};
  * (`core/render/policy`) remains the fallback for every type.
  */
 export const DEFAULT_QUANTIZER_BY_TYPE: DefaultQuantizerByType = {};
+
+/**
+ * Persisted red/black page tuning (P9 wave C): the two duotone knobs, applied
+ * to every red/black page before its preview, thumbnails and print job are
+ * rendered. Global machine/user preference — persisted with the other settings,
+ * never document data. The defaults match the engine's own.
+ */
+export const DEFAULT_RED_BLACK_SETTINGS: RedBlackSettings = {
+    redIntensity: 1,
+    blackDepth: 0.5,
+};
+
+/** Clamp ranges, shared by the store setter and the storage validator. */
+export const RED_INTENSITY_MIN = 0;
+export const RED_INTENSITY_MAX = 1.5;
+export const BLACK_DEPTH_MIN = 0;
+export const BLACK_DEPTH_MAX = 1;
 
 export const defaultKeyboardShortcuts: KeyboardShortcutConfig = {
     modifyKey: 'ctrl',

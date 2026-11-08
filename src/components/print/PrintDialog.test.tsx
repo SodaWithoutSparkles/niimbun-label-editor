@@ -12,6 +12,7 @@ import type { RenderedLabelPage, AssetDeps } from '../../editor/render';
 import type { JobProgress, JobRunResult, JobRunner } from '../../print/jobRunner';
 import type { PrintJob, PrinterCapabilities, PrinterStatus } from '../../print/transport';
 import { useStore } from '../../store/useStore';
+import { DEFAULT_RED_BLACK_SETTINGS } from '../../store/storeDefaults';
 import { PrintDialog } from './PrintDialog';
 import type { PrintCsvStatus } from './usePrintJob';
 import { THUMBNAIL_DPI } from './usePrintThumbnails';
@@ -1627,6 +1628,106 @@ describe('PrintDialog — page colour', () => {
 
         fireEvent.change(pageColorSelect(), { target: { value: 'mono' } });
         expect(screen.queryByText(hint)).not.toBeInTheDocument();
+    });
+});
+
+describe('PrintDialog — red/black tuning (P9 wave C)', () => {
+    const pageColorSelect = () => screen.getByLabelText('Page colour');
+    const redSlider = () => screen.queryByLabelText('Red intensity');
+    const blackSlider = () => screen.queryByLabelText('Black depth');
+    const printButton = () => screen.getByRole('button', { name: 'Print' });
+
+    const thumbnailOverrides = (): { redBlack?: unknown } | undefined =>
+        (usePrintThumbnailsMock.mock.calls.at(-1)![0] as {
+            overrides?: { redBlack?: unknown };
+        }).overrides;
+
+    const jobOverrides = (): { redBlack?: unknown } | undefined =>
+        (
+            buildCsvPrintJobMock.mock.calls[0]![2] as {
+                overrides?: { redBlack?: unknown };
+            }
+        ).overrides;
+
+    afterEach(() => {
+        useStore.setState({ redBlackSettings: DEFAULT_RED_BLACK_SETTINGS });
+    });
+
+    it('shows both sliders only for a supported red/black page', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, grayscale: true }),
+        });
+
+        // Mono: nothing.
+        expect(redSlider()).not.toBeInTheDocument();
+        expect(blackSlider()).not.toBeInTheDocument();
+
+        // Grayscale: still nothing (the knobs only act on the duotone path).
+        fireEvent.change(pageColorSelect(), { target: { value: 'grayscale' } });
+        expect(redSlider()).not.toBeInTheDocument();
+        expect(blackSlider()).not.toBeInTheDocument();
+
+        // Red & black: both, with the persisted defaults shown.
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        expect(redSlider()).toBeInTheDocument();
+        expect(blackSlider()).toBeInTheDocument();
+        expect(redSlider()).toHaveValue('100');
+        expect(blackSlider()).toHaveValue('50');
+        expect(screen.getByText('100%')).toBeInTheDocument();
+        expect(screen.getByText('50%')).toBeInTheDocument();
+    });
+
+    it('has no sliders when the printer cannot print red & black', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, doubleColor: false }),
+        });
+
+        expect(redSlider()).not.toBeInTheDocument();
+        expect(blackSlider()).not.toBeInTheDocument();
+    });
+
+    it('writes the store and threads the tuning into preview, thumbnails and job', async () => {
+        renderDialog({ runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+
+        fireEvent.change(redSlider()!, { target: { value: '130' } });
+        expect(useStore.getState().redBlackSettings).toEqual({
+            redIntensity: 1.3,
+            blackDepth: 0.5,
+        });
+        fireEvent.change(blackSlider()!, { target: { value: '20' } });
+        expect(useStore.getState().redBlackSettings).toEqual({
+            redIntensity: 1.3,
+            blackDepth: 0.2,
+        });
+
+        // The doc-dpi page preview renders through the shared path with it.
+        await waitFor(() =>
+            expect(
+                renderLabelPageMock.mock.calls.some(([, , opts]) => {
+                    const tuning = (opts as { redBlack?: { redIntensity?: number } } | undefined)
+                        ?.redBlack;
+                    return tuning?.redIntensity === 1.3;
+                }),
+            ).toBe(true),
+        );
+        // The queue thumbnails get the same pixel-changing override.
+        expect(thumbnailOverrides()).toMatchObject({
+            redBlack: { redIntensity: 1.3, blackDepth: 0.2 },
+        });
+
+        // The job carries it too (the dialog's options object is shared).
+        fireEvent.click(printButton());
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobOverrides()).toMatchObject({
+            redBlack: { redIntensity: 1.3, blackDepth: 0.2 },
+        });
+
+        // Back to mono: the tuning must not leak into another page colour.
+        fireEvent.change(pageColorSelect(), { target: { value: 'mono' } });
+        expect(thumbnailOverrides()).not.toHaveProperty('redBlack');
     });
 });
 

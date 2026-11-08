@@ -851,6 +851,24 @@ describe('buildCsvPrintJob', () => {
         expect(renderOptionsOf({}, undefined)).not.toHaveProperty('maxHeadHm');
         expect(renderOptionsOf(undefined, undefined)).not.toHaveProperty('maxHeadHm');
     });
+
+    it('forwards redBlack only for a red/black page (mono/grayscale stay unchanged)', () => {
+        const redBlack = { redIntensity: 1.2, blackDepth: 0.4 };
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.DoubleColor, redBlack }, undefined),
+        ).toMatchObject({ pageColor: 'redBlack', redBlack });
+        // A stale tuning value must not leak into another page colour.
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.Grayscale, redBlack }, undefined),
+        ).not.toHaveProperty('redBlack');
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.SingleColor, redBlack }, undefined),
+        ).not.toHaveProperty('redBlack');
+        expect(renderOptionsOf({ redBlack }, undefined)).not.toHaveProperty('redBlack');
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.DoubleColor }, undefined),
+        ).not.toHaveProperty('redBlack');
+    });
 });
 
 describe('$times parsing (build-time snapshot)', () => {

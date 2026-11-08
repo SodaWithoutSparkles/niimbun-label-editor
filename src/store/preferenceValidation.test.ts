@@ -8,6 +8,7 @@ import {
     normalizeKeyboardShortcuts,
     normalizeLanguage,
     normalizeQuantizerDefaults,
+    normalizeRedBlackSettings,
     normalizeToolSettings,
     pickPersistedKeys,
     RECTANGLE_SHORTCUT_MIGRATED_TO,
@@ -19,6 +20,7 @@ import {
     DEFAULT_GRID_SPACING_HM,
     DEFAULT_QUANTIZER_BY_TYPE,
     DEFAULT_QUANTIZER_DEFAULTS,
+    DEFAULT_RED_BLACK_SETTINGS,
     DEFAULT_SCREEN_DPI,
     GRID_SPACING_MAX_HM,
     GRID_SPACING_MIN_HM,
@@ -226,6 +228,50 @@ describe('normalizeDefaultQuantizerByType', () => {
     });
 });
 
+describe('normalizeRedBlackSettings', () => {
+    it('returns undefined for a non-object value (caller keeps its default)', () => {
+        expect(normalizeRedBlackSettings('nope')).toBeUndefined();
+        expect(normalizeRedBlackSettings(null)).toBeUndefined();
+        expect(normalizeRedBlackSettings(undefined)).toBeUndefined();
+        expect(normalizeRedBlackSettings([])).toBeUndefined();
+    });
+
+    it('clamps both knobs to their engine ranges', () => {
+        expect(normalizeRedBlackSettings({ redIntensity: -1, blackDepth: 2 })).toEqual({
+            redIntensity: 0,
+            blackDepth: 1,
+        });
+        expect(normalizeRedBlackSettings({ redIntensity: 2, blackDepth: -3 })).toEqual({
+            redIntensity: 1.5,
+            blackDepth: 0,
+        });
+        // An in-range value round-trips exactly.
+        expect(normalizeRedBlackSettings({ redIntensity: 1.3, blackDepth: 0.25 })).toEqual({
+            redIntensity: 1.3,
+            blackDepth: 0.25,
+        });
+    });
+
+    it('falls back to the defaults for absent or non-finite knobs', () => {
+        expect(normalizeRedBlackSettings({})).toEqual(DEFAULT_RED_BLACK_SETTINGS);
+        expect(
+            normalizeRedBlackSettings({
+                redIntensity: Number.NaN,
+                blackDepth: Infinity,
+            }),
+        ).toEqual(DEFAULT_RED_BLACK_SETTINGS);
+        expect(normalizeRedBlackSettings({ redIntensity: 'high' as never })).toEqual(
+            DEFAULT_RED_BLACK_SETTINGS,
+        );
+    });
+
+    it('drops extra keys', () => {
+        expect(
+            normalizeRedBlackSettings({ redIntensity: 1.2, blackDepth: 0.3, extra: 9 }),
+        ).toEqual({ redIntensity: 1.2, blackDepth: 0.3 });
+    });
+});
+
 describe('normalizeBoolean', () => {
     it('returns booleans unchanged and undefined otherwise', () => {
         expect(normalizeBoolean(true)).toBe(true);
@@ -348,6 +394,7 @@ describe('normalizeKeyboardShortcuts — dithered-view key and migration', () =>
                 connectMethod: DEFAULT_CONNECT_METHOD,
                 quantizerDefaults: DEFAULT_QUANTIZER_DEFAULTS,
                 defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
+                redBlackSettings: DEFAULT_RED_BLACK_SETTINGS,
             },
         );
         expect(repaired.keyboardShortcuts.tools.rectangle).toBe('r');
@@ -406,6 +453,7 @@ const defaults: PersistedSettings = {
     connectMethod: DEFAULT_CONNECT_METHOD,
     quantizerDefaults: DEFAULT_QUANTIZER_DEFAULTS,
     defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
+    redBlackSettings: DEFAULT_RED_BLACK_SETTINGS,
 };
 
 describe('validatePersistedSettings', () => {
@@ -506,6 +554,28 @@ describe('validatePersistedSettings', () => {
         ).toEqual({});
         expect(validatePersistedSettings({}, defaults).defaultQuantizerByType).toEqual({});
     });
+
+    it('normalizes redBlackSettings, falling back to the defaults', () => {
+        expect(
+            validatePersistedSettings(
+                { redBlackSettings: { redIntensity: 1.3, blackDepth: 0.2, extra: true } },
+                defaults,
+            ).redBlackSettings,
+        ).toEqual({ redIntensity: 1.3, blackDepth: 0.2 });
+        expect(
+            validatePersistedSettings(
+                { redBlackSettings: { redIntensity: -1, blackDepth: 2 } },
+                defaults,
+            ).redBlackSettings,
+        ).toEqual({ redIntensity: 0, blackDepth: 1 });
+        // Non-object / absent => the default tuning.
+        expect(
+            validatePersistedSettings({ redBlackSettings: 'x' }, defaults).redBlackSettings,
+        ).toEqual(DEFAULT_RED_BLACK_SETTINGS);
+        expect(validatePersistedSettings({}, defaults).redBlackSettings).toEqual(
+            DEFAULT_RED_BLACK_SETTINGS,
+        );
+    });
 });
 
 describe('pickPersistedKeys', () => {
@@ -564,6 +634,18 @@ describe('pickPersistedKeys', () => {
         const picked = pickPersistedKeys({ defaultPaperTypeId: '' }, defaults);
         expect('defaultPaperTypeId' in picked).toBe(true);
         expect(picked.defaultPaperTypeId).toBeUndefined();
+    });
+
+    it('picks redBlackSettings only when present, and repairs bad entries', () => {
+        expect(
+            pickPersistedKeys({ redBlackSettings: { redIntensity: 1.4, blackDepth: 0.3 } }, defaults),
+        ).toEqual({ redBlackSettings: { redIntensity: 1.4, blackDepth: 0.3 } });
+        // A present-but-garbage value repairs to the default and still overrides
+        // the seed (`in` guard, not truthiness).
+        const picked = pickPersistedKeys({ redBlackSettings: 'x' }, defaults);
+        expect('redBlackSettings' in picked).toBe(true);
+        expect(picked.redBlackSettings).toEqual(DEFAULT_RED_BLACK_SETTINGS);
+        expect('redBlackSettings' in pickPersistedKeys({}, defaults)).toBe(false);
     });
 
     it('picks the two dither settings only when present, and repairs bad entries', () => {
