@@ -926,6 +926,8 @@
     "pageColorUnsupportedHint": "This printer supports mono pages only.",
     "pageColorGrayscaleUnsupportedHint": "This printer does not support 16-level grayscale pages.",
     "pageColorDoubleUnsupportedHint": "This printer does not support two-colour (red & black) pages.",
+    "clampToHead": "Clamp to print head",
+    "clampToHeadHint": "Red & black pages are cropped to the printer's printable width ({{width}} mm at {{dpi}} dpi). Turn this off only for testing.",
     "invert": "Invert",
     "mirror": "Mirror",
     "usePrinterDpi": "Use printer DPI",

@@ -16,6 +16,13 @@ generated images (no photo fixture in the repo).
 > trimming the packet tail, and a **48 mm control** is now in the harness/repro
 > (D-77). Long page and the 48 mm print are pending.** The harness preview is not hardware evidence. Fill
 > the remaining Record rows from the physical output, never from the preview.
+>
+> **P8 follow-up (2026-11-08):** the owner confirmed 48 mm red/black prints
+> clean. The print dialog now **clamps red/black pages to the printhead width by
+> default** (`maxHeadHm` → exact 1:1 crop on the head axis), with a visible
+> "Clamp to print head" toggle as the escape hatch for testing. Preview,
+> thumbnails and the print job all use it (invariant 7); mono/grayscale pages are
+> untouched. The upstream library fix is still pending (D-77).
 
 ## A. Mock dry run (no printer)
 

@@ -843,6 +843,14 @@ describe('buildCsvPrintJob', () => {
         expect(renderOptionsOf({}, undefined)).not.toHaveProperty('pageColor');
         expect(renderOptionsOf(undefined, undefined)).not.toHaveProperty('pageColor');
     });
+
+    it('forwards maxHeadHm only when defined (D-77 head clamp)', () => {
+        expect(renderOptionsOf({ maxHeadHm: 4800 }, undefined)).toMatchObject({
+            maxHeadHm: 4800,
+        });
+        expect(renderOptionsOf({}, undefined)).not.toHaveProperty('maxHeadHm');
+        expect(renderOptionsOf(undefined, undefined)).not.toHaveProperty('maxHeadHm');
+    });
 });
 
 describe('$times parsing (build-time snapshot)', () => {

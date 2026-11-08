@@ -179,6 +179,19 @@ export interface RenderLabelPageOptions {
      * `outer` expands by `|x|`/`|y|` and places the image at `max(x,0)`/`max(y,0)`.
      */
     offset?: { x: number; y: number; type: 'inner' | 'outer' };
+    /**
+     * Printer **printhead width in hm** (hundredths of a millimetre). When the
+     * raster's head-axis size exceeds it — width for `top`/`bottom`, height for
+     * `left`/`right`, matching `printheadOverflow` — the final raster is cropped
+     * on that axis (left/top aligned) to the head width. The crop is an exact
+     * 1:1 pixel copy (no resampling), so kept pixels stay byte-identical.
+     *
+     * Applied **after** the offset stage, on both return paths. This is the
+     * red/black print workaround for D-77 (the library trims the packet tail to
+     * the printable width); callers enable it per page colour. Absent = today's
+     * render, byte-identical. Invalid (non-finite, `<= 0`) throws `RangeError`.
+     */
+    maxHeadHm?: number;
 }
 
 export interface RenderedLabelPage {
@@ -248,6 +261,59 @@ export const offsetRasterDimensions = (
         widthPx: outer ? widthPx + Math.abs(offset.x) : widthPx,
         heightPx: outer ? heightPx + Math.abs(offset.y) : heightPx,
     };
+};
+
+/** The raster after the D-77 head-width crop. */
+interface HeadCroppedRaster {
+    rgba: RgbaBuffer;
+    widthPx: number;
+    heightPx: number;
+    canvas: HTMLCanvasElement;
+}
+
+/**
+ * Crop a composed raster to `limitPx` on the **printhead axis** (D-77 workaround).
+ *
+ * The head spans the raster's cross-feed axis, exactly like
+ * {@link printheadOverflow}: `top`/`bottom` feed the raster unrotated, so the
+ * head spans the width and the kept region is the **left columns**;
+ * `left`/`right` feed it sideways, so the head spans the height and the kept
+ * region is the **top rows**. Left/top aligned, exact 1:1 byte copy — the kept
+ * pixels are identical to the uncropped render, never resampled.
+ *
+ * Returns `undefined` when the raster already fits (no allocation, so the
+ * absent/fitting paths stay byte-identical).
+ */
+const cropHeadAxis = (
+    rgba: RgbaBuffer,
+    direction: LabelDoc['label']['printDirection'],
+    limitPx: number,
+): HeadCroppedRaster | undefined => {
+    const sideways = direction === 'left' || direction === 'right';
+    const { width: sourceWidth, height: sourceHeight } = rgba;
+    const axisPx = sideways ? sourceHeight : sourceWidth;
+    if (axisPx <= limitPx) return undefined;
+
+    const widthPx = sideways ? sourceWidth : limitPx;
+    const heightPx = sideways ? limitPx : sourceHeight;
+    const source = rgba.data;
+    const rowBytes = widthPx * 4;
+    const data = new Uint8ClampedArray(widthPx * heightPx * 4);
+    for (let y = 0; y < heightPx; y++) {
+        const sourceOffset = y * sourceWidth * 4;
+        data.set(source.subarray(sourceOffset, sourceOffset + rowBytes), y * rowBytes);
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = widthPx;
+    canvas.height = heightPx;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('renderLabelPage: no 2D context for the head-crop canvas');
+    const image = ctx.createImageData(widthPx, heightPx);
+    image.data.set(data);
+    ctx.putImageData(image, 0, 0);
+
+    return { rgba: { data, width: widthPx, height: heightPx }, widthPx, heightPx, canvas };
 };
 
 /**
@@ -855,6 +921,13 @@ export const renderLabelPage = async (
     ctx: ResolveContext = {},
     opts: RenderLabelPageOptions = {},
 ): Promise<RenderedLabelPage> => {
+    // Validate the head clamp before resolve/rasterize: a bad value must fail
+    // cheaply, exactly like a bad dpi (invariant 9).
+    const maxHeadHm = opts.maxHeadHm;
+    if (maxHeadHm !== undefined && (!Number.isFinite(maxHeadHm) || maxHeadHm <= 0)) {
+        throw new RangeError(`renderLabelPage: maxHeadHm must be > 0 (got ${maxHeadHm})`);
+    }
+
     const {
         dpi,
         nodes,
@@ -873,6 +946,16 @@ export const renderLabelPage = async (
     // both build it: mono runs one 1-bit pass per slot, red/black only reads the
     // slots to decide which pixels are flat point ops.
     const pageColor = opts.pageColor ?? 'mono';
+
+    // D-77 head-width clamp: the printhead spans a whole number of device dots
+    // at the effective render dpi. A sub-pixel width cannot be cropped to.
+    const headLimitPx =
+        maxHeadHm === undefined ? undefined : Math.round((maxHeadHm * dpi) / HM_PER_INCH);
+    if (headLimitPx !== undefined && headLimitPx < 1) {
+        throw new RangeError(
+            `renderLabelPage: maxHeadHm is narrower than one device pixel at ${dpi} dpi (got ${maxHeadHm})`,
+        );
+    }
 
     const byId = nodeLookup(doc.nodes);
     const policy =
@@ -995,9 +1078,23 @@ export const renderLabelPage = async (
 
     const offset = opts.offset;
     // `{0,0}` is a no-op: skip the extra-canvas round trip and return the base
-    // raster (same `canvas` identity).
+    // raster (same `canvas` identity). The D-77 head clamp still applies, on a
+    // fresh cropped canvas.
     if (!offset || (offset.x === 0 && offset.y === 0)) {
-        return { rgba: imageData, widthPx, heightPx, canvas, warnings, ...(policy?.overflowCount ? { policyOverflowCount: policy.overflowCount } : {}), ...(notices ? { notices } : {}) };
+        const base: RenderedLabelPage = {
+            rgba: imageData,
+            widthPx,
+            heightPx,
+            canvas,
+            warnings,
+            ...(policy?.overflowCount ? { policyOverflowCount: policy.overflowCount } : {}),
+            ...(notices ? { notices } : {}),
+        };
+        const cropped =
+            headLimitPx === undefined
+                ? undefined
+                : cropHeadAxis(imageData, doc.label.printDirection, headLimitPx);
+        return cropped === undefined ? base : { ...base, ...cropped };
     }
     // Offset x/y are device px, so they must be integers (and finite: NaN/
     // Infinity fail `Number.isInteger`). Validate before any offset allocation.
@@ -1049,7 +1146,7 @@ export const renderLabelPage = async (
 
     // Read the composed raster back so `rgba` is exactly the final canvas.
     const finalImage = outCtx.getImageData(0, 0, outWidthPx, outHeightPx);
-    return {
+    const base: RenderedLabelPage = {
         rgba: { data: finalImage.data, width: outWidthPx, height: outHeightPx },
         widthPx: outWidthPx,
         heightPx: outHeightPx,
@@ -1058,4 +1155,11 @@ export const renderLabelPage = async (
         ...(policy?.overflowCount ? { policyOverflowCount: policy.overflowCount } : {}),
         ...(notices ? { notices } : {}),
     };
+    // Head clamp last: crop the composed (offset-expanded) raster on the head
+    // axis so preview == the bytes the printer actually receives.
+    const cropped =
+        headLimitPx === undefined
+            ? undefined
+            : cropHeadAxis(base.rgba, doc.label.printDirection, headLimitPx);
+    return cropped === undefined ? base : { ...base, ...cropped };
 };

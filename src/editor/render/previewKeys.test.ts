@@ -62,6 +62,19 @@ describe('previewOptionsKey', () => {
         expect(grayscale).not.toBe(mono);
         expect(previewOptionsKey(options({ pageColor: 'redBlack' }))).toBe(`${mono}|redBlack`);
     });
+
+    it('adds a head-clamp segment only when maxHeadHm is set', () => {
+        const mono = previewOptionsKey(options());
+        expect(previewOptionsKey(options({ maxHeadHm: 4800 }))).toBe(`${mono}|c4800`);
+        // Two clamp widths are two different rasters.
+        expect(previewOptionsKey(options({ maxHeadHm: 4800 }))).not.toBe(
+            previewOptionsKey(options({ maxHeadHm: 5000 })),
+        );
+        // The clamp composes with the page colour; mono keys stay unchanged.
+        expect(previewOptionsKey(options({ pageColor: 'redBlack', maxHeadHm: 4800 }))).toBe(
+            `${mono}|redBlack|c4800`,
+        );
+    });
 });
 
 describe('previewOverridesKey', () => {

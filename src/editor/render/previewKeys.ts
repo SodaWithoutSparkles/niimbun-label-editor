@@ -31,7 +31,8 @@ import type { RenderLabelPageOptions } from './renderLabelPage';
  * A **page-colour** change also changes the pixels, so a non-mono `pageColor`
  * appends its own segment. Mono (or an absent `pageColor`) adds nothing, so
  * every existing mono key stays byte-identical and its cache/test expectations
- * do not churn.
+ * do not churn. The `maxHeadHm` head clamp (D-77) appends a segment only when
+ * set, for the same reason.
  */
 export const previewOptionsKey = (options: RenderLabelPageOptions): string => {
     const offset = options.offset;
@@ -48,6 +49,11 @@ export const previewOptionsKey = (options: RenderLabelPageOptions): string => {
     ];
     if (options.pageColor !== undefined && options.pageColor !== 'mono') {
         parts.push(options.pageColor);
+    }
+    // The D-77 head clamp changes the raster size/content, so it is part of the
+    // key — but only when set, keeping every existing key byte-identical.
+    if (options.maxHeadHm !== undefined) {
+        parts.push(`c${options.maxHeadHm}`);
     }
     return parts.join('|');
 };

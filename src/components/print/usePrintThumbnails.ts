@@ -67,6 +67,12 @@ export interface PrintThumbnailOverrides {
      * existing mono thumbnail key stays stable.
      */
     pageColor?: PageColorMode;
+    /**
+     * Printhead width in hm: crop the render on the head axis (D-77 red/black
+     * workaround). Pixel-changing, so it is forwarded and appended to the
+     * rebuild key **only when defined**.
+     */
+    maxHeadHm?: number;
 }
 
 export interface UsePrintThumbnailsOptions {
@@ -167,7 +173,11 @@ const overridesContentKey = (overrides: PrintThumbnailOverrides | undefined): st
         overrides.pageColor !== undefined && overrides.pageColor !== 'mono'
             ? `|${overrides.pageColor}`
             : '';
-    return `${invert}|${mirror}|${offset}|${quantizer}${pageColor}`;
+    // Same absent-key convention for the D-77 head clamp: only a set value can
+    // change the raster, so only a set value changes the rebuild key.
+    const maxHeadHm =
+        overrides.maxHeadHm !== undefined ? `|c${overrides.maxHeadHm}` : '';
+    return `${invert}|${mirror}|${offset}|${quantizer}${pageColor}${maxHeadHm}`;
 };
 
 export const usePrintThumbnails = (
@@ -262,6 +272,9 @@ export const usePrintThumbnails = (
                     : {}),
                 ...(currentOverrides?.pageColor !== undefined
                     ? { pageColor: currentOverrides.pageColor }
+                    : {}),
+                ...(currentOverrides?.maxHeadHm !== undefined
+                    ? { maxHeadHm: currentOverrides.maxHeadHm }
                     : {}),
             });
 
