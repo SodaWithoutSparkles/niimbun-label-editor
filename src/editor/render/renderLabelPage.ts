@@ -7,7 +7,6 @@ import {
     DEFAULT_GAMMA_BY_STRATEGY,
     DEFAULT_SCREENTONE,
     diffuseRamp,
-    diffuseToPalette,
     grayscaleRampPalette,
     HM_PER_INCH,
     MonoColorSpace,
@@ -16,9 +15,9 @@ import {
     policyKeyOf,
     quantizeRgba,
     rasterDimensions,
-    redBlackPalette,
     resolveQuantizer,
     resolveQuantizerParams,
+    separateRedBlack,
     type ColorSpace,
     type PageColorMode,
     type RasterDimensions,
@@ -60,16 +59,20 @@ import { flattenResolved, resolve, type ResolvedNode, type ResolveContext } from
  *   - `'redBlack'` — the policy mask is built as in mono, then turned into a
  *     per-pixel **flat mask**: pixels covered by a `threshold` policy (the
  *     global slot included) take the point-op path
- *     ({@link classifyFlatRedBlack}), everything else diffuses through
- *     {@link redBlackPalette}. Flat art stays crisp, images dither, and the
- *     output is exactly `#ffffff` / `#000000` / `#ff0000` (the encoder's
- *     DoubleColor split depends on the exact bytes).
+ *     ({@link classifyFlatRedBlack}), everything else goes through the
+ *     **duotone separation** ({@link separateRedBlack}): red is a clustered
+ *     3×3-dot spot separation, black is a lightness separation diffused on the
+ *     free dots, red wins and the masks are exclusive. Flat art stays crisp,
+ *     photos get a developable red screen, and the output is exactly
+ *     `#ffffff` / `#000000` / `#ff0000` (the encoder's DoubleColor split
+ *     depends on the exact bytes).
  *
- * `pageColor: 'redBlack'` uses the **page-level** resolved diffuser knobs
- * (gamma/strength/serpentine), not per-node ones: the per-node strategy still
- * selects flat vs diffuse, but in this mode every diffusing pixel shares the
- * page pass. `screentone` and `ostromoukhov` policies are therefore treated as
- * diffusion here (per-ink screentone is deferred).
+ * `pageColor: 'redBlack'` does **not** use the page-level diffuser knobs
+ * (gamma/strength/serpentine) for photo pixels: the separation has exactly two
+ * knobs, `redIntensity` and `blackDepth` (`opts.redBlack`). The per-node
+ * strategy still selects flat vs diffuse, and the flat classifier keeps the
+ * page's resolved threshold/gamma. `screentone` and `ostromoukhov` policies are
+ * treated as diffusion here (per-ink screentone is deferred).
  *
  * The clip runs **both before and after** quantization: pre-quantize so the
  * diffusion sees a white surround, post-quantize so error diffused across the
@@ -149,11 +152,27 @@ export interface RenderLabelPageOptions {
      *
      * `'grayscale'` skips the per-object 1-bit policies and diffuses the
      * raster's BT.601 luminance as one scalar plane through the 16-level ramp.
-     * `'redBlack'` keeps the policy
-     * mask but uses it only to split flat (threshold) pixels — crisp exact
-     * palette entries — from diffused ones, through the two-ink palette.
+     * `'redBlack'` keeps the policy mask but uses it only to split flat
+     * (threshold) pixels — crisp exact point-op entries — from photo pixels,
+     * which go through the two-ink **duotone separation**, not a palette pass.
      */
     pageColor?: PageColorMode;
+    /**
+     * Page-level duotone knobs for `pageColor: 'redBlack'`; ignored by every
+     * other mode. Both are normalized by the engine: non-finite values fall
+     * back to the defaults, out-of-range values are clamped.
+     *
+     * - `redIntensity` (0..1.5, default 1) multiplies the red (chroma) demand;
+     *   `0` removes red ink entirely.
+     * - `blackDepth` (0..1, default 0.5) scales the black (darkness) demand:
+     *   0.5 → ×1 (the mono/grayscale darkening, apart from the white-speckle
+     *   clip), 0 → ×0.5, 1 → ×2.
+     *
+     * They act on the continuous ink demands **before** halftoning, so they can
+     * never break the red coverage floor. The page-level diffuser knobs
+     * (gamma/strength/serpentine) do not apply to photo pixels in this mode.
+     */
+    redBlack?: { redIntensity?: number; blackDepth?: number };
     /**
      * Async asset dependencies (image bytes, fonts, resolution cap). When
      * present, image/qr/barcode leaves are prepared first; absent, those leaves
@@ -997,9 +1016,9 @@ export const renderLabelPage = async (
     } else if (pageColor === 'redBlack') {
         // Per-slot flat/diffuse classification: slot 0 is the global strategy,
         // every masked slot is its own resolved policy. `threshold` is the
-        // point-op path (flat art); every diffuser — and, deliberately,
-        // `screentone`/`ostromoukhov` in this mode — diffs through the two-ink
-        // palette.
+        // point-op path (flat art); every other policy — and, deliberately,
+        // `screentone`/`ostromoukhov` in this mode — goes through the two-ink
+        // separation.
         const flatBySlot: boolean[] = [(opts.quantizer ?? 'threshold') === 'threshold'];
         if (policy) {
             for (const [index, entry] of policy.policies) {
@@ -1010,8 +1029,9 @@ export const renderLabelPage = async (
             }
         }
 
-        // One flag per device pixel (`0` = diffuse, `1` = flat). Uncovered
-        // pixels read mask slot 0, i.e. the global strategy.
+        // One flag per device pixel (`0` = photo/separation, `1` = flat). The
+        // mask still drives flat-vs-diffuse exactly as before; uncovered pixels
+        // read mask slot 0, i.e. the global strategy.
         const pixelCount = widthPx * heightPx;
         const flat = new Uint8Array(pixelCount);
         if (policy) {
@@ -1023,18 +1043,18 @@ export const renderLabelPage = async (
             flat.fill(1);
         }
 
-        // Flat pixels classify the raw source bytes with the same gamma and
-        // cutoff the global strategy resolves, so authored red is exact and
-        // mid-greys do not turn into dither noise.
+        // One duotone pass: flat pixels stay exact point ops (classified from
+        // the raw source bytes with the page's resolved gamma and cutoff), photo
+        // pixels get the clustered red screen + free-dot black diffusion. The
+        // separation has its own two knobs; gamma/strength/serpentine do not
+        // apply to photo pixels here.
         const resolvedThreshold = quantizeOptions.threshold ?? 128;
         const resolvedGamma = quantizeOptions.gamma;
-        diffuseToPalette(imageData, redBlackPalette(), {
-            gamma: resolvedGamma,
-            strength: quantizeOptions.strength,
-            serpentine: quantizeOptions.serpentine,
+        separateRedBlack(imageData, {
             flat,
             flatNearest: (r, g, b) =>
                 classifyFlatRedBlack(r, g, b, resolvedThreshold, resolvedGamma),
+            ...opts.redBlack,
         });
     } else {
         quantizeRgba(
