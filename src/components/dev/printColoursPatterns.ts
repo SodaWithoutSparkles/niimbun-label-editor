@@ -18,12 +18,16 @@ import { PageColorType } from '@mmote/niimbluelib';
 import { createLabelDoc } from '../../core/doc/factory';
 import type { ImageRef, LabelDoc, Node } from '../../core/doc/types';
 import { grayLevelColor } from '../../core/render/palette';
+import type { QuantizerId } from '../../core/render/quantize';
 
 export type ColourPatternId =
     | 'grayscale'
     | 'redBlack'
     | 'grayscaleLong'
-    | 'redBlackCalibration';
+    | 'redBlackCalibration'
+    | 'redBlackClustersSmall'
+    | 'redBlackClustersLarge'
+    | 'redBlackHues';
 
 export interface ColourPattern {
     id: ColourPatternId;
@@ -39,6 +43,12 @@ const MM = 100;
 const SHORT_W = 50 * MM;
 const SHORT_H = 30 * MM;
 const LONG_H = 160 * MM;
+
+/** Printhead width at 300 dpi (D-77): the calibration/cluster page width. */
+const HEAD_W = 48 * MM;
+
+/** One 300 dpi device dot in hm (1 inch = 2540 hm). */
+const dotHm = (dots: number): number => Math.round((dots * 2540) / 300);
 
 /** Fixed identity/time so two builds of the same pattern are byte-equal. */
 const FIXED_TIME = 1_760_000_000;
@@ -99,6 +109,35 @@ const pngDataUrl = (
 const flatGreyPng = (grey: number, widthPx = 2, heightPx = 2): string =>
     pngDataUrl(widthPx, heightPx, (ctx, w, h) =>
         writePixels(ctx, w, h, () => [clampChannel(grey), clampChannel(grey), clampChannel(grey), 255]),
+    );
+
+/** Uniform colour fill from an exact sRGB triplet. */
+const flatColourPng = (
+    rgb: readonly [number, number, number],
+    widthPx = 8,
+    heightPx = 8,
+): string =>
+    pngDataUrl(widthPx, heightPx, (ctx, w, h) =>
+        writePixels(ctx, w, h, () => [clampChannel(rgb[0]), clampChannel(rgb[1]), clampChannel(rgb[2]), 255]),
+    );
+
+/** Horizontal linear ramp between two exact sRGB triplets. */
+const colourRampPng = (
+    from: readonly [number, number, number],
+    to: readonly [number, number, number],
+    widthPx: number,
+    heightPx: number,
+): string =>
+    pngDataUrl(widthPx, heightPx, (ctx, w, h) =>
+        writePixels(ctx, w, h, (x) => {
+            const t = x / Math.max(1, w - 1);
+            return [
+                clampChannel(from[0] + (to[0] - from[0]) * t),
+                clampChannel(from[1] + (to[1] - from[1]) * t),
+                clampChannel(from[2] + (to[2] - from[2]) * t),
+                255,
+            ];
+        }),
     );
 
 /** Horizontal black → white strip. */
@@ -261,6 +300,7 @@ const imageNode = (
     w: number,
     h: number,
     tint?: string,
+    quantizerHint?: QuantizerId,
 ): Node => ({
     id,
     parentId: null,
@@ -272,6 +312,7 @@ const imageNode = (
     size: { w, h },
     fit: 'stretch',
     ...(tint !== undefined ? { tint } : {}),
+    ...(quantizerHint !== undefined ? { quantizerHint } : {}),
 });
 
 // ---------------------------------------------------------------------------
@@ -577,10 +618,349 @@ export const buildDensitySweep = (
 ): ColourPattern[] =>
     densities.map((density) => buildRedBlackCalibrationPattern(density, widthMm));
 
+// ---------------------------------------------------------------------------
+// P9 wave C — red/black duotone calibration
+// ---------------------------------------------------------------------------
+
+/**
+ * Cluster / physical-floor ladder (wave C2a, geometry revision).
+ *
+ * Each patch is a **60×60-device-dot** image. At 300 dpi `2540/300 = 127/15`,
+ * so only dot counts that are multiples of 15 are both exact integer `hm` and
+ * whole device pixels; 60 is also the LCM with the footprints 2/3/4/6, so every
+ * footprint tiles the patch exactly (30/20/15/10 tiles) with no partial edge
+ * tile. The node size is `dotHm(60)` = 508 hm = 60 px and origins sit on
+ * 75-dot pitch, so the smooth image draw is a true 1:1 blit: the raster patch is
+ * byte-for-byte the source PNG.
+ *
+ * Four rows do not fit a 30 mm page with captions, so the ladder is split into
+ * a small (2×2, 3×3) and a large (4×4, 6×6) pattern. The small one carries the
+ * 1/2/3-dot line and 1.5/2 mm text detail block.
+ *
+ * The dots are **authored exact red**, not the duotone engine's output, so every
+ * image node carries `quantizerHint: 'threshold'`: the flat policy keeps the
+ * authored bytes instead of running diffusion over them.
+ *
+ * Because a tile can only hold an integer number of dots, most cells realise a
+ * coverage slightly different from the column target. Each cell is captioned
+ * with its **achieved** coverage (`round(100·dots/f²)`); the column headers are
+ * explicitly `target`.
+ */
+const clusterLadderPattern = (
+    id: 'redBlackClustersSmall' | 'redBlackClustersLarge',
+    footprints: readonly number[],
+    label: string,
+    title: string,
+    withDetail: boolean,
+): ColourPattern => {
+    const targets = [25, 50, 56, 67, 78, 100] as const;
+
+    const patchDots = 60; // LCM(2, 3, 4, 6) and a multiple of 15 → exact hm + px.
+    const pitchDots = 75; // 60 patch + 15-dot caption gap.
+    const patchHm = dotHm(patchDots); // 508 hm = 60 px exactly.
+
+    /** Whole-dot origins that are also whole px (multiples of 15 dots). */
+    const colDots = targets.map((_, column) => 60 + column * pitchDots);
+    const rowDots = footprints.map((_, row) => 60 + row * pitchDots);
+
+    const dotsInTile = (footprint: number, target: number): number =>
+        Math.round((target / 100) * footprint * footprint);
+    const achievedOf = (footprint: number, target: number): number => {
+        const dots = dotsInTile(footprint, target);
+        return Math.round((100 * dots) / (footprint * footprint));
+    };
+
+    const nodes: Node[] = [
+        textNode('pc-rbc-title', 60, 30, 4600, 140, title, 110, {
+            fill: '#000000',
+        }),
+        textNode(
+            'pc-rbc-legend',
+            60,
+            180,
+            4600,
+            100,
+            'CAPTIONS = ACHIEVED RED COVERAGE · HEADERS = TARGET',
+            55,
+            { fill: '#000000' },
+        ),
+    ];
+    const resources: ImageRef[] = [];
+
+    targets.forEach((target, column) => {
+        nodes.push(
+            textNode(
+                `pc-rbc-col-${target}`,
+                dotHm(colDots[column]!),
+                300,
+                patchHm,
+                90,
+                `target ${target}%`,
+                55,
+                { fill: '#000000', align: 'center' },
+            ),
+        );
+    });
+
+    footprints.forEach((footprint, row) => {
+        const rowY = dotHm(rowDots[row]!);
+        nodes.push(
+            textNode(`pc-rbc-row-${footprint}`, 20, rowY + 200, 470, 90, `${footprint}x${footprint}`, 60, {
+                fill: '#000000',
+                align: 'right',
+            }),
+        );
+
+        targets.forEach((target, column) => {
+            // Compact top-left prefix: the first n dots of the f×f tile in
+            // row-major order, repeated across the 60×60 patch.
+            const dots = dotsInTile(footprint, target);
+            const achieved = achievedOf(footprint, target);
+            const imageId = `pc-rbc-${footprint}-${target}`;
+            const dataUrl = pngDataUrl(patchDots, patchDots, (ctx, w, h) =>
+                writePixels(ctx, w, h, (x, y) => {
+                    const index = (y % footprint) * footprint + (x % footprint);
+                    return index < dots ? [255, 0, 0, 255] : [255, 255, 255, 255];
+                }),
+            );
+            resources.push(
+                imageRef(
+                    imageId,
+                    `red ${footprint}x${footprint} target ${target}% (achieved ${achieved}%)`,
+                    patchDots,
+                    patchDots,
+                    dataUrl,
+                ),
+            );
+            const x = dotHm(colDots[column]!);
+            nodes.push(
+                imageNode(
+                    `pc-rbc-node-${footprint}-${target}`,
+                    imageId,
+                    x,
+                    rowY,
+                    patchHm,
+                    patchHm,
+                    undefined,
+                    'threshold',
+                ),
+                textNode(
+                    `pc-rbc-cell-${footprint}-${target}`,
+                    x,
+                    dotHm(rowDots[row]! + patchDots + 4),
+                    patchHm,
+                    90,
+                    `${achieved}%`,
+                    55,
+                    { fill: '#000000', align: 'center' },
+                ),
+            );
+        });
+    });
+
+    if (withDetail) {
+        nodes.push(
+            textNode('pc-rbc-detail-caption', 60, 1900, 3200, 90, 'DETAIL 1 / 2 / 3 DOT + INK', 75, {
+                fill: '#000000',
+            }),
+            // Fine detail: 1-, 2- and 3-dot red lines (device-dot thickness) plus
+            // 1.5 mm and 2 mm black text.
+            rectNode('pc-rbc-h1', 60, 2040, 1400, dotHm(1), { fill: '#ff0000' }),
+            rectNode('pc-rbc-h2', 60, 2070, 1400, dotHm(2), { fill: '#ff0000' }),
+            rectNode('pc-rbc-h3', 60, 2100, 1400, dotHm(3), { fill: '#ff0000' }),
+            rectNode('pc-rbc-v1', 1600, 2030, dotHm(1), 140, { fill: '#ff0000' }),
+            rectNode('pc-rbc-v2', 1640, 2030, dotHm(2), 140, { fill: '#ff0000' }),
+            rectNode('pc-rbc-v3', 1690, 2030, dotHm(3), 140, { fill: '#ff0000' }),
+            textNode('pc-rbc-ink-15', 2200, 2020, 2400, 170, 'INK 1.5', 150, { fill: '#000000' }),
+            textNode('pc-rbc-ink-20', 2200, 2210, 2400, 240, 'INK 2.0', 200, { fill: '#000000' }),
+        );
+    }
+
+    const doc = createLabelDoc({
+        id: `pc-red-black-clusters-${withDetail ? 'small' : 'large'}`,
+        name: `Print colours — red/black ${label}`,
+        backingW: HEAD_W,
+        backingH: SHORT_H,
+        dpi: 300,
+        now: FIXED_TIME,
+        regions: [{ kind: 'rect', x: 0, y: 0, w: HEAD_W, h: SHORT_H }],
+        nodes,
+    });
+    doc.resources.images.push(...resources);
+    return { id, label, doc, pageColor: PageColorType.DoubleColor };
+};
+
+/** 2×2 + 3×3 rows (with the fine-detail block). */
+const redBlackClustersSmallPattern = (): ColourPattern =>
+    clusterLadderPattern(
+        'redBlackClustersSmall',
+        [2, 3],
+        'Red & black — cluster ladder 2×2/3×3 (48 mm)',
+        'CLUSTERS 2x2 / 3x3',
+        true,
+    );
+
+/** 4×4 + 6×6 rows. */
+const redBlackClustersLargePattern = (): ColourPattern =>
+    clusterLadderPattern(
+        'redBlackClustersLarge',
+        [4, 6],
+        'Red & black — cluster ladder 4×4/6×6 (48 mm)',
+        'CLUSTERS 4x4 / 6x6',
+        false,
+    );
+
+/** The six P9 sample colours (sRGB), shared by rows A and B. */
+const HUE_SAMPLES: readonly { label: string; hex: string; rgb: readonly [number, number, number] }[] = [
+    { label: 'red #c8281e', hex: '#c8281e', rgb: [200, 40, 30] },
+    { label: 'pink #e6968c', hex: '#e6968c', rgb: [230, 150, 140] },
+    { label: 'dark #5a140f', hex: '#5a140f', rgb: [90, 20, 15] },
+    { label: 'green #283c1e', hex: '#283c1e', rgb: [40, 60, 30] },
+    { label: 'brown #8c6e50', hex: '#8c6e50', rgb: [140, 110, 80] },
+    { label: 'paper #fafaf0', hex: '#fafaf0', rgb: [250, 250, 240] },
+];
+
+/** Pink-hue highlights in OKLab: L 0.60/0.68/0.76/0.85/0.95 → sRGB. */
+const HUE_HIGHLIGHTS: readonly { label: string; rgb: readonly [number, number, number] }[] = [
+    // Computed from #e6968c's OKLab hue/chroma, gamut-clamped per L:
+    { label: 'L60 #b16a61', rgb: [177, 106, 97] },
+    { label: 'L68 #cc8278', rgb: [204, 130, 120] },
+    { label: 'L76 #e79a91', rgb: [231, 154, 145] },
+    { label: 'L85 #fbbcb4', rgb: [251, 188, 180] },
+    { label: 'L95 #ffe8e4', rgb: [255, 232, 228] },
+];
+
+/**
+ * Hue / chroma / tone page (wave C2a).
+ *
+ * Row A runs the six sample colours through the **engine's duotone path**
+ * (image nodes, no tint, no quantizer hint), row B is the same six as authored
+ * flat rects (classifier control). Rows C–E add ramps, highlights, a neutral
+ * black ramp and touching red/black cells for registration.
+ */
+const redBlackHuesPattern = (): ColourPattern => {
+    const margin = 190;
+    const patch = 250; // 2.5 mm
+    const columns = HUE_SAMPLES.length;
+    const columnGap = Math.round((HEAD_W - 2 * margin - columns * patch) / (columns - 1));
+    const columnX = (index: number): number => margin + index * (patch + columnGap);
+
+    const nodes: Node[] = [
+        textNode('pc-rbh-title', 60, 30, 3600, 140, 'RED / BLACK HUES', 120, {
+            fill: '#000000',
+        }),
+        textNode('pc-rbh-a-label', 60, 175, 3600, 90, 'A PHOTO SEPARATION', 75, {
+            fill: '#000000',
+        }),
+        textNode('pc-rbh-b-label', 60, 630, 3600, 90, 'B FLAT CONTROL', 75, {
+            fill: '#000000',
+        }),
+        textNode('pc-rbh-c-label', 60, 995, 4400, 90, 'C RAMPS + HIGHLIGHTS', 75, {
+            fill: '#000000',
+        }),
+        textNode('pc-rbh-c-highlights', 60, 1355, 4400, 80, 'HIGHLIGHTS L 0.60 0.68 0.76 0.85 0.95', 55, {
+            fill: '#000000',
+        }),
+        textNode('pc-rbh-d-label', 60, 1700, 3600, 90, 'D BLACK RAMP', 75, {
+            fill: '#000000',
+        }),
+        textNode('pc-rbh-e-label', 60, 2115, 3600, 90, 'E MIXED CELLS (2 mm, touching)', 75, {
+            fill: '#000000',
+        }),
+    ];
+    const resources: ImageRef[] = [];
+
+    HUE_SAMPLES.forEach((sample, index) => {
+        const imageId = `pc-rbh-photo-${index}`;
+        resources.push(
+            imageRef(imageId, sample.label, 8, 8, flatColourPng(sample.rgb)),
+        );
+        // Row A: engine path — no tint, no quantizer hint.
+        nodes.push(imageNode(`pc-rbh-photo-${index}-node`, imageId, columnX(index), 275, patch, patch));
+        nodes.push(
+            textNode(`pc-rbh-photo-${index}-label`, columnX(index), 535, patch, 80, sample.hex, 60, {
+                fill: '#000000',
+                align: 'center',
+            }),
+        );
+        // Row B: authored flat art, classified at the resolved threshold.
+        nodes.push(
+            rectNode(`pc-rbh-flat-${index}`, columnX(index), 730, patch, patch, { fill: sample.hex }),
+        );
+    });
+
+    // Row C: red→brown and pink→white ramps, 20 mm × 2.5 mm.
+    const rampW = 2000;
+    const rampY = 1095;
+    const redBrown = imageRef(
+        'pc-rbh-ramp-red-brown',
+        'red to brown ramp',
+        400,
+        50,
+        colourRampPng([200, 40, 30], [140, 110, 80], 400, 50),
+    );
+    const pinkWhite = imageRef(
+        'pc-rbh-ramp-pink-white',
+        'pink to white ramp',
+        400,
+        50,
+        colourRampPng([230, 150, 140], [255, 255, 255], 400, 50),
+    );
+    resources.push(redBrown, pinkWhite);
+    nodes.push(
+        imageNode('pc-rbh-ramp-red-brown-node', redBrown.imageId, margin, rampY, rampW, patch),
+        imageNode('pc-rbh-ramp-pink-white-node', pinkWhite.imageId, margin + rampW + 420, rampY, rampW, patch),
+    );
+
+    // Row C highlights: five in-gamut pink-hue patches at the target OKLab L.
+    HUE_HIGHLIGHTS.forEach((highlight, index) => {
+        const imageId = `pc-rbh-highlight-${index}`;
+        resources.push(imageRef(imageId, highlight.label, 8, 8, flatColourPng(highlight.rgb)));
+        nodes.push(imageNode(`pc-rbh-highlight-${index}-node`, imageId, margin + index * 300, 1435, patch, patch));
+    });
+
+    // Row D: neutral 0→255 grey tone, no red.
+    const blackRamp = imageRef('pc-rbh-black-ramp', 'black ramp 0..255', 600, 40, greyGradientPng(600, 40));
+    resources.push(blackRamp);
+    nodes.push(imageNode('pc-rbh-black-ramp-node', blackRamp.imageId, margin, 1800, 4420, 300));
+
+    // Row E: 2×4 cells of 2 mm, alternating black/red, edges touching.
+    for (let row = 0; row < 2; row++) {
+        for (let column = 0; column < 4; column++) {
+            nodes.push(
+                rectNode(`pc-rbh-mixed-${row}-${column}`, margin + column * 200, 2215 + row * 200, 200, 200, {
+                    fill: (row + column) % 2 === 0 ? '#000000' : '#ff0000',
+                }),
+            );
+        }
+    }
+
+    const doc = createLabelDoc({
+        id: 'pc-red-black-hues',
+        name: 'Print colours — red/black hues',
+        backingW: HEAD_W,
+        backingH: SHORT_H,
+        dpi: 300,
+        now: FIXED_TIME,
+        regions: [{ kind: 'rect', x: 0, y: 0, w: HEAD_W, h: SHORT_H }],
+        nodes,
+    });
+    doc.resources.images.push(...resources);
+    return {
+        id: 'redBlackHues',
+        label: 'Red & black — hues & tone (48 mm)',
+        doc,
+        pageColor: PageColorType.DoubleColor,
+    };
+};
+
 /** Build all patterns, fresh docs + fresh PNGs on every call. */
 export const buildColourPatterns = (): ColourPattern[] => [
     grayscalePattern(),
     redBlackPattern(),
     grayscaleLongPattern(),
     buildRedBlackCalibrationPattern(),
+    redBlackClustersSmallPattern(),
+    redBlackClustersLargePattern(),
+    redBlackHuesPattern(),
 ];

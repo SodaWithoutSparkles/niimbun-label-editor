@@ -24,6 +24,7 @@ import { MockTransport } from '../../print/mockTransport';
 import { NiimbotTransport } from '../../print/niimbotAdapter';
 import { buildCsvPrintJob, renderOptionsOf } from '../../print/printLabel';
 import type { PrintProgress, PrinterStatus, PrinterTransport } from '../../print/transport';
+import { useStore } from '../../store/useStore';
 import {
     buildColourPatterns,
     buildDensitySweep,
@@ -58,6 +59,11 @@ export function PrintColoursSmoke() {
     const [patternId, setPatternId] = useState<ColourPatternId>('grayscale');
     const pattern = patterns.find((candidate) => candidate.id === patternId) ?? patterns[0]!;
     const [pageColor, setPageColor] = useState<PageColorType>(pattern.pageColor);
+    // The dialog's persisted duotone tuning: preview and job must use the same
+    // slider values (invariant 7). Red/black only, so absent otherwise.
+    const redBlackSettings = useStore((state) => state.redBlackSettings);
+    const redBlack =
+        pageColor === PageColorType.DoubleColor ? redBlackSettings : undefined;
 
     const transportRef = useRef<PrinterTransport | undefined>(undefined);
     const pageRef = useRef<RenderedLabelPage | undefined>(undefined);
@@ -155,7 +161,7 @@ export function PrintColoursSmoke() {
         renderLabelPage(
             previewDoc,
             {},
-            { ...renderOptionsOf({ pageColor }, ASSETS), dpi: PREVIEW_DPI },
+            { ...renderOptionsOf({ pageColor, redBlack }, ASSETS), dpi: PREVIEW_DPI },
         )
             .then((page) => {
                 if (cancelled) return;
@@ -182,7 +188,7 @@ export function PrintColoursSmoke() {
         return () => {
             cancelled = true;
         };
-    }, [previewDoc, pageColor]);
+    }, [previewDoc, pageColor, redBlackSettings]);
 
     const connect = async (): Promise<void> => {
         const transport = transportRef.current;
@@ -223,7 +229,11 @@ export function PrintColoursSmoke() {
                 {
                     order: 'grouped',
                     copies: 1,
-                    overrides: { pageColor, ...(density !== undefined ? { density } : {}) },
+                    overrides: {
+                        pageColor,
+                        redBlack,
+                        ...(density !== undefined ? { density } : {}),
+                    },
                 },
                 { assets: ASSETS },
             );
@@ -270,6 +280,7 @@ export function PrintColoursSmoke() {
                             copies: 1,
                             overrides: {
                                 pageColor: PageColorType.DoubleColor,
+                                redBlack: redBlackSettings,
                                 density: sweepDensity,
                             },
                         },
