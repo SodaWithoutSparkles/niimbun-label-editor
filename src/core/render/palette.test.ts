@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { monoLuminance, type RgbaBuffer } from './colorspace';
 import {
     classifyFlatRedBlack,
+    diffuseRamp,
     diffuseToPalette,
     GRAYSCALE_LEVELS,
     grayscaleRampPalette,
@@ -416,3 +417,184 @@ describe('diffusion', () => {
         );
     });
 });
+
+describe('diffuseRamp (scalar luminance plane)', () => {
+    it('keeps an exact band-centre grey as that single level everywhere', () => {
+        const palette = grayscaleRampPalette();
+        for (const level of [0, 1, 5, 7, 8, 14, 15]) {
+            const value = grayLevelColor(level);
+            const rgba = solid(8, 4, value, value, value);
+            diffuseRamp(rgba, palette);
+            for (const [r, g, b] of rgbList(rgba)) {
+                expect([r, g, b], `level ${level}`).toEqual([value, value, value]);
+            }
+        }
+    });
+
+    it('dithers a mid grey across its two neighbouring levels', () => {
+        // 128 sits in level 7's band (136) and neighbours level 8 (119).
+        const rgba = solid(32, 32, 128, 128, 128);
+        diffuseRamp(rgba, grayscaleRampPalette());
+
+        expect(countColor(rgba, grayLevelColor(7), grayLevelColor(7), grayLevelColor(7)))
+            .toBeGreaterThan(0);
+        expect(countColor(rgba, grayLevelColor(8), grayLevelColor(8), grayLevelColor(8)))
+            .toBeGreaterThan(0);
+    });
+
+    it('applies gamma to the scalar tone and keeps the endpoints fixed', () => {
+        const palette = grayscaleRampPalette();
+
+        const neutral = solid(32, 32, 128, 128, 128);
+        diffuseRamp(neutral, palette, { gamma: 1 });
+        const lighter = solid(32, 32, 128, 128, 128);
+        diffuseRamp(lighter, palette, { gamma: 2.2 });
+        const darker = solid(32, 32, 128, 128, 128);
+        diffuseRamp(darker, palette, { gamma: 0.5 });
+
+        // >1 lightens midtones, <1 darkens; tone is conserved on the scalar plane.
+        expect(meanLuminance(lighter)).toBeGreaterThan(meanLuminance(neutral));
+        expect(meanLuminance(darker)).toBeLessThan(meanLuminance(neutral));
+
+        for (const endpoint of [0, 255]) {
+            const rgba = solid(4, 4, endpoint, endpoint, endpoint);
+            diffuseRamp(rgba, palette, { gamma: 2.2 });
+            for (const [r, g, b] of rgbList(rgba)) {
+                expect([r, g, b]).toEqual([endpoint, endpoint, endpoint]);
+            }
+        }
+    });
+
+    it('strength 0 is a nearest-value point op', () => {
+        // No diffusion: every pixel independently picks the closest entry grey.
+        // 128 is 8 from level 7 (136) and 9 from level 8 (119).
+        const rgba = solid(8, 6, 128, 128, 128);
+        diffuseRamp(rgba, grayscaleRampPalette(), { strength: 0 });
+
+        for (const [r, g, b] of rgbList(rgba)) {
+            expect([r, g, b]).toEqual([grayLevelColor(7), grayLevelColor(7), grayLevelColor(7)]);
+        }
+    });
+
+    it('non-finite strength normalizes to 1', () => {
+        const render = (strength: number): RgbaBuffer => {
+            const rgba = solid(6, 4, 128, 128, 128);
+            diffuseRamp(rgba, grayscaleRampPalette(), { strength });
+            return rgba;
+        };
+
+        const neutral = render(1);
+        const notANumber = render(Number.NaN);
+        const infinite = render(Number.POSITIVE_INFINITY);
+
+        expect(Array.from(notANumber.data)).toEqual(Array.from(neutral.data));
+        expect(Array.from(infinite.data)).toEqual(Array.from(neutral.data));
+    });
+
+    it('serpentine and raster scans differ, and each is deterministic', () => {
+        const make = (): RgbaBuffer =>
+            bufferOf(8, 8, (x, y) => {
+                const value = 96 + x * 6 + (y & 1);
+                return [value, value, value, 255];
+            });
+        const palette = grayscaleRampPalette();
+
+        const serpentine = make();
+        diffuseRamp(serpentine, palette, { serpentine: true });
+        const serpentineAgain = make();
+        diffuseRamp(serpentineAgain, palette, { serpentine: true });
+
+        const raster = make();
+        diffuseRamp(raster, palette, { serpentine: false });
+        const rasterAgain = make();
+        diffuseRamp(rasterAgain, palette, { serpentine: false });
+
+        expect(Array.from(serpentineAgain.data)).toEqual(Array.from(serpentine.data));
+        expect(Array.from(rasterAgain.data)).toEqual(Array.from(raster.data));
+        expect(Array.from(serpentine.data)).not.toEqual(Array.from(raster.data));
+    });
+
+    it('preserves every alpha byte and only emits ramp entries', () => {
+        const alphas = [0, 1, 127, 128, 254, 255];
+        const rgba = bufferOf(3, 2, (x, y) => {
+            const i = y * 3 + x;
+            return [128 + x * 20, 0, y * 30, alphas[i % alphas.length]];
+        });
+        const before = rgba.data.filter((_, i) => i % 4 === 3);
+
+        diffuseRamp(rgba, grayscaleRampPalette());
+
+        expect(rgba.data.filter((_, i) => i % 4 === 3)).toEqual(before);
+        expectInPalette(rgba, grayscaleRampPalette());
+    });
+
+    it('dithers a saturated red field at its own tone instead of collapsing it', () => {
+        // REGRESSION (P9 wave A). Source (200, 40, 30): BT.601 luminance 86.7,
+        // level 10's band (85). The old RGB-vector engine had no sink for the
+        // chroma residual: it clipped against 0/255 and drifted the whole field
+        // to level 11 (68). Scalar diffusion keeps the tone on level 10. Because
+        // 86.7 is not exactly the band centre, error conservation requires a
+        // small fraction of level-9 (102) pixels — roughly the 1.7/17 residual
+        // — so the interior must stay inside {9, 10}, dominated by level 10,
+        // with no darker level anywhere.
+        const rgba = solid(96, 48, 200, 40, 30);
+        diffuseRamp(rgba, grayscaleRampPalette());
+
+        const level10 = grayLevelColor(10);
+        const level9 = grayLevelColor(9);
+        let count10 = 0;
+        let count9 = 0;
+        for (let y = 1; y < 47; y++) {
+            for (let x = 1; x < 95; x++) {
+                const value = rgba.data[(y * 96 + x) * 4];
+                if (value === level10) count10++;
+                else if (value === level9) count9++;
+                else expect.fail(`interior pixel (${x},${y}) is not level 9 or 10: ${value}`);
+            }
+        }
+        const interior = 94 * 46;
+        expect(count10 / interior).toBeGreaterThan(0.85);
+        expect(count10).toBeGreaterThan(count9 * 5);
+        // Error diffusion conserves tone: the mean stays at the source luminance.
+        expect(Math.abs(meanLuminance(rgba) - (200 * 0.299 + 40 * 0.587 + 30 * 0.114)))
+            .toBeLessThanOrEqual(2);
+    });
+
+    it('keeps a red block and a green block at their own tone across the seam', () => {
+        // Red (200,40,30) and green (40,120,40) have almost the same BT.601
+        // luminance (86.7 / 86.96), so both interiors belong to level 10's band.
+        // The old RGB path darkened the saturated sides toward level 11; the
+        // scalar plane must leave both sides on {9, 10} and never go darker,
+        // including across the 4-pixel seam.
+        const rgba = bufferOf(96, 48, (x) =>
+            x < 48 ? [200, 40, 30, 255] : [40, 120, 40, 255],
+        );
+        diffuseRamp(rgba, grayscaleRampPalette());
+
+        const level10 = grayLevelColor(10);
+        const level9 = grayLevelColor(9);
+        for (const [x0, x1] of [
+            [1, 44],
+            [51, 95],
+        ] as const) {
+            let count10 = 0;
+            let count9 = 0;
+            for (let y = 1; y < 47; y++) {
+                for (let x = x0; x < x1; x++) {
+                    const value = rgba.data[(y * 96 + x) * 4];
+                    if (value === level10) count10++;
+                    else if (value === level9) count9++;
+                    else {
+                        expect.fail(
+                            `block x∈[${x0},${x1}) pixel (${x},${y}) is not level 9 or 10: ${value}`,
+                        );
+                    }
+                }
+            }
+            expect(count10).toBeGreaterThan(count9 * 5);
+        }
+        // No pixel anywhere is darker than level 10 (no collapse to level 11).
+        for (const [r] of rgbList(rgba)) expect(r).toBeGreaterThanOrEqual(level10);
+    });
+});
+

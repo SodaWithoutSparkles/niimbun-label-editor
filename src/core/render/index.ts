@@ -42,6 +42,7 @@ export {
 
 export {
     classifyFlatRedBlack,
+    diffuseRamp,
     diffuseToPalette,
     GRAYSCALE_LEVELS,
     grayscaleRampPalette,
@@ -55,6 +56,7 @@ export {
     type Palette,
     type PaletteDiffuseOptions,
     type PaletteEntry,
+    type RampDiffuseOptions,
 } from './palette';
 
 export {

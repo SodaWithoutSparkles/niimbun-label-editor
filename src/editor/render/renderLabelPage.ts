@@ -6,6 +6,7 @@ import {
     classifyFlatRedBlack,
     DEFAULT_GAMMA_BY_STRATEGY,
     DEFAULT_SCREENTONE,
+    diffuseRamp,
     diffuseToPalette,
     grayscaleRampPalette,
     HM_PER_INCH,
@@ -52,9 +53,10 @@ import { flattenResolved, resolve, type ResolvedNode, type ResolveContext } from
  * Page-colour branch (`opts.pageColor`):
  *   - `'mono'` (default) — the pipeline above: per-object 1-bit policies plus
  *     `quantizeRgba`.
- *   - `'grayscale'` — **no** policy mask and no 1-bit quantize; the tone-mapped
- *     raster goes through {@link diffuseToPalette} with the 16-level ramp, so
- *     the encoder receives exact band-centre greys.
+ *   - `'grayscale'` — **no** policy mask and no 1-bit quantize; the raster's
+ *     BT.601 luminance is diffused as one scalar plane by
+ *     {@link diffuseRamp} through the 16-level ramp, so the encoder receives
+ *     exact band-centre greys.
  *   - `'redBlack'` — the policy mask is built as in mono, then turned into a
  *     per-pixel **flat mask**: pixels covered by a `threshold` policy (the
  *     global slot included) take the point-op path
@@ -145,8 +147,9 @@ export interface RenderLabelPageOptions {
     /**
      * Print-time page colour. Absent = `'mono'` (the 1-bit path, byte-identical).
      *
-     * `'grayscale'` skips the per-object 1-bit policies and runs the 16-level
-     * ramp diffuser on the tone-mapped raster. `'redBlack'` keeps the policy
+     * `'grayscale'` skips the per-object 1-bit policies and diffuses the
+     * raster's BT.601 luminance as one scalar plane through the 16-level ramp.
+     * `'redBlack'` keeps the policy
      * mask but uses it only to split flat (threshold) pixels — crisp exact
      * palette entries — from diffused ones, through the two-ink palette.
      */
@@ -980,11 +983,13 @@ export const renderLabelPage = async (
 
     const quantizeOptions = buildQuantizeOptions(opts, dpi);
     if (pageColor === 'grayscale') {
-        // One palette pass over the tone-mapped raster. The diffuser knobs come
-        // from the selected global quantizer's effective settings, so the
-        // render-level gamma/strength/serpentine still apply; the default
-        // `threshold` strategy resolves to the neutral gamma 1.
-        diffuseToPalette(imageData, grayscaleRampPalette(), {
+        // One scalar-luminance pass over the raster: a neutral ramp has no
+        // chroma sink, so diffusing one luminance plane (rather than an RGB
+        // error vector) is what keeps saturated sources at their own tone. The
+        // diffuser knobs come from the selected global quantizer's effective
+        // settings, so the render-level gamma/strength/serpentine still apply;
+        // the default `threshold` strategy resolves to the neutral gamma 1.
+        diffuseRamp(imageData, grayscaleRampPalette(), {
             gamma: quantizeOptions.gamma,
             strength: quantizeOptions.strength,
             serpentine: quantizeOptions.serpentine,

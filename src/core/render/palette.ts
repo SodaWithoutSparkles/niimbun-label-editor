@@ -8,14 +8,19 @@ import { buildToneLut, normalizeGamma, toByte } from './preprocess';
  * The mono engine (`quantize.ts`) is the 2-entry special case, but this module
  * is kept separate rather than widening it: the existing 1-bit strategies and
  * their goldens must stay byte-identical, and a palette engine needs a
- * per-entry nearest test plus a 3-channel error vector. One engine serves both
- * colour modes this run needs (`grayscaleRampPalette`, `redBlackPalette`).
+ * per-entry nearest test plus a 3-channel error vector.
  *
- * Error is a full RGB **vector** (`source - chosenEntry`) distributed on all
- * three channel planes — the run's "one error channel" call. Decomposing into
- * two scalar diffusions (black plane + red plane) would mis-mix dark red
- * regions, where every pixel sits *between* black and red rather than on one
- * of them.
+ * Two palette engines live here:
+ *
+ *  - {@link diffuseToPalette} spreads a full RGB **vector**
+ *    (`source - chosenEntry`) on all three channel planes. That is correct for
+ *    `redBlackPalette`, whose entries differ in hue: decomposing into two scalar
+ *    diffusions (black plane + red plane) would mis-mix dark red regions, where
+ *    every pixel sits *between* black and red rather than on one of them.
+ *  - {@link diffuseRamp} spreads **one scalar luminance plane** for an ordered
+ *    neutral ramp (`grayscaleRampPalette`). A neutral palette has no chroma
+ *    sink, so an RGB-vector residual would clip against `0..255` and collapse
+ *    the luminance instead of dithering it.
  *
  * Memory: three `Float32Array(width * height)` working planes at ≈12 bytes/px
  * on top of the 4-byte/px RGBA buffer. At the run's 16 M px cap that is
@@ -409,6 +414,161 @@ export const diffuseToPalette = (
                 red[q] += (errorR * numerator) / FS_DENOM;
                 green[q] += (errorG * numerator) / FS_DENOM;
                 blue[q] += (errorB * numerator) / FS_DENOM;
+            }
+        }
+    }
+
+    return rgba;
+};
+
+/** Scalar-ramp diffusion knobs. All neutral defaults preserve the nearest op. */
+export interface RampDiffuseOptions {
+    /**
+     * 0 → nearest entry with no diffusion; 1 → standard Floyd–Steinberg;
+     * >1 stronger (error amplified before distribution). Clamped to `0..4`.
+     * A non-finite strength normalizes to the neutral `1`, matching
+     * {@link diffuseToPalette} — a `NaN` never reaches the scalar plane.
+     */
+    strength?: number;
+    /** Serpentine scanning (reverse rows scan right-to-left). Default true. */
+    serpentine?: boolean;
+    /** Tone curve on the scalar luminance. Neutral `1`; default 1. */
+    gamma?: number;
+}
+
+/**
+ * Map `rgba` onto an ordered neutral `palette` with serpentine Floyd–Steinberg
+ * diffusion on **one scalar luminance plane**. Mutates in place and returns the
+ * same buffer, matching every other engine in this folder.
+ *
+ * Entry selection and the diffused error use `entry.r`, so a non-neutral palette
+ * is rejected rather than silently mis-rendered.
+ *
+ * **Why a scalar plane.** A neutral ramp has no chroma sink. The vector engine
+ * ({@link diffuseToPalette}) spreads a `(R, G, B)` residual, but for a
+ * saturated source that chroma error has nowhere to land: the three planes clip
+ * against `0..255`, and the luminance that survives collapses (a flat red field
+ * drifts to one dark level instead of dithering at its own tone). Diffusing the
+ * luminance the palette actually selects by keeps the error on the quantised
+ * axis — the tone is conserved and the output stays on the same 16-level ramp.
+ *
+ * **Why entry-value nearest.** The entry is chosen by minimising
+ * `Math.abs(entry.r - L)`, **not** by `palette.nearest`. With
+ * {@link grayscaleRampPalette} the band centres are the exact integers
+ * `255 - 17k`, so these boundaries fall midway (`246.5`, `229.5`, …) and this
+ * test reproduces `ImageEncoder.colorToGrayLevel` exactly. Calling
+ * `nearest(L, L, L)` would re-apply the BT.601 weights, whose float sum is
+ * `0.9999999999999999`; a value sitting on a boundary can then flip to the
+ * other level and make preview ≠ print. The accumulated scalar is already a
+ * luminance, so it is used unclamped (diffusion may push it outside `0..255`
+ * without affecting the nearest test). Ties go to the earlier entry.
+ *
+ * Order of operations:
+ *
+ *  1. Copy BT.601 luminance of every source pixel into one `Float32Array`.
+ *     Alpha is never read, so every alpha byte survives untouched.
+ *  2. Tone-map when `normalizeGamma(gamma) !== 1`: `L' = lut[toByte(L)]`. Unlike
+ *     the vector engine there is no hue to preserve, so a plain scalar curve is
+ *     correct — and the neutral path does not round the copied luminance.
+ *     `lut[0] = 0` and `lut[255] = 255`, so the endpoints stay fixed.
+ *  3. Serpentine scan: `7/16` forward on the current row, then `3/16` (back
+ *     diagonal), `5/16` (below) and `1/16` (forward diagonal) on the next row.
+ *     Reverse rows mirror the taps by negating the column offset; out-of-bounds
+ *     taps are dropped. `strength` multiplies the error *before* distribution
+ *     and is clamped to `0..4`; `0` degenerates to a nearest-value point op. A
+ *     non-finite `strength` normalizes to the neutral `1`.
+ *  4. Write the chosen entry's exact integer bytes to RGB. Entries are never
+ *     blended, so every output pixel is a palette colour.
+ *
+ * Defaults are neutral: `strength 1`, `serpentine true`, `gamma 1`.
+ */
+export const diffuseRamp = (
+    rgba: RgbaBuffer,
+    palette: Palette,
+    options: RampDiffuseOptions = {},
+): RgbaBuffer => {
+    const { strength = 1, serpentine = true, gamma = 1 } = options;
+    const { data, width, height } = rgba;
+    const count = width * height;
+    const entries = palette.entries;
+
+    if (entries.length === 0) {
+        // Same wording style as `nearestPaletteEntry`: fail before touching px.
+        throw new Error('diffuseRamp: palette has no entries');
+    }
+    for (const entry of entries) {
+        if (entry.r !== entry.g || entry.g !== entry.b) {
+            throw new Error('diffuseRamp: palette must be a neutral ramp (r = g = b)');
+        }
+    }
+
+    // One scalar plane: the same BT.601 luminance the encoder's grey-level test
+    // uses. Alpha is opacity metadata, never ink, so it is not read.
+    const plane = new Float32Array(count);
+    for (let p = 0, i = 0; p < count; p++, i += 4) {
+        plane[p] = monoLuminance(data[i], data[i + 1], data[i + 2]);
+    }
+
+    // A scalar curve is exact here: there is no hue to preserve, unlike the
+    // vector engine's per-channel rescale. The neutral path skips the rounding
+    // entirely, so an exact ramp centre stays an exact float.
+    if (normalizeGamma(gamma) !== 1) {
+        const lut = buildToneLut(gamma);
+        for (let p = 0; p < count; p++) {
+            plane[p] = lut[toByte(plane[p])];
+        }
+    }
+
+    // Mirror the settings UI's strength range: a huge finite value would overflow
+    // the accumulated error to Infinity and make every entry distance Infinity
+    // (the nearest test then falls back to entry 0 and the page goes white).
+    const diffusionStrength = Number.isFinite(strength)
+        ? Math.min(4, Math.max(0, strength))
+        : 1;
+
+    for (let y = 0; y < height; y++) {
+        const reverse = serpentine && (y & 1) !== 0;
+        const start = reverse ? width - 1 : 0;
+        const end = reverse ? -1 : width;
+        const step = reverse ? -1 : 1;
+        const direction = reverse ? -1 : 1;
+
+        for (let x = start; x !== end; x += step) {
+            const p = y * width + x;
+            const value = plane[p];
+
+            // Closest entry **grey value**, ties → earlier entry. Deliberately
+            // not `palette.nearest` (see the doc comment): the scalar is already
+            // the luminance, and re-deriving it from clamped channels would
+            // reintroduce the boundary-rounding mismatch with the encoder.
+            let best = 0;
+            let bestDistance = Infinity;
+            for (let index = 0; index < entries.length; index++) {
+                const distance = Math.abs(entries[index].r - value);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    best = index;
+                }
+            }
+
+            const entry = entries[best];
+            const offset = p * 4;
+            data[offset] = entry.r;
+            data[offset + 1] = entry.g;
+            data[offset + 2] = entry.b;
+
+            if (diffusionStrength === 0) continue;
+
+            const error = (value - entry.r) * diffusionStrength;
+            if (error === 0) continue;
+
+            for (const [dx, dy, numerator] of FS_TAPS) {
+                const nx = x + dx * direction;
+                const ny = y + dy;
+                // ny >= 0 always (dy is 0 or 1) and ny only grows forward.
+                if (nx < 0 || nx >= width || ny >= height) continue;
+                const q = ny * width + nx;
+                plane[q] += (error * numerator) / FS_DENOM;
             }
         }
     }

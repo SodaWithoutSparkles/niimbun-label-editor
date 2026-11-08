@@ -12,8 +12,8 @@ import { renderLabelPage } from './renderLabelPage';
  * P3 wave A — grayscale page colour end to end through the shared render path.
  *
  * A grayscale page skips the per-object 1-bit policy mask and `quantizeRgba`;
- * it runs the 16-level ramp diffuser on the tone-mapped raster instead. These
- * tests pin the externally visible consequences:
+ * it diffuses the raster's BT.601 luminance as one scalar plane through the
+ * 16-level ramp instead. These tests pin the externally visible consequences:
  *
  *  - an authored band-centre grey survives exactly (no dither speckle);
  *  - a mid grey *is* dithered (both neighbours appear), proving the diffuser
@@ -218,6 +218,33 @@ describe('renderLabelPage — grayscale page colour', () => {
                 expect(levelAt(data, x, y), `(${x},${y})`).toBe(expected);
             }
         }
+    });
+
+    it('renders a saturated red fill at its own level, not a dark blob', async () => {
+        // REGRESSION (P9 wave A): #c8281e = (200, 40, 30), BT.601 luminance
+        // ≈86.7 → level 10 (85). The old RGB-vector diffuser clipped the chroma
+        // residual and collapsed the field to level 11 (68); scalar luminance
+        // diffusion keeps the interior on level 10 with its adjacent-level
+        // dither and never darkens past it.
+        const page = await renderLabelPage(
+            docWith([rect('r', 0, 800, '#c8281e')]),
+            {},
+            { pageColor: 'grayscale' },
+        );
+
+        let count10 = 0;
+        let count9 = 0;
+        for (let y = 6; y < 44; y++) {
+            for (let x = 5; x < 75; x++) {
+                const value = page.rgba.data[(y * page.widthPx + x) * 4]!;
+                if (value === grayLevelColor(10)) count10++;
+                else if (value === grayLevelColor(9)) count9++;
+                else {
+                    expect.fail(`interior pixel (${x},${y}) is not level 9 or 10: ${value}`);
+                }
+            }
+        }
+        expect(count10).toBeGreaterThan(count9 * 5);
     });
 
     it('leaves the mono path byte-identical and 1-bit', async () => {
