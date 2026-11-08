@@ -113,6 +113,8 @@
       "label": "General",
       "language": "Language",
       "autoSave": "Auto-save",
+      "autoOrient": "Auto-rotate portrait labels",
+      "autoOrientHint": "Show a portrait label on its side when it opens. Off keeps the real orientation.",
       "screenDpi": "Screen DPI",
       "screenDpiDescription": "Screen density used for real-size zoom. Default 96.",
       "gridSpacing": "Grid spacing",

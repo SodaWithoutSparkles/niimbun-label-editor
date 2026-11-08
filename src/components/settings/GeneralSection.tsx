@@ -41,6 +41,7 @@ export const GeneralSection: React.FC = () => {
     const { t } = useTranslation();
     const languageId = useId();
     const autoSaveId = useId();
+    const autoOrientId = useId();
     const connectMethodId = useId();
     const defaultPaperTypeId = useId();
     const screenDpiId = useId();
@@ -49,6 +50,8 @@ export const GeneralSection: React.FC = () => {
     const setLanguage = useStore((state) => state.setLanguage);
     const autoSave = useStore((state) => state.autoSave);
     const toggleAutoSave = useStore((state) => state.toggleAutoSave);
+    const autoOrientPortrait = useStore((state) => state.autoOrientPortrait);
+    const setAutoOrientPortrait = useStore((state) => state.setAutoOrientPortrait);
     const connectMethod = useStore((state) => state.connectMethod);
     const setConnectMethod = useStore((state) => state.setConnectMethod);
     const paperRepo = useStore((state) => state.paperRepo);
@@ -158,6 +161,17 @@ export const GeneralSection: React.FC = () => {
             </SettingRow>
             <SettingRow label={t('settings.general.autoSave')} htmlFor={autoSaveId}>
                 <Toggle id={autoSaveId} checked={autoSave} onChange={() => toggleAutoSave()} />
+            </SettingRow>
+            <SettingRow
+                label={t('settings.general.autoOrient')}
+                description={t('settings.general.autoOrientHint')}
+                htmlFor={autoOrientId}
+            >
+                <Toggle
+                    id={autoOrientId}
+                    checked={autoOrientPortrait}
+                    onChange={(checked) => setAutoOrientPortrait(checked)}
+                />
             </SettingRow>
             <SettingRow
                 label={t('settings.general.connectMethod')}

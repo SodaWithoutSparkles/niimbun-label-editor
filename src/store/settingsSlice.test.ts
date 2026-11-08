@@ -73,3 +73,12 @@ describe('usePrinterDpi setting', () => {
         expect(store.getState().usePrinterDpi).toBe(defaultUsePrinterDpi);
     });
 });
+
+describe('autoOrientPortrait setting', () => {
+    it('resetSettings restores the OFF default', () => {
+        const store = createAppStore(makeStorage());
+        store.getState().setAutoOrientPortrait(true);
+        store.getState().resetSettings();
+        expect(store.getState().autoOrientPortrait).toBe(false);
+    });
+});

@@ -5,6 +5,14 @@ import type { AppState, ConnectMethod, DefaultQuantizerByType, KeyboardShortcutC
 export const defaultAutoSave = true;
 
 /**
+ * "Default view orientation" for a freshly opened document. OFF by default
+ * (opt-in): a portrait label keeps its real orientation instead of being
+ * silently turned on its side. Persisted with the other global settings; never
+ * document data.
+ */
+export const defaultAutoOrientPortrait = false;
+
+/**
  * Print raster dpi preference (P2): render at the printer's reported dpi
  * (`PrinterInfo.resolutionClass`) when one is known, falling back to the
  * document's dpi hint. Default ON — a printer that reports its head dpi prints

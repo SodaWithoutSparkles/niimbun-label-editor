@@ -22,6 +22,7 @@ import {
     DEFAULT_SCREEN_DPI,
     GRID_SPACING_MAX_HM,
     GRID_SPACING_MIN_HM,
+    defaultAutoOrientPortrait,
     defaultAutoSave,
     defaultKeyboardShortcuts,
     defaultLanguage,
@@ -337,6 +338,7 @@ describe('normalizeKeyboardShortcuts — dithered-view key and migration', () =>
             { keyboardShortcuts: { tools: { rectangle: 'q' } } },
             {
                 autoSave: defaultAutoSave,
+                autoOrientPortrait: defaultAutoOrientPortrait,
                 usePrinterDpi: defaultUsePrinterDpi,
                 keyboardShortcuts: defaultKeyboardShortcuts,
                 toolSettings: defaultToolSettings,
@@ -394,6 +396,7 @@ describe('normalizeGridSpacingHm', () => {
 
 const defaults: PersistedSettings = {
     autoSave: defaultAutoSave,
+    autoOrientPortrait: defaultAutoOrientPortrait,
     usePrinterDpi: defaultUsePrinterDpi,
     keyboardShortcuts: defaultKeyboardShortcuts,
     toolSettings: defaultToolSettings,
@@ -434,6 +437,14 @@ describe('validatePersistedSettings', () => {
         // Wrong-typed / absent => the default (ON).
         expect(validatePersistedSettings({ usePrinterDpi: 'no' }, defaults).usePrinterDpi).toBe(true);
         expect(validatePersistedSettings({}, defaults).usePrinterDpi).toBe(defaultUsePrinterDpi);
+    });
+
+    it('round-trips the autoOrientPortrait preference and repairs bad types', () => {
+        expect(validatePersistedSettings({ autoOrientPortrait: true }, defaults).autoOrientPortrait).toBe(true);
+        expect(validatePersistedSettings({ autoOrientPortrait: false }, defaults).autoOrientPortrait).toBe(false);
+        // Wrong-typed / absent => the default (OFF).
+        expect(validatePersistedSettings({ autoOrientPortrait: 'yes' }, defaults).autoOrientPortrait).toBe(false);
+        expect(validatePersistedSettings({}, defaults).autoOrientPortrait).toBe(defaultAutoOrientPortrait);
     });
 
     it('normalizes/clamps gridSpacingHm and falls back when unusable', () => {
@@ -530,6 +541,17 @@ describe('pickPersistedKeys', () => {
             usePrinterDpi: false,
         });
         expect('usePrinterDpi' in pickPersistedKeys({}, defaults)).toBe(false);
+    });
+
+    it('picks autoOrientPortrait only when present', () => {
+        expect(pickPersistedKeys({ autoOrientPortrait: true }, defaults)).toEqual({
+            autoOrientPortrait: true,
+        });
+        // An invalid value is repaired to the default, not dropped.
+        expect(pickPersistedKeys({ autoOrientPortrait: 1 }, defaults)).toEqual({
+            autoOrientPortrait: false,
+        });
+        expect('autoOrientPortrait' in pickPersistedKeys({}, defaults)).toBe(false);
     });
 
     it('picks a validated defaultPaperTypeId only when present', () => {

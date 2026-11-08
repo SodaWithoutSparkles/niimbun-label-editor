@@ -9,6 +9,7 @@ import {
     GRID_SPACING_MIN_HM,
     SCREEN_DPI_MAX,
     SCREEN_DPI_MIN,
+    defaultAutoOrientPortrait,
     defaultAutoSave,
     defaultKeyboardShortcuts,
     defaultLanguage,
@@ -28,6 +29,12 @@ export const createSettingsSlice: StoreSlice = (set) => ({
         const nextAutoSave = !state.autoSave;
         return { autoSave: nextAutoSave };
     }),
+
+    // "Default view orientation" (opt-in, default OFF). Persisted with the
+    // other global settings; never document data. Takes effect at the next
+    // document open, never on the document already on screen.
+    autoOrientPortrait: defaultAutoOrientPortrait,
+    setAutoOrientPortrait: (autoOrientPortrait) => set({ autoOrientPortrait }),
 
     // Print raster dpi preference (P2). Persisted with the other global
     // settings; never document data. A value setter (not a toggle) because the
@@ -121,6 +128,7 @@ export const createSettingsSlice: StoreSlice = (set) => ({
 
     resetSettings: () => set({
         autoSave: defaultAutoSave,
+        autoOrientPortrait: defaultAutoOrientPortrait,
         usePrinterDpi: defaultUsePrinterDpi,
         keyboardShortcuts: defaultKeyboardShortcuts,
         toolSettings: defaultToolSettings,

@@ -154,6 +154,15 @@ export interface AppState {
     toggleAutoSave: () => void;
     lastAutoSaveAt: number | null;
     setLastAutoSaveAt: (timestamp: number | null) => void;
+    /**
+     * "Default view orientation": when ON, a freshly opened portrait label is
+     * shown on its side (long axis horizontal). When OFF (the default) the real
+     * orientation is kept. Persisted with the other global settings; never
+     * document data. Changing the switch does not rotate the document already
+     * on screen — it applies at the next document open.
+     */
+    autoOrientPortrait: boolean;
+    setAutoOrientPortrait: (enabled: boolean) => void;
 
     // Print
     /**
@@ -466,7 +475,10 @@ export interface AppState {
     /** True once the user manually toggled view rotation. */
     viewRotationUserSet: boolean;
     toggleViewRotation: () => void;
-    /** Doc-open default orientation: long axis horizontal. View-only. */
+    /**
+     * Doc-open default orientation, gated by the `autoOrientPortrait`
+     * preference (OFF ⇒ stay unrotated). View-only; never writes the document.
+     */
     applyDefaultViewOrientation: (backingW: number, backingH: number) => void;
     /** Re-arm the auto-pick before it runs at a doc-open boundary. */
     resetViewOrientation: () => void;

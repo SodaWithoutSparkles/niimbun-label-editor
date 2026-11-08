@@ -16,6 +16,7 @@ import {
     DEFAULT_QUANTIZER_BY_TYPE,
     DEFAULT_QUANTIZER_DEFAULTS,
     DEFAULT_SCREEN_DPI,
+    defaultAutoOrientPortrait,
     defaultAutoSave,
     defaultKeyboardShortcuts,
     defaultLanguage,
@@ -31,6 +32,7 @@ import {
 /** The preference defaults, used to repair whatever `ui_settings` holds. */
 const persistedDefaults: PersistedSettings = {
     autoSave: defaultAutoSave,
+    autoOrientPortrait: defaultAutoOrientPortrait,
     usePrinterDpi: defaultUsePrinterDpi,
     keyboardShortcuts: defaultKeyboardShortcuts,
     toolSettings: defaultToolSettings,
@@ -151,6 +153,7 @@ export const createAppStore = (storage?: Storage) => {
                 //    land in localStorage.
                 partialize: (s) => ({
                     autoSave: s.autoSave,
+                    autoOrientPortrait: s.autoOrientPortrait,
                     usePrinterDpi: s.usePrinterDpi,
                     keyboardShortcuts: s.keyboardShortcuts,
                     toolSettings: s.toolSettings,

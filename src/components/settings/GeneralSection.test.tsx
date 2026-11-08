@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '../../i18n';
 import { useStore } from '../../store/useStore';
 import { GeneralSection } from './GeneralSection';
@@ -16,6 +16,7 @@ afterEach(() => {
         connectMethod: 'bluetooth',
         paperRepo: null,
         defaultPaperTypeId: undefined,
+        autoOrientPortrait: false,
     });
 });
 
@@ -95,6 +96,37 @@ describe('GeneralSection grid spacing', () => {
         fireEvent.keyDown(input, { key: 'Enter' });
 
         expect(useStore.getState().gridSpacingHm).toBe(2000);
+    });
+});
+
+describe('GeneralSection default view orientation (opt-in)', () => {
+    const autoOrientToggle = () =>
+        screen.getByRole('switch', { name: /auto-rotate portrait labels/i });
+
+    it('renders off by default and reflects the store value', () => {
+        useStore.setState({ autoOrientPortrait: false });
+        render(<GeneralSection />);
+
+        expect(autoOrientToggle().getAttribute('aria-checked')).toBe('false');
+        expect(
+            screen.getByText(/show a portrait label on its side when it opens/i),
+        ).toBeTruthy();
+
+        act(() => {
+            useStore.setState({ autoOrientPortrait: true });
+        });
+        expect(autoOrientToggle().getAttribute('aria-checked')).toBe('true');
+    });
+
+    it('writes the chosen value to the store on click', () => {
+        useStore.setState({ autoOrientPortrait: false });
+        render(<GeneralSection />);
+
+        fireEvent.click(autoOrientToggle());
+        expect(useStore.getState().autoOrientPortrait).toBe(true);
+
+        fireEvent.click(autoOrientToggle());
+        expect(useStore.getState().autoOrientPortrait).toBe(false);
     });
 });
 

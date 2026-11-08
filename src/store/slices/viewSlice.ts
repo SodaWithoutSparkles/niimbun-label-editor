@@ -57,18 +57,24 @@ export const createViewSlice: StoreSlice = (set) => ({
     toggleViewRotation: () =>
         set((state) => ({ viewRotation: state.viewRotation === 0 ? 90 : 0, viewRotationUserSet: true })),
     /**
-     * Default view orientation for a freshly opened document (§6): the label's
-     * long axis horizontal when its backing is taller than it is wide. View-only
-     * (invariant 1) — it never writes the document. A no-op once the user has
-     * toggled rotation by hand, so it can never clobber a manual choice (it is
-     * only ever invoked at the doc-open boundary, never from a render/resize).
+     * Default view orientation for a freshly opened document (§6), gated by the
+     * `autoOrientPortrait` preference. With the preference ON, a label whose
+     * backing is taller than it is wide opens with its long axis horizontal
+     * (rotation 90). With it OFF (the default), the view stays unrotated so the
+     * real orientation is shown. View-only (invariant 1) — it never writes the
+     * document.
+     *
+     * A no-op once the user has toggled rotation by hand, so it can never
+     * clobber a manual choice (it is only ever invoked at the doc-open boundary,
+     * never from a render/resize). Changing the preference itself does not
+     * rotate the document already on screen; it applies at the next doc-open.
      */
     applyDefaultViewOrientation: (backingW, backingH) =>
-        set((state) =>
-            state.viewRotationUserSet
-                ? {}
-                : { viewRotation: backingH > backingW ? 90 : 0 },
-        ),
+        set((state) => {
+            if (state.viewRotationUserSet) return {};
+            const rotate = state.autoOrientPortrait && backingH > backingW;
+            return { viewRotation: rotate ? 90 : 0 };
+        }),
     /** Re-arm the auto-pick at a doc-open boundary (before applying it). */
     resetViewOrientation: () => set({ viewRotationUserSet: false }),
 

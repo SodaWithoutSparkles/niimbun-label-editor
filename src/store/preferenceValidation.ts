@@ -31,6 +31,7 @@ import type {
 export type PersistedSettings = Pick<
     AppState,
     | 'autoSave'
+    | 'autoOrientPortrait'
     | 'usePrinterDpi'
     | 'keyboardShortcuts'
     | 'toolSettings'
@@ -344,6 +345,9 @@ export const validatePersistedSettings = (
 
     return {
         autoSave: normalizeBoolean(persisted.autoSave) ?? defaults.autoSave,
+        autoOrientPortrait:
+            normalizeBoolean(persisted.autoOrientPortrait) ??
+            defaults.autoOrientPortrait,
         usePrinterDpi:
             normalizeBoolean(persisted.usePrinterDpi) ?? defaults.usePrinterDpi,
         keyboardShortcuts:
@@ -391,6 +395,9 @@ export const pickPersistedKeys = (
     const repaired = validatePersistedSettings(persisted, defaults);
     const picked: Partial<PersistedSettings> = {};
     if ('autoSave' in persisted) picked.autoSave = repaired.autoSave;
+    if ('autoOrientPortrait' in persisted) {
+        picked.autoOrientPortrait = repaired.autoOrientPortrait;
+    }
     if ('usePrinterDpi' in persisted) picked.usePrinterDpi = repaired.usePrinterDpi;
     if ('keyboardShortcuts' in persisted) picked.keyboardShortcuts = repaired.keyboardShortcuts;
     if ('toolSettings' in persisted) picked.toolSettings = repaired.toolSettings;
