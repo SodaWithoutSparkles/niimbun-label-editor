@@ -13,11 +13,13 @@ and is capability-gated.
 - **Physical verification (owner, 2026-11-08, density 3 default):** the 16-level
   ramp is **not fully usable on paper** — levels **0–2 are indistinguishable from
   the background**, level **3 is very faint**, and on some stock level **15 merges
-  with 14 (sometimes 13)**. Usable range is roughly **4–14**. A later **dynamic
-  range** option (map the authored tone range onto the physically usable band) is
-  requested — see **D-75**. Red/black physical calibration is still pending. Owner
-  checklist: [`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md); the harness
-  has a **Density** select for heat/energy tests (density does not change the ramp
+  with 14 (sometimes 13)**. Usable range is roughly **4–14**. **P10 wave 1 shipped
+  the usable band as a user setting** (`grayscaleTone`, default 4/14; level 0 stays
+  paper white) instead of hard-coding one printer's range. Dynamic-range mapping
+  of the authored tone range onto the band is still **D-75**. Red/black physical
+  calibration is still pending. Owner checklist:
+  [`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md); the harness has a
+  **Density** select for heat/energy tests (density does not change the ramp
   mapping).
 - **Red/black mode on mono stock** (owner, 2026-11-08): prints an intermediate
   **grey ≈ grayscale levels 11–12**, not black/red. The mode assumes red/black
@@ -73,17 +75,25 @@ post-clip → offset → encoder canvas`.
 
 - **mono** — unchanged: per-object policy mask + `quantizeRgba` (1-bit goldens
   byte-identical).
-- **grayscale** — skips the policy mask entirely; one `diffuseRamp` pass with
-  `grayscaleRampPalette()` over **one BT.601 scalar luminance plane** (a neutral
-  ramp has no chroma sink, so an RGB error vector would clip against 0/255 and
-  collapse saturated sources). The entry is chosen by the **band-centre grey
-  value** (`|entry.r − L|` over the exact integers `255 − 17k`), which reproduces
-  `ImageEncoder.colorToGrayLevel` without re-weighting the accumulated scalar.
-  The knobs come from `buildQuantizeOptions`, i.e. the **global** quantizer's
-  effective settings. At the default global strategy (`threshold`) that resolves
-  to gamma 1, strength 1, serpentine true, so the mode is serpentine
-  Floyd–Steinberg over the 16 band-centre greys. Per-node policies and params do
-  not apply (no mask is built; `policyOverflowCount` is absent).
+- **grayscale** — skips the policy mask entirely; one `diffuseRamp` pass with a
+  **band-limited** `grayscaleRampPalette(minLevel, maxLevel)` over **one BT.601
+  scalar luminance plane** (a neutral ramp has no chroma sink, so an RGB error
+  vector would clip against 0/255 and collapse saturated sources). The palette is
+  **paper white (level 0) plus every level in the usable band**; level 0 is
+  always kept so margins, region clips and highlights stay blank (a strict
+  `[4..14]` remap would grey the whole page). The app passes the persisted
+  `grayscaleTone` (default **4–14**); direct callers/tests with no arguments get
+  the unchanged 0–15 ramp. A reversed band (`min > max`) ties at `max`. Entry
+  selection is by the **band-centre grey value** (`|entry.r − L|` over the exact
+  integers `255 − 17k`), which reproduces `ImageEncoder.colorToGrayLevel` without
+  re-weighting the accumulated scalar. Dithering runs between the **allowed**
+  entries, so a tone between level 0 and level 4 dithers across that gap instead
+  of vanishing into invisible levels. The knobs come from `buildQuantizeOptions`,
+  i.e. the **global** quantizer's effective settings. At the default global
+  strategy (`threshold`) that resolves to gamma 1, strength 1, serpentine true,
+  so the mode is serpentine Floyd–Steinberg over the band greys. Per-node
+  policies and params do not apply (no mask is built; `policyOverflowCount` is
+  absent).
 - **redBlack** — builds the policy mask exactly as mono, then uses it only to
   split **flat vs diffuse**:
   - slot 0 is the global strategy; every slot whose resolved quantizer is
@@ -97,12 +107,16 @@ post-clip → offset → encoder canvas`.
     - **red spot** — OKLab chroma projected on the 29° red axis; hue gate (full
       ≤15°, zero ≥34°) × near-neutral chroma guard × saturation tone. Halftoned
       as **clustered 3×3 cells** (0.254 mm @ 300 dpi, grid anchored at the
-      raster origin) with allowed levels `0, 5/9 … 9/9` — **no non-zero level
-      below 5/9**. Dots grow by connected priority (centre plus-shape, then
-      corners); a non-zero cell inks ≥4 dots and ≥half its available dots, and a
-      cell that cannot form a 4-dot connected cluster is suppressed entirely
-      (isolated dots do not develop; flat art is not bridged). Serpentine FS
-      runs at cell resolution on the realised residual.
+      raster origin) with allowed levels `0` plus `k/9` for `k` in the
+      **coverage band** `[round(min·9/100) .. floor(max·9/100)]`, clamped 1..9
+      (defaults **50–100 % → `0, 5/9 … 9/9`**, today's set; empty/reversed band
+      clamps `max` up to `min`'s level). Dots grow by connected priority (centre
+      plus-shape, then corners); a non-zero cell inks ≥4 dots — the 4/9
+      (~44 %) minimum of a full cell — so a full cell's **effective floor is
+      4/9 (~44 %)** even when the slider asks for less, and a cell that cannot
+      form a 4-dot connected cluster is suppressed entirely (isolated dots do
+      not develop; flat art is not bridged). Serpentine FS runs at cell
+      resolution on the realised residual.
     - **black** — `BT.601 darkness − red ink darkness`:
       `k = clamp01(((1 − Y − 0.04) / 0.96 − 0.70 · ρ) · blackGain)` with
       `RED_INK_LUMA 0.30`, so a bright red or pink takes no black and a dark red
@@ -171,30 +185,45 @@ non-white pixel, so red ink is ink in the mirror-loss notice.
 - Encoder split: `0xff0000` → red plane; any other non-white → black plane;
   white → neither. A near-red pixel would silently print black.
 
-## Red/black tuning (P9)
+## Page tuning (P9, extended P10)
 
-- **Persisted settings.** `redBlackSettings: { redIntensity, blackDepth }`
-  (defaults `1` / `0.5`) lives in the settings slice
-  (`DEFAULT_RED_BLACK_SETTINGS`, `storeDefaults.ts`), is merged by
-  `setRedBlackSettings` with a clamp (`redIntensity 0..1.5`, `blackDepth 0..1`,
+- **Persisted settings.** `redBlackSettings: { redIntensity, blackDepth,
+  redCoverageMin, redCoverageMax }` (defaults `1` / `0.5` / `50` / `100`) lives
+  in the settings slice (`DEFAULT_RED_BLACK_SETTINGS`, `storeDefaults.ts`), is
+  merged by `setRedBlackSettings` with clamps (`redIntensity 0..1.5`,
+  `blackDepth 0..1`, coverage 0..100 integers, reversed band ties `min = max`,
   non-finite keeps the current value) and is carried by `pickPersistedKeys`.
   Global preference, never document data.
-- **UI.** Two range sliders under the page-colour row in the print dialog,
-  rendered only when `pageColor === DoubleColor` **and**
-  `capabilities.doubleColor === true`: *Red intensity* 0–150 %, *Black depth*
-  0–100 %, labels `print.redIntensity` / `print.blackDepth` plus `…Hint`
-  descriptions.
+- **Grayscale band.** `grayscaleTone: { minLevel, maxLevel }` (defaults
+  **4 / 14**) is the same kind of setting: `setGrayscaleTone` clamps to 0..15
+  integers, ties `min = max` when reversed, and `normalizeGrayscaleTone` repairs
+  a corrupt blob. Level 0 is **not** part of the band: the render palette always
+  keeps paper white. A store default of 4/14 therefore renders `[0, 4..14]`.
+- **UI.** Under the page-colour row in the print dialog, gated on the selected
+  **and supported** page colour:
+  - Grayscale — *Lightest ink level* / *Darkest ink level* range inputs (0–15,
+    step 1, default 4/14) with `level N` readouts and a hint that level 0 stays
+    paper white and the band is paper-dependent.
+  - Red & black — *Red intensity* 0–150 %, *Black depth* 0–100 %, *Red coverage
+    from* / *Red coverage to* 0–100 % (defaults 50/100), each with a readout; the
+    coverage hint states the ~50 % local-coverage need on this stock class and
+    that a non-zero cell always inks at least 4 of 9 dots (~44 %).
 - **Threading (invariant 7).** `PrintOverrides.redBlack` → `renderOptionsOf`
-  forwards it only when defined **and** the page is `redBlack` →
-  `RenderLabelPageOptions.redBlack`; `previewOptionsKey` appends
-  `rb<redIntensity>,<blackDepth>`; dialog thumbnails forward the same object and
-  content key; the job sees the same options. The `?printcolours` harness reads
-  the persisted store values too, so its preview and print match the dialog.
+  forwards it only when defined **and** the page is `redBlack`;
+  `PrintOverrides.grayscaleTone` is forwarded only when defined **and** the page
+  is `grayscale`, so mono/other option objects stay byte-identical.
+  `previewOptionsKey` appends `gt<min>,<max>` only when present and
+  `rb<intensity>,<depth>[,<min>,<max>]` for a coverage-bearing object; dialog
+  thumbnails (`PrintThumbnailOverrides`) forward both and include them in the
+  rebuild key only when defined; the job sees the same options. The
+  `?printcolours` harness reads the persisted store values too, so its preview
+  and print match the dialog.
 - **Engine mapping.** Demands are scaled **before** halftoning:
   `redGain = 2^(2·(redIntensity − 1))` (1 → ×1, 1.5 → ×2, 0 → 0) and
-  `blackGain = 2^(2·(blackDepth − 0.5))` (0.5 → ×1, 0 → ×0.5, 1 → ×2). The
-  clamps keep `ρ = 0` at 0, and black can only take free dots, so tuning cannot
-  break the red floor.
+  `blackGain = 2^(2·(blackDepth − 0.5))` (0.5 → ×1, 0 → ×0.5, 1 → ×2). The red
+  coverage band selects the allowed cell levels (`redBlackCellLevels`); defaults
+  reproduce the P9 set exactly. The clamps keep `ρ = 0` at 0, and black can only
+  take free dots, so tuning cannot break the red floor.
 - **Scope.** In red/black, page-level gamma/strength/serpentine do **not** apply
   to photo pixels (only the flat point op uses the page threshold/gamma).
   Grayscale still takes the global quantizer's gamma/strength/serpentine. See
@@ -301,13 +330,14 @@ split panes for the library author.
 
 ## v1 limitations / open items
 
-- **Page-level knobs only.** In red/black the photo path has exactly two knobs
-  (`redIntensity`, `blackDepth`); the flat classifier additionally takes the
-  page's resolved `threshold` and `gamma`. `strength` and `serpentine` are inert
-  in red/black, and no per-node diffuser params are applied. The per-object
-  strategy decides only flat vs diffuse. Grayscale applies no per-node params at
-  all. P6's dialog copy tells the user (`print.pageColorDoubleHint`). See
-  `tech-debt.md` **D-74**.
+- **Page-level knobs only.** In red/black the photo path has four knobs
+  (`redIntensity`, `blackDepth`, `redCoverageMin`, `redCoverageMax`); the flat
+  classifier additionally takes the page's resolved `threshold` and `gamma`.
+  `strength` and `serpentine` are inert in red/black, and no per-node diffuser
+  params are applied. The per-object strategy decides only flat vs diffuse.
+  Grayscale applies no per-node params at all and takes the band plus the global
+  quantizer's gamma/strength/serpentine. P6's dialog copy tells the user
+  (`print.pageColorDoubleHint`). See `tech-debt.md` **D-74**.
 - **No RGB-vector palette engine.** P9 removed `diffuseToPalette`, the
   weighted-RGB nearest test and the per-entry `weight` calibration hook;
   red/black photos are a two-ink separation, so "red weight vs black weight" no
@@ -315,19 +345,22 @@ split panes for the library author.
   deferred; `screentone` and `ostromoukhov` count as diffusion in this mode.
 - **Duotone constants are a starting profile.** `RED_INK_LUMA 0.30`, the 29° red
   axis with a 15–34° hue gate, the chroma curves (0.015–0.06 guard, 0.015–0.18
-  tone), the 0.04 white clip, the 3×3 cell / `5/9` level floor and the black gain
-  curve are **uncalibrated**. The two sliders are the user lever; code constants
-  change only after the calibration print
+  tone), the 0.04 white clip, the 3×3 cell / default `5/9` coverage floor and the
+  black gain curve are **uncalibrated**. The sliders are the user lever; code
+  constants change only after the calibration print
   ([`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md), P9 addendum). See
   **D-78** (cluster floor) and **D-79** (constants).
 - **Long grayscale buffer unverified.** `PrinterCapabilities.sixteenGrayMaxBuffer`
   is parsed but never enforced by 0.49. The 50×160 mm harness pattern covers it.
   See **D-73**.
-- **Grayscale dynamic range requested** (owner, 2026-11-08): at density 3 the
-  paper shows roughly levels 4–14; 0–2 sit on paper white, 3 is very faint, and on
-  some stock 15 merges into 14/13. A later option should map the authored tone
-  range onto the physically usable band (bounds depend on density/paper). Recorded
-  as **D-75**; the current ramp stays the library-defined 0–15.
+- **Grayscale usable band shipped, dynamic range still open** (owner,
+  2026-11-08; P10 wave 1): at density 3 the paper shows roughly levels 4–14;
+  0–2 sit on paper white, 3 is very faint, and on some stock 15 merges into
+  14/13. The band is now a persisted user setting (`grayscaleTone`, default
+  4/14, level 0 always kept), so it is no longer hard-coded to one printer/paper.
+  **Still open (D-75):** mapping the authored tone range *onto* that band; the
+  current ramp keeps the library's 0–15 mapping and only restricts the allowed
+  levels (dithering across the 0→min gap).
 - **D-05 seam drift** still applies — in red/black the flat point op discards
   any error a diffuse neighbour deposited, on top of the existing
   diffuse-beside-diffuse seam.
@@ -350,6 +383,16 @@ split panes for the library author.
   multi-page mode parity in `printLabel.test.ts` (~:490-556).
 - Dialog gating/copy: `src/components/print/PrintDialog.test.tsx`.
 - Harness patterns: `src/components/dev/printColoursPatterns.test.ts`.
+- Grayscale band (palette membership, dithering across the 0→min gap) and red
+  coverage level sets: `src/core/render/palette.test.ts`,
+  `src/core/render/duotone.test.ts` (`redBlackCellLevels`).
+- P10 store/threading/UI: `src/store/settingsSlice.test.ts`,
+  `src/store/preferenceValidation.test.ts`,
+  `src/editor/render/previewKeys.test.ts`,
+  `src/components/print/usePrintThumbnails.test.tsx`,
+  `src/print/printLabel.test.ts` (`renderOptionsOf`),
+  `src/components/print/PrintDialog.test.tsx`,
+  `src/components/dev/PrintColoursSmoke.test.tsx`.
 - `?printcolours` P9 calibration patterns (the harness reads the persisted
   `redBlackSettings`, so slider changes re-render the preview and go into the
   printed job):

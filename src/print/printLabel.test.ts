@@ -852,8 +852,33 @@ describe('buildCsvPrintJob', () => {
         expect(renderOptionsOf(undefined, undefined)).not.toHaveProperty('maxHeadHm');
     });
 
-    it('forwards redBlack only for a red/black page (mono/grayscale stay unchanged)', () => {
-        const redBlack = { redIntensity: 1.2, blackDepth: 0.4 };
+    it('forwards grayscaleTone only for a grayscale page (other modes stay unchanged)', () => {
+        const grayscaleTone = { minLevel: 4, maxLevel: 14 };
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.Grayscale, grayscaleTone }, undefined),
+        ).toMatchObject({ pageColor: 'grayscale', grayscaleTone });
+        // A stale band must not leak into another page colour.
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.DoubleColor, grayscaleTone }, undefined),
+        ).not.toHaveProperty('grayscaleTone');
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.SingleColor, grayscaleTone }, undefined),
+        ).not.toHaveProperty('grayscaleTone');
+        expect(renderOptionsOf({ grayscaleTone }, undefined)).not.toHaveProperty('grayscaleTone');
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.Grayscale }, undefined),
+        ).not.toHaveProperty('grayscaleTone');
+    });
+
+    it('forwards the red coverage band through redBlack', () => {
+        const redBlack = {
+            redIntensity: 1,
+            blackDepth: 0.5,
+            redCoverageMin: 60,
+            redCoverageMax: 90,
+        };
+        // Red/black output is identical to the pre-P10 default when the band is
+        // absent; the coverage fields ride the same key when supplied.
         expect(
             renderOptionsOf({ pageColor: PageColorType.DoubleColor, redBlack }, undefined),
         ).toMatchObject({ pageColor: 'redBlack', redBlack });

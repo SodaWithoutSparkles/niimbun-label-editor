@@ -19,6 +19,7 @@ import {
     resolveQuantizerParams,
     separateRedBlack,
     type ColorSpace,
+    type GrayscaleTone,
     type PageColorMode,
     type RasterDimensions,
     type PolicyMask,
@@ -55,8 +56,9 @@ import { flattenResolved, resolve, type ResolvedNode, type ResolveContext } from
  *     `quantizeRgba`.
  *   - `'grayscale'` — **no** policy mask and no 1-bit quantize; the raster's
  *     BT.601 luminance is diffused as one scalar plane by
- *     {@link diffuseRamp} through the 16-level ramp, so the encoder receives
- *     exact band-centre greys.
+ *     {@link diffuseRamp} through the **usable ink band** (paper white plus
+ *     `opts.grayscaleTone`, default the full 16-level ramp), so the encoder
+ *     receives exact band-centre greys.
  *   - `'redBlack'` — the policy mask is built as in mono, then turned into a
  *     per-pixel **flat mask**: pixels covered by a `threshold` policy (the
  *     global slot included) take the point-op path
@@ -69,11 +71,12 @@ import { flattenResolved, resolve, type ResolvedNode, type ResolveContext } from
  *     depends on the exact bytes).
  *
  * `pageColor: 'redBlack'` does **not** use the page-level diffuser knobs
- * (gamma/strength/serpentine) for photo pixels: the separation has exactly two
- * knobs, `redIntensity` and `blackDepth` (`opts.redBlack`). The per-node
- * strategy still selects flat vs diffuse, and the flat classifier keeps the
- * page's resolved threshold/gamma. `screentone` and `ostromoukhov` policies are
- * treated as diffusion here (per-ink screentone is deferred).
+ * (gamma/strength/serpentine) for photo pixels: the separation has four knobs,
+ * `redIntensity`, `blackDepth` and the `redCoverageMin`/`redCoverageMax` band
+ * (`opts.redBlack`). The per-node strategy still selects flat vs diffuse, and
+ * the flat classifier keeps the page's resolved threshold/gamma. `screentone`
+ * and `ostromoukhov` policies are treated as diffusion here (per-ink screentone
+ * is deferred).
  *
  * The clip runs **both before and after** quantization: pre-quantize so the
  * diffusion sees a white surround, post-quantize so error diffused across the
@@ -159,6 +162,23 @@ export interface RenderLabelPageOptions {
      */
     pageColor?: PageColorMode;
     /**
+     * Usable grayscale ink band (level 0 is always paper white). Ignored by
+     * every other page colour.
+     *
+     * The printer's 16 levels are not all usable: the bottom levels look like
+     * paper and the top can merge on some stock, depending on paper and printer.
+     * The render palette is therefore **paper white (level 0) plus every level
+     * in `minLevel`..`maxLevel`** — level 0 is kept unconditionally so label
+     * margins and clipped regions stay blank. Both values clamp to 0..15
+     * (integers); `minLevel > maxLevel` ties at `maxLevel`. Absent fields use
+     * the engine defaults 0 and 15, i.e. the full ramp.
+     *
+     * Dithering runs between the **allowed** entries, so a tone just below
+     * `minLevel` dithers across the `0 → minLevel` gap instead of vanishing into
+     * invisible levels.
+     */
+    grayscaleTone?: GrayscaleTone;
+    /**
      * Page-level duotone knobs for `pageColor: 'redBlack'`; ignored by every
      * other mode. Both are normalized by the engine: non-finite values fall
      * back to the defaults, out-of-range values are clamped.
@@ -168,10 +188,15 @@ export interface RenderLabelPageOptions {
      * - `blackDepth` (0..1, default 0.5) scales the black (darkness) demand:
      *   0.5 → ×1 (the mono/grayscale darkening, apart from the white-speckle
      *   clip), 0 → ×0.5, 1 → ×2.
+     * - `redCoverageMin` (0..100, default 50) and `redCoverageMax` (0..100,
+     *   default 100) select the allowed red cell levels `k/9`: a full cell
+     *   still inks at least four connected dots, so its effective floor is
+     *   `4/9` (~44 %) whatever a lower slider says.
      *
-     * They act on the continuous ink demands **before** halftoning, so they can
-     * never break the red coverage floor. The page-level diffuser knobs
-     * (gamma/strength/serpentine) do not apply to photo pixels in this mode.
+     * They act on the continuous ink demands and the allowed levels **before**
+     * halftoning, so they can never break the red coverage floor. The page-level
+     * diffuser knobs (gamma/strength/serpentine) do not apply to photo pixels in
+     * this mode.
      */
     redBlack?: RedBlackTuning;
     /**
@@ -1009,7 +1034,14 @@ export const renderLabelPage = async (
         // diffuser knobs come from the selected global quantizer's effective
         // settings, so the render-level gamma/strength/serpentine still apply;
         // the default `threshold` strategy resolves to the neutral gamma 1.
-        diffuseRamp(imageData, grayscaleRampPalette(), {
+        //
+        // The palette is the user's usable ink band: paper white (level 0) plus
+        // every level in `grayscaleTone` (defaults 0..15, i.e. the full ramp).
+        // Dithering then runs between the allowed entries, so a tone between
+        // level 0 and the lowest ink level dithers across that gap instead of
+        // disappearing into levels the paper cannot show.
+        const tone = opts.grayscaleTone;
+        diffuseRamp(imageData, grayscaleRampPalette(tone?.minLevel, tone?.maxLevel), {
             gamma: quantizeOptions.gamma,
             strength: quantizeOptions.strength,
             serpentine: quantizeOptions.serpentine,

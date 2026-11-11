@@ -16,7 +16,7 @@ import type {
     Region,
     GlobalSpec,
 } from '../core/doc/types';
-import type { QuantizerDefaults, QuantizerId, RedBlackTuning } from '../core/render';
+import type { GrayscaleTone, QuantizerDefaults, QuantizerId, RedBlackTuning } from '../core/render';
 import type { ResizeOptions, Size } from '../core/doc/geometry';
 import type { CsvRepo } from '../data/csvRepo';
 import type { LabelRepo, LabelSummary } from '../data/labelRepo';
@@ -97,11 +97,18 @@ export type ConnectMethod = 'bluetooth' | 'serial';
 export type DefaultQuantizerByType = Partial<Record<NodeType, QuantizerId>>;
 
 /**
- * Persisted red/black tuning (P9 wave C). Both knobs are always present: the
- * store has a concrete value for every page, unlike the optional engine
- * `RedBlackTuning` where an absent field means the engine default.
+ * Persisted red/black tuning (P9 wave C, extended P10). All four knobs are
+ * always present: the store has a concrete value for every page, unlike the
+ * optional engine `RedBlackTuning` where an absent field means the engine
+ * default.
  */
 export type RedBlackSettings = Required<RedBlackTuning>;
+
+/**
+ * Persisted grayscale usable ink band (P10). Both bounds are always present;
+ * the render option is the optional `GrayscaleTone` form.
+ */
+export type GrayscaleToneSettings = Required<GrayscaleTone>;
 
 export type NotificationType = 'info' | 'success' | 'warning' | 'error';
 
@@ -221,17 +228,34 @@ export interface AppState {
     defaultQuantizerByType: DefaultQuantizerByType;
     setDefaultQuantizerByType: (defaults: DefaultQuantizerByType) => void;
     /**
-     * Red/black page tuning (P9 wave C): `redIntensity` (0..1.5) and
-     * `blackDepth` (0..1). Applied to **every** red/black page — preview,
-     * thumbnails and the print job share this one value (invariant 7).
-     * Persisted with the other global settings; never document data.
+     * Red/black page tuning (P9 wave C, extended P10): `redIntensity` (0..1.5),
+     * `blackDepth` (0..1) and the red cell-coverage band
+     * `redCoverageMin`/`redCoverageMax` (0..100). Applied to **every** red/black
+     * page — preview, thumbnails and the print job share this one value
+     * (invariant 7). Persisted with the other global settings; never document
+     * data.
      */
     redBlackSettings: RedBlackSettings;
     /**
      * Merge a partial patch into `redBlackSettings` and clamp each knob to its
      * engine range. A non-finite patch value keeps the current (valid) value.
+     * A reversed coverage band clamps `min` down to `max`.
      */
     setRedBlackSettings: (patch: Partial<RedBlackSettings>) => void;
+    /**
+     * Usable grayscale ink band (P10): `minLevel`/`maxLevel` (0..15 integers,
+     * default 4/14). Paper/printer dependent; level 0 always stays paper white.
+     * Applied to every grayscale page — preview, thumbnails and the print job
+     * (invariant 7). Persisted with the other global settings; never document
+     * data.
+     */
+    grayscaleTone: GrayscaleToneSettings;
+    /**
+     * Merge a partial patch into `grayscaleTone` and clamp both levels to
+     * 0..15 integers. A reversed band clamps `min` down to `max`; a non-finite
+     * patch value keeps the current (valid) value.
+     */
+    setGrayscaleTone: (patch: Partial<GrayscaleToneSettings>) => void;
     /**
      * Preferred paper type for a new label, persisted across sessions. Optional
      * on purpose: unset (`undefined`) is valid and means "no preference", so the

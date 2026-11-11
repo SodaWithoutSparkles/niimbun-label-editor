@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createAppStore } from './useStore';
-import { DEFAULT_RED_BLACK_SETTINGS, defaultUsePrinterDpi } from './storeDefaults';
+import {
+    DEFAULT_GRAYSCALE_TONE,
+    DEFAULT_RED_BLACK_SETTINGS,
+    defaultUsePrinterDpi,
+} from './storeDefaults';
 
 /** Minimal in-memory Storage, mirroring `docSlice.persistence.test.ts`. */
 const makeStorage = (): Storage => {
@@ -88,34 +92,47 @@ describe('redBlackSettings', () => {
         const storage = makeStorage();
         const store = createAppStore(storage);
         expect(store.getState().redBlackSettings).toEqual(DEFAULT_RED_BLACK_SETTINGS);
-        expect(DEFAULT_RED_BLACK_SETTINGS).toEqual({ redIntensity: 1, blackDepth: 0.5 });
+        expect(DEFAULT_RED_BLACK_SETTINGS).toEqual({
+            redIntensity: 1,
+            blackDepth: 0.5,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
+        });
 
         store.getState().setRedBlackSettings({ redIntensity: 1.2 });
         expect(store.getState().redBlackSettings).toEqual({
             redIntensity: 1.2,
             blackDepth: 0.5,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
         });
 
         const reloaded = createAppStore(storage);
         expect(reloaded.getState().redBlackSettings).toEqual({
             redIntensity: 1.2,
             blackDepth: 0.5,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
         });
     });
 
-    it('merges a partial patch and clamps both knobs', () => {
+    it('merges a partial patch and clamps every knob', () => {
         const store = createAppStore(makeStorage());
         store.getState().setRedBlackSettings({ redIntensity: 1.2, blackDepth: 0.7 });
         expect(store.getState().redBlackSettings).toEqual({
             redIntensity: 1.2,
             blackDepth: 0.7,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
         });
 
-        // One key in the patch leaves the other untouched.
+        // One key in the patch leaves the other knobs untouched.
         store.getState().setRedBlackSettings({ blackDepth: 0.2 });
         expect(store.getState().redBlackSettings).toEqual({
             redIntensity: 1.2,
             blackDepth: 0.2,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
         });
 
         // Out-of-range values clamp; non-finite keeps the current value.
@@ -123,6 +140,8 @@ describe('redBlackSettings', () => {
         expect(store.getState().redBlackSettings).toEqual({
             redIntensity: 1.5,
             blackDepth: 0,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
         });
         store.getState().setRedBlackSettings({
             redIntensity: Number.NaN,
@@ -131,13 +150,103 @@ describe('redBlackSettings', () => {
         expect(store.getState().redBlackSettings).toEqual({
             redIntensity: 1.5,
             blackDepth: 0,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
+        });
+    });
+
+    it('clamps and orders the red coverage band, rounding to integers', () => {
+        const store = createAppStore(makeStorage());
+        store.getState().setRedBlackSettings({ redCoverageMin: 20, redCoverageMax: 80 });
+        expect(store.getState().redBlackSettings).toMatchObject({
+            redCoverageMin: 20,
+            redCoverageMax: 80,
+        });
+
+        // Out of range clamps; a reversed band ties at the upper bound.
+        store.getState().setRedBlackSettings({ redCoverageMin: -10, redCoverageMax: 130 });
+        expect(store.getState().redBlackSettings).toMatchObject({
+            redCoverageMin: 0,
+            redCoverageMax: 100,
+        });
+        store.getState().setRedBlackSettings({ redCoverageMin: 90 });
+        store.getState().setRedBlackSettings({ redCoverageMax: 40 });
+        expect(store.getState().redBlackSettings).toMatchObject({
+            redCoverageMin: 40,
+            redCoverageMax: 40,
+        });
+
+        // Integers: the slider is step 1, but a programmatic write rounds.
+        store.getState().setRedBlackSettings({ redCoverageMin: 61.6, redCoverageMax: 90.2 });
+        expect(store.getState().redBlackSettings).toMatchObject({
+            redCoverageMin: 62,
+            redCoverageMax: 90,
+        });
+        // Non-finite keeps the current value.
+        store.getState().setRedBlackSettings({
+            redCoverageMin: Number.NaN,
+            redCoverageMax: Infinity,
+        });
+        expect(store.getState().redBlackSettings).toMatchObject({
+            redCoverageMin: 62,
+            redCoverageMax: 90,
         });
     });
 
     it('resetSettings restores the defaults', () => {
         const store = createAppStore(makeStorage());
-        store.getState().setRedBlackSettings({ redIntensity: 1.5, blackDepth: 1 });
+        store.getState().setRedBlackSettings({
+            redIntensity: 1.5,
+            blackDepth: 1,
+            redCoverageMin: 20,
+            redCoverageMax: 40,
+        });
         store.getState().resetSettings();
         expect(store.getState().redBlackSettings).toEqual(DEFAULT_RED_BLACK_SETTINGS);
+    });
+});
+
+describe('grayscaleTone', () => {
+    it('defaults to the measured usable band 4..14 and persists it', () => {
+        const storage = makeStorage();
+        const store = createAppStore(storage);
+        expect(store.getState().grayscaleTone).toEqual({ minLevel: 4, maxLevel: 14 });
+        expect(DEFAULT_GRAYSCALE_TONE).toEqual({ minLevel: 4, maxLevel: 14 });
+
+        store.getState().setGrayscaleTone({ maxLevel: 12 });
+        expect(store.getState().grayscaleTone).toEqual({ minLevel: 4, maxLevel: 12 });
+
+        const reloaded = createAppStore(storage);
+        expect(reloaded.getState().grayscaleTone).toEqual({ minLevel: 4, maxLevel: 12 });
+    });
+
+    it('merges a partial patch, rounds and clamps to integer levels 0..15', () => {
+        const store = createAppStore(makeStorage());
+        store.getState().setGrayscaleTone({ minLevel: 2.4, maxLevel: 9.6 });
+        expect(store.getState().grayscaleTone).toEqual({ minLevel: 2, maxLevel: 10 });
+
+        store.getState().setGrayscaleTone({ minLevel: -5, maxLevel: 99 });
+        expect(store.getState().grayscaleTone).toEqual({ minLevel: 0, maxLevel: 15 });
+
+        // Non-finite keeps the current value.
+        store.getState().setGrayscaleTone({ minLevel: Number.NaN, maxLevel: Infinity });
+        expect(store.getState().grayscaleTone).toEqual({ minLevel: 0, maxLevel: 15 });
+    });
+
+    it('ties a reversed band at the upper bound (min clamps down to max)', () => {
+        const store = createAppStore(makeStorage());
+        store.getState().setGrayscaleTone({ minLevel: 12, maxLevel: 5 });
+        expect(store.getState().grayscaleTone).toEqual({ minLevel: 5, maxLevel: 5 });
+
+        // Raising the max alone re-opens the band without moving the min.
+        store.getState().setGrayscaleTone({ maxLevel: 8 });
+        expect(store.getState().grayscaleTone).toEqual({ minLevel: 5, maxLevel: 8 });
+    });
+
+    it('resetSettings restores 4..14', () => {
+        const store = createAppStore(makeStorage());
+        store.getState().setGrayscaleTone({ minLevel: 0, maxLevel: 15 });
+        store.getState().resetSettings();
+        expect(store.getState().grayscaleTone).toEqual(DEFAULT_GRAYSCALE_TONE);
     });
 });

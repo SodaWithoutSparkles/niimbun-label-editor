@@ -12,6 +12,7 @@ import { createWarningsSlice } from './slices/warningsSlice';
 import { createViewSlice } from './slices/viewSlice';
 import {
     DEFAULT_CONNECT_METHOD,
+    DEFAULT_GRAYSCALE_TONE,
     DEFAULT_GRID_SPACING_HM,
     DEFAULT_QUANTIZER_BY_TYPE,
     DEFAULT_QUANTIZER_DEFAULTS,
@@ -44,6 +45,7 @@ const persistedDefaults: PersistedSettings = {
     quantizerDefaults: DEFAULT_QUANTIZER_DEFAULTS,
     defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
     redBlackSettings: DEFAULT_RED_BLACK_SETTINGS,
+    grayscaleTone: DEFAULT_GRAYSCALE_TONE,
     // Optional: `undefined` is the "no preference" default (see `storeTypes`).
     defaultPaperTypeId: undefined,
 };
@@ -166,6 +168,7 @@ export const createAppStore = (storage?: Storage) => {
                     quantizerDefaults: s.quantizerDefaults,
                     defaultQuantizerByType: s.defaultQuantizerByType,
                     redBlackSettings: s.redBlackSettings,
+                    grayscaleTone: s.grayscaleTone,
                     defaultPaperTypeId: s.defaultPaperTypeId,
                 }),
                 migrate: (persisted) => persisted as PersistedSettings,

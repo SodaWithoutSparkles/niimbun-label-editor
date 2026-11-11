@@ -84,26 +84,88 @@ export const grayLevelColor = (level: number): number => 255 - 17 * level;
 export const GRAYSCALE_LEVELS = 16;
 
 /**
- * The 16-level grayscale PageColor ramp: index == library level, ordered
- * 0 = white → 15 = black, each entry at its exact band centre.
+ * The physically usable ink band for a grayscale page, as a user setting.
+ *
+ * The printer maps 16 levels evenly, but paper/printer physics decides which of
+ * them actually show ink: at density 3 the owner measured roughly 0–2 as
+ * indistinguishable from paper, 3 very faint, and 15 merging into 14 on some
+ * stock. The app therefore renders only {@link minLevel}…{@link maxLevel} — plus
+ * level 0, which is **always kept** so label margins, region clips and
+ * highlights stay paper white (a strict `[4..14]` remap would grey the whole
+ * page). This type is the optional render-option form; the store keeps the
+ * required form (`GrayscaleToneSettings`) with the app default 4/14.
+ */
+export interface GrayscaleTone {
+    /** Lightest ink level to print, 0..15. Default 0 (engine default). */
+    minLevel?: number;
+    /** Darkest ink level to print, 0..15. Default 15 (engine default). */
+    maxLevel?: number;
+}
+
+/** Clamp one level to the printer range; a non-finite value takes `fallback`. */
+const normalizeGrayLevel = (value: number | undefined, fallback: number): number => {
+    if (value === undefined || !Number.isFinite(value)) return fallback;
+    return Math.min(GRAYSCALE_LEVELS - 1, Math.max(0, Math.round(value)));
+};
+
+/**
+ * The grayscale PageColor ramp for the usable band `minLevel`..`maxLevel`
+ * (defaults `0`..`15`, today's full ramp). Entries are always
+ * **paper white (level 0) plus every level in the band**, each at its exact
+ * band centre `255 - 17k`.
+ *
+ * Level 0 is kept unconditionally: the page margins and clipped regions are
+ * painted white, and a band that excluded 0 would map paper white to the
+ * lightest *ink* level and print a grey page. The band is paper/printer
+ * dependent, so the app passes the persisted `grayscaleTone`; a direct caller
+ * or test gets the unchanged 0..15 ramp.
+ *
+ * A reversed band (`minLevel > maxLevel`) is a tie at the upper bound: `min` is
+ * clamped to `max`, so `(14, 4)` prints exactly level 4 (plus paper white). The
+ * same rule is applied by the store and the preference validator.
  *
  * `nearest` mirrors `ImageEncoder.colorToGrayLevel` rather than using squared
- * RGB distance. For a neutral target the squared-distance nearest grey is the
- * channel **mean**, `(r + g + b) / 3`, which disagrees with the encoder's
- * BT.601 luminance on coloured input (saturated green: luminance ≈ 150, channel
- * mean 85) and would make the preview pick a different level from the print.
- * That is why this palette — and not every palette — carries a `nearest`.
+ * RGB distance, and is attached **only to the full 0..15 ramp**, where the
+ * palette index still equals the library level. For a restricted band the
+ * encoder level is not an entry index, so `nearest` is omitted rather than
+ * returning an index that would address the wrong entry. `diffuseRamp` selects
+ * by entry grey value and never reads `nearest`.
  */
-export const grayscaleRampPalette = (): Palette => ({
-    id: 'grayscale-ramp',
-    entries: Array.from({ length: GRAYSCALE_LEVELS }, (_, level) => {
+export const grayscaleRampPalette = (
+    minLevel = 0,
+    maxLevel = GRAYSCALE_LEVELS - 1,
+): Palette => {
+    const highest = normalizeGrayLevel(maxLevel, GRAYSCALE_LEVELS - 1);
+    const requestedLowest = normalizeGrayLevel(minLevel, 0);
+    // `min > max` ties at the upper bound (see the doc comment).
+    const lowest = requestedLowest > highest ? highest : requestedLowest;
+
+    const levels = [0];
+    for (let level = Math.max(1, lowest); level <= highest; level++) levels.push(level);
+    const entries = levels.map((level) => {
         const value = grayLevelColor(level);
         return { r: value, g: value, b: value };
-    }),
-    // Library formula, mirrored: `clamp(round((1 - L / 255) * 15), 0, 15)`.
-    nearest: (r, g, b) =>
-        Math.max(0, Math.min(15, Math.round((1 - monoLuminance(r, g, b) / 255) * 15))),
-});
+    });
+
+    const isFullRamp = lowest === 0 && highest === GRAYSCALE_LEVELS - 1;
+    return {
+        id: isFullRamp ? 'grayscale-ramp' : `grayscale-ramp-${lowest}-${highest}`,
+        entries,
+        // Library formula, mirrored: `clamp(round((1 - L / 255) * 15), 0, 15)`.
+        ...(isFullRamp
+            ? {
+                  nearest: (r: number, g: number, b: number) =>
+                      Math.max(
+                          0,
+                          Math.min(
+                              GRAYSCALE_LEVELS - 1,
+                              Math.round((1 - monoLuminance(r, g, b) / 255) * (GRAYSCALE_LEVELS - 1)),
+                          ),
+                      ),
+              }
+            : {}),
+    };
+};
 
 /**
  * The DoubleColor page palette: `[white, black, red]`, no `nearest`.

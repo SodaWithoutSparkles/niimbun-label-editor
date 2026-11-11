@@ -3,6 +3,7 @@ import type { RgbaBuffer } from './colorspace';
 import { monoLuminance } from './colorspace';
 import {
     RED_BLACK_CELL,
+    redBlackCellLevels,
     redBlackDemand,
     rednessOf,
     separateRedBlack,
@@ -899,5 +900,154 @@ describe('ink isolation', () => {
         separateRedBlack(rgba);
         expect(tally(rgba).black).toBe(0);
         expect(tally(rgba).red).toBeGreaterThan(0);
+    });
+});
+
+describe('red coverage band (P10)', () => {
+    /** Dots inked per 3×3 cell, row-major. */
+    const cellCounts = (rgba: RgbaBuffer): number[] => {
+        const cells: number[] = [];
+        const cellCols = Math.ceil(rgba.width / RED_BLACK_CELL);
+        const cellRows = Math.ceil(rgba.height / RED_BLACK_CELL);
+        for (let cy = 0; cy < cellRows; cy++) {
+            for (let cx = 0; cx < cellCols; cx++) {
+                let red = 0;
+                for (let dy = 0; dy < RED_BLACK_CELL; dy++) {
+                    const y = cy * RED_BLACK_CELL + dy;
+                    if (y >= rgba.height) continue;
+                    for (let dx = 0; dx < RED_BLACK_CELL; dx++) {
+                        const x = cx * RED_BLACK_CELL + dx;
+                        if (x >= rgba.width) continue;
+                        if (isRed(rgba, x, y)) red++;
+                    }
+                }
+                cells.push(red);
+            }
+        }
+        return cells;
+    };
+
+    it('keeps the historical level set for the 50..100 % default', () => {
+        // Today's set: no non-zero level below 5/9 (the D-78 physical floor).
+        expect(redBlackCellLevels()).toEqual([0, 5 / 9, 6 / 9, 7 / 9, 8 / 9, 1]);
+        expect(redBlackCellLevels(50, 100)).toEqual([0, 5 / 9, 6 / 9, 7 / 9, 8 / 9, 1]);
+    });
+
+    it('narrows the level set to the requested band', () => {
+        expect(redBlackCellLevels(67, 100)).toEqual([0, 6 / 9, 7 / 9, 8 / 9, 1]);
+        expect(redBlackCellLevels(100, 100)).toEqual([0, 1]);
+        expect(redBlackCellLevels(80, 90)).toEqual([0, 7 / 9, 8 / 9]);
+    });
+
+    it('clamps an empty/reversed band up to a single ink level', () => {
+        expect(redBlackCellLevels(100, 50)).toEqual([0, 1]);
+        // `max` clamps up to `min`'s level, so only that level is allowed.
+        expect(redBlackCellLevels(90, 20)).toEqual([0, 8 / 9]);
+        // Below the 4/9 physical floor the slider is still clamped to k >= 1.
+        expect(redBlackCellLevels(0, 0)).toEqual([0, 1 / 9]);
+        expect(redBlackCellLevels(-50, 250)).toEqual([
+            0, 1 / 9, 2 / 9, 3 / 9, 4 / 9, 5 / 9, 6 / 9, 7 / 9, 8 / 9, 1,
+        ]);
+    });
+
+    it('keeps the ≥4-dot cluster floor even when the band asks for less', () => {
+        // A low band (10..20 %) allows 1/9. A non-zero full cell still inks
+        // exactly the 4-dot minimum, so full cells never print below 4/9 — the
+        // documented effective floor — and the slider can reach it.
+        const rgba = solid(30, 30, 230, 150, 140);
+        separateRedBlack(rgba, { redCoverageMin: 10, redCoverageMax: 20 });
+
+        const counts = cellCounts(rgba);
+        let activated = 0;
+        for (const red of counts) {
+            if (red === 0) continue;
+            activated++;
+            expect(red).toBe(4);
+        }
+        expect(activated).toBeGreaterThan(0);
+    });
+
+    it('reaches a user-chosen 4/9 (44 %) full cell at exactly 4 connected dots', () => {
+        // 44 % is the lowest band that maps to 4/9. A full 3×3 cell must ink
+        // exactly 4 dots (44 %), not the old forced 5-dot floor, and those dots
+        // must still form a connected cluster.
+        expect(redBlackCellLevels(44, 44)).toEqual([0, 4 / 9]);
+
+        const rgba = solid(30, 30, 200, 40, 30);
+        separateRedBlack(rgba, { redCoverageMin: 44, redCoverageMax: 44 });
+
+        const counts = cellCounts(rgba);
+        expect(counts.every((red) => red === 4)).toBe(true);
+
+        // Per-cell connectivity: collect each cell's red dots and check they
+        // form one orthogonally connected cluster.
+        for (let cy = 0; cy < rgba.height / RED_BLACK_CELL; cy++) {
+            for (let cx = 0; cx < rgba.width / RED_BLACK_CELL; cx++) {
+                const points: { x: number; y: number }[] = [];
+                for (let dy = 0; dy < RED_BLACK_CELL; dy++) {
+                    for (let dx = 0; dx < RED_BLACK_CELL; dx++) {
+                        const x = cx * RED_BLACK_CELL + dx;
+                        const y = cy * RED_BLACK_CELL + dy;
+                        if (isRed(rgba, x, y)) points.push({ x, y });
+                    }
+                }
+                expect(points).toHaveLength(4);
+                expect(isOrthogonallyConnected(points)).toBe(true);
+            }
+        }
+    });
+
+    it('keeps partial cells within their available dots at the 4-dot minimum', () => {
+        // Rasters that produce clipped cells of n = 4 (5×5 corner) and n = 6
+        // (right/bottom edge). With the 44 % band every activated cell takes the
+        // 4-dot minimum: never more than n, never fewer than four; cells with
+        // fewer than four available dots are still suppressed.
+        for (const [width, height] of [
+            [5, 5],
+            [5, 3],
+        ] as const) {
+            const rgba = solid(width, height, 200, 40, 30);
+            separateRedBlack(rgba, { redCoverageMin: 44, redCoverageMax: 44 });
+
+            const cellCols = Math.ceil(width / RED_BLACK_CELL);
+            const cellRows = Math.ceil(height / RED_BLACK_CELL);
+            for (let cy = 0; cy < cellRows; cy++) {
+                for (let cx = 0; cx < cellCols; cx++) {
+                    let n = 0;
+                    let red = 0;
+                    for (let dy = 0; dy < RED_BLACK_CELL; dy++) {
+                        const y = cy * RED_BLACK_CELL + dy;
+                        if (y >= height) continue;
+                        for (let dx = 0; dx < RED_BLACK_CELL; dx++) {
+                            const x = cx * RED_BLACK_CELL + dx;
+                            if (x >= width) continue;
+                            n++;
+                            if (isRed(rgba, x, y)) red++;
+                        }
+                    }
+                    if (n < 4) {
+                        // Too few available dots: suppressed entirely.
+                        expect(red, `${width}×${height} cell ${cx},${cy}`).toBe(0);
+                    } else {
+                        expect(red, `${width}×${height} cell ${cx},${cy}`).toBe(
+                            Math.min(n, Math.max(4, Math.round((4 / 9) * n))),
+                        );
+                        expect(red).toBeLessThanOrEqual(n);
+                        expect(red).toBeGreaterThanOrEqual(4);
+                    }
+                }
+            }
+        }
+    });
+
+    it('restricts a full-demand field to the allowed levels', () => {
+        const rgba = solid(30, 30, 200, 40, 30);
+        separateRedBlack(rgba, { redCoverageMin: 80, redCoverageMax: 90 });
+        const allowed = [0, 7, 8];
+        for (const red of cellCounts(rgba)) {
+            expect(allowed).toContain(red);
+        }
+        // The field is strongly red: most cells take the top allowed level.
+        expect(cellCounts(rgba).filter((red) => red === 8).length).toBeGreaterThan(0);
     });
 });

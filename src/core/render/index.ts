@@ -50,6 +50,7 @@ export {
     RED_BLACK_BLACK,
     RED_BLACK_RED,
     RED_BLACK_WHITE,
+    type GrayscaleTone,
     type PageColorMode,
     type Palette,
     type PaletteEntry,
@@ -57,9 +58,12 @@ export {
 } from './palette';
 
 export {
+    DEFAULT_RED_COVERAGE_MAX,
+    DEFAULT_RED_COVERAGE_MIN,
     RED_BLACK_CELL,
     RED_INK_DARKNESS,
     RED_INK_LUMA,
+    redBlackCellLevels,
     redBlackDemand,
     rednessOf,
     separateRedBlack,

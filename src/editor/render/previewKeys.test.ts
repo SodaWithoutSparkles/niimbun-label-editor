@@ -109,6 +109,64 @@ describe('previewOptionsKey', () => {
             ),
         ).toBe(`${mono}|redBlack|c4800|rb1.2,0.4`);
     });
+    it('includes the red coverage band in the red/black segment when supplied', () => {
+        const mono = previewOptionsKey(options());
+        expect(
+            previewOptionsKey(
+                options({
+                    pageColor: 'redBlack',
+                    redBlack: {
+                        redIntensity: 1,
+                        blackDepth: 0.5,
+                        redCoverageMin: 60,
+                        redCoverageMax: 90,
+                    },
+                }),
+            ),
+        ).toBe(`${mono}|redBlack|rb1,0.5,60,90`);
+        // A change in either coverage bound changes the key.
+        expect(
+            previewOptionsKey(
+                options({
+                    pageColor: 'redBlack',
+                    redBlack: { redIntensity: 1, blackDepth: 0.5, redCoverageMin: 50 },
+                }),
+            ),
+        ).not.toBe(
+            previewOptionsKey(
+                options({
+                    pageColor: 'redBlack',
+                    redBlack: { redIntensity: 1, blackDepth: 0.5, redCoverageMin: 60 },
+                }),
+            ),
+        );
+    });
+
+    it('adds a grayscale-tone segment only when defined', () => {
+        const mono = previewOptionsKey(options());
+        // Absent (mono/red-black pages) appends nothing.
+        expect(previewOptionsKey(options({ pageColor: 'mono' }))).toBe(mono);
+
+        const grayscale = previewOptionsKey(options({ pageColor: 'grayscale' }));
+        expect(grayscale).toBe(`${mono}|grayscale`);
+        const tuned = previewOptionsKey(
+            options({ pageColor: 'grayscale', grayscaleTone: { minLevel: 4, maxLevel: 14 } }),
+        );
+        expect(tuned).toBe(`${mono}|grayscale|gt4,14`);
+        expect(tuned).not.toBe(grayscale);
+
+        // A changed bound changes the key; equal values give equal keys.
+        expect(
+            previewOptionsKey(
+                options({ pageColor: 'grayscale', grayscaleTone: { minLevel: 5, maxLevel: 14 } }),
+            ),
+        ).not.toBe(tuned);
+        expect(
+            previewOptionsKey(
+                options({ pageColor: 'grayscale', grayscaleTone: { minLevel: 4, maxLevel: 14 } }),
+            ),
+        ).toBe(tuned);
+    });
 });
 
 describe('previewOverridesKey', () => {

@@ -4,6 +4,7 @@ import {
     normalizeConnectMethod,
     normalizeDefaultPaperTypeId,
     normalizeDefaultQuantizerByType,
+    normalizeGrayscaleTone,
     normalizeGridSpacingHm,
     normalizeKeyboardShortcuts,
     normalizeLanguage,
@@ -17,6 +18,7 @@ import {
 } from './preferenceValidation';
 import {
     DEFAULT_CONNECT_METHOD,
+    DEFAULT_GRAYSCALE_TONE,
     DEFAULT_GRID_SPACING_HM,
     DEFAULT_QUANTIZER_BY_TYPE,
     DEFAULT_QUANTIZER_DEFAULTS,
@@ -236,19 +238,25 @@ describe('normalizeRedBlackSettings', () => {
         expect(normalizeRedBlackSettings([])).toBeUndefined();
     });
 
-    it('clamps both knobs to their engine ranges', () => {
+    it('clamps all four knobs to their engine ranges', () => {
         expect(normalizeRedBlackSettings({ redIntensity: -1, blackDepth: 2 })).toEqual({
             redIntensity: 0,
             blackDepth: 1,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
         });
         expect(normalizeRedBlackSettings({ redIntensity: 2, blackDepth: -3 })).toEqual({
             redIntensity: 1.5,
             blackDepth: 0,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
         });
         // An in-range value round-trips exactly.
         expect(normalizeRedBlackSettings({ redIntensity: 1.3, blackDepth: 0.25 })).toEqual({
             redIntensity: 1.3,
             blackDepth: 0.25,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
         });
     });
 
@@ -268,7 +276,82 @@ describe('normalizeRedBlackSettings', () => {
     it('drops extra keys', () => {
         expect(
             normalizeRedBlackSettings({ redIntensity: 1.2, blackDepth: 0.3, extra: 9 }),
-        ).toEqual({ redIntensity: 1.2, blackDepth: 0.3 });
+        ).toEqual({
+            redIntensity: 1.2,
+            blackDepth: 0.3,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
+        });
+    });
+
+    it('clamps and orders the red coverage band (reversed ties at the max)', () => {
+        expect(
+            normalizeRedBlackSettings({ redCoverageMin: 20, redCoverageMax: 80 }),
+        ).toMatchObject({ redCoverageMin: 20, redCoverageMax: 80 });
+        // Rounded to integers, clamped to 0..100.
+        expect(
+            normalizeRedBlackSettings({ redCoverageMin: -5, redCoverageMax: 150 }),
+        ).toMatchObject({ redCoverageMin: 0, redCoverageMax: 100 });
+        expect(
+            normalizeRedBlackSettings({ redCoverageMin: 62.7, redCoverageMax: 90.2 }),
+        ).toMatchObject({ redCoverageMin: 63, redCoverageMax: 90 });
+        // A reversed band clamps `min` down to `max` (the documented tie).
+        expect(
+            normalizeRedBlackSettings({ redCoverageMin: 90, redCoverageMax: 40 }),
+        ).toMatchObject({ redCoverageMin: 40, redCoverageMax: 40 });
+        // Non-finite / absent coverage falls back to the defaults.
+        expect(
+            normalizeRedBlackSettings({
+                redCoverageMin: Number.NaN,
+                redCoverageMax: Infinity,
+            }),
+        ).toMatchObject({ redCoverageMin: 50, redCoverageMax: 100 });
+    });
+});
+
+describe('normalizeGrayscaleTone', () => {
+    it('returns undefined for a non-object value (caller keeps its default)', () => {
+        expect(normalizeGrayscaleTone('nope')).toBeUndefined();
+        expect(normalizeGrayscaleTone(null)).toBeUndefined();
+        expect(normalizeGrayscaleTone(undefined)).toBeUndefined();
+        expect(normalizeGrayscaleTone([])).toBeUndefined();
+    });
+
+    it('keeps a valid band and falls back to 4/14 for absent or non-finite levels', () => {
+        expect(normalizeGrayscaleTone({ minLevel: 2, maxLevel: 12 })).toEqual({
+            minLevel: 2,
+            maxLevel: 12,
+        });
+        expect(normalizeGrayscaleTone({})).toEqual(DEFAULT_GRAYSCALE_TONE);
+        expect(
+            normalizeGrayscaleTone({ minLevel: Number.NaN, maxLevel: Infinity }),
+        ).toEqual(DEFAULT_GRAYSCALE_TONE);
+        expect(normalizeGrayscaleTone({ minLevel: '4' as never })).toEqual(
+            DEFAULT_GRAYSCALE_TONE,
+        );
+    });
+
+    it('clamps to integer levels 0..15 and ties a reversed band at the max', () => {
+        expect(normalizeGrayscaleTone({ minLevel: -3, maxLevel: 99 })).toEqual({
+            minLevel: 0,
+            maxLevel: 15,
+        });
+        expect(normalizeGrayscaleTone({ minLevel: 4.4, maxLevel: 13.6 })).toEqual({
+            minLevel: 4,
+            maxLevel: 14,
+        });
+        // `min > max` clamps `min = max` (documented tie).
+        expect(normalizeGrayscaleTone({ minLevel: 12, maxLevel: 5 })).toEqual({
+            minLevel: 5,
+            maxLevel: 5,
+        });
+    });
+
+    it('drops extra keys', () => {
+        expect(normalizeGrayscaleTone({ minLevel: 3, maxLevel: 9, extra: true })).toEqual({
+            minLevel: 3,
+            maxLevel: 9,
+        });
     });
 });
 
@@ -395,6 +478,7 @@ describe('normalizeKeyboardShortcuts — dithered-view key and migration', () =>
                 quantizerDefaults: DEFAULT_QUANTIZER_DEFAULTS,
                 defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
                 redBlackSettings: DEFAULT_RED_BLACK_SETTINGS,
+                grayscaleTone: DEFAULT_GRAYSCALE_TONE,
             },
         );
         expect(repaired.keyboardShortcuts.tools.rectangle).toBe('r');
@@ -454,6 +538,7 @@ const defaults: PersistedSettings = {
     quantizerDefaults: DEFAULT_QUANTIZER_DEFAULTS,
     defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
     redBlackSettings: DEFAULT_RED_BLACK_SETTINGS,
+    grayscaleTone: DEFAULT_GRAYSCALE_TONE,
 };
 
 describe('validatePersistedSettings', () => {
@@ -561,19 +646,62 @@ describe('validatePersistedSettings', () => {
                 { redBlackSettings: { redIntensity: 1.3, blackDepth: 0.2, extra: true } },
                 defaults,
             ).redBlackSettings,
-        ).toEqual({ redIntensity: 1.3, blackDepth: 0.2 });
+        ).toEqual({
+            redIntensity: 1.3,
+            blackDepth: 0.2,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
+        });
         expect(
             validatePersistedSettings(
                 { redBlackSettings: { redIntensity: -1, blackDepth: 2 } },
                 defaults,
             ).redBlackSettings,
-        ).toEqual({ redIntensity: 0, blackDepth: 1 });
+        ).toEqual({
+            redIntensity: 0,
+            blackDepth: 1,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
+        });
+        expect(
+            validatePersistedSettings(
+                { redBlackSettings: { redCoverageMin: 60, redCoverageMax: 90 } },
+                defaults,
+            ).redBlackSettings,
+        ).toEqual({
+            redIntensity: 1,
+            blackDepth: 0.5,
+            redCoverageMin: 60,
+            redCoverageMax: 90,
+        });
         // Non-object / absent => the default tuning.
         expect(
             validatePersistedSettings({ redBlackSettings: 'x' }, defaults).redBlackSettings,
         ).toEqual(DEFAULT_RED_BLACK_SETTINGS);
         expect(validatePersistedSettings({}, defaults).redBlackSettings).toEqual(
             DEFAULT_RED_BLACK_SETTINGS,
+        );
+    });
+
+    it('normalizes grayscaleTone, falling back to 4/14', () => {
+        expect(
+            validatePersistedSettings(
+                { grayscaleTone: { minLevel: 6, maxLevel: 10, extra: true } },
+                defaults,
+            ).grayscaleTone,
+        ).toEqual({ minLevel: 6, maxLevel: 10 });
+        expect(
+            validatePersistedSettings(
+                { grayscaleTone: { minLevel: 99, maxLevel: -2 } },
+                defaults,
+            ).grayscaleTone,
+        ).toEqual({ minLevel: 0, maxLevel: 0 });
+        // Non-object / absent => the default band.
+        expect(
+            validatePersistedSettings({ grayscaleTone: 'x' }, defaults).grayscaleTone,
+        ).toEqual(DEFAULT_GRAYSCALE_TONE);
+        expect(validatePersistedSettings({}, defaults).grayscaleTone).toEqual(
+            DEFAULT_GRAYSCALE_TONE,
         );
     });
 });
@@ -639,13 +767,32 @@ describe('pickPersistedKeys', () => {
     it('picks redBlackSettings only when present, and repairs bad entries', () => {
         expect(
             pickPersistedKeys({ redBlackSettings: { redIntensity: 1.4, blackDepth: 0.3 } }, defaults),
-        ).toEqual({ redBlackSettings: { redIntensity: 1.4, blackDepth: 0.3 } });
+        ).toEqual({
+            redBlackSettings: {
+                redIntensity: 1.4,
+                blackDepth: 0.3,
+                redCoverageMin: 50,
+                redCoverageMax: 100,
+            },
+        });
         // A present-but-garbage value repairs to the default and still overrides
         // the seed (`in` guard, not truthiness).
         const picked = pickPersistedKeys({ redBlackSettings: 'x' }, defaults);
         expect('redBlackSettings' in picked).toBe(true);
         expect(picked.redBlackSettings).toEqual(DEFAULT_RED_BLACK_SETTINGS);
         expect('redBlackSettings' in pickPersistedKeys({}, defaults)).toBe(false);
+    });
+
+    it('picks grayscaleTone only when present, and repairs bad entries', () => {
+        expect(
+            pickPersistedKeys({ grayscaleTone: { minLevel: 5, maxLevel: 11 } }, defaults),
+        ).toEqual({ grayscaleTone: { minLevel: 5, maxLevel: 11 } });
+        // A present-but-garbage value repairs to the default and still overrides
+        // the seed (`in` guard, not truthiness).
+        const picked = pickPersistedKeys({ grayscaleTone: 'x' }, defaults);
+        expect('grayscaleTone' in picked).toBe(true);
+        expect(picked.grayscaleTone).toEqual(DEFAULT_GRAYSCALE_TONE);
+        expect('grayscaleTone' in pickPersistedKeys({}, defaults)).toBe(false);
     });
 
     it('picks the two dither settings only when present, and repairs bad entries', () => {

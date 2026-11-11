@@ -12,7 +12,7 @@ import type { RenderedLabelPage, AssetDeps } from '../../editor/render';
 import type { JobProgress, JobRunResult, JobRunner } from '../../print/jobRunner';
 import type { PrintJob, PrinterCapabilities, PrinterStatus } from '../../print/transport';
 import { useStore } from '../../store/useStore';
-import { DEFAULT_RED_BLACK_SETTINGS } from '../../store/storeDefaults';
+import { DEFAULT_GRAYSCALE_TONE, DEFAULT_RED_BLACK_SETTINGS } from '../../store/storeDefaults';
 import { PrintDialog } from './PrintDialog';
 import type { PrintCsvStatus } from './usePrintJob';
 import { THUMBNAIL_DPI } from './usePrintThumbnails';
@@ -1650,7 +1650,10 @@ describe('PrintDialog — red/black tuning (P9 wave C)', () => {
         ).overrides;
 
     afterEach(() => {
-        useStore.setState({ redBlackSettings: DEFAULT_RED_BLACK_SETTINGS });
+        useStore.setState({
+            redBlackSettings: DEFAULT_RED_BLACK_SETTINGS,
+            grayscaleTone: DEFAULT_GRAYSCALE_TONE,
+        });
     });
 
     it('shows both sliders only for a supported red/black page', () => {
@@ -1674,8 +1677,13 @@ describe('PrintDialog — red/black tuning (P9 wave C)', () => {
         expect(blackSlider()).toBeInTheDocument();
         expect(redSlider()).toHaveValue('100');
         expect(blackSlider()).toHaveValue('50');
-        expect(screen.getByText('100%')).toBeInTheDocument();
-        expect(screen.getByText('50%')).toBeInTheDocument();
+        // Coverage defaults ride in the same red/black block.
+        expect(screen.getByLabelText('Red coverage from')).toHaveValue('50');
+        expect(screen.getByLabelText('Red coverage to')).toHaveValue('100');
+        // Readouts exist (100 % appears for red intensity and coverage-to, 50 %
+        // for black depth and coverage-from).
+        expect(screen.getAllByText('100%').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('50%').length).toBeGreaterThan(0);
     });
 
     it('has no sliders when the printer cannot print red & black', () => {
@@ -1696,11 +1704,15 @@ describe('PrintDialog — red/black tuning (P9 wave C)', () => {
         expect(useStore.getState().redBlackSettings).toEqual({
             redIntensity: 1.3,
             blackDepth: 0.5,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
         });
         fireEvent.change(blackSlider()!, { target: { value: '20' } });
         expect(useStore.getState().redBlackSettings).toEqual({
             redIntensity: 1.3,
             blackDepth: 0.2,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
         });
 
         // The doc-dpi page preview renders through the shared path with it.
@@ -1728,6 +1740,143 @@ describe('PrintDialog — red/black tuning (P9 wave C)', () => {
         // Back to mono: the tuning must not leak into another page colour.
         fireEvent.change(pageColorSelect(), { target: { value: 'mono' } });
         expect(thumbnailOverrides()).not.toHaveProperty('redBlack');
+    });
+
+    it('writes and threads the red coverage band', async () => {
+        renderDialog({ runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+
+        fireEvent.change(screen.getByLabelText('Red coverage from'), {
+            target: { value: '60' },
+        });
+        expect(useStore.getState().redBlackSettings).toMatchObject({
+            redCoverageMin: 60,
+            redCoverageMax: 100,
+        });
+        fireEvent.change(screen.getByLabelText('Red coverage to'), {
+            target: { value: '90' },
+        });
+        expect(useStore.getState().redBlackSettings).toMatchObject({
+            redCoverageMin: 60,
+            redCoverageMax: 90,
+        });
+
+        await waitFor(() =>
+            expect(
+                renderLabelPageMock.mock.calls.some(([, , opts]) => {
+                    const tuning = (
+                        opts as
+                            | { redBlack?: { redCoverageMin?: number; redCoverageMax?: number } }
+                            | undefined
+                    )?.redBlack;
+                    return tuning?.redCoverageMin === 60 && tuning?.redCoverageMax === 90;
+                }),
+            ).toBe(true),
+        );
+        expect(thumbnailOverrides()).toMatchObject({
+            redBlack: { redCoverageMin: 60, redCoverageMax: 90 },
+        });
+
+        fireEvent.click(printButton());
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobOverrides()).toMatchObject({
+            redBlack: { redCoverageMin: 60, redCoverageMax: 90 },
+        });
+    });
+});
+
+describe('PrintDialog — grayscale usable ink band (P10)', () => {
+    const pageColorSelect = () => screen.getByLabelText('Page colour');
+    const lightest = () => screen.queryByLabelText('Lightest ink level');
+    const darkest = () => screen.queryByLabelText('Darkest ink level');
+    const printButton = () => screen.getByRole('button', { name: 'Print' });
+    const grayscaleStatus = () => statusOf({ ...B1_PRO, grayscale: true });
+
+    const thumbnailOverrides = (): { grayscaleTone?: unknown } | undefined =>
+        (usePrintThumbnailsMock.mock.calls.at(-1)![0] as {
+            overrides?: { grayscaleTone?: unknown };
+        }).overrides;
+
+    const jobOverrides = (): { grayscaleTone?: unknown } | undefined =>
+        (
+            buildCsvPrintJobMock.mock.calls[0]![2] as {
+                overrides?: { grayscaleTone?: unknown };
+            }
+        ).overrides;
+
+    afterEach(() => {
+        useStore.setState({ grayscaleTone: DEFAULT_GRAYSCALE_TONE });
+    });
+
+    it('shows both level sliders only for a supported grayscale page', () => {
+        renderDialog({ runner: new FakeRunner(), printerStatus: grayscaleStatus() });
+
+        // Mono: nothing.
+        expect(lightest()).not.toBeInTheDocument();
+        expect(darkest()).not.toBeInTheDocument();
+
+        // Red & black: the duotone knobs, not the grayscale band.
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        expect(lightest()).not.toBeInTheDocument();
+        expect(darkest()).not.toBeInTheDocument();
+
+        // Grayscale: both, with the 4/14 defaults shown.
+        fireEvent.change(pageColorSelect(), { target: { value: 'grayscale' } });
+        expect(lightest()).toBeInTheDocument();
+        expect(darkest()).toBeInTheDocument();
+        expect(lightest()).toHaveValue('4');
+        expect(darkest()).toHaveValue('14');
+        expect(screen.getByText('level 4')).toBeInTheDocument();
+        expect(screen.getByText('level 14')).toBeInTheDocument();
+        expect(screen.getByText(/Level 0 always stays paper white/)).toBeInTheDocument();
+    });
+
+    it('hides the band when the printer cannot print grayscale pages', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, grayscale: false }),
+        });
+        fireEvent.change(pageColorSelect(), { target: { value: 'grayscale' } });
+        // The option is disabled; even forced, no controls are rendered.
+        expect(lightest()).not.toBeInTheDocument();
+        expect(darkest()).not.toBeInTheDocument();
+    });
+
+    it('writes the store and threads the band into preview, thumbnails and job', async () => {
+        renderDialog({ runner: new FakeRunner(), printerStatus: grayscaleStatus() });
+        fireEvent.change(pageColorSelect(), { target: { value: 'grayscale' } });
+
+        fireEvent.change(lightest()!, { target: { value: '5' } });
+        expect(useStore.getState().grayscaleTone).toEqual({ minLevel: 5, maxLevel: 14 });
+        fireEvent.change(darkest()!, { target: { value: '12' } });
+        expect(useStore.getState().grayscaleTone).toEqual({ minLevel: 5, maxLevel: 12 });
+
+        // The doc-dpi page preview renders through the shared path with it.
+        await waitFor(() =>
+            expect(
+                renderLabelPageMock.mock.calls.some(([, , opts]) => {
+                    const tone = (
+                        opts as { grayscaleTone?: { minLevel?: number; maxLevel?: number } } | undefined
+                    )?.grayscaleTone;
+                    return tone?.minLevel === 5 && tone?.maxLevel === 12;
+                }),
+            ).toBe(true),
+        );
+        // The queue thumbnails get the same pixel-changing override.
+        expect(thumbnailOverrides()).toMatchObject({
+            grayscaleTone: { minLevel: 5, maxLevel: 12 },
+        });
+
+        // The job carries it too (the dialog's options object is shared).
+        fireEvent.click(printButton());
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobOverrides()).toMatchObject({
+            grayscaleTone: { minLevel: 5, maxLevel: 12 },
+        });
+
+        // Back to mono: the band must not leak into another page colour.
+        fireEvent.change(pageColorSelect(), { target: { value: 'mono' } });
+        expect(thumbnailOverrides()).not.toHaveProperty('grayscaleTone');
     });
 });
 

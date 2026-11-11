@@ -155,6 +155,10 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     // into the preview, thumbnails and the job from here.
     const redBlackSettings = useStore((state) => state.redBlackSettings);
     const setRedBlackSettings = useStore((state) => state.setRedBlackSettings);
+    // Grayscale usable ink band (P10). Persisted global preference; threaded
+    // into the preview, thumbnails and the job from here.
+    const grayscaleTone = useStore((state) => state.grayscaleTone);
+    const setGrayscaleTone = useStore((state) => state.setGrayscaleTone);
     const capabilities = printerStatus.capabilities;
     /** 16-level grayscale pages are supported only by tasks that report it. */
     const grayscaleSupported = capabilities?.grayscale === true;
@@ -442,6 +446,13 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
      */
     const redBlackTuning =
         pageColor === PageColorType.DoubleColor ? redBlackSettings : undefined;
+    /**
+     * The usable grayscale ink band applies to a grayscale page only
+     * (`undefined` otherwise), so mono/red-black option objects and keys stay
+     * exactly as before.
+     */
+    const grayscaleTuning =
+        pageColor === PageColorType.Grayscale ? grayscaleTone : undefined;
 
     const thumbnailOverrides = useMemo<PrintThumbnailOverrides>(
         () => ({
@@ -459,6 +470,8 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             ...(headClampHm !== undefined ? { maxHeadHm: headClampHm } : {}),
             // P9: red/black tuning, only for a red/black page.
             ...(redBlackTuning !== undefined ? { redBlack: redBlackTuning } : {}),
+            // P10: usable grayscale band, only for a grayscale page.
+            ...(grayscaleTuning !== undefined ? { grayscaleTone: grayscaleTuning } : {}),
         }),
         [
             invert,
@@ -469,6 +482,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             pageColor,
             headClampHm,
             redBlackTuning,
+            grayscaleTuning,
         ],
     );
 
@@ -485,8 +499,9 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             ...(assets !== undefined ? { assets } : {}),
             ...thumbnailOverrides,
             ...(redBlackTuning !== undefined ? { redBlack: redBlackTuning } : {}),
+            ...(grayscaleTuning !== undefined ? { grayscaleTone: grayscaleTuning } : {}),
         }),
-        [resolved.dpi, assets, thumbnailOverrides, redBlackTuning],
+        [resolved.dpi, assets, thumbnailOverrides, redBlackTuning, grayscaleTuning],
     );
 
     const handlePreviewReport = useCallback(
@@ -567,6 +582,8 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             // P9: the job renders the same red/black separation as the preview
             // and thumbnails (invariant 7).
             ...(redBlackTuning !== undefined ? { redBlack: redBlackTuning } : {}),
+            // P10: the job renders the same usable grayscale band (invariant 7).
+            ...(grayscaleTuning !== undefined ? { grayscaleTone: grayscaleTuning } : {}),
         }),
         [
             densityEnabled,
@@ -584,6 +601,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             quantizerDefaults,
             defaultQuantizerByType,
             redBlackTuning,
+            grayscaleTuning,
         ],
     );
 
@@ -1081,6 +1099,59 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                 aria-label={t('print.pageColor')}
                             />
                         </SettingRow>
+                        {pageColor === PageColorType.Grayscale && grayscaleSupported && (
+                            <>
+                                <SettingRow
+                                    label={t('print.grayscaleLightest')}
+                                    description={t('print.grayscaleToneHint')}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={15}
+                                            step={1}
+                                            value={grayscaleTone.minLevel}
+                                            onChange={(event) =>
+                                                setGrayscaleTone({
+                                                    minLevel: Number(event.target.value),
+                                                })
+                                            }
+                                            className="w-40 accent-blue-500"
+                                            aria-label={t('print.grayscaleLightest')}
+                                        />
+                                        <span className="w-14 text-right font-mono text-xs text-gray-400">
+                                            {t('print.grayscaleLevelValue', {
+                                                level: grayscaleTone.minLevel,
+                                            })}
+                                        </span>
+                                    </div>
+                                </SettingRow>
+                                <SettingRow label={t('print.grayscaleDarkest')}>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={15}
+                                            step={1}
+                                            value={grayscaleTone.maxLevel}
+                                            onChange={(event) =>
+                                                setGrayscaleTone({
+                                                    maxLevel: Number(event.target.value),
+                                                })
+                                            }
+                                            className="w-40 accent-blue-500"
+                                            aria-label={t('print.grayscaleDarkest')}
+                                        />
+                                        <span className="w-14 text-right font-mono text-xs text-gray-400">
+                                            {t('print.grayscaleLevelValue', {
+                                                level: grayscaleTone.maxLevel,
+                                            })}
+                                        </span>
+                                    </div>
+                                </SettingRow>
+                            </>
+                        )}
                         {pageColor === PageColorType.DoubleColor && redBlackSupported && (
                             <>
                                 <SettingRow
@@ -1131,6 +1202,51 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                         />
                                         <span className="w-10 text-right font-mono text-xs text-gray-400">
                                             {Math.round(redBlackSettings.blackDepth * 100)}%
+                                        </span>
+                                    </div>
+                                </SettingRow>
+                                <SettingRow
+                                    label={t('print.redCoverageFrom')}
+                                    description={t('print.redCoverageHint')}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={100}
+                                            step={1}
+                                            value={redBlackSettings.redCoverageMin}
+                                            onChange={(event) =>
+                                                setRedBlackSettings({
+                                                    redCoverageMin: Number(event.target.value),
+                                                })
+                                            }
+                                            className="w-40 accent-blue-500"
+                                            aria-label={t('print.redCoverageFrom')}
+                                        />
+                                        <span className="w-10 text-right font-mono text-xs text-gray-400">
+                                            {redBlackSettings.redCoverageMin}%
+                                        </span>
+                                    </div>
+                                </SettingRow>
+                                <SettingRow label={t('print.redCoverageTo')}>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={100}
+                                            step={1}
+                                            value={redBlackSettings.redCoverageMax}
+                                            onChange={(event) =>
+                                                setRedBlackSettings({
+                                                    redCoverageMax: Number(event.target.value),
+                                                })
+                                            }
+                                            className="w-40 accent-blue-500"
+                                            aria-label={t('print.redCoverageTo')}
+                                        />
+                                        <span className="w-10 text-right font-mono text-xs text-gray-400">
+                                            {redBlackSettings.redCoverageMax}%
                                         </span>
                                     </div>
                                 </SettingRow>

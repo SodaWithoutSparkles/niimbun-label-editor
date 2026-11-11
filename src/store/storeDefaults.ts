@@ -1,9 +1,10 @@
 import type { SupportedLanguage } from '../i18n/languages';
-import type { QuantizerDefaults } from '../core/render';
+import { GRAYSCALE_LEVELS, type QuantizerDefaults } from '../core/render';
 import type {
     AppState,
     ConnectMethod,
     DefaultQuantizerByType,
+    GrayscaleToneSettings,
     KeyboardShortcutConfig,
     RedBlackSettings,
 } from './storeTypes';
@@ -83,6 +84,8 @@ export const DEFAULT_QUANTIZER_BY_TYPE: DefaultQuantizerByType = {};
 export const DEFAULT_RED_BLACK_SETTINGS: RedBlackSettings = {
     redIntensity: 1,
     blackDepth: 0.5,
+    redCoverageMin: 50,
+    redCoverageMax: 100,
 };
 
 /** Clamp ranges, shared by the store setter and the storage validator. */
@@ -90,6 +93,25 @@ export const RED_INTENSITY_MIN = 0;
 export const RED_INTENSITY_MAX = 1.5;
 export const BLACK_DEPTH_MIN = 0;
 export const BLACK_DEPTH_MAX = 1;
+/** Red cell coverage is a percent of a cell's dots. */
+export const RED_COVERAGE_MIN = 0;
+export const RED_COVERAGE_MAX = 100;
+
+/**
+ * Persisted usable ink band for grayscale pages (P10). Paper/printer-dependent:
+ * at density 3 the owner measured 0–2 as paper-white, 3 faint and 15 merging
+ * into 14, so the default band is **4–14**. Level 0 is always kept as paper
+ * white by the render palette (`grayscaleRampPalette`), whatever this band says.
+ * Global preference, never document data.
+ */
+export const DEFAULT_GRAYSCALE_TONE: GrayscaleToneSettings = {
+    minLevel: 4,
+    maxLevel: 14,
+};
+
+/** Printer grayscale level range, shared by the store setter and the validator. */
+export const GRAYSCALE_TONE_MIN_LEVEL = 0;
+export const GRAYSCALE_TONE_MAX_LEVEL = GRAYSCALE_LEVELS - 1;
 
 export const defaultKeyboardShortcuts: KeyboardShortcutConfig = {
     modifyKey: 'ctrl',
