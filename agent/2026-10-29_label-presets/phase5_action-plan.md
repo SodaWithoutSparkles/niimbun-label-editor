@@ -131,8 +131,9 @@ with those values → Print (or "Open in editor" to copy it into a normal label)
 - `bun run test:run -- src/editor src/components/gallery src/components/print`
   (Windows bun binary from global memory; never write its path into a file)
 - Full `bun run test:run` before reporting done.
-- Owner-only, after the phase: one hardware print of a filled preset (not
-  automatable here).
+- ~~Owner-only, after the phase: one hardware print of a filled preset (not
+  automatable here).~~ **Closed 2026-11-12 — content parity covered; see
+  [`handoff.md`](handoff.md).**
 
 ## Envelope reminders
 

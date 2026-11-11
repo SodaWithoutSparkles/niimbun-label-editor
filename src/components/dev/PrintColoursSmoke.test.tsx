@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { PageColorType } from '@mmote/niimbluelib';
+import { PageColorType, LabelType } from '@mmote/niimbluelib';
 import '../../i18n';
 import { installCanvasShim } from '../../test/canvasHarness';
 import { useStore } from '../../store/useStore';
@@ -151,5 +151,54 @@ describe('PrintColoursSmoke — page tuning overrides (P10)', () => {
         await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(3));
         expect(overridesOfLastCall()).not.toHaveProperty('redBlack');
         expect(overridesOfLastCall()).not.toHaveProperty('grayscaleTone');
+    });
+});
+
+describe('PrintColoursSmoke — continuous stock (P10 wave 2)', () => {
+    const sweepOverrides = (from: number): Record<string, unknown>[] =>
+        buildCsvPrintJobMock.mock.calls
+            .slice(from)
+            .map((call) => (call[2] as { overrides: Record<string, unknown> }).overrides);
+
+    it('forwards the pattern label type only when the pattern carries one', async () => {
+        render(<PrintColoursSmoke />);
+        const printButton = screen.getByRole('button', { name: 'Print 1 page' });
+        const sweepButton = screen.getByRole('button', { name: /Print density sweep/ });
+        await waitFor(() => expect(printButton).toBeEnabled());
+
+        // Default pattern (short grayscale): no label-type override anywhere.
+        fireEvent.click(printButton);
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        await screen.findByText(/printed 1 \/ 1 page/);
+        expect(overridesOfLastCall()).not.toHaveProperty('labelType');
+
+        fireEvent.click(sweepButton);
+        await screen.findByText(/density sweep printed/);
+        expect(buildCsvPrintJobMock.mock.calls.length).toBe(6);
+        for (const overrides of sweepOverrides(1)) {
+            expect(overrides).not.toHaveProperty('labelType');
+        }
+
+        // The long pattern carries Continuous: the single print and the sweep
+        // both send it, and the status line names it.
+        fireEvent.change(screen.getByLabelText(/Pattern/), {
+            target: { value: 'grayscaleLong' },
+        });
+        await waitFor(() => expect(printButton).toBeEnabled());
+        fireEvent.click(printButton);
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(7));
+        // The result line from the previous print/sweep is stale here: busy is
+        // cleared only when `print` settles, so wait on the control state.
+        await waitFor(() => expect(sweepButton).toBeEnabled());
+        expect(overridesOfLastCall()).toMatchObject({ labelType: LabelType.Continuous });
+        expect(screen.getByText(/labelType=Continuous/)).toBeTruthy();
+
+        fireEvent.click(sweepButton);
+        await waitFor(() => expect(buildCsvPrintJobMock.mock.calls.length).toBe(12));
+        const longSweep = sweepOverrides(7);
+        expect(longSweep).toHaveLength(5);
+        for (const overrides of longSweep) {
+            expect(overrides.labelType).toBe(LabelType.Continuous);
+        }
     });
 });

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeAll, describe, expect, it } from 'vitest';
 import { loadImage } from '@napi-rs/canvas';
-import { PageColorType } from '@mmote/niimbluelib';
+import { PageColorType, LabelType } from '@mmote/niimbluelib';
 import { isLabelDoc } from '../../core/doc/validate';
 import type { Node } from '../../core/doc/types';
 import { parseDoc } from '../../core/doc/serialize';
@@ -217,6 +217,24 @@ describe('buildColourPatterns', () => {
         }
 
         expect(checked).toBeGreaterThanOrEqual(5);
+    });
+
+    it('marks only the long grayscale pattern as continuous stock', () => {
+        const patterns = buildColourPatterns();
+        const long = patternOf(patterns, 'grayscaleLong');
+
+        expect(long.labelType).toBe(LabelType.Continuous);
+        expect(long.label).toContain('continuous');
+        expect(long.doc.meta.name).toContain('continuous');
+        // Geometry and dpi stay: only the roll is continuous, the page is 50×160.
+        expect(long.doc.label.backingW).toBe(5000);
+        expect(long.doc.label.backingH).toBe(16000);
+        expect(long.doc.label.dpi).toBe(300);
+
+        for (const pattern of patterns) {
+            if (pattern.id === 'grayscaleLong') continue;
+            expect(pattern.labelType, pattern.id).toBeUndefined();
+        }
     });
 
     it('page colours are Grayscale / DoubleColor / Grayscale / four DoubleColor ladders', () => {

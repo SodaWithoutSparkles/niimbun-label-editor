@@ -23,6 +23,7 @@ import { renderLabelPage, type RenderedLabelPage } from '../../editor/render';
 import { MockTransport } from '../../print/mockTransport';
 import { NiimbotTransport } from '../../print/niimbotAdapter';
 import { buildCsvPrintJob, renderOptionsOf } from '../../print/printLabel';
+import { labelTypeEnumName } from '../../print/labelTypeNames';
 import type { PrintProgress, PrinterStatus, PrinterTransport } from '../../print/transport';
 import { useStore } from '../../store/useStore';
 import {
@@ -59,6 +60,12 @@ export function PrintColoursSmoke() {
     const [patternId, setPatternId] = useState<ColourPatternId>('grayscale');
     const pattern = patterns.find((candidate) => candidate.id === patternId) ?? patterns[0]!;
     const [pageColor, setPageColor] = useState<PageColorType>(pattern.pageColor);
+    // Stock type is a property of the pattern, not the page colour: only the long
+    // pattern requests continuous stock (the owner's rolls), so every other
+    // pattern leaves the printer-reported label type in place.
+    const labelType = pattern.labelType;
+    const labelTypeNote =
+        labelType !== undefined ? ` · labelType=${labelTypeEnumName(labelType)}` : '';
     // The dialog's persisted tuning: preview and job must use the same slider
     // values (invariant 7). Each key is gated on the page colour, exactly like
     // `renderOptionsOf`.
@@ -219,6 +226,7 @@ export function PrintColoursSmoke() {
         try {
             info(
                 `building "${pattern.label}" · pageColor=${pageColorLabel(pageColor)} · density=${density ?? 'default'}` +
+                    labelTypeNote +
                     (pageSize ? ` · preview ${pageSize.widthPx}×${pageSize.heightPx} px` : ''),
             );
             // NOT `buildLabelPrintJob`: that hardcodes SingleColor, so the page
@@ -241,6 +249,7 @@ export function PrintColoursSmoke() {
                         ...(redBlack !== undefined ? { redBlack } : {}),
                         ...(grayscaleTone !== undefined ? { grayscaleTone } : {}),
                         ...(density !== undefined ? { density } : {}),
+                        ...(labelType !== undefined ? { labelType } : {}),
                     },
                 },
                 { assets: ASSETS },
@@ -265,7 +274,10 @@ export function PrintColoursSmoke() {
         let printed = 0;
         setBusy(true);
         try {
-            info(`density sweep: ${total} calibration label(s), densities ${densityMin}–${densityMax}`);
+            info(
+                `density sweep: ${total} calibration label(s), densities ${densityMin}–${densityMax}` +
+                    labelTypeNote,
+            );
             let sweep: ColourPattern[];
             try {
                 // Build inside the try: a build throw must log and abort cleanly,
@@ -290,6 +302,7 @@ export function PrintColoursSmoke() {
                                 pageColor: PageColorType.DoubleColor,
                                 redBlack: redBlackSettings,
                                 density: sweepDensity,
+                                ...(labelType !== undefined ? { labelType } : {}),
                             },
                         },
                         { assets: ASSETS },
@@ -449,8 +462,8 @@ export function PrintColoursSmoke() {
                         <li>Colour gradient: correct mix of black / red / white?</li>
                         <li>Red vs black ink density: does red print as dark as black?</li>
                         <li>
-                            Long 50×160 mm page: does the print finish without a buffer error or
-                            truncation?
+                            Long continuous 50×160 mm page: does the print finish without a buffer
+                            error or truncation?
                         </li>
                         <li>
                             Paper/RFID: if the roll is not recognised, select the paper type

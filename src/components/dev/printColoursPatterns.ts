@@ -4,7 +4,7 @@
  * The owner prints these on real hardware to answer the physical questions the
  * code cannot: does the 16-level grey ramp band, are all 16 levels distinct, do
  * flat and diffuse red/black art look right, and does the long (50×160 mm)
- * grayscale page survive the printer's buffer?
+ * continuous-stock grayscale page survive the printer's buffer?
  *
  * Every pattern is an in-memory `LabelDoc` built from raw node literals (the
  * `PrintSmoke` precedent) so the harness never touches the store. Images are
@@ -14,7 +14,7 @@
  *
  * Strings are hardcoded: this is a dev harness, not product UI.
  */
-import { PageColorType } from '@mmote/niimbluelib';
+import { LabelType, PageColorType } from '@mmote/niimbluelib';
 import { createLabelDoc } from '../../core/doc/factory';
 import type { ImageRef, LabelDoc, Node } from '../../core/doc/types';
 import { grayLevelColor } from '../../core/render/palette';
@@ -35,6 +35,13 @@ export interface ColourPattern {
     label: string;
     doc: LabelDoc;
     pageColor: PageColorType;
+    /**
+     * Stock type the harness must select for this pattern. Absent = no override
+     * (the printer-reported roll type wins). Only the long pattern sets it: the
+     * owner's rolls are continuous, so a 160 mm page has to be sent as
+     * continuous stock rather than the die-cut type a gap label would report.
+     */
+    labelType?: LabelType;
 }
 
 /** 1/100 mm units, matching the document's `hm`. */
@@ -465,7 +472,7 @@ const redBlackPattern = (): ColourPattern => {
     };
 };
 
-/** Long grayscale page: 50 × 160 mm, the printer-buffer stress case. */
+/** Long grayscale page: 50 × 160 mm, continuous stock, the printer-buffer stress case. */
 const grayscaleLongPattern = (): ColourPattern => {
     const strip = imageRef(
         'pc-long-gradient',
@@ -489,7 +496,7 @@ const grayscaleLongPattern = (): ColourPattern => {
 
     const doc = createLabelDoc({
         id: 'pc-grayscale-long',
-        name: 'Print colours — grayscale long',
+        name: 'Print colours — grayscale continuous 50×160',
         backingW: SHORT_W,
         backingH: LONG_H,
         dpi: 300,
@@ -500,9 +507,10 @@ const grayscaleLongPattern = (): ColourPattern => {
     doc.resources.images.push(strip);
     return {
         id: 'grayscaleLong',
-        label: 'Grayscale — 50×160 long',
+        label: 'Grayscale — continuous 50×160',
         doc,
         pageColor: PageColorType.Grayscale,
+        labelType: LabelType.Continuous,
     };
 };
 

@@ -91,7 +91,10 @@ field bindings, the presets pane, or any copy path.
   editor" are disabled and the dialog names the ids. A default may already
   satisfy one.
 - One `usePrintJob` instance feeds both the live preview (`prepareRow`, then
-  `renderDocPreview`) and `PrintDialog` — one content path, so preview ≡ print.
+  `renderDocPreview`) and `PrintDialog` — one content path, so the document and
+  resolved content match. The preview itself is a `renderDocPreview` at
+  `GALLERY_THUMBNAIL_DPI = 100`, not the print raster; the print dialog's own
+  preview and the job share the resolved-dpi render (invariant 7).
   Values, key column and key are local state only and reset on preset/CSV switch.
 - **Open in editor** = `saveCopy(preset, { kind: 'label' })` → `openLabel`; a
   rejected `openLabel` is a user-visible error. The session token is invalidated
@@ -126,6 +129,18 @@ field bindings, the presets pane, or any copy path.
   `csvStatus` is the source's kind, `csv` is the record only for `ready`, and
   `csvRevision` stays `0`. Absent keeps the repo-backed read, so the editor path
   is unchanged.
+
+## Verification (closed 2026-11-12: content parity)
+
+The P5/P6b deferred owner print of a filled preset is **no longer required**.
+Fill **content parity** — the dialog produces the same document and the same
+`prepareRow` context as a normal print — is covered by automated tests. The
+**print dialog's** page preview and the job share the resolved-dpi render
+(invariant 7); the fill dialog's live thumbnail is a `renderDocPreview` at
+`GALLERY_THUMBNAIL_DPI = 100`, i.e. a 100-dpi preview, not the print raster.
+Only **printer-side** effects — ink density, stock/label type, registration —
+are physical, and they are unrelated to preset content; those are covered by the
+print-colours calibration, not by presets.
 
 ## Gallery and routing
 

@@ -6,7 +6,9 @@
 - Head: `307d2f3` (P6b) + docs `3f82a2d`; the P7 docs commit follows this file
 - **Gate: green** — `bun run test:run` → **188 files / 2772 tests passed**;
   `node node_modules/typescript/bin/tsc --noEmit` clean; `bun run build` green
-  (tsc + vite, 2070 modules). No hardware print (owner deferred it on 2026-10-31).
+  (tsc + vite, 2070 modules). No hardware print (owner deferred it on 2026-10-31;
+  **closed 2026-11-12: content parity**, covered by automated tests — see the
+  handoff's deviation note).
 
 Phase commits and their docs commits:
 
@@ -40,7 +42,7 @@ Phase commits and their docs commits:
 | Resolution seam | `prepareResolvedContent({ fields })` resolves field sources by own-property name: non-empty value → fallback → `{empty}`. `TemplateContext.fields` is required (`{}` default), so templates read `ctx.fields.<id>` alongside `ctx.row` / `ctx.globals`. Values are never persisted. Preview and print share the one pass. | `52fd3b2` |
 | Presets pane | `#/gallery/templates` now renders the **Label presets** pane across the five section vocabularies. Presets are filtered out of Recent (grid + sidebar); labels never appear in the pane. Cards share the label art/thumb backfill; delete reuses the store `deleteLabel` contract. | `be60d5b` |
 | Authoring | File ▸ **Save as preset** copies the open label to a new preset (fresh id, `kind` explicit, thumb cleared, CSV/globals/resources preserved); the source is never converted and stays open. **JS** tab gains the **Field** kind (name + fallback); **MFP → Fields** declares ids with Default / Required / Hidden. New field names register on binding commit. | `d24e4ed`, `f72c4fe` |
-| Fill + print | Clicking a preset card opens a modal with one input per field, a live colour preview and Print / Open in editor. Preview and `PrintDialog` share one `usePrintJob`, so preview ≡ print. Values are transient. "Open in editor" copies the preset into a normal label, bindings intact. The trust prompt is unchanged (first use of a template-bearing preset). | `8670cf8` |
+| Fill + print | Clicking a preset card opens a modal with one input per field, a live colour preview and Print / Open in editor. Preview and `PrintDialog` share one `usePrintJob`, so the content matches; the fill preview is a 100-dpi `renderDocPreview`, not the print raster. Values are transient. "Open in editor" copies the preset into a normal label, bindings intact. The trust prompt is unchanged (first use of a template-bearing preset). | `8670cf8` |
 | Declared fields | `data.fields` is additive. Duplicate ids are first-wins; invalid entries drop with repairs; ids/defaults stay untrimmed. Reserved `csv.row` is declared in the same undo entry as a CSV attach (and survives a detach). The fill form = visible declarations + bound-but-undeclared leftovers; hidden ids are reachable through **Add field**; required ids block Print and Open in editor while trimmed-empty. | `f72c4fe`, `307d2f3` |
 | CSV row lookup | With `csv.row` declared and a readable attached CSV, the fill dialog offers a key-column select + key input; matching is exact after trimming, first duplicate wins. One-row table override feeds preview and print: matched row, stored sample row when no key is typed, or one all-empty fallback row on a miss (explicit status). A matched print is one label; `ctx.index` / `ctx.total` are `0` / `1`. | `307d2f3` |
 | Docs + memory | `docs/user-guide/templates.md` gains the fourth kind, `ctx.fields.<id>`, the preset workflow, the CSV key lookup, the one-record caveat and the trust note. New `memory/presets.md` + index line; addenda to `csv-templates.md` and `app-shell.md`. | P7 docs commit (this pass) |
@@ -70,7 +72,14 @@ Phase commits and their docs commits:
   gate disables printing. Only "nothing attached" (`none`) is the normal
   one-page path.
 - **No hardware print yet.** The P5 exit criterion's owner print and P6b's
-  real-CSV verification were deferred by the owner (2026-10-31).
+  real-CSV verification were deferred by the owner (2026-10-31). **Closed
+  2026-11-12: content parity.** Fill content parity — the same document and
+  `prepareRow` context as a normal print — is covered by automated tests. The
+  **print dialog's** preview and the job share the resolved-dpi render
+  (invariant 7); the fill dialog's live thumbnail is a `renderDocPreview` at
+  `GALLERY_THUMBNAIL_DPI = 100`, not the print raster. Only printer-side effects
+  (density, stock/label type, registration) are physical and unrelated to preset
+  content, so no owner preset print is required.
 - **Presets are not edited in place** (by design, D3): revise one via
   **Open in editor** → edit the normal copy → **Save as preset** again.
 
@@ -84,9 +93,15 @@ Phase commits and their docs commits:
 
 ## Follow-ups
 
-- **Owner, hardware:** print one filled preset, including a key-matched CSV row,
-  on real stock. This closes the P5/P6b verification gaps and exercises the
-  one-row seam on hardware.
+- ~~**Owner, hardware:** print one filled preset, including a key-matched CSV
+  row, on real stock. This closes the P5/P6b verification gaps and exercises the
+  one-row seam on hardware.~~ **Closed 2026-11-12: content parity** — the
+  one-row seam and fill content are covered by automated tests (same document +
+  `prepareRow` context as a normal print). The fill dialog's live thumbnail is a
+  100-dpi `renderDocPreview`, not the print raster; the **print dialog's**
+  preview and the job share the resolved-dpi render (invariant 7). Only
+  printer-side effects (density, stock, registration) are physical and unrelated
+  to preset content, so no owner preset print is required.
 - **Next feature run: dual-color (red/black).** Per
   `agent/memory/dual-color.md`, it is the next feature after this run; the
   research, seam map and one-print verification strategy are parked there.

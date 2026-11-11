@@ -13,11 +13,12 @@ and is capability-gated.
 - **Physical verification (owner, 2026-11-08, density 3 default):** the 16-level
   ramp is **not fully usable on paper** — levels **0–2 are indistinguishable from
   the background**, level **3 is very faint**, and on some stock level **15 merges
-  with 14 (sometimes 13)**. Usable range is roughly **4–14**. **P10 wave 1 shipped
-  the usable band as a user setting** (`grayscaleTone`, default 4/14; level 0 stays
-  paper white) instead of hard-coding one printer's range. Dynamic-range mapping
-  of the authored tone range onto the band is still **D-75**. Red/black physical
-  calibration is still pending. Owner checklist:
+  with 14 (sometimes 13)**. Usable range is roughly **4–14**. **P10 shipped the
+  usable band as a user setting** (`grayscaleTone`, default 4/14; level 0 stays
+  paper white) instead of hard-coding one printer's range — **D-75 resolved**. The
+  shipped defaults are the owner's density-3 stock, not a universal constant
+  (calibration: **D-78/D-79**). Red/black physical calibration is still pending.
+  Owner checklist:
   [`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md); the harness has a
   **Density** select for heat/energy tests (density does not change the ramp
   mapping).
@@ -218,6 +219,11 @@ non-white pixel, so red ink is ink in the mirror-loss notice.
   rebuild key only when defined; the job sees the same options. The
   `?printcolours` harness reads the persisted store values too, so its preview
   and print match the dialog.
+- **Calibration defaults are one stock's, not constants.** Every shipped default
+  above (`grayscaleTone` 4/14, red intensity 100 %, black depth 50 %, coverage
+  50/100) was measured/tuned on the **owner's density-3 stock**. Calibration is
+  per printer/paper/density and must not be hard-coded as universal truth — the
+  sliders are the per-paper lever. See **D-78/D-79**.
 - **Engine mapping.** Demands are scaled **before** halftoning:
   `redGain = 2^(2·(redIntensity − 1))` (1 → ×1, 1.5 → ×2, 0 → 0) and
   `blackGain = 2^(2·(blackDepth − 0.5))` (0.5 → ×1, 0 → ×0.5, 1 → ×2). The red
@@ -343,24 +349,34 @@ split panes for the library author.
   red/black photos are a two-ink separation, so "red weight vs black weight" no
   longer exists. Angled/blue-noise red screens and per-ink screentone are still
   deferred; `screentone` and `ostromoukhov` count as diffusion in this mode.
-- **Duotone constants are a starting profile.** `RED_INK_LUMA 0.30`, the 29° red
-  axis with a 15–34° hue gate, the chroma curves (0.015–0.06 guard, 0.015–0.18
-  tone), the 0.04 white clip, the 3×3 cell / default `5/9` coverage floor and the
-  black gain curve are **uncalibrated**. The sliders are the user lever; code
-  constants change only after the calibration print
+- **Duotone constants are a starting profile, per printer/paper/density.** `RED_INK_LUMA 0.30`, the
+  29° red axis with a 15–34° hue gate, the chroma curves (0.015–0.06 guard,
+  0.015–0.18 tone), the 0.04 white clip, the 3×3 cell / `5/9` coverage floor and
+  the black gain curve are **uncalibrated**, taken from the owner's density-3
+  stock. Do **not** hard-code them as universal truth: they are per
+  printer/paper/density, and the dialog sliders (`grayscaleTone`,
+  `redIntensity`/`blackDepth`, `redCoverageMin`/`Max`) are the per-paper lever.
+  Code constants change only after the calibration print
   ([`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md), P9 addendum). See
-  **D-78** (cluster floor) and **D-79** (constants).
-- **Long grayscale buffer unverified.** `PrinterCapabilities.sixteenGrayMaxBuffer`
-  is parsed but never enforced by 0.49. The 50×160 mm harness pattern covers it.
-  See **D-73**.
-- **Grayscale usable band shipped, dynamic range still open** (owner,
-  2026-11-08; P10 wave 1): at density 3 the paper shows roughly levels 4–14;
+  **D-78** (cluster floor) and **D-79** (constants) — both open as calibration
+  debt, not release blockers.
+- **Long continuous grayscale buffer unverified.** `PrinterCapabilities.sixteenGrayMaxBuffer`
+  is parsed but never enforced by 0.49. A 48×80 mm Floyd–Steinberg print stalled
+  ≈0.5 s at the printer's buffer and **completed with no truncation**, so the
+  risk is flow control (a stall), not corruption. The harness pattern
+  "Grayscale — continuous 50×160" is 50×160 mm at 300 dpi on **continuous**
+  stock (`LabelType.Continuous`) and is the remaining long-page test. See
+  **D-73**.
+- **Grayscale usable band is a user control; its defaults are one stock's calibration** (owner,
+  2026-11-08; P10, 2026-11-12): at density 3 the paper shows roughly levels 4–14;
   0–2 sit on paper white, 3 is very faint, and on some stock 15 merges into
-  14/13. The band is now a persisted user setting (`grayscaleTone`, default
-  4/14, level 0 always kept), so it is no longer hard-coded to one printer/paper.
-  **Still open (D-75):** mapping the authored tone range *onto* that band; the
-  current ramp keeps the library's 0–15 mapping and only restricts the allowed
-  levels (dithering across the 0→min gap).
+  14/13. `grayscaleTone` (default 4/14, level 0 always kept as paper white) is
+  persisted and threaded to preview, thumbnails and job, so the band is no
+  longer hard-coded to one printer/paper. The shipped **defaults** still come
+  from the owner's density-3 stock and must not be read as a universal constant;
+  re-calibrating them is **D-78/D-79**. **D-75 is resolved in P10** — no
+  tone-range remap is required for release; the renderer dithers across the
+  0→min gap.
 - **D-05 seam drift** still applies — in red/black the flat point op discards
   any error a diffuse neighbour deposited, on top of the existing
   diffuse-beside-diffuse seam.
@@ -407,4 +423,8 @@ split panes for the library author.
     highlights at OKLab L 0.60–0.95, the neutral black ramp, and touching 2 mm
     red/black cells for registration.
 - Harness + owner checklist: `?printcolours`,
-  [`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md).
+  [`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md). The
+  "Grayscale — continuous 50×160" pattern sets `labelType: LabelType.Continuous`
+  and the smoke forwards it into the job (single print and density sweep) so the
+  long page really is sent as continuous stock; every other pattern leaves the
+  printer-reported label type alone.
