@@ -7,6 +7,7 @@ import {
     isCornerAnchor,
     movePatch,
     preserveAspectFor,
+    rotationOnlyPatch,
     transformEndPatch,
     transformerTargetSize,
 } from './transformGesture';
@@ -147,6 +148,51 @@ describe('transformEndPatch (one-op transform)', () => {
         });
         expect(sizeOf(patch)).toEqual({ w: 200, h: 100 });
         expect(patch.transform).toEqual({ x: 0, y: 0, rotDeg: 0, scaleX: -1, scaleY: 1 });
+    });
+
+    it('normalizes the committed rotation to 0.1° and wraps past ±360 (bug 1)', () => {
+        const wrapped = transformEndPatch(rect(), { w: 100, h: 50 }, false, {
+            x: 0,
+            y: 0,
+            rotDeg: 400,
+        });
+        expect(wrapped.transform?.rotDeg).toBe(40);
+        const rounded = transformEndPatch(rect(), { w: 100, h: 50 }, false, {
+            x: 0,
+            y: 0,
+            rotDeg: -12.34,
+        });
+        expect(rounded.transform?.rotDeg).toBe(-12.3);
+    });
+});
+
+describe('rotationOnlyPatch (bug 4)', () => {
+    it('commits rotation + origin only, never a resize', () => {
+        // A shrink text's live Konva scale holds its display scale; feeding it to
+        // the resize path baked a wrong `size`/`fontSize`. The rotate-only patch
+        // carries no geometry fields at all.
+        const source = text();
+        const patch = rotationOnlyPatch(source, { x: 12.4, y: -3.6, rotDeg: 30 });
+        expect(patch as { size?: unknown }).not.toHaveProperty('size');
+        expect(patch as { fontSize?: unknown }).not.toHaveProperty('fontSize');
+        expect(patch as { points?: unknown }).not.toHaveProperty('points');
+        // Konva pivots the rotater about the Transformer centre, so the live
+        // origin moved; committing it keeps the node WYSIWYG on release.
+        expect(patch.transform).toEqual({ x: 12, y: -4, rotDeg: 30, scaleX: 1, scaleY: 1 });
+    });
+
+    it('keeps a non-identity stored scale untouched', () => {
+        const source: TextNode = {
+            ...text(),
+            transform: { x: 5, y: 6, rotDeg: 10, scaleX: 2, scaleY: -3 },
+        };
+        const patch = rotationOnlyPatch(source, { x: 5, y: 6, rotDeg: 90 });
+        expect(patch.transform).toEqual({ x: 5, y: 6, rotDeg: 90, scaleX: 2, scaleY: -3 });
+    });
+
+    it('rounds to 0.1° and wraps an out-of-range rotation', () => {
+        expect(rotationOnlyPatch(text(), { x: 0, y: 0, rotDeg: 400 }).transform?.rotDeg).toBe(40);
+        expect(rotationOnlyPatch(text(), { x: 0, y: 0, rotDeg: 12.3456 }).transform?.rotDeg).toBe(12.3);
     });
 });
 

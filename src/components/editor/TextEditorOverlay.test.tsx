@@ -448,6 +448,35 @@ describe('TextEditorOverlay', () => {
         expect(left).toBeLessThanOrEqual(session.unscaledWidth);
     });
 
+    it('seeds the caret from the unscaled click-local point (no double zoom, bug 5)', () => {
+        // `clickLocal` is already in this textarea's layout px: the parent
+        // inverted the node's full matrix (zoom included) and the wrapper CSS
+        // re-applies the scale. Scaling it again by `session.scaleX` opened the
+        // caret ~2× further right and ~2× further down.
+        const fixture = {
+            ...session,
+            text: 'aaa bbb ccc',
+            fontSize: 10,
+            lineHeight: 2,
+            unscaledWidth: 25,
+            unscaledHeight: 100,
+            scaleX: 2,
+            clickLocalX: 12,
+            clickLocalY: 22,
+        };
+        render(overlay({ session: fixture }));
+        const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+        const ctx = document.createElement('canvas').getContext('2d')!;
+        const font = { fontSize: 10, fontFamily: 'sans-serif', fontStyle: 'normal', lineHeight: 2 };
+        const expected = caretFromPoint(ctx, fixture.text, 12, 22, 25, font, 'word', 'left');
+        // The pre-fix call multiplied both axes by `session.scaleX`.
+        const doubled = caretFromPoint(ctx, fixture.text, 12 * 2, 22 * 2, 25, font, 'word', 'left');
+        // Keep the test discriminating: the two seeds must land on different
+        // characters for this fixture.
+        expect(doubled).not.toBe(expected);
+        expect(textarea.selectionStart).toBe(expected);
+    });
+
     it('keeps a caret for an empty box', () => {
         render(overlay({ session: { ...session, text: '' } }));
         expect(screen.getByTestId('text-editor-caret')).toBeTruthy();

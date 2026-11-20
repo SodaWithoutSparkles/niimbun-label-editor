@@ -54,6 +54,12 @@ interface PopoverSliderProps {
 
     // Alignment
     popoverAlign?: 'center' | 'start' | 'end';
+
+    // Circular fields (e.g. rotation): an out-of-range commit wraps by `period`
+    // instead of clamping, so the committed angle keeps its visual meaning.
+    // In-range values are committed signed as typed (`-15` stays `-15`).
+    circular?: boolean;
+    period?: number; // wrap span; defaults to `max - min`
 }
 
 export const PopoverSlider: React.FC<PopoverSliderProps> = ({
@@ -77,7 +83,9 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
     buttonStep = step,
     className = '',
     popoverClassName = '',
-    popoverAlign = 'center'
+    popoverAlign = 'center',
+    circular = false,
+    period = max - min
 }) => {
     const { t } = useTranslation();
     const [isOpen, setIsOpen] = useState(false);
@@ -290,6 +298,39 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
     }, [isOpen]);
 
     const handleConfirm = (newVal: number) => {
+        if (circular) {
+            // A value already inside the bounds keeps its signed form: typed
+            // `-15` must commit `-15`, never the equivalent `345`. Only an
+            // out-of-range value wraps, and it wraps on the RAW value before
+            // step rounding: `newVal / step` can overflow to Infinity (1e308 at
+            // 0.1°) and would poison the step math with NaN.
+            let wrapped = newVal;
+            if (period > 0 && (newVal < min || newVal > max)) {
+                // JS remainder is exact and finite for any finite input, and
+                // keeps the sign (`400 → 40`, `-400 → -40`, `720 → 0` — the same
+                // reduce as `normalizeRotDeg`, so a live edit and this commit
+                // agree at exact multiples, where a subtract-until-in-range
+                // loop would have stopped at 360).
+                wrapped = newVal % period;
+                // One period shift re-enters [min, max] whenever the range is
+                // at least a period wide (the sane config); bounded rather than
+                // a loop so a degenerate period can never spin.
+                if (wrapped < min) wrapped += period;
+                else if (wrapped > max) wrapped -= period;
+            }
+            // Clamp to allowed precision based on step; fix float precision
+            // issues (e.g. 0.1 + 0.2 = 0.300000004).
+            const precision = step.toString().split('.')[1]?.length || 0;
+            const rounded = Math.round(wrapped / step) * step;
+            const fixed = parseFloat(rounded.toFixed(precision));
+            // Belt-and-braces: keep the finite wrapped value if the step math
+            // still overflowed.
+            const committed = Number.isFinite(fixed) ? fixed : wrapped;
+            onChange(committed);
+            setTempValue(committed);
+            return;
+        }
+
         // Clamp to allowed precision based on step
         const rounded = Math.round(newVal / step) * step;
         // Fix float precision issues (e.g. 0.1 + 0.2 = 0.300000004)

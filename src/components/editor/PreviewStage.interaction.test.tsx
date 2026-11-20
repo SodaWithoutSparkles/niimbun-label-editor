@@ -9,6 +9,7 @@ import { useStore } from '../../store/useStore';
 import { createLabelDoc } from '../../core/doc/factory';
 import type { Node, TextNode } from '../../core/doc/types';
 import { PreviewStage } from './PreviewStage';
+import { caretFromPoint, localPointOf } from './TextEditorOverlay';
 import { centeredViewport, ZOOM_MAX } from '../../editor/viewportController';
 import { resolve } from '../../editor/render/resolve';
 import { shrinkScaleOf } from '../../editor/render/textMetrics';
@@ -733,12 +734,56 @@ describe('PreviewStage P3 selection & resize semantics', () => {
         });
     });
 
+    describe('bug 3 — dragging a child of a rotated group', () => {
+        // A 90° group: its local +x axis points down the screen and +y points
+        // left, so a world-space pointer delta must be rotated before it is
+        // added to the child's parent-local origin.
+        const rotatedGroup = (): Node => ({
+            id: 'g',
+            parentId: null,
+            type: 'group',
+            visible: true,
+            locked: false,
+            transform: { x: 1500, y: 500, rotDeg: 90, scaleX: 1, scaleY: 1 },
+        });
+        const child = (): Node => ({ ...rectNode('c', 200, 100), parentId: 'g' });
+
+        it('moves the child along the screen axis, not the group-local one', () => {
+            const stage = mountSelection([rotatedGroup(), child()], ['c']);
+            const zoom = stage.getLayers().at(-1)!.scaleX();
+            // Inside the child's rotated world box (x 400…1400, y 700…1700).
+            const from = toScreen(stage, 900, 1200);
+
+            firePointer(stage, 'pointerdown', from.x, from.y);
+            firePointer(stage, 'pointermove', from.x + 30, from.y);
+            act(() => {
+                window.dispatchEvent(new Event('pointerup'));
+            });
+
+            const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 'c')!;
+            // World +x is the group-local −y axis: the local x must not change
+            // and the local y must take the whole (negative) world delta.
+            expect(node.transform.x).toBeCloseTo(200, 5);
+            // `movePatch` rounds to integer hm like every other translation.
+            expect(node.transform.y).toBe(Math.round(100 - 30 / zoom));
+            expect(useStore.getState().docPast).toHaveLength(1);
+        });
+    });
+
     describe('item 6 — text box-only live resize', () => {
         /** The same text box with `wrap: 'cut'`: its registered node is the clip group. */
         const cutTextNode = (id: string): Node => ({
             ...(textNode(id) as TextNode),
             wrap: 'cut',
             text: { kind: 'static', value: 'W'.repeat(40) },
+        });
+
+        /** A shrink-to-fit box: its live Konva scale holds the display factor. */
+        const shrinkTextNode = (id: string): Node => ({
+            ...(textNode(id) as TextNode),
+            size: { w: 400, h: 120 },
+            wrap: 'shrink',
+            text: { kind: 'static', value: 'hello shrinking world' },
         });
 
         it('keeps the glyph scale at ±1 while resizing the box, and commits that box', () => {
@@ -790,6 +835,73 @@ describe('PreviewStage P3 selection & resize semantics', () => {
             expect(node.transform.scaleX).toBe(1);
             expect(node.transform.scaleY).toBe(1);
             expect(state.docPast).toHaveLength(1);
+        });
+
+        it('commits the document box when resizing a shrink text (display scale divided out)', () => {
+            const stage = mountSelection([shrinkTextNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            // The live node carries the shrink display factor in its own scale.
+            const shrink = text.scaleX();
+            expect(shrink).toBeGreaterThan(0);
+            expect(shrink).toBeLessThan(1);
+            const baseW = text.width();
+            const baseH = text.height();
+
+            act(() => {
+                transformer.fire('transformstart', {});
+                // A 2× gesture on both axes: Konva multiplies the node's current
+                // scale, shrink included.
+                text.scaleX(shrink * 2);
+                text.scaleY(shrink * 2);
+                transformer.fire('transform', {});
+            });
+
+            // The recipe works in document units: width is the document box (not
+            // `baseW × shrink`), while height keeps the `h / shrink` layout used
+            // for wrapping, so the display scale stays on the node.
+            expect(text.width()).toBeCloseTo(baseW * 2, 5);
+            expect(text.height()).toBeCloseTo(baseH * 2, 5);
+            expect(text.scaleX()).toBeCloseTo(shrink, 5);
+            expect(text.scaleY()).toBeCloseTo(shrink, 5);
+
+            act(() => {
+                transformer.fire('transformend', {});
+            });
+
+            const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 't') as TextNode;
+            expect(node.size).toEqual({ w: 800, h: 240 });
+            expect(node.fontSize).toBe(300);
+            expect(node.transform.scaleX).toBe(1);
+            expect(node.transform.scaleY).toBe(1);
+            expect(useStore.getState().docPast).toHaveLength(1);
+        });
+
+        it('commits a rotate-only gesture on a shrink text without resizing it (bug 4)', () => {
+            const stage = mountSelection([shrinkTextNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            const baseW = text.width();
+            const baseH = text.height();
+
+            act(() => {
+                (transformer as unknown as { _movingAnchorName: string })._movingAnchorName = 'rotater';
+                transformer.fire('transformstart', {});
+                text.rotation(30);
+                transformer.fire('transformend', {});
+            });
+
+            expect(text.width()).toBe(baseW);
+            expect(text.height()).toBe(baseH);
+
+            const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 't') as TextNode;
+            // The live display scale (shrink) must never reach `size`/`fontSize`.
+            expect(node.size).toEqual({ w: 400, h: 120 });
+            expect(node.fontSize).toBe(300);
+            expect(node.transform.rotDeg).toBe(30);
+            expect(node.transform.scaleX).toBe(1);
+            expect(node.transform.scaleY).toBe(1);
+            expect(useStore.getState().docPast).toHaveLength(1);
         });
 
         it('restores the committed text box when a box-only resize is cancelled', () => {
@@ -1320,6 +1432,38 @@ describe('PreviewStage inline text editing (P5)', () => {
         expect(textarea.value).toBe('hello world');
         // While editing, the node's Konva Text must not paint under the overlay.
         expect(renderedTextValues(stage)).not.toContain('hello world');
+    });
+
+    it('seeds the caret from the stage-local double-click point (rulers on, bug 5)', () => {
+        useStore.setState({ rulersVisible: true });
+        const stage = mountSelect([textNode('t')]);
+        const konvaText = stage.findOne('Text') as Konva.Text;
+        const nodeM = konvaText.getAbsoluteTransform().getMatrix();
+        const at = toScreen(stage, 600, 250);
+        // The stage-local point and the pre-fix point (the 24 px ruler gutter
+        // subtracted a second time), both mapped into node-local hm.
+        const local = localPointOf(nodeM, at.x, at.y);
+        const doubleGutter = localPointOf(nodeM, at.x - 24, at.y - 24);
+
+        dblClick(stage, 600, 250);
+
+        const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+        const ctx = document.createElement('canvas').getContext('2d')!;
+        const font = { fontSize: 300, fontFamily: 'sans-serif', fontStyle: 'normal', lineHeight: 1 };
+        const expected = caretFromPoint(ctx, 'hello world', local.x, local.y, 1000, font, 'word', 'left');
+        const buggy = caretFromPoint(
+            ctx,
+            'hello world',
+            doubleGutter.x,
+            doubleGutter.y,
+            1000,
+            font,
+            'word',
+            'left',
+        );
+        // Keep the test discriminating: 24 stage px must change the seed here.
+        expect(buggy).not.toBe(expected);
+        expect(textarea.selectionStart).toBe(expected);
     });
 
     it('does not mount the overlay on a double-click on a non-text node', () => {

@@ -54,7 +54,11 @@ const SHORTCUT_TO_ACTION: Record<string, InsertAction> = {
     line: 'shape:line',
 };
 
-/** Arrow keys nudge the selection in world space; `dy` grows downward. */
+/**
+ * Arrow keys as **screen-space** directions (`dy` grows downward on screen).
+ * The nudge branch converts them to world space through the view rotation
+ * before calling `nudgeNodes`.
+ */
 const ARROW_DELTAS: Record<string, { dx: number; dy: number }> = {
     ArrowUp: { dx: 0, dy: -1 },
     ArrowDown: { dx: 0, dy: 1 },
@@ -162,11 +166,19 @@ export const EditorKeyboardShortcuts = () => {
                 arrowRepeatRef.current = { key: event.key, count };
                 // 1st press 0.1 mm, 2nd 1 mm, 3rd+ 2 mm (hm = 1/100 mm).
                 const step = count === 1 ? 10 : count === 2 ? 100 : 200;
+                // Arrows are screen-space, `nudgeNodes` takes world space. At a
+                // 90° view rotation a screen delta `(dx, dy)` is the world delta
+                // `(dy, -dx)` (`screenToWorld` in `core/viewport.ts`), so Right
+                // stays screen-right instead of moving down the document.
+                const world =
+                    state.viewRotation === 90
+                        ? { dx: arrow.dy * step, dy: -arrow.dx * step }
+                        : { dx: arrow.dx * step, dy: arrow.dy * step };
                 // `count > 1`, not `event.repeat`: the escalation ref is only advanced after the
                 // tool/selection guards pass, so a count above 1 proves this hold already pushed
                 // a baseline. `event.repeat` does not (a repeat can arrive with a selection made
                 // mid-hold, which would swallow the first nudge's undo entry).
-                state.nudgeNodes(arrow.dx * step, arrow.dy * step, count > 1);
+                state.nudgeNodes(world.dx, world.dy, count > 1);
                 return;
             }
 

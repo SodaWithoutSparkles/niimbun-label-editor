@@ -1,6 +1,7 @@
 import { preservesAspectByDefault, resizeNodeGeometry, type Size } from '../core/doc/geometry';
 import type { Node } from '../core/doc/types';
 import type { NodePatch } from '../store/storeTypes';
+import { normalizeRotDeg } from './rotation';
 
 /**
  * Pure gesture math for the Preview's pointer interactions (ui-spec.md §5).
@@ -135,7 +136,9 @@ export const transformEndPatch = (
             // committed geometry off the live gesture.
             x: Math.round(live.x),
             y: Math.round(live.y),
-            rotDeg: live.rotDeg,
+            // Canvas commits land on the same 0.1° grid (and ±360 wrap) as
+            // every other rotation entry point (bug 1 canvas half).
+            rotDeg: normalizeRotDeg(live.rotDeg),
             // Preserve the **sign** of the live scale (a handle dragged past the
             // opposite edge mirrors the node); the magnitude is already baked
             // into the geometry above. `Math.sign(x) || 1` maps 0/NaN to 1.
@@ -144,6 +147,32 @@ export const transformEndPatch = (
         },
     } as NodePatch;
 };
+
+/**
+ * Patch for a **rotation-only** Transformer gesture (the `rotater` anchor).
+ *
+ * The live Konva node's scale is not the document's scale: `ResolvedShape`
+ * folds a shrink-to-fit text's display scale and the inspector's
+ * `transform.scale` into it. Feeding that scale to `transformerTargetSize` and
+ * baking it into `size`/`fontSize` corrupted the node on every rotation (a
+ * 10×1 mm shrink text rotated 30° committed 5×0.5 mm). A rotate gesture changes
+ * no geometry, so this patch changes none either: size/points/cornerRadius/
+ * fontSize and the stored scale all come from `source` untouched.
+ *
+ * `x`/`y` **do** change: Konva's rotater pivots about the Transformer's centre,
+ * so it translates the node's origin while rotating it. Committing only
+ * `rotDeg` would re-render the node rotated about its *own* origin and jump it
+ * on release (the existing resize commit has always carried the live x/y for
+ * the same reason). Rounded to integer hm like every other commit.
+ */
+export const rotationOnlyPatch = (source: Node, live: LiveTransform): NodePatch => ({
+    transform: {
+        ...source.transform,
+        x: Math.round(live.x),
+        y: Math.round(live.y),
+        rotDeg: normalizeRotDeg(live.rotDeg),
+    },
+});
 
 /**
  * Resize target for a Transformer gesture (must-fix #2): the node's real base

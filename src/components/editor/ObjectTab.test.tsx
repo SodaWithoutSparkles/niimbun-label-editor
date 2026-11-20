@@ -202,8 +202,13 @@ describe('numberRange', () => {
         expect(numberRange('scaleY', backing)).toEqual({ min: 0.05, max: 10, step: 0.05 });
     });
 
+    it('gives rotation one signed range with tenth-degree steps', () => {
+        // Raw signed display (270° stays 270°, never −90°); out-of-range commits
+        // wrap in `PopoverSlider` instead of clamping.
+        expect(numberRange('rotDeg', undefined)).toEqual({ min: -360, max: 360, step: 0.1 });
+    });
+
     it('keeps every other field’s range and never returns NaN without a backing', () => {
-        expect(numberRange('rotDeg', undefined)).toEqual({ min: 0, max: 100000, step: 1 });
         expect(numberRange('strokeWidth', undefined)).toEqual({ min: 0, max: 100000, step: 1 });
         expect(numberRange('fontSize', undefined)).toEqual({ min: 1, max: 2000, step: 1 });
         expect(numberRange('quantizerThreshold', undefined)).toEqual({ min: 0, max: 255, step: 1 });
@@ -261,9 +266,10 @@ describe('ObjectTab — transform slider bounds follow the label size', () => {
         }
     });
 
-    it('leaves rotation on its unchanged fixed range', () => {
+    it('shows rotation on its signed tenth-degree range', () => {
         renderImage();
-        expect(openField('Rotation').number).toEqual({ min: '0', max: '100000', step: '1' });
+        expect(openField('Rotation').number).toEqual({ min: '-360', max: '360', step: '0.1' });
+        expect(openField('Rotation').range).toEqual({ min: '-360', max: '360', step: '0.1' });
     });
 });
 
@@ -291,6 +297,29 @@ describe('ObjectTab — W/H can never be sized to 0', () => {
 
     it('floors a typed 0 on Height to 1 (not 0)', () => {
         expect(typeSize('Height', '0')).toEqual({ w: 500, h: 1 });
+    });
+});
+
+describe('ObjectTab — rotation keeps one signed, wrapped angle', () => {
+    /** Open Rotation, type `next` into its live-committing input, read the angle. */
+    const typeRotation = (next: string) => {
+        const selected = imageNode();
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['a'] });
+        render(<ObjectTab selected={[selected]} />);
+        const row = screen.getByText('Rotation').closest('.items-center.justify-between') as HTMLElement;
+        fireEvent.click(row.querySelector('.cursor-pointer') as HTMLElement);
+        fireEvent.change(document.querySelector('input[role="spinbutton"]') as HTMLInputElement, {
+            target: { value: next },
+        });
+        return useStore.getState().currentDoc!.nodes.find((n) => n.id === 'a')!.transform.rotDeg;
+    };
+
+    it('keeps a typed in-range negative angle signed (-15, never 345)', () => {
+        expect(typeRotation('-15')).toBe(-15);
+    });
+
+    it('reduces a typed out-of-range angle by one period (400 → 40)', () => {
+        expect(typeRotation('400')).toBe(40);
     });
 });
 

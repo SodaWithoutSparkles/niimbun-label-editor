@@ -237,3 +237,75 @@ describe('PopoverSlider numeric entry', () => {
         expect(onChange).toHaveBeenLastCalledWith(42);
     });
 });
+
+describe('PopoverSlider circular commit', () => {
+    const input = () => screen.getByRole('spinbutton') as HTMLInputElement;
+
+    /**
+     * A signed rotation-like field: one range [-360, 360] at 0.1° that wraps by
+     * a full turn. The live keystroke path forwards raw values; Enter/blur goes
+     * through `handleConfirm`, which is the path under test here.
+     */
+    const renderCircular = () => {
+        const onChange = vi.fn();
+        render(
+            <PopoverSlider
+                value={0}
+                onChange={onChange}
+                min={-360}
+                max={360}
+                step={0.1}
+                circular
+                period={360}
+            />,
+        );
+        fireEvent.click(screen.getByText('0'));
+        return onChange;
+    };
+
+    it('keeps an in-range typed angle signed (-15 stays -15, never 345)', () => {
+        const onChange = renderCircular();
+        fireEvent.change(input(), { target: { value: '-15' } });
+        fireEvent.keyDown(input(), { key: 'Enter' });
+
+        expect(onChange).toHaveBeenLastCalledWith(-15);
+    });
+
+    it('wraps an out-of-range typed angle by the period (400 → 40)', () => {
+        const onChange = renderCircular();
+        fireEvent.change(input(), { target: { value: '400' } });
+        fireEvent.keyDown(input(), { key: 'Enter' });
+
+        expect(onChange).toHaveBeenLastCalledWith(40);
+    });
+
+    it('wraps an out-of-range negative angle by the period (-400 → -40)', () => {
+        const onChange = renderCircular();
+        fireEvent.change(input(), { target: { value: '-400' } });
+        fireEvent.keyDown(input(), { key: 'Enter' });
+
+        expect(onChange).toHaveBeenLastCalledWith(-40);
+    });
+
+    it('wraps an exact multiple to 0 (720 → 0, matching the live path)', () => {
+        const onChange = renderCircular();
+        fireEvent.change(input(), { target: { value: '720' } });
+        fireEvent.keyDown(input(), { key: 'Enter' });
+
+        expect(onChange).toHaveBeenLastCalledWith(0);
+    });
+
+    it('keeps an extreme finite angle finite and in range (1e308)', () => {
+        const onChange = renderCircular();
+        fireEvent.change(input(), { target: { value: '1e308' } });
+        fireEvent.keyDown(input(), { key: 'Enter' });
+
+        const calls = onChange.mock.calls;
+        const committed = calls[calls.length - 1]![0] as number;
+        expect(Number.isFinite(committed)).toBe(true);
+        expect(committed).toBeGreaterThanOrEqual(-360);
+        expect(committed).toBeLessThanOrEqual(360);
+        // One period wrap, rounded to the field's 0.1° step.
+        expect(committed).toBeCloseTo(1e308 % 360, 5);
+    });
+});

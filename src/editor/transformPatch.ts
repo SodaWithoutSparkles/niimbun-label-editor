@@ -10,6 +10,30 @@ import type { NodePatch } from '../store/storeTypes';
  * `transform.x/y` (rounded hm), leaving size/rotation intact.
  */
 
+/**
+ * Rotate a **world-space** translation into a parent frame rotated by
+ * `parentRotDeg` (the parent's effective world rotation, in degrees).
+ *
+ * A drag delta is measured in world space, but a node's `transform.x/y` live in
+ * its parent's local frame. A child of a rotated group must therefore be moved
+ * by the delta expressed in that frame: for a 90° group, dragging right moves
+ * the child **up** in parent-local terms (`(dx,dy) → (0,−dx)`), which renders as
+ * "right" on screen. Rotating by `−parentRotDeg` is the inverse of the parent's
+ * rotation; the identity path returns the delta untouched so an unrotated (or
+ * root) parent stays bit-identical to the raw-delta behaviour.
+ */
+export const worldDeltaToLocal = (
+    dx: number,
+    dy: number,
+    parentRotDeg: number,
+): { dx: number; dy: number } => {
+    if (parentRotDeg === 0) return { dx, dy };
+    const radians = (-parentRotDeg * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    return { dx: dx * cos - dy * sin, dy: dx * sin + dy * cos };
+};
+
 /** Invert only the linear (a,b,c,d) part of a matrix; `null` when singular. */
 const invertLinear = (m: Mat2D): Mat2D | null => {
     const det = m.a * m.d - m.b * m.c;
