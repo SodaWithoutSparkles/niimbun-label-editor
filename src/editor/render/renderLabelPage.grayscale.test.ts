@@ -6,7 +6,7 @@ import { createLabelDoc } from '../../core/doc/factory';
 import { grayLevelColor, type RgbaBuffer } from '../../core/render';
 import type { LabelDoc, Node, Region } from '../../core/doc/types';
 import { installCanvasShim } from '../../test/canvasHarness';
-import { renderLabelPage } from './renderLabelPage';
+import { renderLabelPage, invertRgb } from './renderLabelPage';
 
 /**
  * P3 wave A — grayscale page colour end to end through the shared render path.
@@ -245,6 +245,82 @@ describe('renderLabelPage — grayscale page colour', () => {
             }
         }
         expect(count10).toBeGreaterThan(count9 * 5);
+    });
+
+    it('does not bleed ink outside a black shape on a band-limited page', async () => {
+        // REGRESSION (phase 3, bug 2). The default band 4..14 has no level-0
+        // (black) entry, so the diffuser used to keep a -17 residual on an
+        // authored black and pushed it into the white surround: 186 px of ink
+        // landed outside the rect. The engine now clamps the scalar plane at the
+        // band's darkest ink, so authored black prints level 14 and nothing
+        // spreads. x = 200 hm @254 dpi = px 20; w = 600 hm = 60 px.
+        const page = await renderLabelPage(
+            docWith([rect('r', 200, 600, '#000000')]),
+            {},
+            { pageColor: 'grayscale', grayscaleTone: { minLevel: 4, maxLevel: 14 } },
+        );
+
+        for (let y = 0; y < page.heightPx; y++) {
+            for (let x = 0; x < page.widthPx; x++) {
+                if (x >= 20 && x < 80) continue;
+                expect(pixelAt(page.rgba, x, y)[0], `(${x},${y}) outside the rect`).toBe(255);
+            }
+        }
+        expect(pixelAt(page.rgba, 50, 25)).toEqual([
+            grayLevelColor(14),
+            grayLevelColor(14),
+            grayLevelColor(14),
+            255,
+        ]);
+    });
+
+    it('inverts inside the resolved band, so paper lands on the darkest allowed level', async () => {
+        // REGRESSION (phase 3, bug 3). A full-ramp invert mapped paper (level 0)
+        // to level 15, outside a 4..8 band. A grayscale page now mirrors levels
+        // within its band: paper 0 → 8, darkest ink 8 → lightest 4, so every
+        // emitted level stays in [4, 8].
+        const page = await renderLabelPage(
+            docWith([rect('r', 0, 400, '#000000')]),
+            {},
+            { pageColor: 'grayscale', grayscaleTone: { minLevel: 4, maxLevel: 8 }, invert: true },
+        );
+
+        for (let y = 0; y < page.heightPx; y++) {
+            for (let x = 0; x < page.widthPx; x++) {
+                const [r, g, b] = pixelAt(page.rgba, x, y);
+                expect([g, b], `(${x},${y}) is neutral`).toEqual([r, r]);
+                const level = (255 - r) / 17;
+                expect(Number.isInteger(level), `(${x},${y}) is a ramp level`).toBe(true);
+                expect(level, `(${x},${y}) level`).toBeGreaterThanOrEqual(4);
+                expect(level, `(${x},${y}) level`).toBeLessThanOrEqual(8);
+            }
+        }
+        // Paper (level 0 before invert) is the darkest allowed ink, not level 15.
+        expect(pixelAt(page.rgba, 80, 25)[0]).toBe(grayLevelColor(8));
+        // The authored black rect rendered at the band floor (level 8), so the
+        // inversion lands on the lightest allowed ink (level 4).
+        expect(pixelAt(page.rgba, 20, 25)[0]).toBe(grayLevelColor(4));
+    });
+
+    it('keeps the full-ramp invert byte-identical to the legacy luminance invert', async () => {
+        // A full 0..15 band makes `lowest + highest - k = 15 - k`, so the
+        // band-aware path must reproduce `invertRgb` byte for byte. This pins
+        // that the band branch did not change the default-ramp grayscale page.
+        const doc = docWith([
+            rect('r', 0, 400, '#eeeeee'),
+            rect('m', 500, 300, '#808080'),
+        ]);
+        const plain = await renderLabelPage(doc, {}, { pageColor: 'grayscale' });
+        const inverted = await renderLabelPage(doc, {}, { pageColor: 'grayscale', invert: true });
+
+        const legacy: RgbaBuffer = {
+            width: plain.rgba.width,
+            height: plain.rgba.height,
+            data: new Uint8ClampedArray(plain.rgba.data),
+        };
+        invertRgb(legacy);
+
+        expect(Array.from(inverted.rgba.data)).toEqual(Array.from(legacy.data));
     });
 
     it('leaves the mono path byte-identical and 1-bit', async () => {

@@ -160,7 +160,7 @@ describe('P7 batch job end-to-end: planSequence → buildCsvPrintJob → jobRunn
         expect(record.result).toEqual({ pagesPrinted: 100 });
     });
 
-    it('interleaved: 100 quantity-1 pages, in row order', async () => {
+    it('interleaved: 100 quantity-1 pages, copy-major round-robin', async () => {
         const csv = groupedCsv();
         const transport = new MockTransport();
         await transport.connect();
@@ -187,11 +187,11 @@ describe('P7 batch job end-to-end: planSequence → buildCsvPrintJob → jobRunn
         const result = await runner.run(job);
 
         expect(result).toEqual({ cancelled: false, pagesPrinted: 100 });
-        // row0 skipped; row1 emitted twice; rows 2..99 once each.
+        // row0 skipped; copy 0 walks rows 1..99 in order, then copy 1 revisits
+        // row1 (its $times is 2) — copy-major / row-minor round-robin.
         expect(rowOrder).toEqual([
+            ...Array.from({ length: 99 }, (_, i) => i + 1),
             1,
-            1,
-            ...Array.from({ length: 98 }, (_, i) => i + 2),
         ]);
 
         const record = transport.jobs[0]!;

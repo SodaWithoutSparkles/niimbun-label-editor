@@ -7,6 +7,7 @@ import {
     DEFAULT_GAMMA_BY_STRATEGY,
     DEFAULT_SCREENTONE,
     diffuseRamp,
+    GRAY_LEVEL_STEP,
     grayscaleRampPalette,
     HM_PER_INCH,
     MonoColorSpace,
@@ -15,6 +16,7 @@ import {
     policyKeyOf,
     quantizeRgba,
     rasterDimensions,
+    resolveGrayscaleBand,
     resolveQuantizer,
     resolveQuantizerParams,
     separateRedBlack,
@@ -216,7 +218,10 @@ export interface RenderLabelPageOptions {
     /**
      * Post-quantize: invert luminance while keeping hue. For neutral pixels
      * this is exactly `v → 255 - v` (black ↔ white); palette colours keep
-     * their hue (red stays red, never cyan).
+     * their hue (red stays red, never cyan). On a **grayscale** page the
+     * inversion stays inside `grayscaleTone`: level `k` becomes
+     * `clamp(lowest + highest - k, lowest, highest)`, so paper (level 0) maps
+     * to the darkest allowed level rather than 15.
      */
     invert?: boolean;
     /** Post-quantize: flip the raster horizontally. */
@@ -816,23 +821,77 @@ const buildQuantizeOptions = (
  */
 export const invertRgb = (rgba: RgbaBuffer): void => {
     const { data } = rgba;
+    for (let i = 0; i < data.length; i += 4) invertPixelLuminance(data, i);
+};
+
+/**
+ * Invert one post-quantize pixel by luminance, keeping hue: the {@link invertRgb}
+ * op, factored out so the band-aware grayscale invert shares its defensive
+ * non-neutral behaviour.
+ */
+function invertPixelLuminance(data: Uint8ClampedArray, i: number): void {
+    const r = data[i]!;
+    const g = data[i + 1]!;
+    const b = data[i + 2]!;
+    const luminance = monoLuminance(r, g, b);
+    if (luminance === 0) {
+        data[i] = 255;
+        data[i + 1] = 255;
+        data[i + 2] = 255;
+        return;
+    }
+    // One scale factor for all three channels: hue and saturation survive.
+    // The clamps/rounding happen in the `Uint8ClampedArray` write.
+    const scale = (255 - luminance) / luminance;
+    data[i] = r * scale;
+    data[i + 1] = g * scale;
+    data[i + 2] = b * scale;
+}
+
+/**
+ * Post-quantize invert for a **grayscale** page: mirror each level inside the
+ * resolved usable band instead of across the full 0..15 ramp.
+ *
+ * After {@link diffuseRamp} every pixel is an exact neutral ramp byte
+ * `255 - 17k`, so the level is recovered exactly as `k = (255 - r) / 17`. The
+ * negative mirrors the band about its own centre and commits
+ * `k' = clamp(lowest + highest - k, lowest, highest)`, written back as
+ * `255 - 17k'`. A band-limited page therefore never emits an inverted level
+ * outside `[lowest, highest]`: dithering to a level the paper cannot show is
+ * the whole defect this avoids.
+ *
+ * Mapping consequences:
+ *
+ *  - the lightest ink (`lowest`) ↔ the darkest ink (`highest`);
+ *  - paper / blank (level 0, outside the band on the light side) has no
+ *    counterpart darker than the band, so the clamp lands it on `highest` — the
+ *    darkest allowed level, not level 15.
+ *
+ * With the full 0..15 ramp `lowest = 0`, `highest = 15`, so the clamp never
+ * applies and `255 - 17(15 - k) = 17k` — byte-identical to {@link invertRgb} on
+ * neutral pixels, which keeps the full-ramp grayscale goldens unchanged.
+ * Non-neutral pixels cannot occur on this path (the diffuser only writes ramp
+ * entries), so they take the hue-preserving {@link invertRgb} op defensively.
+ */
+export const invertGrayscaleRamp = (rgba: RgbaBuffer, tone?: GrayscaleTone): void => {
+    const { data } = rgba;
+    const { lowest, highest } = resolveGrayscaleBand(tone?.minLevel, tone?.maxLevel);
+    const mirrorBase = lowest + highest;
+
     for (let i = 0; i < data.length; i += 4) {
         const r = data[i]!;
         const g = data[i + 1]!;
         const b = data[i + 2]!;
-        const luminance = monoLuminance(r, g, b);
-        if (luminance === 0) {
-            data[i] = 255;
-            data[i + 1] = 255;
-            data[i + 2] = 255;
+        if (r !== g || g !== b) {
+            invertPixelLuminance(data, i);
             continue;
         }
-        // One scale factor for all three channels: hue and saturation survive.
-        // The clamps/rounding happen in the `Uint8ClampedArray` write.
-        const scale = (255 - luminance) / luminance;
-        data[i] = r * scale;
-        data[i + 1] = g * scale;
-        data[i + 2] = b * scale;
+        const level = Math.round((255 - r) / GRAY_LEVEL_STEP);
+        const mirrored = Math.min(highest, Math.max(lowest, mirrorBase - level));
+        const value = 255 - GRAY_LEVEL_STEP * mirrored;
+        data[i] = value;
+        data[i + 1] = value;
+        data[i + 2] = value;
     }
 };
 
@@ -1104,7 +1163,13 @@ export const renderLabelPage = async (
     // Post-quantize overrides, applied **before** the post-clip: invert must not
     // blacken the guaranteed-white margin, and mirror must not move ink outside
     // the union. Order: quantize → invert → mirror → post-clip → offset.
-    if (opts.invert) invertRgb(imageData);
+    // A grayscale page inverts **within its resolved band**: a full-ramp
+    // inversion would turn paper (level 0) into level 15, which the user's band
+    // says the paper cannot show (and which the renderer must never emit).
+    if (opts.invert) {
+        if (pageColor === 'grayscale') invertGrayscaleRamp(imageData, opts.grayscaleTone);
+        else invertRgb(imageData);
+    }
 
     // Post-clip: error diffusion can cross the boundary; guarantee blank outside.
     // Only the mirror path counts ink around the clip: the flip is the one

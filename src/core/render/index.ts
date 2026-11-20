@@ -43,6 +43,7 @@ export {
 export {
     classifyFlatRedBlack,
     diffuseRamp,
+    GRAY_LEVEL_STEP,
     GRAYSCALE_LEVELS,
     grayscaleRampPalette,
     grayLevelColor,
@@ -50,6 +51,7 @@ export {
     RED_BLACK_BLACK,
     RED_BLACK_RED,
     RED_BLACK_WHITE,
+    resolveGrayscaleBand,
     type GrayscaleTone,
     type PageColorMode,
     type Palette,

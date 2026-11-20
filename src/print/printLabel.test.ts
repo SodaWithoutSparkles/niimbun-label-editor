@@ -321,7 +321,7 @@ describe('buildCsvPrintJob', () => {
         expect(pages.reduce((sum, page) => sum + page.quantity, 0)).toBe(job.totalPages);
     });
 
-    it('interleaved: quantity-1 pages in row order', async () => {
+    it('interleaved: quantity-1 pages, copy-major round-robin', async () => {
         const csv = csvOf(['$times'], [['2'], ['3']]);
         const seen: number[] = [];
         const job = buildCsvPrintJob(
@@ -339,7 +339,8 @@ describe('buildCsvPrintJob', () => {
         expect(job.totalPages).toBe(5);
         const pages = await collectPages(job);
         expect(pages.map((page) => page.quantity)).toEqual([1, 1, 1, 1, 1]);
-        expect(seen).toEqual([0, 0, 1, 1, 1]);
+        // Copy 0: row0, row1. Copy 1: row0, row1. Copy 2: row1 only ($times 3).
+        expect(seen).toEqual([0, 1, 0, 1, 1]);
         expect(pages.reduce((sum, page) => sum + page.quantity, 0)).toBe(job.totalPages);
     });
 
@@ -641,9 +642,14 @@ describe('buildCsvPrintJob', () => {
         );
         expect(job.totalPages).toBe(1);
 
-        // Simulate a non-deterministic source: the generator now yields more
-        // copies than the build-time Σ promised (the callback is documented as
-        // pure/stable; violating that must fail loudly instead of over-sending).
+        // The plan resolves `times × copies` once at build time, so the first
+        // (cached) pass is stable regardless of the live source below.
+        expect(await collectPages(job)).toHaveLength(1);
+
+        // Simulate a non-deterministic source: the re-derived second pass now
+        // yields more copies than the build-time Σ promised (the callback is
+        // documented as pure/stable; violating that must fail loudly instead of
+        // over-sending).
         times = 5;
 
         await expect(collectPages(job)).rejects.toThrow(/exceeds totalPages/);
@@ -659,8 +665,12 @@ describe('buildCsvPrintJob', () => {
         );
         expect(job.totalPages).toBe(5);
 
-        // The generator now yields fewer copies than the transport was told; a
-        // silent under-send would leave it waiting for pages that never come.
+        // First pass walks the build-time quantities (Σ 5).
+        expect((await collectPages(job)).map((page) => page.quantity)).toEqual([5]);
+
+        // The re-derived second pass now yields fewer copies than the transport
+        // was told; a silent under-send would leave it waiting for pages that
+        // never come.
         times = 1;
 
         await expect(collectPages(job)).rejects.toThrow(/under-sent/);

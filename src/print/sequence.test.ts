@@ -59,7 +59,7 @@ describe('planSequence — grouped', () => {
 });
 
 describe('planSequence — interleaved', () => {
-    it('emits times × copies quantity-1 plans per record, in row order', async () => {
+    it('round-robins copy-major: quantities 2,1 emit row0, row1, row0', async () => {
         const plan = planSequence(2, timesMap({ 0: 2, 1: 1 }), {
             order: 'interleaved',
             copies: 1,
@@ -67,8 +67,27 @@ describe('planSequence — interleaved', () => {
 
         expect(await collect(plan)).toEqual([
             { rowIndex: 0, quantity: 1 },
-            { rowIndex: 0, quantity: 1 },
             { rowIndex: 1, quantity: 1 },
+            { rowIndex: 0, quantity: 1 },
+        ]);
+    });
+
+    it('emits A,B,C,A,B,C for three records with 2 copies each', async () => {
+        const plan = planSequence(3, () => 1, { order: 'interleaved', copies: 2 });
+
+        expect((await collect(plan)).map((page) => page.rowIndex)).toEqual([
+            0, 1, 2, 0, 1, 2,
+        ]);
+    });
+
+    it('round-robins unequal per-record quantities (2,1,3 → 0,1,2,0,2,2)', async () => {
+        const plan = planSequence(3, timesMap({ 0: 2, 1: 1, 2: 3 }), {
+            order: 'interleaved',
+            copies: 1,
+        });
+
+        expect((await collect(plan)).map((page) => page.rowIndex)).toEqual([
+            0, 1, 2, 0, 2, 2,
         ]);
     });
 
@@ -83,6 +102,22 @@ describe('planSequence — interleaved', () => {
             { rowIndex: 0, quantity: 1 },
             { rowIndex: 0, quantity: 1 },
         ]);
+    });
+
+    it('matches grouped order when copies is 1 and every record is single-copy', async () => {
+        const interleaved = await collect(
+            planSequence(3, () => 1, { order: 'interleaved', copies: 1 }),
+        );
+        const grouped = await collect(
+            planSequence(3, () => 1, { order: 'grouped', copies: 1 }),
+        );
+
+        expect(interleaved).toEqual([
+            { rowIndex: 0, quantity: 1 },
+            { rowIndex: 1, quantity: 1 },
+            { rowIndex: 2, quantity: 1 },
+        ]);
+        expect(grouped).toEqual(interleaved);
     });
 });
 
@@ -168,9 +203,9 @@ describe('planSequence — totalPages', () => {
     });
 
     it('equals the sum of generated quantities for a pure timesFor', async () => {
-        // Purity is a documented requirement: timesFor runs once per row in the
-        // Σ pass and again per row in the generator. A row-indexed (stable)
-        // callback keeps both passes identical.
+        // Purity is a documented requirement: the plan resolves every row's
+        // quantity once, but callers may re-derive the plan for a later
+        // iteration pass. A row-indexed (stable) callback keeps passes identical.
         const plan = planSequence(3, timesMap({ 0: 2, 1: 3, 2: 4 }), {
             order: 'interleaved',
             copies: 2,
@@ -223,7 +258,7 @@ describe('planSequence — interleaved warning', () => {
 });
 
 describe('planSequence — laziness', () => {
-    it('does not build the remaining pages when the consumer stops early', async () => {
+    it('resolves timesFor once per row, then walks the plan one page at a time', async () => {
         const rows = 100_000;
         let calls = 0;
         const timesFor = (): number => {
@@ -232,7 +267,8 @@ describe('planSequence — laziness', () => {
         };
 
         const plan = planSequence(rows, timesFor, { order: 'interleaved', copies: 1 });
-        // The cheap upfront Σ visits each row exactly once.
+        // The cheap upfront Σ resolves each row exactly once and keeps those
+        // integers; the generator never calls back into the source.
         const afterPlanning = calls;
         expect(afterPlanning).toBe(rows);
 
@@ -241,9 +277,13 @@ describe('planSequence — laziness', () => {
         expect(first.done).toBe(false);
         expect(first.value).toEqual({ rowIndex: 0, quantity: 1 });
 
-        // One more source step ran for the pulled page. An eager generator that
-        // materialised everything on `next()` would add `rows` more calls here.
-        expect(calls).toBe(rows + 1);
+        // Pulling a page visits only the rows needed for it — no re-evaluation
+        // of `timesFor`, and no materialisation of the remaining pages.
+        expect(calls).toBe(rows);
+
+        const second = await iterator.next();
+        expect(second.value).toEqual({ rowIndex: 1, quantity: 1 });
+        expect(calls).toBe(rows);
     });
 });
 

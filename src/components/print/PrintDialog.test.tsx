@@ -1149,6 +1149,63 @@ describe('PrintDialog — persisted print offset (P9)', () => {
         expect(screen.getByLabelText('Offset X')).toHaveValue('68');
     });
 
+    it.each([
+        { resolvedDpi: 300, thumbX: 10 },
+        // 30 * 100 / 203 = 14.78 → 15: the offset is re-expressed, not forwarded.
+        { resolvedDpi: 203, thumbX: 15 },
+    ])(
+        'scales the offset into thumbnail px but keeps print px for preview and job ($resolvedDpi dpi)',
+        async ({ resolvedDpi, thumbX }) => {
+            renderDialog({
+                doc: narrowDoc(),
+                runner: new FakeRunner(),
+                printerStatus:
+                    resolvedDpi === 300
+                        ? statusOf(B1_PRO)
+                        : { ...statusOf(B1_PRO), dpi: resolvedDpi },
+            });
+
+            fireEvent.change(screen.getByLabelText('Offset X'), { target: { value: '30' } });
+
+            // The page preview renders at the resolved print dpi, so the offset
+            // stays in print px: one device dot is one dot at every render dpi.
+            await waitFor(() =>
+                expect(
+                    renderLabelPageMock.mock.calls.some(([, , opts]) => {
+                        const o = opts as { dpi?: number; offset?: { x?: number } } | undefined;
+                        return o?.dpi === resolvedDpi && o.offset?.x === 30;
+                    }),
+                ).toBe(true),
+            );
+
+            // The queue cache renders at THUMBNAIL_DPI, so a verbatim forward
+            // would exaggerate the shift by `resolvedDpi / THUMBNAIL_DPI`.
+            fireEvent.change(screen.getByLabelText('View as'), { target: { value: 'queue' } });
+            await waitFor(() =>
+                expect(
+                    renderLabelPageMock.mock.calls.some(([, , opts]) => {
+                        const o = opts as
+                            | { dpi?: number; offset?: { x?: number; y?: number } }
+                            | undefined;
+                        return (
+                            o?.dpi === THUMBNAIL_DPI &&
+                            o.offset?.x === thumbX &&
+                            o.offset?.y === 0
+                        );
+                    }),
+                ).toBe(true),
+            );
+
+            // The job renders at the print dpi too, so it keeps print px.
+            fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+            await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+            const jobOpts = buildCsvPrintJobMock.mock.calls[0]![2] as {
+                overrides?: { offset?: { x?: number; y?: number } };
+            };
+            expect(jobOpts.overrides?.offset).toMatchObject({ x: 30, y: 0 });
+        },
+    );
+
     it('reports the hm offset once on unmount, never per keystroke', () => {
         const onPrintOffsetChange = vi.fn();
         const doc = narrowDoc();

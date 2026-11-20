@@ -374,9 +374,18 @@ split panes for the library author.
   persisted and threaded to preview, thumbnails and job, so the band is no
   longer hard-coded to one printer/paper. The shipped **defaults** still come
   from the owner's density-3 stock and must not be read as a universal constant;
-  re-calibrating them is **D-78/D-79**. **D-75 is resolved in P10** — no
-  tone-range remap is required for release; the renderer dithers across the
-  0→min gap.
+  re-calibrating them is **D-78/D-79**. **D-75 is resolved in P10.** The
+  renderer dithers across the 0→min gap. **Band-limited rendering also clamps**
+  (phase 3, 2026-11-21): the scalar plane's low side is clamped to the band's
+  darkest entry *before* diffusion, because a band with no black entry used to
+  keep a residual on authored black and bleed a level-`max` halo far outside the
+  shape (default band: 186 px outside a 60×32 black rect; now zero). A full
+  0..15 ramp clamps to 0, so its output stays byte-identical. **Invert is
+  band-aware**: on a grayscale page level `k` becomes
+  `clamp(min + max − k, min, max)` (paper → `max`, not 15), while mono/red-black
+  keep `invertRgb`. Full-ramp grayscale invert is byte-identical to
+  `invertRgb` (`0 + 15 − k`). No global tone-range remap: midtones are never
+  rescaled.
 - **D-05 seam drift** still applies — in red/black the flat point op discards
   any error a diffuse neighbour deposited, on top of the existing
   diffuse-beside-diffuse seam.

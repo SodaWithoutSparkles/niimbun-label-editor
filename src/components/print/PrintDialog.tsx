@@ -33,6 +33,7 @@ import type { EditorWarning } from '../../editor/warnings';
 import { docUsesScreentone } from '../../editor/screentoneUsage';
 import {
     mergeNotices,
+    THUMBNAIL_DPI,
     usePrintThumbnails,
     type PrintThumbnailOverrides,
 } from './usePrintThumbnails';
@@ -458,7 +459,20 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         () => ({
             ...(invert ? { invert: true } : {}),
             ...(mirror ? { mirror: true } : {}),
-            ...(parsedOffset ? { offset: parsedOffset } : {}),
+            // The offset is defined in **print-dpi** device px, but the thumbnail
+            // cache renders at `THUMBNAIL_DPI`. Scale it into thumbnail px here,
+            // or `renderLabelPage` shifts the 100-dpi raster by the print-dpi
+            // dot count and the preview exaggerates the offset by
+            // `resolved.dpi / THUMBNAIL_DPI`.
+            ...(parsedOffset
+                ? {
+                      offset: {
+                          ...parsedOffset,
+                          x: Math.round((parsedOffset.x * THUMBNAIL_DPI) / resolved.dpi),
+                          y: Math.round((parsedOffset.y * THUMBNAIL_DPI) / resolved.dpi),
+                      },
+                  }
+                : {}),
             quantizerDefaults,
             defaultQuantizerByType,
             // Mono is the absent key (today's render); only another mode is
@@ -477,6 +491,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             invert,
             mirror,
             parsedOffset,
+            resolved.dpi,
             quantizerDefaults,
             defaultQuantizerByType,
             pageColor,
@@ -498,10 +513,14 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             dpi: resolved.dpi,
             ...(assets !== undefined ? { assets } : {}),
             ...thumbnailOverrides,
+            // `thumbnailOverrides` carries the offset scaled to
+            // `THUMBNAIL_DPI`; this raster renders at the resolved print dpi, so
+            // restore the print-px value (same number the job receives).
+            ...(parsedOffset ? { offset: parsedOffset } : {}),
             ...(redBlackTuning !== undefined ? { redBlack: redBlackTuning } : {}),
             ...(grayscaleTuning !== undefined ? { grayscaleTone: grayscaleTuning } : {}),
         }),
-        [resolved.dpi, assets, thumbnailOverrides, redBlackTuning, grayscaleTuning],
+        [resolved.dpi, assets, thumbnailOverrides, parsedOffset, redBlackTuning, grayscaleTuning],
     );
 
     const handlePreviewReport = useCallback(

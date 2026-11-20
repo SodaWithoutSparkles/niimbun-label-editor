@@ -414,6 +414,43 @@ describe('diffuseRamp (scalar luminance plane)', () => {
         }
     });
 
+    it('clamps tones darker than the band floor, so black cannot bleed into white', () => {
+        // REGRESSION (phase 3, bug 2). With band 4..14 the darkest entry is
+        // level 14 (17), so an authored black (0) had **no exact entry**. Its
+        // `value - entry.r = -17` residual was diffused into neighbours; past
+        // the 246.5 boundary those white neighbours flipped to level 14, inking
+        // a halo far outside the shape (measured: 186 px outside a 60×32 rect).
+        // The scalar plane now clamps at the darkest representable entry, so
+        // "darker than the paper can show" becomes the darkest printable ink.
+        const width = 100;
+        const height = 60;
+        const rect = { x: 20, y: 14, w: 60, h: 32 };
+        const isInside = (x: number, y: number): boolean =>
+            x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+        const rgba = bufferOf(width, height, (x, y) => {
+            const value = isInside(x, y) ? 0 : 255;
+            return [value, value, value, 255];
+        });
+
+        diffuseRamp(rgba, grayscaleRampPalette(4, 14));
+
+        const white = grayLevelColor(0);
+        let inkedInside = 0;
+        let inkedOutside = 0;
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const inked = rgba.data[(y * width + x) * 4] !== white;
+                if (!inked) continue;
+                if (isInside(x, y)) inkedInside++;
+                else inkedOutside++;
+            }
+        }
+        expect(inkedOutside).toBe(0);
+        expect(inkedInside).toBe(rect.w * rect.h);
+        // The whole rect takes the darkest allowed ink, not level 15.
+        expect(rgba.data[(rect.y * width + rect.x) * 4]).toBe(grayLevelColor(14));
+    });
+
     it('emits only the band entries for a full-tone field', () => {
         const rgba = solid(16, 16, 128, 128, 128);
         const palette = grayscaleRampPalette(4, 14);

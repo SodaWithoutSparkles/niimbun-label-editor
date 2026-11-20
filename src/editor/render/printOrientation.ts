@@ -132,10 +132,14 @@ export const printheadOverflow = (
  * raster is not actually over) — a missing reported head size disables the
  * warning, exactly like the size check.
  *
- * A pixel is ink when **any** of its RGB channels is `< 128`. The quantized mono
- * raster is exact `0/255`, so all channels agree; testing every channel also
- * keeps this correct for a future `RedBlack` raster (an R-only test would miss
- * red ink). Pure and DOM-free so it can run on a `RenderedLabelPage.rgba`
+ * A pixel is ink when it is **not paper white** (`r !== 255 || g !== 255 ||
+ * b !== 255`), mirroring `countInkPx`. The detector runs on the post-quantize
+ * raster, where every pixel is an exact palette colour, so the white test is
+ * exact: a `r < 128` luminance test would classify grayscale levels 1–7
+ * (bytes 238…136) as paper and miss clipped light-grey ink. Testing every
+ * channel also keeps this correct for a future `RedBlack` raster (an R-only
+ * test would miss red ink). Alpha is ignored — it is opacity metadata, never
+ * pigment. Pure and DOM-free so it can run on a `RenderedLabelPage.rgba`
  * directly.
  */
 export const hasInkBeyondPrinthead = (
@@ -150,11 +154,12 @@ export const hasInkBeyondPrinthead = (
     const headSize = sideways ? heightPx : widthPx;
     if (headSize <= printheadPixels) return false;
 
-    // Any dark channel counts as ink: mono is exact 0/255 in every channel, and
-    // this also stays correct for a future RedBlack raster (red ink would be
-    // missed by an R-only test).
+    // Not paper white = ink. Post-quantize every pixel is an exact palette
+    // colour (black, a grey level, red, or white), so no luminance threshold is
+    // needed — and a `< 128` test would miss grayscale levels 1–7. Any non-white
+    // channel also covers red ink (an R-only test would miss it).
     const isInk = (base: number): boolean =>
-        data[base]! < 128 || data[base + 1]! < 128 || data[base + 2]! < 128;
+        data[base] !== 255 || data[base + 1] !== 255 || data[base + 2] !== 255;
 
     if (!sideways) {
         // top/bottom: feed axis is height; the head spans the width.

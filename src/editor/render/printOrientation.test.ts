@@ -184,6 +184,26 @@ describe('hasInkBeyondPrinthead', () => {
         expect(hasInkBeyondPrinthead(withinHeadRows, 'right', 567)).toBe(false);
     });
 
+    it('treats light grayscale levels as ink beyond the head', () => {
+        // Post-quantize grayscale level k is byte `255 - 17k`, so levels 1–7
+        // (238…136) are ink that the old `< 128` predicate missed entirely.
+        const greyBeyond = (byte: number) => {
+            const page = inkPage(600, 100, () => false);
+            const base = (0 * 600 + 599) * 4;
+            page.rgba.data[base] = byte;
+            page.rgba.data[base + 1] = byte;
+            page.rgba.data[base + 2] = byte;
+            return page;
+        };
+
+        // Level 7 = 136, the darkest level the old luminance test called paper.
+        expect(hasInkBeyondPrinthead(greyBeyond(136), 'top', 567)).toBe(true);
+        // Level 1 = 238, the lightest non-white ink.
+        expect(hasInkBeyondPrinthead(greyBeyond(238), 'top', 567)).toBe(true);
+        // Paper white (255) is never ink.
+        expect(hasInkBeyondPrinthead(greyBeyond(255), 'top', 567)).toBe(false);
+    });
+
     it('treats a pixel as ink when only one RGB channel is dark', () => {
         const page = inkPage(600, 100, () => false);
         const base = (0 * 600 + 599) * 4;
