@@ -51,7 +51,7 @@ export const Header: React.FC = () => {
     const redoDoc = useStore(state => state.redoDoc);
     const cloneNode = useStore(state => state.cloneNode);
     const selectNodes = useStore(state => state.selectNodes);
-    const removeNode = useStore(state => state.removeNode);
+    const removeNodes = useStore(state => state.removeNodes);
     const moveNodeZ = useStore(state => state.moveNodeZ);
     const groupNodes = useStore(state => state.groupNodes);
     const ungroupNode = useStore(state => state.ungroupNode);
@@ -76,7 +76,7 @@ export const Header: React.FC = () => {
             .filter((id): id is string => id !== null);
         if (clonedIds.length > 0) selectNodes(clonedIds);
     };
-    const editDelete = () => selectedNodeIds.forEach((id) => removeNode(id));
+    const editDelete = () => removeNodes(selectedNodeIds);
     const editMoveLayer = (direction: 'up' | 'down') =>
         selectedNodeIds.forEach((id) => moveNodeZ(id, direction));
     const editGroup = () => groupNodes([...selectedNodeIds]);

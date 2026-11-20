@@ -180,6 +180,36 @@ describe('EditorKeyboardShortcuts — print (Ctrl/Cmd+P)', () => {
     });
 });
 
+describe('EditorKeyboardShortcuts — delete selection (single undo entry)', () => {
+    const withThreeSelected = () => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({ id: 'doc-1', now: 1, nodes: [node('a'), node('b'), node('c')] }),
+            selectedNodeIds: ['a', 'b', 'c'],
+        });
+        render(<EditorKeyboardShortcuts />);
+        return useStore.getState().docPast.length;
+    };
+
+    it('Delete removes the whole selection with exactly one history entry', () => {
+        const before = withThreeSelected();
+
+        press('Delete');
+
+        expect(useStore.getState().currentDoc!.nodes).toHaveLength(0);
+        expect(useStore.getState().docPast).toHaveLength(before + 1);
+    });
+
+    it('Backspace removes the whole selection with exactly one history entry', () => {
+        const before = withThreeSelected();
+
+        press('Backspace');
+
+        expect(useStore.getState().currentDoc!.nodes).toHaveLength(0);
+        expect(useStore.getState().docPast).toHaveLength(before + 1);
+    });
+});
+
 describe('EditorKeyboardShortcuts — arrow nudge (P4 W4)', () => {
     const withSelectedNode = () =>
         useStore.setState({

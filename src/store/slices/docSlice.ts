@@ -206,18 +206,22 @@ export const createDocSlice: StoreSlice = (set, get) => {
             const repo = get().labelRepo;
             if (!repo) return null;
             const request = ++openRequestId;
+            // Doc-switch boundary: flush any pending autosave **before** the
+            // read. The pending write can be an edit of the doc being opened, so
+            // reading first would install a stale pre-edit copy that the next
+            // save then writes back over the newer contents. The same flush also
+            // settles the leaving doc's last edit (so it is not dropped) before
+            // its undo history and transient baseline are cleared (so undo/redo
+            // can never apply doc A's snapshots to doc B). Await it so every
+            // started write settles before the read and before the new doc
+            // becomes current (deterministic ordering).
+            await get().flushAutosave();
+            // The await above can outlive a newer open or a delete of this label.
+            if (request !== openRequestId) return null;
             const doc = await repo.get(id);
             // A newer open, or a delete of this label, superseded this read.
             if (request !== openRequestId) return null;
             if (!doc) return null;
-            // Doc-switch boundary: flush any pending autosave for the doc we are
-            // leaving (so its last edit is not dropped), then drop its undo
-            // history and transient baseline (so undo/redo can never apply doc
-            // A's snapshots to doc B). Await the flush so the leaving doc's write
-            // settles before the new doc becomes current (deterministic ordering).
-            await get().flushAutosave();
-            // The await above can outlive a delete of this same label.
-            if (request !== openRequestId) return null;
             get().clearDocHistory();
             // Default view orientation for this document (view-only, §6). Done
             // here — the single doc-open boundary — so it never re-fires from a
@@ -293,13 +297,18 @@ export const createDocSlice: StoreSlice = (set, get) => {
                 get().addNotification({ type: 'error', message: i18next.t('gallery.deleteFailed') });
             }
             if (removed) {
-                set((state) => ({
-                    currentDoc: state.currentDoc?.meta.id === id ? null : state.currentDoc,
-                }));
-                // The open document is gone: leaving `view: 'editor'` would render
-                // an empty editor while the URL still points at the deleted doc.
-                // This also closes the editor-only print dialog.
-                if (closingCurrent) get().setView('gallery');
+                // Decide from live state, not the flag captured before the
+                // remove: an `openLabel` during that await may have committed a
+                // different doc (the flag says close, it must not) or this very
+                // label (the flag says leave the editor, it must close). One
+                // live read drives both the clear and the view reset.
+                if (get().currentDoc?.meta.id === id) {
+                    // The open document is gone: leaving `view: 'editor'` would
+                    // render an empty editor while the URL still points at the
+                    // deleted doc. This also closes the editor-only print dialog.
+                    set({ currentDoc: null });
+                    get().setView('gallery');
+                }
             }
             await get().refreshGallery();
         },

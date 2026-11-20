@@ -615,6 +615,80 @@ describe('editorSlice — document operations', () => {
         expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['o']);
     });
 
+    it('removeNodes removes every selected node and its descendants in one commit', () => {
+        const store = setupStore(
+            makeDoc([
+                textNode('a'),
+                textNode('b', 'a'),
+                textNode('c'),
+                groupNode('g'),
+                textNode('d', 'g'),
+                textNode('o'),
+            ]),
+        );
+        store.getState().removeNodes(['a', 'g']);
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['c', 'o']);
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('removeNodes deletes a 21-node selection as a single undo entry', () => {
+        const ids = Array.from({ length: 21 }, (_, i) => `n${i}`);
+        const store = setupStore(makeDoc(ids.map((id) => textNode(id))));
+        const before = store.getState().docPast.length;
+
+        store.getState().removeNodes(ids);
+
+        expect(store.getState().currentDoc!.nodes).toHaveLength(0);
+        expect(store.getState().docPast).toHaveLength(before + 1);
+
+        // One undo restores all 21: the delete did not exhaust the history cap.
+        store.getState().undoDoc();
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(ids);
+    });
+
+    it('removeNodes is a no-op for an empty list or ids that do not exist', () => {
+        const store = setupStore(makeDoc([textNode('a')]));
+        const before = store.getState().docPast.length;
+
+        store.getState().removeNodes([]);
+        store.getState().removeNodes(['missing']);
+        store.getState().removeNodes(['missing', 'also-missing']);
+
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['a']);
+        expect(store.getState().docPast).toHaveLength(before);
+    });
+
+    it('removeNodes removes a parent selected together with its descendant once', () => {
+        const store = setupStore(makeDoc([textNode('p'), textNode('c', 'p'), textNode('o')]));
+
+        store.getState().removeNodes(['p', 'c']);
+
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['o']);
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('removeNodes ignores a stale id and leaves the orphans parented to it alone', () => {
+        // `stale` is no longer a node, but the selection was never pruned and
+        // `orphan` still names it as its parent. Only the valid id may delete.
+        const store = setupStore(
+            makeDoc([textNode('a'), textNode('orphan', 'stale')]),
+        );
+
+        store.getState().removeNodes(['stale', 'a']);
+
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['orphan']);
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('removeNodes commits once for mixed valid and missing ids', () => {
+        const store = setupStore(makeDoc([textNode('a'), textNode('b'), textNode('o')]));
+
+        store.getState().removeNodes(['a', 'missing', 'b']);
+
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['o']);
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
     it('cloneNode deep-clones a subtree with unique ids and offsets the root', () => {
         const store = setupStore(makeDoc([textNode('p'), textNode('c', 'p')]));
         const newRoot = store.getState().cloneNode('p');

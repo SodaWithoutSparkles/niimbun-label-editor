@@ -485,6 +485,11 @@ export interface AppState {
      */
     flushAutosave: () => Promise<void>;
     removeNode: (id: string) => void;
+    /**
+     * Deletes every selected node (and each one's descendants) as ONE undo
+     * entry, so a large selection cannot exhaust `DOC_HISTORY_CAP`.
+     */
+    removeNodes: (ids: readonly string[]) => void;
     /** Deep-clones the node subtree with fresh ids; returns the clone's root id. */
     cloneNode: (id: string) => string | null;
     reparentNode: (id: string, parentId: string | null, index: number) => void;

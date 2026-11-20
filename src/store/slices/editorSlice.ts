@@ -873,6 +873,40 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             commit(next, doc);
         },
 
+        removeNodes: (ids) => {
+            const doc = get().currentDoc;
+            if (!doc || ids.length === 0) return;
+            const existing = new Set(doc.nodes.map((node) => node.id));
+            // Missing ids contribute nothing, exactly like `removeNode`'s guard:
+            // a stale id left in the selection must not reach orphan children
+            // through their `parentId`.
+            const roots = ids.filter((id) => existing.has(id));
+            if (roots.length === 0) return;
+            const next = cloneDoc(doc);
+            // One working clone, one `commit`: the whole delete is a single undo
+            // entry regardless of how many nodes are selected (same precedent as
+            // `nudgeNodes`). Build the parent→children index once, then walk
+            // every selected root against it, so a parent selected together with
+            // its own descendant is removed once, not twice.
+            const childrenOf = new Map<string, string[]>();
+            for (const node of next.nodes) {
+                if (node.parentId === null) continue;
+                const siblings = childrenOf.get(node.parentId);
+                if (siblings) siblings.push(node.id);
+                else childrenOf.set(node.parentId, [node.id]);
+            }
+            const doomed = new Set<string>();
+            const stack = [...roots];
+            while (stack.length > 0) {
+                const current = stack.pop()!;
+                if (doomed.has(current)) continue;
+                doomed.add(current);
+                for (const child of childrenOf.get(current) ?? []) stack.push(child);
+            }
+            next.nodes = next.nodes.filter((node) => !doomed.has(node.id));
+            commit(next, doc);
+        },
+
         cloneNode: (id) => {
             const doc = get().currentDoc;
             if (!doc) return null;

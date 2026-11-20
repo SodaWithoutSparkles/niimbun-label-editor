@@ -135,7 +135,7 @@ export const EditorKeyboardShortcuts = () => {
             }
             if (event.key === 'Delete' || event.key === 'Backspace') {
                 event.preventDefault();
-                for (const id of state.selectedNodeIds) state.removeNode(id);
+                state.removeNodes(state.selectedNodeIds);
                 return;
             }
             if (event.key === '[') {
