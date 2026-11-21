@@ -164,6 +164,27 @@ describe('transformEndPatch (one-op transform)', () => {
         });
         expect(rounded.transform?.rotDeg).toBe(-12.3);
     });
+
+    it('keeps a mirrored resize faithful and keeps the document’s scale pair', () => {
+        // Finding A: Konva decomposes a mirrored gesture as the negation of the
+        // doc pair (doc diag(−1,1) ≡ live diag(1,−1)); the commit keeps the doc
+        // signs and adds 180°. A single-axis flip never triggers it.
+        const mirrored: ShapeNode = {
+            ...rect(),
+            transform: { x: 0, y: 0, rotDeg: 0, scaleX: -1, scaleY: 1 },
+        };
+        // Konva's decomposition of a 1.5× stretch on the mirrored node.
+        const patch = transformEndPatch(mirrored, { w: 150, h: 50 }, false, {
+            x: 0,
+            y: 0,
+            rotDeg: -180,
+            scaleX: 1.5,
+            scaleY: -1,
+        });
+        expect(sizeOf(patch)).toEqual({ w: 150, h: 50 });
+        // −180 + 180 = 0, with the document's own horizontal mirror kept.
+        expect(patch.transform).toEqual({ x: 0, y: 0, rotDeg: 0, scaleX: -1, scaleY: 1 });
+    });
 });
 
 describe('rotationOnlyPatch (bug 4)', () => {
@@ -193,6 +214,45 @@ describe('rotationOnlyPatch (bug 4)', () => {
     it('rounds to 0.1° and wraps an out-of-range rotation', () => {
         expect(rotationOnlyPatch(text(), { x: 0, y: 0, rotDeg: 400 }).transform?.rotDeg).toBe(40);
         expect(rotationOnlyPatch(text(), { x: 0, y: 0, rotDeg: 12.3456 }).transform?.rotDeg).toBe(12.3);
+    });
+
+    it('adds 180° when Konva decomposed the doc as its negated scale pair', () => {
+        // Finding A: a horizontally mirrored doc (scaleX −1) is normalized by
+        // Konva to the equivalent live pair (1, −1) plus a 180°-shifted angle.
+        // Copying the live angle with the doc's scales would land 180° off; the
+        // live −165° must commit +15°.
+        const source: TextNode = {
+            ...text(),
+            transform: { x: 0, y: 0, rotDeg: 0, scaleX: -1, scaleY: 1 },
+        };
+        const patch = rotationOnlyPatch(source, { x: 0, y: 0, rotDeg: -165, scaleX: 1, scaleY: -1 });
+        expect(patch.transform).toEqual({ x: 0, y: 0, rotDeg: 15, scaleX: -1, scaleY: 1 });
+    });
+
+    it('leaves a non-mirrored rotation unchanged', () => {
+        expect(
+            rotationOnlyPatch(text(), { x: 0, y: 0, rotDeg: -165, scaleX: 1, scaleY: 1 }).transform?.rotDeg,
+        ).toBe(-165);
+        // Same signs as the doc → no representation change either.
+        const mirrored: TextNode = {
+            ...text(),
+            transform: { x: 0, y: 0, rotDeg: 0, scaleX: -1, scaleY: 1 },
+        };
+        expect(
+            rotationOnlyPatch(mirrored, { x: 0, y: 0, rotDeg: -165, scaleX: -1, scaleY: 1 }).transform?.rotDeg,
+        ).toBe(-165);
+    });
+
+    it('does not add the fix for a single-axis live flip', () => {
+        // One axis flipped is a genuine mirror change, not Konva's
+        // both-axes-negated representation: the angle stands.
+        const source: TextNode = {
+            ...text(),
+            transform: { x: 0, y: 0, rotDeg: 0, scaleX: -1, scaleY: 1 },
+        };
+        expect(
+            rotationOnlyPatch(source, { x: 0, y: 0, rotDeg: -165, scaleX: 1, scaleY: 1 }).transform?.rotDeg,
+        ).toBe(-165);
     });
 });
 

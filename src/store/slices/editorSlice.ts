@@ -313,8 +313,10 @@ export const createEditorSlice: StoreSlice = (set, get) => {
     /**
      * Schedule a debounced autosave. The doc is captured at *schedule* time (not
      * read when the timer fires) so a later `setView('gallery')`/`openLabel`
-     * cannot drop the pending edit — and the captured identity lets the fire
-     * path refuse to write if the doc has since been replaced.
+     * cannot drop the pending edit: if a doc switch commits before the debounce
+     * fires, the fire path still writes this snapshot — it is that label's own
+     * latest content, and a full-doc save is idempotent. The remaining guards
+     * only decide whether background writes are allowed at all.
      */
     const scheduleAutosave = (doc: LabelDoc): void => {
         cancelAutosave();
@@ -325,8 +327,13 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             pendingAutosaveDoc = null;
             if (!pending) return;
             const state = get();
-            // A doc switch since scheduling invalidates this write.
-            if (state.currentDoc?.meta.id !== pending.meta.id) return;
+            // A doc switch since scheduling must NOT drop this write: the
+            // snapshot is that label's latest content, and the switch committed
+            // after this debounce was scheduled, so no flush covered it. A
+            // full-doc save is idempotent, and the delete-before-save inversion
+            // stays closed because `deleteLabel` flushes (cancelling this timer
+            // synchronously) before `repo.remove`, as does `setView` on the
+            // editor→gallery boundary.
             if (!state.autoSave) return;
             if (state.view !== 'editor') return;
             const repo = state.labelRepo;
@@ -871,6 +878,10 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             const doomed = collectSubtreeIds(next.nodes, id);
             next.nodes = next.nodes.filter((node) => !doomed.has(node.id));
             commit(next, doc);
+            // Prune deleted ids from the selection: a stale id still counted by
+            // the transformer's selection size (D-83) breaks its handle set and
+            // aspect-ratio locking. Batched with the commit by React.
+            set((state) => ({ selectedNodeIds: state.selectedNodeIds.filter((id) => !doomed.has(id)) }));
         },
 
         removeNodes: (ids) => {
@@ -905,6 +916,10 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             }
             next.nodes = next.nodes.filter((node) => !doomed.has(node.id));
             commit(next, doc);
+            // Prune deleted ids from the selection: a stale id still counted by
+            // the transformer's selection size (D-83) breaks its handle set and
+            // aspect-ratio locking. Batched with the commit by React.
+            set((state) => ({ selectedNodeIds: state.selectedNodeIds.filter((id) => !doomed.has(id)) }));
         },
 
         cloneNode: (id) => {

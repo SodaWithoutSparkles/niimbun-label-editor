@@ -219,9 +219,9 @@ export interface RenderLabelPageOptions {
      * Post-quantize: invert luminance while keeping hue. For neutral pixels
      * this is exactly `v → 255 - v` (black ↔ white); palette colours keep
      * their hue (red stays red, never cyan). On a **grayscale** page the
-     * inversion stays inside `grayscaleTone`: level `k` becomes
-     * `clamp(lowest + highest - k, lowest, highest)`, so paper (level 0) maps
-     * to the darkest allowed level rather than 15.
+     * inversion reverses the ordered set **paper + the resolved band**:
+     * paper ↔ the darkest allowed level, lightest ink ↔ darkest ink, so a
+     * degenerate band (min = max) still keeps paper and ink distinct.
      */
     invert?: boolean;
     /** Post-quantize: flip the raster horizontally. */
@@ -849,34 +849,44 @@ function invertPixelLuminance(data: Uint8ClampedArray, i: number): void {
 }
 
 /**
- * Post-quantize invert for a **grayscale** page: mirror each level inside the
- * resolved usable band instead of across the full 0..15 ramp.
+ * Post-quantize invert for a **grayscale** page: reverse the ordered set
+ * **paper + every level in the usable band**, instead of mirroring across the
+ * full 0..15 ramp.
  *
  * After {@link diffuseRamp} every pixel is an exact neutral ramp byte
- * `255 - 17k`, so the level is recovered exactly as `k = (255 - r) / 17`. The
- * negative mirrors the band about its own centre and commits
- * `k' = clamp(lowest + highest - k, lowest, highest)`, written back as
- * `255 - 17k'`. A band-limited page therefore never emits an inverted level
- * outside `[lowest, highest]`: dithering to a level the paper cannot show is
- * the whole defect this avoids.
+ * `255 - 17k`, so the level is recovered exactly as `k = (255 - r) / 17`. Map
+ * the pixel to an ordinal over `{paper} ∪ [lowest..highest]`:
  *
- * Mapping consequences:
+ *  - paper (level 0, byte 255) → ordinal `0`;
+ *  - a band level `k` → `k - lowest + 1`, except on a full/zero-based band
+ *    (`lowest === 0`) where level 0 *is* paper and the ordinal is `k`.
  *
- *  - the lightest ink (`lowest`) ↔ the darkest ink (`highest`);
- *  - paper / blank (level 0, outside the band on the light side) has no
- *    counterpart darker than the band, so the clamp lands it on `highest` — the
- *    darkest allowed level, not level 15.
+ * The negative is `o' = N - o` with `N = highest - lowest + 1`, then back to a
+ * level: `o' === 0` → paper (byte 255), else `k' = lowest + o' - 1`.
  *
- * With the full 0..15 ramp `lowest = 0`, `highest = 15`, so the clamp never
- * applies and `255 - 17(15 - k) = 17k` — byte-identical to {@link invertRgb} on
- * neutral pixels, which keeps the full-ramp grayscale goldens unchanged.
- * Non-neutral pixels cannot occur on this path (the diffuser only writes ramp
- * entries), so they take the hue-preserving {@link invertRgb} op defensively.
+ * This is an ordinal reversal, not a level-arithmetic clamp. The clamp
+ * (`lowest + highest - k` pushed back into the band) collapsed every pixel to
+ * one level when `lowest === highest`, erasing the design on a degenerate band
+ * (4/4: paper and ink both became level 4). Reversing ordinals always keeps
+ * paper and ink distinct:
+ *
+ *  - band 4..8 → paper↔8, 4↔7, 5↔6;
+ *  - band 4..4 → paper↔4;
+ *  - full 0..15 → paper↔15 and `k → 15 - k`, i.e.
+ *    `255 - 17(15 - k) = 17k`, byte-identical to {@link invertRgb} on neutral
+ *    pixels. Level 0 is already the lightest full-ramp entry, so it is paper
+ *    and is not counted as an extra ink ordinal.
+ *
+ * Pixels outside `{paper} ∪ [lowest..highest]` cannot occur after diffusion;
+ * defensively they clamp into the band. Non-neutral pixels likewise cannot
+ * occur, so they take the hue-preserving {@link invertRgb} op.
  */
 export const invertGrayscaleRamp = (rgba: RgbaBuffer, tone?: GrayscaleTone): void => {
     const { data } = rgba;
     const { lowest, highest } = resolveGrayscaleBand(tone?.minLevel, tone?.maxLevel);
-    const mirrorBase = lowest + highest;
+    const bandLevels = highest - lowest + 1;
+    // On a full ramp level 0 *is* paper, so it must not get a second ordinal.
+    const bandOrdinalBase = lowest === 0 ? 0 : 1;
 
     for (let i = 0; i < data.length; i += 4) {
         const r = data[i]!;
@@ -887,8 +897,13 @@ export const invertGrayscaleRamp = (rgba: RgbaBuffer, tone?: GrayscaleTone): voi
             continue;
         }
         const level = Math.round((255 - r) / GRAY_LEVEL_STEP);
-        const mirrored = Math.min(highest, Math.max(lowest, mirrorBase - level));
-        const value = 255 - GRAY_LEVEL_STEP * mirrored;
+        const ordinal =
+            level <= 0
+                ? 0
+                : Math.min(highest, Math.max(lowest, level)) - lowest + bandOrdinalBase;
+        const inverted = bandLevels - ordinal;
+        const value =
+            inverted === 0 ? 255 : 255 - GRAY_LEVEL_STEP * (lowest + inverted - 1);
         data[i] = value;
         data[i + 1] = value;
         data[i + 2] = value;

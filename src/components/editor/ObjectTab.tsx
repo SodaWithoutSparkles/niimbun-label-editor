@@ -279,7 +279,12 @@ const numberValue = (
     context: { id: QuantizerId | undefined; quantizerDefaults: QuantizerDefaults },
 ): number => {
     if (isTransformKey(key)) {
-        return node.transform[key as (typeof TRANSFORM_KEYS)[number]];
+        const value = node.transform[key as (typeof TRANSFORM_KEYS)[number]];
+        // Display-only canonicalization: a saved document may hold any finite
+        // angle (721.23456789°) and ungrouping leaves float dust (0.1 + 0.2).
+        // The slider/readout must show the same signed angle the commit path
+        // writes, without rewriting stored geometry just by opening the tab.
+        return key === 'rotDeg' ? normalizeRotDeg(value) : value;
     }
     if (key === 'sizeW') return node.size?.w ?? 0;
     if (key === 'sizeH') return node.size?.h ?? 0;

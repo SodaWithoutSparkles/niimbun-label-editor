@@ -381,11 +381,15 @@ split panes for the library author.
   keep a residual on authored black and bleed a level-`max` halo far outside the
   shape (default band: 186 px outside a 60×32 black rect; now zero). A full
   0..15 ramp clamps to 0, so its output stays byte-identical. **Invert is
-  band-aware**: on a grayscale page level `k` becomes
-  `clamp(min + max − k, min, max)` (paper → `max`, not 15), while mono/red-black
+  an ordinal reversal** over `{paper} ∪ [min..max]`: with
+  `N = max − min + 1`, paper has ordinal 0 and band level `k` has
+  `k − min + 1` (or `k` when `min = 0`, since level 0 *is* paper); `o' = N − o`
+  maps back to paper at 0, else `min + o' − 1`. Band 4..8 therefore maps
+  paper↔8, 4↔7, 5↔6, and a degenerate 4/4 keeps paper↔4 instead of collapsing
+  the page to one level (the level-arithmetic clamp did that). Mono/red-black
   keep `invertRgb`. Full-ramp grayscale invert is byte-identical to
-  `invertRgb` (`0 + 15 − k`). No global tone-range remap: midtones are never
-  rescaled.
+  `invertRgb` (`k → 15 − k`, paper → 15). No global tone-range remap: midtones
+  are never rescaled.
 - **D-05 seam drift** still applies — in red/black the flat point op discards
   any error a diffuse neighbour deposited, on top of the existing
   diffuse-beside-diffuse seam.

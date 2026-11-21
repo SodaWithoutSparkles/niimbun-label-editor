@@ -321,6 +321,38 @@ describe('ObjectTab — rotation keeps one signed, wrapped angle', () => {
     it('reduces a typed out-of-range angle by one period (400 → 40)', () => {
         expect(typeRotation('400')).toBe(40);
     });
+
+    /** Render an image whose stored rotation is `rotDeg`, open its Rotation row. */
+    const renderRotation = (rotDeg: number) => {
+        const selected = imageNode({
+            transform: { x: 0, y: 0, rotDeg, scaleX: 1, scaleY: 1 },
+        });
+        useStore.setState({ currentDoc: doc([selected]), selectedNodeIds: ['a'] });
+        render(<ObjectTab selected={[selected]} />);
+        const row = screen.getByText('Rotation').closest('.items-center.justify-between') as HTMLElement;
+        fireEvent.click(row.querySelector('.cursor-pointer') as HTMLElement);
+        return document.querySelector('input[role="spinbutton"]') as HTMLInputElement;
+    };
+
+    const stored = () =>
+        useStore.getState().currentDoc!.nodes.find((n) => n.id === 'a')!.transform.rotDeg;
+
+    it('shows a stored out-of-range angle normalized without rewriting it', () => {
+        // A saved document can carry any finite angle; the display is the same
+        // canonical signed angle the commit path would write.
+        const input = renderRotation(721.23456789);
+        expect(screen.getByText('1.2')).toBeTruthy();
+        expect(input.value).toBe('1.2');
+        // Opening the tab is not a commit: geometry is untouched.
+        expect(stored()).toBe(721.23456789);
+    });
+
+    it('shows float dust at the stored angle normalized (0.1 + 0.2 → 0.3)', () => {
+        const input = renderRotation(0.1 + 0.2);
+        expect(screen.getByText('0.3')).toBeTruthy();
+        expect(input.value).toBe('0.3');
+        expect(stored()).toBe(0.1 + 0.2);
+    });
 });
 
 const textNode = (over: Record<string, unknown> = {}): Node =>

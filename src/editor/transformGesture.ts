@@ -81,6 +81,33 @@ export const isCornerAnchor = (anchor: string | null | undefined): boolean =>
     CORNER_ANCHOR.test(anchor ?? '');
 
 /**
+ * The extra rotation a commit must apply when Konva decomposed the gesture into
+ * the **negation** of the document's scale pair, in degrees (`0` or `180`).
+ *
+ * Konva's `Util.Transform.decompose` always reports a **non-negative**
+ * `scaleX`; the mirror sign rides on `scaleY`. A horizontally mirrored node
+ * therefore reaches the commit as the negation of the document's pair
+ * (`doc diag(−1,1)` ≡ live `diag(1,−1)`), and `R(θ)·(−D) = R(θ+180)·D`. A
+ * commit that keeps the document's scales must add that 180° or the node lands
+ * 180° off. Only a **both-axes** negation is that representation change: a
+ * single-axis flip is a real mirror and needs no rotation fix.
+ *
+ * `docScale*` are the document's signs, which the fix makes the commit keep.
+ */
+const orientationFixDeg = (
+    liveScaleX: number,
+    liveScaleY: number,
+    docScaleX: number,
+    docScaleY: number,
+): number => {
+    const liveX = Math.sign(liveScaleX) || 1;
+    const liveY = Math.sign(liveScaleY) || 1;
+    const docX = Math.sign(docScaleX) || 1;
+    const docY = Math.sign(docScaleY) || 1;
+    return liveX * docX === -1 && liveY * docY === -1 ? 180 : 0;
+};
+
+/**
  * Patch that combines a free/aspect-locked resize with the node's final
  * position + rotation, as one op. Resize bakes the **magnitude** into
  * `size`/`points`/`fontSize`/`cornerRadius`; the transform takes
@@ -115,6 +142,26 @@ export const transformEndPatch = (
         cornerRadius?: number;
         fontSize?: number;
     };
+    // Konva's decomposition may report the gesture as the **negation** of the
+    // document's scale pair (its normal form for a horizontally mirrored node:
+    // `scaleX ≥ 0`, the mirror sign on `scaleY`). `R(θ)·(−D) = R(θ+180)·D`, so
+    // in that case keep the document's own signs and add 180° rather than
+    // adopting the negated pair: the rendered matrix is identical, while the
+    // document keeps the mirror parameterization the user set. A single-axis
+    // flip is a real mirror change and keeps the live signs with no offset.
+    const mirrorFix = orientationFixDeg(
+        live.scaleX ?? 1,
+        live.scaleY ?? 1,
+        node.transform.scaleX,
+        node.transform.scaleY,
+    );
+    const keepDocScales = mirrorFix === 180;
+    const storedScaleX = keepDocScales
+        ? Math.sign(node.transform.scaleX) || 1
+        : Math.sign(live.scaleX ?? 1) || 1;
+    const storedScaleY = keepDocScales
+        ? Math.sign(node.transform.scaleY) || 1
+        : Math.sign(live.scaleY ?? 1) || 1;
     return {
         ...(size !== undefined ? { size } : {}),
         ...(points !== undefined ? { points } : {}),
@@ -137,13 +184,14 @@ export const transformEndPatch = (
             x: Math.round(live.x),
             y: Math.round(live.y),
             // Canvas commits land on the same 0.1° grid (and ±360 wrap) as
-            // every other rotation entry point (bug 1 canvas half).
-            rotDeg: normalizeRotDeg(live.rotDeg),
+            // every other rotation entry point (bug 1 canvas half), plus the
+            // mirrored-representation fix derived from the sign pairs.
+            rotDeg: normalizeRotDeg(live.rotDeg + mirrorFix),
             // Preserve the **sign** of the live scale (a handle dragged past the
             // opposite edge mirrors the node); the magnitude is already baked
             // into the geometry above. `Math.sign(x) || 1` maps 0/NaN to 1.
-            scaleX: Math.sign(live.scaleX ?? 1) || 1,
-            scaleY: Math.sign(live.scaleY ?? 1) || 1,
+            scaleX: storedScaleX,
+            scaleY: storedScaleY,
         },
     } as NodePatch;
 };
@@ -164,15 +212,31 @@ export const transformEndPatch = (
  * `rotDeg` would re-render the node rotated about its *own* origin and jump it
  * on release (the existing resize commit has always carried the live x/y for
  * the same reason). Rounded to integer hm like every other commit.
+ *
+ * If Konva decomposed the gesture into the **negated** copy of the document's
+ * scale pair (its normal form for a mirrored node), the live rotation is 180°
+ * out of phase with the scales this patch keeps; `orientationFixDeg` restores
+ * it, so a mirrored node no longer jumps 180° on release.
  */
-export const rotationOnlyPatch = (source: Node, live: LiveTransform): NodePatch => ({
-    transform: {
-        ...source.transform,
-        x: Math.round(live.x),
-        y: Math.round(live.y),
-        rotDeg: normalizeRotDeg(live.rotDeg),
-    },
-});
+export const rotationOnlyPatch = (source: Node, live: LiveTransform): NodePatch => {
+    // Konva's live scale pair is the authority for the mirror representation
+    // (it always decomposes to a non-negative `scaleX`); omitting it means "the
+    // gesture did not flip", so the source signs apply unchanged.
+    const liveScaleX = live.scaleX ?? source.transform.scaleX;
+    const liveScaleY = live.scaleY ?? source.transform.scaleY;
+    return {
+        transform: {
+            ...source.transform,
+            x: Math.round(live.x),
+            y: Math.round(live.y),
+            // The commit keeps the document's scales, so a live pair that is
+            // their negation needs the 180° representation fix (finding A).
+            rotDeg: normalizeRotDeg(
+                live.rotDeg + orientationFixDeg(liveScaleX, liveScaleY, source.transform.scaleX, source.transform.scaleY),
+            ),
+        },
+    };
+};
 
 /**
  * Resize target for a Transformer gesture (must-fix #2): the node's real base

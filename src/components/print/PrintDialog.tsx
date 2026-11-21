@@ -50,6 +50,42 @@ import {
 } from './printDialogModel';
 
 /**
+ * D-31 ink-sample bounds. Each sampled row is a full resolved-dpi render, so an
+ * unbounded CSV walk would block the warning for large batches: measured at
+ * 300 dpi, one render costs ~15 ms at 0.27 Mpx, ~72 ms at 2.2 Mpx and ~170 ms
+ * at 4.3 Mpx (for rasters ≤ 8 Mpx, the budget below bounds the sampled rows'
+ * total area at roughly 0.3 s).
+ *
+ * One row is the **minimum**, so a single raster larger than the budget (still
+ * permitted up to the 16 Mpx raster cap) exceeds it: that regime renders one
+ * full page — the status-quo single-render cost — not 0.3 s. The budget only
+ * bounds *additional* sampled rows; it is not a hard wall-clock cap.
+ *
+ * The row cap keeps a tiny label from sampling a huge batch. When either bound
+ * bites, the walk strides **evenly across the distinct active records** (first
+ * and last included), so a late content-dependent overflow is still reachable
+ * instead of silently checking only row 1.
+ */
+const INK_SAMPLE_PIXEL_BUDGET = 8_000_000;
+const INK_SAMPLE_ROW_CAP = 12;
+
+/**
+ * Distinct active row indices to sample, in ascending order. All of them when
+ * they fit `limit`; otherwise `limit` of them strided evenly across the whole
+ * record set. Copies repeat the same content, so duplicate indices collapse.
+ */
+const inkSampleRows = (activeRows: readonly number[], limit: number): number[] => {
+    const distinct = [...new Set(activeRows)];
+    const count = Math.min(distinct.length, Math.max(1, limit));
+    if (count >= distinct.length) return distinct;
+    if (count === 1) return [distinct[0]!];
+    return Array.from({ length: count }, (_, index) => {
+        const at = Math.round((index * (distinct.length - 1)) / (count - 1));
+        return distinct[at]!;
+    });
+};
+
+/**
  * Print dialog (P7 W4).
  *
  * `Modal`-based batch-print surface: a virtualized record list with ~100 dpi
@@ -350,18 +386,35 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         [],
     );
 
+    const parsedOffset = useMemo(() => {
+        const x = Number.parseInt(offsetX, 10);
+        const y = Number.parseInt(offsetY, 10);
+        if (!Number.isInteger(x) || !Number.isInteger(y) || (x === 0 && y === 0)) {
+            return undefined;
+        }
+        return { x, y, type: offsetType };
+    }, [offsetX, offsetY, offsetType]);
+
     const dims = useMemo(
         () =>
             rasterDimensions(doc.label.backingW, doc.label.backingH, resolved.dpi),
         [doc.label.backingW, doc.label.backingH, resolved.dpi],
     );
+    // R12 + D-31: `renderLabelPage` applies the offset last, and an `outer`
+    // offset **grows** the canvas. Both the raster-cap pre-flight and the
+    // overflow gate must judge the same offset-adjusted extent the head sees:
+    // with the base size alone a page that fits *before* the offset skips the
+    // ink check even when the shift pushes its ink past the head.
+    const capDims = parsedOffset
+        ? offsetRasterDimensions(dims.widthPx, dims.heightPx, parsedOffset)
+        : dims;
     const orientedWidthPx =
         doc.label.printDirection === 'left' || doc.label.printDirection === 'right'
-            ? dims.heightPx
-            : dims.widthPx;
+            ? capDims.heightPx
+            : capDims.widthPx;
     const overflows = printheadOverflow(
-        dims.widthPx,
-        dims.heightPx,
+        capDims.widthPx,
+        capDims.heightPx,
         doc.label.printDirection,
         capabilities?.printheadPixels,
     );
@@ -389,22 +442,9 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     // reported.
     const labelTypeDiff = labelTypeMismatch(reportedLabelType, effectiveLabelType);
 
-    const parsedOffset = useMemo(() => {
-        const x = Number.parseInt(offsetX, 10);
-        const y = Number.parseInt(offsetY, 10);
-        if (!Number.isInteger(x) || !Number.isInteger(y) || (x === 0 && y === 0)) {
-            return undefined;
-        }
-        return { x, y, type: offsetType };
-    }, [offsetX, offsetY, offsetType]);
-
     // R12: the print path has no degradation, so a raster above the cap would
-    // throw mid-job. `renderLabelPage` applies the offset last, and an `outer`
-    // offset **grows** the canvas, so the guard must pre-flight the same
-    // offset-expanded dimensions the renderer allocates.
-    const capDims = parsedOffset
-        ? offsetRasterDimensions(dims.widthPx, dims.heightPx, parsedOffset)
-        : dims;
+    // throw mid-job. `capDims` above is the offset-expanded size the renderer
+    // allocates.
     const rasterCapExceeded = capDims.widthPx * capDims.heightPx > MAX_RASTER_PIXELS;
 
     /**
@@ -624,45 +664,61 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         ],
     );
 
-    // D-31: `printheadOverflow` above is only the cheap **size** trigger. A blank
-    // over-width label must not warn, so once it trips we lazily render the page
-    // at the resolved print dpi through the shared path (invariant 7) and warn
-    // only if ink actually lands past the head. `renderOptionsOf` applies the *identical*
-    // override split the print job uses, so the sample matches what would print.
+    // D-31: `overflows` above is only the cheap **size** trigger (already
+    // offset-adjusted). A blank over-width label must not warn, so once it trips
+    // we lazily render pages at the resolved print dpi through the shared path
+    // (invariant 7) and warn only if ink actually lands past the head.
+    // `renderOptionsOf` applies the *identical* override split the print job
+    // uses, so the sample matches what would print.
     //
-    // The sample uses the **first active record's** `prepareRow` context. CSV
-    // content is per-row, so a later row with narrower ink can only over-warn
-    // (never miss a clip), which is acceptable for a non-blocking warning. The
-    // check is recomputed only while the size check trips (and the dialog is
-    // open); the effect re-runs on the doc + override values.
+    // CSV content is per-row, so a clean first record proves nothing: a later
+    // longer text can overflow after an in-fitting row. The walk therefore
+    // covers the distinct active records and **short-circuits on the first
+    // clipped page**. It is bounded by `INK_SAMPLE_PIXEL_BUDGET` /
+    // `INK_SAMPLE_ROW_CAP` so a large batch cannot turn an advisory warning into
+    // seconds of rendering; the even stride keeps later rows reachable.
     const inkRenderOptions = useMemo<RenderLabelPageOptions>(
         () => renderOptionsOf(printOverrides, assets),
         [printOverrides, assets],
     );
-    const firstActiveRowIndex = activeRows[0];
     const [inkOverflow, setInkOverflow] = useState(false);
 
     useEffect(() => {
-        if (!open || !overflows || firstActiveRowIndex === undefined) {
+        if (!open || !overflows || activeRows.length === 0) {
             setInkOverflow(false);
             return;
         }
-        // Clear the previous verdict: while the new async render is in flight a
+        // Clear the previous verdict: while the new async walk is in flight a
         // stale "may be clipped" warning must not linger.
         setInkOverflow(false);
         let cancelled = false;
+        // The sample renders the offset-expanded raster, so the area budget
+        // must use the same extent the gate judged.
+        const sampleDims = parsedOffset
+            ? offsetRasterDimensions(dims.widthPx, dims.heightPx, parsedOffset)
+            : dims;
+        const area = Math.max(1, sampleDims.widthPx * sampleDims.heightPx);
+        const limit = Math.min(
+            INK_SAMPLE_ROW_CAP,
+            Math.max(1, Math.floor(INK_SAMPLE_PIXEL_BUDGET / area)),
+        );
+        const sampleRows = inkSampleRows(activeRows, limit);
         void (async () => {
             try {
-                const ctx = prepareRow ? await prepareRow(firstActiveRowIndex) : {};
-                const page = await renderLabelPage(doc, ctx, inkRenderOptions);
-                if (!cancelled) {
-                    setInkOverflow(
+                for (const rowIndex of sampleRows) {
+                    const ctx = prepareRow ? await prepareRow(rowIndex) : {};
+                    const page = await renderLabelPage(doc, ctx, inkRenderOptions);
+                    if (cancelled) return;
+                    if (
                         hasInkBeyondPrinthead(
                             page,
                             doc.label.printDirection,
                             capabilities?.printheadPixels,
-                        ),
-                    );
+                        )
+                    ) {
+                        setInkOverflow(true);
+                        return;
+                    }
                 }
             } catch {
                 // A render failure must never leave a stale warning up.
@@ -675,11 +731,13 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     }, [
         open,
         overflows,
-        firstActiveRowIndex,
+        activeRows,
         prepareRow,
         doc,
         inkRenderOptions,
         capabilities?.printheadPixels,
+        dims,
+        parsedOffset,
     ]);
 
     const showOverflow = overflows && inkOverflow;

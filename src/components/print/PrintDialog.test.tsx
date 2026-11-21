@@ -8,7 +8,8 @@ import { rasterDimensions } from '../../core/render';
 import { createLabelDoc } from '../../core/doc/factory';
 import type { LabelDoc } from '../../core/doc/types';
 import type { CsvRecord } from '../../data/csvRepo';
-import type { RenderedLabelPage, AssetDeps } from '../../editor/render';
+import type { RenderedLabelPage, AssetDeps, ResolveContext } from '../../editor/render';
+import { offsetRasterDimensions } from '../../editor/render';
 import type { JobProgress, JobRunResult, JobRunner } from '../../print/jobRunner';
 import type { PrintJob, PrinterCapabilities, PrinterStatus } from '../../print/transport';
 import { useStore } from '../../store/useStore';
@@ -365,6 +366,136 @@ describe('PrintDialog — warnings', () => {
             const group = useStore.getState().editorWarnings.print;
             expect(group?.warnings.map((warning) => warning.kind)).toContain('print-policy-overflow');
         });
+    });
+});
+
+describe('PrintDialog — D-31 ink sample covers the offset and every row', () => {
+    /** 160 dots wide at the 300 dpi hint: the head used below. */
+    const headSizedDoc = () => createLabelDoc({ backingW: 1355, backingH: 7800, dpi: 300 });
+    const HEAD_PX = 160;
+
+    /** A page of `dims` with a black band in columns `[from, from + 40)`. */
+    const bandPage = (dims: { widthPx: number; heightPx: number }, from: number): RenderedLabelPage => {
+        const data = new Uint8ClampedArray(dims.widthPx * dims.heightPx * 4).fill(255);
+        for (let y = 0; y < dims.heightPx; y++) {
+            for (let x = from; x < Math.min(from + 40, dims.widthPx); x++) {
+                const i = (y * dims.widthPx + x) * 4;
+                data[i] = 0;
+                data[i + 1] = 0;
+                data[i + 2] = 0;
+            }
+        }
+        return {
+            rgba: { data, width: dims.widthPx, height: dims.heightPx },
+            widthPx: dims.widthPx,
+            heightPx: dims.heightPx,
+            canvas: {
+                toDataURL: () => 'data:image/png;base64,stub',
+            } as unknown as HTMLCanvasElement,
+        };
+    };
+
+    /** Mimic the real offset renderer: ink drawn at the offset, canvas grown. */
+    const offsetBandPage = (
+        doc: LabelDoc,
+        offset: { x: number; y: number; type: 'inner' | 'outer' } | undefined,
+    ): RenderedLabelPage => {
+        const base = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+        const dims = offset ? offsetRasterDimensions(base.widthPx, base.heightPx, offset) : base;
+        const inkFrom = offset ? Math.max(offset.x, 0) : 100;
+        return bandPage(dims, inkFrom);
+    };
+
+    it('warns when an outer offset pushes a head-sized page past the head', async () => {
+        // The page is exactly HEAD_PX wide, so the base size gate does NOT trip.
+        // The +280 outer offset grows the raster to 440 columns: the shifted ink
+        // now lands past the 160-dot head and the warning must fire.
+        renderLabelPageMock.mockImplementation(async (doc: LabelDoc, _ctx, opts) =>
+            offsetBandPage(doc, (opts as { offset?: { x: number; y: number; type: 'inner' | 'outer' } } | undefined)?.offset),
+        );
+
+        renderDialog({
+            doc: headSizedDoc(),
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, printheadPixels: HEAD_PX }),
+        });
+
+        // Fits exactly before the offset: no warning yet.
+        expect(screen.queryByTestId('print-warning-overflow')).not.toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('Offset X'), { target: { value: '280' } });
+        fireEvent.change(screen.getByLabelText('Offset type'), { target: { value: 'outer' } });
+
+        expect(await screen.findByTestId('print-warning-overflow')).toBeInTheDocument();
+    });
+
+    it('warns when a later CSV row overflows even though the first row fits', async () => {
+        // Row 2 carries a long text; the mocked raster mirrors it with ink past
+        // the 567-dot head. Rows 0/1 stay inside it.
+        renderLabelPageMock.mockImplementation(async (doc: LabelDoc, ctx?: ResolveContext) => {
+            const text = ctx?.overrides?.get('t')?.text ?? '';
+            const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+            return text.length > 50 ? bandPage(dims, 590) : bandPage(dims, 100);
+        });
+        const prepareRow = async (rowIndex: number): Promise<ResolveContext> => ({
+            overrides: new Map([
+                ['t', { text: `${rowIndex}:${'x'.repeat(rowIndex === 2 ? 200 : 1)}`, placeholder: false }],
+            ]),
+        });
+
+        render(
+            <PrintDialog
+                open
+                onClose={vi.fn()}
+                doc={wideDoc()}
+                csv={csvOf(4)}
+                prepareRow={prepareRow}
+                runner={new FakeRunner()}
+                printerStatus={statusOf(B1_PRO)}
+            />,
+        );
+
+        expect(await screen.findByTestId('print-warning-overflow')).toBeInTheDocument();
+
+        // Short-circuit: once row 2 clips, row 3 is never sampled.
+        const sampledRows = renderLabelPageMock.mock.calls
+            .map(([, ctx]) => (ctx as ResolveContext | undefined)?.overrides?.get('t')?.text ?? '')
+            .filter((text) => text !== '')
+            .map((text) => Number.parseInt(text, 10));
+        expect(sampledRows).toContain(2);
+        expect(sampledRows).not.toContain(3);
+    });
+
+    it('stays silent when the only CSV row fits within the head', async () => {
+        renderLabelPageMock.mockImplementation(async (doc: LabelDoc, ctx?: ResolveContext) => {
+            const text = ctx?.overrides?.get('t')?.text ?? '';
+            const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+            return text.length > 50 ? bandPage(dims, 590) : bandPage(dims, 100);
+        });
+        const prepareRow = async (rowIndex: number): Promise<ResolveContext> => ({
+            overrides: new Map([['t', { text: `${rowIndex}:x`, placeholder: false }]]),
+        });
+
+        render(
+            <PrintDialog
+                open
+                onClose={vi.fn()}
+                doc={wideDoc()}
+                csv={csvOf(1)}
+                prepareRow={prepareRow}
+                runner={new FakeRunner()}
+                printerStatus={statusOf(B1_PRO)}
+            />,
+        );
+
+        // The size gate trips (the page is wider than the head), so the ink
+        // sample must have rendered before "no warning" is meaningful.
+        await waitFor(() => expect(renderLabelPageMock.mock.calls.length).toBeGreaterThanOrEqual(2));
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+        expect(screen.queryByTestId('print-warning-overflow')).not.toBeInTheDocument();
     });
 });
 
