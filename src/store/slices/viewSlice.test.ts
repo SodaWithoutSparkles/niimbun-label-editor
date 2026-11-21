@@ -22,19 +22,47 @@ const makeStorage = (): Storage => {
 
 const store = () => createAppStore(makeStorage());
 
-describe('viewSlice — default view orientation (must-fix #8)', () => {    it('puts a portrait label on its side (long axis horizontal) and leaves landscape flat', () => {
+describe('viewSlice — default view orientation (opt-in)', () => {
+    it('defaults OFF: a portrait label keeps its real orientation (rotation 0)', () => {
         const s = store();
+        expect(s.getState().autoOrientPortrait).toBe(false);
+
+        s.getState().applyDefaultViewOrientation(2000, 3000);
+        expect(s.getState().viewRotation).toBe(0);
+    });
+
+    it('when enabled, puts a portrait label on its side and leaves landscape flat', () => {
+        const s = store();
+        s.getState().setAutoOrientPortrait(true);
         s.getState().applyDefaultViewOrientation(2000, 3000);
         expect(s.getState().viewRotation).toBe(90);
 
         const s2 = store();
+        s2.getState().setAutoOrientPortrait(true);
         s2.getState().applyDefaultViewOrientation(3000, 2000);
         expect(s2.getState().viewRotation).toBe(0);
+    });
+
+    it('disabling after a rotated open resets the next doc-open to rotation 0', () => {
+        const s = store();
+        s.getState().setAutoOrientPortrait(true);
+        s.getState().applyDefaultViewOrientation(2000, 3000);
+        expect(s.getState().viewRotation).toBe(90);
+
+        // The pref change alone must not rotate the doc already on screen.
+        s.getState().setAutoOrientPortrait(false);
+        expect(s.getState().viewRotation).toBe(90);
+
+        // At the next doc-open boundary the stale rotation is cleared.
+        s.getState().resetViewOrientation();
+        s.getState().applyDefaultViewOrientation(2000, 3000);
+        expect(s.getState().viewRotation).toBe(0);
     });
 
     it('is view-only: nothing about the document is touched', () => {
         // The action has no document argument at all — structurally view-only.
         const s = store();
+        s.getState().setAutoOrientPortrait(true);
         s.setState({ currentDoc: null });
         s.getState().applyDefaultViewOrientation(2000, 3000);
         expect(s.getState().viewRotation).toBe(90);
@@ -43,6 +71,7 @@ describe('viewSlice — default view orientation (must-fix #8)', () => {    it('
 
     it('a manual toggle wins — the auto-pick must not clobber it', () => {
         const s = store();
+        s.getState().setAutoOrientPortrait(true);
         // Portrait doc auto-picks 90.
         s.getState().applyDefaultViewOrientation(2000, 3000);
         expect(s.getState().viewRotation).toBe(90);
@@ -59,6 +88,7 @@ describe('viewSlice — default view orientation (must-fix #8)', () => {    it('
 
     it('re-arms at a doc-open boundary so the next document gets a fresh pick', () => {
         const s = store();
+        s.getState().setAutoOrientPortrait(true);
         s.getState().toggleViewRotation();
         expect(s.getState().viewRotationUserSet).toBe(true);
 
@@ -66,6 +96,17 @@ describe('viewSlice — default view orientation (must-fix #8)', () => {    it('
         expect(s.getState().viewRotationUserSet).toBe(false);
         s.getState().applyDefaultViewOrientation(2000, 3000);
         expect(s.getState().viewRotation).toBe(90);
+    });
+
+    it('persists the preference in `ui_settings`', () => {
+        const storage = makeStorage();
+        const s = createAppStore(storage);
+        s.getState().setAutoOrientPortrait(true);
+
+        const raw = storage.getItem('ui_settings');
+        expect(raw).not.toBeNull();
+        expect(raw).toContain('autoOrientPortrait');
+        expect(JSON.parse(raw!).state.autoOrientPortrait).toBe(true);
     });
 });
 

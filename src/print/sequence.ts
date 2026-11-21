@@ -2,9 +2,10 @@
  * W1 — lazy print-sequence generator.
  *
  * Turns a CSV row count plus a per-row `$times` callback into a *plan* the print
- * pipeline can walk without ever materializing every page (invariant 9): a large
- * job only allocates the `PagePlan` it is actively consuming. `totalPages` is a
- * cheap integer Σ — the niimbluelib task needs it upfront — and carries no
+ * pipeline can walk without ever materializing every page (invariant 9): the plan
+ * holds one integer per record (`times × copies`), so even a large job only
+ * allocates the `PagePlan` it is actively consuming. `totalPages` is a cheap
+ * integer Σ — the niimbluelib task needs it upfront — and carries no
  * raster/encode work.
  *
  * This module is deliberately pure (decision 42): it imports no DOM/React/Konva,
@@ -59,27 +60,43 @@ const normalizeTimes = (raw: number): number => {
 };
 
 /**
- * The lazy source of `PagePlan`s. Never precomputes: each `next()` visits only
- * the records needed to produce the plans it yields, so a consumer that stops
- * early leaves the remaining rows unbuilt.
+ * The lazy source of `PagePlan`s. It walks the per-row `quantity` array that
+ * {@link planSequence} already resolved during the Σ pass (one integer per
+ * record), yielding one plan at a time: a consumer that stops early leaves the
+ * remaining pages unbuilt.
+ *
+ * - **grouped:** one plan per record, in row order.
+ * - **interleaved:** copy-major / row-minor — copy `0` visits every record in
+ *   row order, then copy `1` visits the records with more copies left, and so
+ *   on. `A,B,C` ×2 emits `A,B,C,A,B,C`; unequal quantities round-robin
+ *   (`2,1,3` → `0,1,2,0,2,2`). Each copy pass drops the records it exhausted,
+ *   so the walk is O(rows + pages) rather than O(maxQuantity × rows) — a large
+ *   CSV with one huge `$times` cannot stall the generator.
  */
 async function* generatePages(
-    rows: number,
-    timesFor: (rowIndex: number) => number,
-    copies: number,
+    quantities: readonly number[],
     order: PrintOrder,
 ): AsyncGenerator<PagePlan> {
-    for (let rowIndex = 0; rowIndex < rows; rowIndex++) {
-        const quantity = normalizeTimes(timesFor(rowIndex)) * copies;
-        if (quantity <= 0) continue;
-
-        if (order === 'grouped') {
-            yield { rowIndex, quantity };
-        } else {
-            for (let copy = 0; copy < quantity; copy++) {
-                yield { rowIndex, quantity: 1 };
-            }
+    if (order === 'grouped') {
+        for (let rowIndex = 0; rowIndex < quantities.length; rowIndex++) {
+            const quantity = quantities[rowIndex]!;
+            if (quantity > 0) yield { rowIndex, quantity };
         }
+        return;
+    }
+
+    let active: number[] = [];
+    for (let rowIndex = 0; rowIndex < quantities.length; rowIndex++) {
+        if (quantities[rowIndex]! > 0) active.push(rowIndex);
+    }
+
+    for (let copy = 0; active.length > 0; copy++) {
+        const next: number[] = [];
+        for (const rowIndex of active) {
+            yield { rowIndex, quantity: 1 };
+            if (quantities[rowIndex]! > copy + 1) next.push(rowIndex);
+        }
+        active = next;
     }
 }
 
@@ -91,14 +108,19 @@ async function* generatePages(
  * module then floors fractions and clamps non-finite/negative values to 0, which
  * skips the row. Records whose `times × copies` is 0 emit no plan.
  *
- * **`timesFor` MUST be pure and stable across calls.** It is invoked once per row
- * in the upfront Σ pass and once more per row when the generator runs. A
- * non-deterministic callback would make the eagerly-computed `totalPages` differ
- * from the quantity the generator actually emits, which trips the downstream
- * Σ-quantity guard mid-job.
+ * **`timesFor` MUST be pure and stable across calls.** It is invoked exactly
+ * once per row, during the upfront Σ pass, and the resolved quantities are
+ * handed to the generator — never re-evaluated per page. Stability still
+ * matters because callers may re-derive the plan for a later iteration pass
+ * (see `buildCsvPrintJob`'s re-iterable job); a non-deterministic callback
+ * would make that pass disagree with the eagerly-computed `totalPages`, which
+ * trips the downstream Σ-quantity guard mid-job.
  *
- * - **grouped:** one `{ rowIndex, quantity: times × copies }` per record.
- * - **interleaved:** `times × copies` plans of `{ rowIndex, quantity: 1 }`.
+ * - **grouped:** one `{ rowIndex, quantity: times × copies }` per record, in row
+ *   order.
+ * - **interleaved:** copy-major / row-minor — one `{ rowIndex, quantity: 1 }`
+ *   per copy, walking the records in row order for each copy. `A,B,C` ×2 emits
+ *   `A,B,C,A,B,C`; unequal quantities round-robin (`2,1,3` → `0,1,2,0,2,2`).
  *
  * `copies` is the dialog's global multiplier (positive integer, default 1).
  *
@@ -137,9 +159,16 @@ export function planSequence(
         );
     }
 
+    // Resolve `times × copies` once per row. The Σ pass already has to visit
+    // every row for the MAX_TOTAL_PAGES guard, so it doubles as the quantity
+    // precompute: one integer per record (not one page), which is what lets the
+    // interleaved generator emit copy-major without re-evaluating `timesFor`.
+    const quantities = new Array<number>(rows).fill(0);
     let totalPages = 0;
     for (let rowIndex = 0; rowIndex < rows; rowIndex++) {
-        totalPages += normalizeTimes(timesFor(rowIndex)) * copies;
+        const quantity = normalizeTimes(timesFor(rowIndex)) * copies;
+        quantities[rowIndex] = quantity;
+        totalPages += quantity;
         if (totalPages > MAX_TOTAL_PAGES) {
             throw new RangeError(
                 `planSequence: total pages exceed MAX_TOTAL_PAGES (${MAX_TOTAL_PAGES})`,
@@ -156,6 +185,6 @@ export function planSequence(
         totalPages,
         rows,
         ...(warning ? { warning } : {}),
-        pages: generatePages(rows, timesFor, copies, opts.order),
+        pages: generatePages(quantities, opts.order),
     };
 }

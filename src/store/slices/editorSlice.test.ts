@@ -615,6 +615,160 @@ describe('editorSlice — document operations', () => {
         expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['o']);
     });
 
+    it('removeNodes removes every selected node and its descendants in one commit', () => {
+        const store = setupStore(
+            makeDoc([
+                textNode('a'),
+                textNode('b', 'a'),
+                textNode('c'),
+                groupNode('g'),
+                textNode('d', 'g'),
+                textNode('o'),
+            ]),
+        );
+        store.getState().removeNodes(['a', 'g']);
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['c', 'o']);
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('removeNodes deletes a 21-node selection as a single undo entry', () => {
+        const ids = Array.from({ length: 21 }, (_, i) => `n${i}`);
+        const store = setupStore(makeDoc(ids.map((id) => textNode(id))));
+        const before = store.getState().docPast.length;
+
+        store.getState().removeNodes(ids);
+
+        expect(store.getState().currentDoc!.nodes).toHaveLength(0);
+        expect(store.getState().docPast).toHaveLength(before + 1);
+
+        // One undo restores all 21: the delete did not exhaust the history cap.
+        store.getState().undoDoc();
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(ids);
+    });
+
+    it('removeNodes is a no-op for an empty list or ids that do not exist', () => {
+        const store = setupStore(makeDoc([textNode('a')]));
+        const before = store.getState().docPast.length;
+
+        store.getState().removeNodes([]);
+        store.getState().removeNodes(['missing']);
+        store.getState().removeNodes(['missing', 'also-missing']);
+
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['a']);
+        expect(store.getState().docPast).toHaveLength(before);
+    });
+
+    it('removeNodes removes a parent selected together with its descendant once', () => {
+        const store = setupStore(makeDoc([textNode('p'), textNode('c', 'p'), textNode('o')]));
+
+        store.getState().removeNodes(['p', 'c']);
+
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['o']);
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('removeNodes ignores a stale id and leaves the orphans parented to it alone', () => {
+        // `stale` is no longer a node, but the selection was never pruned and
+        // `orphan` still names it as its parent. Only the valid id may delete.
+        const store = setupStore(
+            makeDoc([textNode('a'), textNode('orphan', 'stale')]),
+        );
+
+        store.getState().removeNodes(['stale', 'a']);
+
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['orphan']);
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('removeNodes commits once for mixed valid and missing ids', () => {
+        const store = setupStore(makeDoc([textNode('a'), textNode('b'), textNode('o')]));
+
+        store.getState().removeNodes(['a', 'missing', 'b']);
+
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['o']);
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('removeNode prunes the deleted id from the selection (D-83)', () => {
+        const store = setupStore(makeDoc([textNode('a'), textNode('b')]));
+        store.setState({ selectedNodeIds: ['a', 'b'] });
+
+        store.getState().removeNode('a');
+
+        // The survivor stays selected; the stale id no longer inflates the
+        // transformer's selection count. Still one undo entry.
+        expect(store.getState().selectedNodeIds).toEqual(['b']);
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('removeNode prunes the deleted subtree ids from the selection (D-83)', () => {
+        const store = setupStore(
+            makeDoc([textNode('p'), textNode('c', 'p'), textNode('o')]),
+        );
+        store.setState({ selectedNodeIds: ['p', 'c', 'o'] });
+
+        store.getState().removeNode('p');
+
+        expect(store.getState().selectedNodeIds).toEqual(['o']);
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('removeNodes prunes a deleted group and its subtree ids from the selection (D-83)', () => {
+        const store = setupStore(
+            makeDoc([groupNode('g'), textNode('c1', 'g'), textNode('o')]),
+        );
+        store.setState({ selectedNodeIds: ['g', 'c1', 'o'] });
+
+        store.getState().removeNodes(['g']);
+
+        // Both the group and its child leave the selection, even though only the
+        // group was named in the delete list.
+        expect(store.getState().selectedNodeIds).toEqual(['o']);
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('removeNodes deleting the whole selection empties selectedNodeIds (D-83)', () => {
+        const store = setupStore(makeDoc([textNode('a'), textNode('b')]));
+        store.setState({ selectedNodeIds: ['a', 'b'] });
+
+        store.getState().removeNodes(['a', 'b']);
+
+        expect(store.getState().selectedNodeIds).toEqual([]);
+        // Pruning the selection did not add a second history entry.
+        expect(store.getState().docPast).toHaveLength(1);
+    });
+
+    it('redoDoc prunes an id the restored doc no longer has (F5)', () => {
+        // Repro: delete a → undo → select the restored node → redo → Shift-select
+        // the survivor. The stale id used to survive redo, so the transformer saw
+        // two ids: eight handles and no aspect lock.
+        const store = setupStore(makeDoc([textNode('a'), textNode('b')]));
+
+        store.getState().removeNode('a');
+        store.getState().undoDoc();
+        store.getState().selectNode('a');
+        store.getState().redoDoc();
+
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['b']);
+        // The restored doc defines which ids may stay selected.
+        expect(store.getState().selectedNodeIds).toEqual([]);
+
+        store.getState().toggleSelectNode('b');
+        expect(store.getState().selectedNodeIds).toHaveLength(1);
+        expect(store.getState().selectedNodeIds).toEqual(['b']);
+    });
+
+    it('undoDoc prunes an id the restored snapshot no longer has (F5)', () => {
+        const store = setupStore(makeDoc([textNode('a')]));
+
+        const added = store.getState().addNode(textNode('b'))!;
+        store.getState().selectNode(added);
+        store.getState().undoDoc();
+
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['a']);
+        expect(store.getState().selectedNodeIds).toEqual([]);
+    });
+
     it('cloneNode deep-clones a subtree with unique ids and offsets the root', () => {
         const store = setupStore(makeDoc([textNode('p'), textNode('c', 'p')]));
         const newRoot = store.getState().cloneNode('p');
@@ -1075,7 +1229,7 @@ describe('editorSlice — autosave', () => {
         expect(save.mock.calls.some((c) => c[0].meta.id === 'doc-2')).toBe(false);
     });
 
-    it('never fires a scheduled save for doc A after currentDoc became doc B', async () => {
+    it('still writes a scheduled save for doc A after currentDoc became doc B', async () => {
         const docA = makeDoc([textNode('a')]);
         const docB = createLabelDoc({ id: 'doc-2', name: 'B', nodes: [textNode('b')], now: 2_000_000 });
         const { repo, save } = makeMemoryRepo();
@@ -1086,11 +1240,14 @@ describe('editorSlice — autosave', () => {
 
         store.getState().addNode(textNode('a2'));
         // Replace the doc without going through the flush boundary, then let the
-        // timer fire: the captured identity no longer matches, so it is dropped.
+        // timer fire: the snapshot is A's own latest content (a full-doc save is
+        // idempotent), so it must still land even though B is current now.
         store.setState({ currentDoc: docB });
         await vi.advanceTimersByTimeAsync(1000);
 
-        expect(save).not.toHaveBeenCalled();
+        expect(save).toHaveBeenCalledTimes(1);
+        expect(save.mock.calls[0]![0].meta.id).toBe('doc-1');
+        expect(save.mock.calls[0]![0].nodes).toHaveLength(2);
     });
 });
 

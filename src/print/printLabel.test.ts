@@ -321,7 +321,7 @@ describe('buildCsvPrintJob', () => {
         expect(pages.reduce((sum, page) => sum + page.quantity, 0)).toBe(job.totalPages);
     });
 
-    it('interleaved: quantity-1 pages in row order', async () => {
+    it('interleaved: quantity-1 pages, copy-major round-robin', async () => {
         const csv = csvOf(['$times'], [['2'], ['3']]);
         const seen: number[] = [];
         const job = buildCsvPrintJob(
@@ -339,7 +339,8 @@ describe('buildCsvPrintJob', () => {
         expect(job.totalPages).toBe(5);
         const pages = await collectPages(job);
         expect(pages.map((page) => page.quantity)).toEqual([1, 1, 1, 1, 1]);
-        expect(seen).toEqual([0, 0, 1, 1, 1]);
+        // Copy 0: row0, row1. Copy 1: row0, row1. Copy 2: row1 only ($times 3).
+        expect(seen).toEqual([0, 1, 0, 1, 1]);
         expect(pages.reduce((sum, page) => sum + page.quantity, 0)).toBe(job.totalPages);
     });
 
@@ -641,9 +642,14 @@ describe('buildCsvPrintJob', () => {
         );
         expect(job.totalPages).toBe(1);
 
-        // Simulate a non-deterministic source: the generator now yields more
-        // copies than the build-time Σ promised (the callback is documented as
-        // pure/stable; violating that must fail loudly instead of over-sending).
+        // The plan resolves `times × copies` once at build time, so the first
+        // (cached) pass is stable regardless of the live source below.
+        expect(await collectPages(job)).toHaveLength(1);
+
+        // Simulate a non-deterministic source: the re-derived second pass now
+        // yields more copies than the build-time Σ promised (the callback is
+        // documented as pure/stable; violating that must fail loudly instead of
+        // over-sending).
         times = 5;
 
         await expect(collectPages(job)).rejects.toThrow(/exceeds totalPages/);
@@ -659,8 +665,12 @@ describe('buildCsvPrintJob', () => {
         );
         expect(job.totalPages).toBe(5);
 
-        // The generator now yields fewer copies than the transport was told; a
-        // silent under-send would leave it waiting for pages that never come.
+        // First pass walks the build-time quantities (Σ 5).
+        expect((await collectPages(job)).map((page) => page.quantity)).toEqual([5]);
+
+        // The re-derived second pass now yields fewer copies than the transport
+        // was told; a silent under-send would leave it waiting for pages that
+        // never come.
         times = 1;
 
         await expect(collectPages(job)).rejects.toThrow(/under-sent/);
@@ -850,6 +860,49 @@ describe('buildCsvPrintJob', () => {
         });
         expect(renderOptionsOf({}, undefined)).not.toHaveProperty('maxHeadHm');
         expect(renderOptionsOf(undefined, undefined)).not.toHaveProperty('maxHeadHm');
+    });
+
+    it('forwards grayscaleTone only for a grayscale page (other modes stay unchanged)', () => {
+        const grayscaleTone = { minLevel: 4, maxLevel: 14 };
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.Grayscale, grayscaleTone }, undefined),
+        ).toMatchObject({ pageColor: 'grayscale', grayscaleTone });
+        // A stale band must not leak into another page colour.
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.DoubleColor, grayscaleTone }, undefined),
+        ).not.toHaveProperty('grayscaleTone');
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.SingleColor, grayscaleTone }, undefined),
+        ).not.toHaveProperty('grayscaleTone');
+        expect(renderOptionsOf({ grayscaleTone }, undefined)).not.toHaveProperty('grayscaleTone');
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.Grayscale }, undefined),
+        ).not.toHaveProperty('grayscaleTone');
+    });
+
+    it('forwards the red coverage band through redBlack', () => {
+        const redBlack = {
+            redIntensity: 1,
+            blackDepth: 0.5,
+            redCoverageMin: 60,
+            redCoverageMax: 90,
+        };
+        // Red/black output is identical to the pre-P10 default when the band is
+        // absent; the coverage fields ride the same key when supplied.
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.DoubleColor, redBlack }, undefined),
+        ).toMatchObject({ pageColor: 'redBlack', redBlack });
+        // A stale tuning value must not leak into another page colour.
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.Grayscale, redBlack }, undefined),
+        ).not.toHaveProperty('redBlack');
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.SingleColor, redBlack }, undefined),
+        ).not.toHaveProperty('redBlack');
+        expect(renderOptionsOf({ redBlack }, undefined)).not.toHaveProperty('redBlack');
+        expect(
+            renderOptionsOf({ pageColor: PageColorType.DoubleColor }, undefined),
+        ).not.toHaveProperty('redBlack');
     });
 });
 

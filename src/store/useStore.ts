@@ -12,10 +12,13 @@ import { createWarningsSlice } from './slices/warningsSlice';
 import { createViewSlice } from './slices/viewSlice';
 import {
     DEFAULT_CONNECT_METHOD,
+    DEFAULT_GRAYSCALE_TONE,
     DEFAULT_GRID_SPACING_HM,
     DEFAULT_QUANTIZER_BY_TYPE,
     DEFAULT_QUANTIZER_DEFAULTS,
+    DEFAULT_RED_BLACK_SETTINGS,
     DEFAULT_SCREEN_DPI,
+    defaultAutoOrientPortrait,
     defaultAutoSave,
     defaultKeyboardShortcuts,
     defaultLanguage,
@@ -31,6 +34,7 @@ import {
 /** The preference defaults, used to repair whatever `ui_settings` holds. */
 const persistedDefaults: PersistedSettings = {
     autoSave: defaultAutoSave,
+    autoOrientPortrait: defaultAutoOrientPortrait,
     usePrinterDpi: defaultUsePrinterDpi,
     keyboardShortcuts: defaultKeyboardShortcuts,
     toolSettings: defaultToolSettings,
@@ -40,6 +44,8 @@ const persistedDefaults: PersistedSettings = {
     connectMethod: DEFAULT_CONNECT_METHOD,
     quantizerDefaults: DEFAULT_QUANTIZER_DEFAULTS,
     defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
+    redBlackSettings: DEFAULT_RED_BLACK_SETTINGS,
+    grayscaleTone: DEFAULT_GRAYSCALE_TONE,
     // Optional: `undefined` is the "no preference" default (see `storeTypes`).
     defaultPaperTypeId: undefined,
 };
@@ -151,6 +157,7 @@ export const createAppStore = (storage?: Storage) => {
                 //    land in localStorage.
                 partialize: (s) => ({
                     autoSave: s.autoSave,
+                    autoOrientPortrait: s.autoOrientPortrait,
                     usePrinterDpi: s.usePrinterDpi,
                     keyboardShortcuts: s.keyboardShortcuts,
                     toolSettings: s.toolSettings,
@@ -160,6 +167,8 @@ export const createAppStore = (storage?: Storage) => {
                     connectMethod: s.connectMethod,
                     quantizerDefaults: s.quantizerDefaults,
                     defaultQuantizerByType: s.defaultQuantizerByType,
+                    redBlackSettings: s.redBlackSettings,
+                    grayscaleTone: s.grayscaleTone,
                     defaultPaperTypeId: s.defaultPaperTypeId,
                 }),
                 migrate: (persisted) => persisted as PersistedSettings,

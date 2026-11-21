@@ -40,6 +40,7 @@ beforeEach(() => {
         isPrintOpen: false,
         selectedNodeIds: [],
         activeTool: 'select',
+        viewRotation: 0,
     });
 });
 
@@ -52,6 +53,10 @@ afterEach(() => {
         isPrintOpen: false,
         view: 'gallery',
         renderMode: 'normal',
+        // History leaks across tests otherwise, and `DOC_HISTORY_CAP` (20) turns
+        // a later `before + 1` assertion into a silent no-op.
+        docPast: [],
+        docFuture: [],
     });
 });
 
@@ -180,6 +185,36 @@ describe('EditorKeyboardShortcuts — print (Ctrl/Cmd+P)', () => {
     });
 });
 
+describe('EditorKeyboardShortcuts — delete selection (single undo entry)', () => {
+    const withThreeSelected = () => {
+        useStore.setState({
+            view: 'editor',
+            currentDoc: createLabelDoc({ id: 'doc-1', now: 1, nodes: [node('a'), node('b'), node('c')] }),
+            selectedNodeIds: ['a', 'b', 'c'],
+        });
+        render(<EditorKeyboardShortcuts />);
+        return useStore.getState().docPast.length;
+    };
+
+    it('Delete removes the whole selection with exactly one history entry', () => {
+        const before = withThreeSelected();
+
+        press('Delete');
+
+        expect(useStore.getState().currentDoc!.nodes).toHaveLength(0);
+        expect(useStore.getState().docPast).toHaveLength(before + 1);
+    });
+
+    it('Backspace removes the whole selection with exactly one history entry', () => {
+        const before = withThreeSelected();
+
+        press('Backspace');
+
+        expect(useStore.getState().currentDoc!.nodes).toHaveLength(0);
+        expect(useStore.getState().docPast).toHaveLength(before + 1);
+    });
+});
+
 describe('EditorKeyboardShortcuts — arrow nudge (P4 W4)', () => {
     const withSelectedNode = () =>
         useStore.setState({
@@ -219,6 +254,28 @@ describe('EditorKeyboardShortcuts — arrow nudge (P4 W4)', () => {
         expect(x()).toBe(-10);
         press('ArrowRight');
         expect(x()).toBe(0);
+    });
+
+    it('follows the screen axes when the view is rotated 90°', () => {
+        withSelectedNode();
+        useStore.setState({ viewRotation: 90 });
+        render(<EditorKeyboardShortcuts />);
+
+        // At a 90° view rotation a screen delta `(dx, dy)` is the world delta
+        // `(dy, -dx)` (`screenToWorld` in `core/viewport.ts`), so Right/Left move
+        // the node along world `y` and Up/Down along world `x`.
+        press('ArrowRight');
+        expect(x()).toBe(0);
+        expect(y()).toBe(-10);
+        press('ArrowLeft');
+        expect(x()).toBe(0);
+        expect(y()).toBe(0);
+        press('ArrowUp');
+        expect(x()).toBe(-10);
+        expect(y()).toBe(0);
+        press('ArrowDown');
+        expect(x()).toBe(0);
+        expect(y()).toBe(0);
     });
 
     it('does not nudge while a modal dialog is open', () => {

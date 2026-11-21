@@ -1,5 +1,21 @@
 # P9 — photo-quality fix: scalar grayscale + duotone red/black
 
+## Status (2026-11-09)
+
+- **Wave A shipped** — `fix(print): diffuse grayscale pages on a scalar luminance plane`.
+- **Wave B shipped** — `feat(print): separate red/black photos into clustered red and black inks`.
+- **Wave C shipped, split in two** — C1 sliders:
+  `feat(print): expose red/black tuning sliders`; C2 harness + docs:
+  `feat(dev): add red/black cluster and tone calibration patterns`, then this
+  docs/memory promotion (what shipped is recorded in
+  [`../memory/print-colours.md`](../memory/print-colours.md)).
+- **Deliberate deviation from the first model:** black generation is **BT.601
+  darkness − red ink darkness** (`RED_INK_LUMA 0.30`), not the OKLab `L` + soft
+  curve. The OKLab attempt printed neutrals ~30 % too light on the real photo
+  and was rejected after measurement.
+- **Owner hardware verification pending:** the constants are a starting profile;
+  the P9 addendum in [`P7-VERIFY.md`](P7-VERIFY.md) decides them.
+
 Follow-up to P1–P8 after the owner rendered a real photo (red crab, dark bokeh)
 through both non-mono modes. Both modes are broken for photos; the diagnosis is
 reproduced offline and the fix designs are owner-approved (2026-11-08).
@@ -228,8 +244,8 @@ Per pixel, sRGB → OKLab (input is sRGB; alpha already composited by rasterize)
 `node_modules` holds Windows natives, so Linux node cannot run rolldown/napi:
 
 ```
-"/mnt/c/Program Files/nodejs/node.exe" "C:/Users/kevin/code/niimbun-label-editor/node_modules/typescript/bin/tsc"
-"/mnt/c/Program Files/nodejs/node.exe" "C:/Users/kevin/code/niimbun-label-editor/node_modules/vitest/vitest.mjs" run <paths>
+node.exe node_modules/typescript/bin/tsc
+node.exe node_modules/vitest/vitest.mjs run <paths>
 ```
 
 Never `bunx`/`npx`; never `git stash`. Physical output is the only proof for the
@@ -238,6 +254,7 @@ separation constants — do not tune from the preview.
 ## Out of scope
 
 - Grayscale dynamic-range mapping (D-75) and any grayscale UI.
-- Angled/blue-noise red screens, per-ink screentone, palette-weight calibration.
+- Angled/blue-noise red screens, per-ink screentone (the old palette-weight hook was
+  removed with the palette engine).
 - Library Mixed-row fix (D-77 stays clamped) and paper RFID hints.
 - Batch/CSV changes beyond option threading.

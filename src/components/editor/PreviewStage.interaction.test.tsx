@@ -9,8 +9,11 @@ import { useStore } from '../../store/useStore';
 import { createLabelDoc } from '../../core/doc/factory';
 import type { Node, TextNode } from '../../core/doc/types';
 import { PreviewStage } from './PreviewStage';
+import { SampleRowContext } from './sampleRowContext';
+import type { SampleRowState } from './useSampleRow';
+import { caretFromPoint, localPointOf } from './TextEditorOverlay';
 import { centeredViewport, ZOOM_MAX } from '../../editor/viewportController';
-import { resolve } from '../../editor/render/resolve';
+import { resolve, type ResolvedText } from '../../editor/render/resolve';
 import { shrinkScaleOf } from '../../editor/render/textMetrics';
 import type { InsertAction } from '../../store/slices/toolsSlice';
 
@@ -591,7 +594,7 @@ describe('PreviewStage P3 selection & resize semantics', () => {
         fontSize: 300,
     });
 
-    const mountSelection = (nodes: Node[], selected: string[]) => {
+    const mountSelection = (nodes: Node[], selected: string[], provider?: SampleRowState) => {
         useStore.setState({
             view: 'editor',
             currentDoc: createLabelDoc({ id: 'doc-1', now: 1_700_000_000, backingW: 4000, backingH: 3000, nodes }),
@@ -599,7 +602,15 @@ describe('PreviewStage P3 selection & resize semantics', () => {
             activeTool: 'select',
             snapEnabled: false,
         });
-        render(<PreviewStage />);
+        render(
+            provider ? (
+                <SampleRowContext.Provider value={provider}>
+                    <PreviewStage />
+                </SampleRowContext.Provider>
+            ) : (
+                <PreviewStage />
+            ),
+        );
         const stage = Konva.stages[Konva.stages.length - 1] as Konva.Stage;
         if (!stage) throw new Error('PreviewStage did not mount a Konva stage');
         return stage;
@@ -733,12 +744,137 @@ describe('PreviewStage P3 selection & resize semantics', () => {
         });
     });
 
+    describe('P2 review — mirrored transforms', () => {
+        it('commits the angle that reproduces the live mirrored orientation', () => {
+            const mirrored: Node = {
+                ...textNode('t'),
+                transform: { x: 0, y: 0, rotDeg: 0, scaleX: -1, scaleY: 1 },
+            };
+            const stage = mountSelection([mirrored], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            let live: number[] = [];
+            act(() => {
+                (transformer as unknown as { _movingAnchorName: string })._movingAnchorName = 'rotater';
+                transformer.fire('transformstart', {});
+                // Konva rotates the Transformer's centred rect and feeds it
+                // through the real fit path; drive that path so the live
+                // decomposition is Konva's, not a hand-computed angle.
+                const shape = transformer._getNodeRect();
+                const cx = shape.x + shape.width / 2;
+                const cy = shape.y + shape.height / 2;
+                const rad = (30 * Math.PI) / 180;
+                (transformer as unknown as { _fitNodesInto: (a: unknown, b: unknown) => void })._fitNodesInto(
+                    {
+                        ...shape,
+                        x: cx + (shape.x - cx) * Math.cos(rad) - (shape.y - cy) * Math.sin(rad),
+                        y: cy + (shape.x - cx) * Math.sin(rad) + (shape.y - cy) * Math.cos(rad),
+                        rotation: shape.rotation + rad,
+                    },
+                    {},
+                );
+                // `getMatrix()` returns Konva's internal array — copy it.
+                live = [...text.getTransform().getMatrix()];
+                transformer.fire('transformend', {});
+            });
+
+            const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 't')!;
+            // The document keeps its horizontal mirror; the committed angle is
+            // Konva's live angle plus the 180° representation flip (finding A).
+            expect(node.transform.scaleX).toBe(-1);
+            expect(node.transform.scaleY).toBe(1);
+            expect(node.transform.rotDeg).toBe(30);
+            // The re-rendered node reproduces the live orientation exactly.
+            const rendered = text.getTransform().getMatrix();
+            for (let i = 0; i < 4; i += 1) expect(rendered[i]).toBeCloseTo(live[i]!, 5);
+        });
+
+        it('keeps a mirrored resize WYSIWYG (same world box after the commit)', () => {
+            const mirrored: Node = {
+                ...rectNode('r', 0, 0),
+                transform: { x: 0, y: 0, rotDeg: 0, scaleX: -1, scaleY: 1 },
+            };
+            const stage = mountSelection([mirrored], ['r']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const rect = transformer.nodes()[0] as Konva.Rect;
+            let liveBox: { x: number; y: number; width: number; height: number } | null = null;
+
+            act(() => {
+                (transformer as unknown as { _movingAnchorName: string })._movingAnchorName = 'middle-right';
+                transformer.fire('transformstart', {});
+                // Konva's decomposition of a 1.5× stretch on the mirrored node.
+                rect.setAttrs({ rotation: -180, scaleX: 1.5, scaleY: -1 });
+                transformer.fire('transform', {});
+                liveBox = rect.getClientRect();
+                transformer.fire('transformend', {});
+            });
+
+            const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 'r')!;
+            expect(node.size).toEqual({ w: 1500, h: 1000 });
+            // The document keeps its horizontal mirror (and gains the 180° fix),
+            // so the rendered box is exactly the live one.
+            expect(node.transform).toMatchObject({ rotDeg: 0, scaleX: -1, scaleY: 1 });
+            const renderedBox = rect.getClientRect();
+            // Same world box (a ≤ 1 px tolerance absorbs the integer-hm
+            // translation rounding and the preview stroke's scale handling; a
+            // 180° flip would move an edge by the whole 189 px extent).
+            expect(Math.abs(renderedBox.x - liveBox!.x)).toBeLessThan(0.75);
+            expect(renderedBox.y).toBeCloseTo(liveBox!.y, 4);
+            expect(Math.abs(renderedBox.width - liveBox!.width)).toBeLessThan(0.75);
+            expect(renderedBox.height).toBeCloseTo(liveBox!.height, 4);
+        });
+    });
+
+    describe('bug 3 — dragging a child of a rotated group', () => {
+        // A 90° group: its local +x axis points down the screen and +y points
+        // left, so a world-space pointer delta must be rotated before it is
+        // added to the child's parent-local origin.
+        const rotatedGroup = (): Node => ({
+            id: 'g',
+            parentId: null,
+            type: 'group',
+            visible: true,
+            locked: false,
+            transform: { x: 1500, y: 500, rotDeg: 90, scaleX: 1, scaleY: 1 },
+        });
+        const child = (): Node => ({ ...rectNode('c', 200, 100), parentId: 'g' });
+
+        it('moves the child along the screen axis, not the group-local one', () => {
+            const stage = mountSelection([rotatedGroup(), child()], ['c']);
+            const zoom = stage.getLayers().at(-1)!.scaleX();
+            // Inside the child's rotated world box (x 400…1400, y 700…1700).
+            const from = toScreen(stage, 900, 1200);
+
+            firePointer(stage, 'pointerdown', from.x, from.y);
+            firePointer(stage, 'pointermove', from.x + 30, from.y);
+            act(() => {
+                window.dispatchEvent(new Event('pointerup'));
+            });
+
+            const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 'c')!;
+            // World +x is the group-local −y axis: the local x must not change
+            // and the local y must take the whole (negative) world delta.
+            expect(node.transform.x).toBeCloseTo(200, 5);
+            // `movePatch` rounds to integer hm like every other translation.
+            expect(node.transform.y).toBe(Math.round(100 - 30 / zoom));
+            expect(useStore.getState().docPast).toHaveLength(1);
+        });
+    });
+
     describe('item 6 — text box-only live resize', () => {
         /** The same text box with `wrap: 'cut'`: its registered node is the clip group. */
         const cutTextNode = (id: string): Node => ({
             ...(textNode(id) as TextNode),
             wrap: 'cut',
             text: { kind: 'static', value: 'W'.repeat(40) },
+        });
+
+        /** A shrink-to-fit box: its live Konva scale holds the display factor. */
+        const shrinkTextNode = (id: string): Node => ({
+            ...(textNode(id) as TextNode),
+            size: { w: 400, h: 120 },
+            wrap: 'shrink',
+            text: { kind: 'static', value: 'hello shrinking world' },
         });
 
         it('keeps the glyph scale at ±1 while resizing the box, and commits that box', () => {
@@ -790,6 +926,306 @@ describe('PreviewStage P3 selection & resize semantics', () => {
             expect(node.transform.scaleX).toBe(1);
             expect(node.transform.scaleY).toBe(1);
             expect(state.docPast).toHaveLength(1);
+        });
+
+        it('commits the document box when resizing a shrink text (display scale divided out)', () => {
+            const stage = mountSelection([shrinkTextNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            // The live node carries the shrink display factor in its own scale.
+            const shrink = text.scaleX();
+            expect(shrink).toBeGreaterThan(0);
+            expect(shrink).toBeLessThan(1);
+            const baseW = text.width();
+            const baseH = text.height();
+
+            act(() => {
+                transformer.fire('transformstart', {});
+                // A 2× gesture on both axes: Konva multiplies the node's current
+                // scale, shrink included.
+                text.scaleX(shrink * 2);
+                text.scaleY(shrink * 2);
+                transformer.fire('transform', {});
+            });
+
+            // The recipe works in document units: width is the document box (not
+            // `baseW × shrink`), while height keeps the `h / shrink` layout used
+            // for wrapping, so the display scale stays on the node.
+            expect(text.width()).toBeCloseTo(baseW * 2, 5);
+            expect(text.height()).toBeCloseTo(baseH * 2, 5);
+            expect(text.scaleX()).toBeCloseTo(shrink, 5);
+            expect(text.scaleY()).toBeCloseTo(shrink, 5);
+
+            act(() => {
+                transformer.fire('transformend', {});
+            });
+
+            const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 't') as TextNode;
+            expect(node.size).toEqual({ w: 800, h: 240 });
+            expect(node.fontSize).toBe(300);
+            expect(node.transform.scaleX).toBe(1);
+            expect(node.transform.scaleY).toBe(1);
+            expect(useStore.getState().docPast).toHaveLength(1);
+        });
+
+        it('commits a rotate-only gesture on a shrink text without resizing it (bug 4)', () => {
+            const stage = mountSelection([shrinkTextNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            const baseW = text.width();
+            const baseH = text.height();
+
+            act(() => {
+                (transformer as unknown as { _movingAnchorName: string })._movingAnchorName = 'rotater';
+                transformer.fire('transformstart', {});
+                text.rotation(30);
+                transformer.fire('transformend', {});
+            });
+
+            expect(text.width()).toBe(baseW);
+            expect(text.height()).toBe(baseH);
+
+            const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 't') as TextNode;
+            // The live display scale (shrink) must never reach `size`/`fontSize`.
+            expect(node.size).toEqual({ w: 400, h: 120 });
+            expect(node.fontSize).toBe(300);
+            expect(node.transform.rotDeg).toBe(30);
+            expect(node.transform.scaleX).toBe(1);
+            expect(node.transform.scaleY).toBe(1);
+            expect(useStore.getState().docPast).toHaveLength(1);
+        });
+
+        /** Height-bound shrink text (10×1 mm): widening cannot change its shrink. */
+        const linesShrinkTextNode = (
+            id: string,
+            text: TextNode['text'] = { kind: 'static', value: 'a\nb\nc' },
+        ): Node => ({
+            ...(textNode(id) as TextNode),
+            size: { w: 1000, h: 100 },
+            wrap: 'shrink',
+            text,
+            lineHeight: 1,
+        });
+
+        /** The shrink factor a committed box + resolved text will render with. */
+        const committedShrink = (resolved: ResolvedText, w: number, h: number): number =>
+            shrinkScaleOf({
+                text: resolved.text,
+                width: w,
+                height: h,
+                fontSize: resolved.fontSize,
+                fontFamily: resolved.fontFamily,
+                fontStyle: resolved.fontStyle,
+                lineHeight: resolved.lineHeight,
+                letterSpacing: resolved.letterSpacing,
+            });
+
+        it('releases a shrink-text resize at the committed box’s shrink (no glyph doubling)', () => {
+            const stage = mountSelection([linesShrinkTextNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            const shrink = text.scaleX();
+            expect(shrink).toBeGreaterThan(0);
+            expect(shrink).toBeLessThan(1);
+
+            act(() => {
+                (transformer as unknown as { _movingAnchorName: string })._movingAnchorName = 'middle-right';
+                transformer.fire('transformstart', {});
+                // Widen only: Konva multiplies the node's scale, shrink included.
+                text.scaleX(shrink * 1.5);
+                transformer.fire('transform', {});
+            });
+            act(() => {
+                transformer.fire('transformend', {});
+            });
+
+            const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 't') as TextNode;
+            expect(node.size).toEqual({ w: 1500, h: 100 });
+            expect(node.fontSize).toBe(300);
+            // The renderer's shrink prop is unchanged for this height-bound box,
+            // so React-Konva skips re-applying it; the live node must already sit
+            // at the new shrink, not at ±1 (which doubled the glyphs).
+            const resolved = resolve(useStore.getState().currentDoc!)[0] as ResolvedText;
+            const expected = committedShrink(resolved, 1500, 100);
+            expect(expected).toBeLessThan(1);
+            expect(text.scaleX()).toBeCloseTo(expected, 5);
+        });
+
+        it('measures the commit shrink on the resolved sample-row text (CSV-bound)', () => {
+            const row: SampleRowState = {
+                overrides: new Map([['t', { text: 'row one\nrow two\nrow three', placeholder: false }]]),
+                trust: 'ask',
+                blocked: false,
+                needsApproval: false,
+                globalWarnings: [],
+                templateErrors: new Map(),
+                rowCount: 1,
+                error: null,
+            };
+            const stage = mountSelection(
+                [linesShrinkTextNode('t', { kind: 'csv', column: 'title', fallback: '' })],
+                ['t'],
+                row,
+            );
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            const shrink = text.scaleX();
+            expect(shrink).toBeGreaterThan(0);
+            expect(shrink).toBeLessThan(1);
+
+            act(() => {
+                (transformer as unknown as { _movingAnchorName: string })._movingAnchorName = 'middle-right';
+                transformer.fire('transformstart', {});
+                text.scaleX(shrink * 1.5);
+                transformer.fire('transform', {});
+            });
+            act(() => {
+                transformer.fire('transformend', {});
+            });
+
+            const doc = useStore.getState().currentDoc!;
+            const node = doc.nodes.find((entry) => entry.id === 't') as TextNode;
+            // The display scale is divided out on the RESOLVED text basis (the
+            // doc node's static value is empty): the box widens 10 → 15 mm.
+            expect(node.size).toEqual({ w: 1500, h: 100 });
+            expect(node.transform.scaleX).toBe(1);
+            const resolved = resolve(doc, { overrides: row.overrides })[0] as ResolvedText;
+            expect(text.scaleX()).toBeCloseTo(committedShrink(resolved, 1500, 100), 5);
+        });
+
+        it('widens a fresh shrink box without touching its height', () => {
+            const stage = mountSelection([linesShrinkTextNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            const shrink = text.scaleX();
+
+            act(() => {
+                (transformer as unknown as { _movingAnchorName: string })._movingAnchorName = 'middle-right';
+                transformer.fire('transformstart', {});
+                text.scaleX(shrink * 1.5);
+                transformer.fire('transform', {});
+            });
+            act(() => {
+                transformer.fire('transformend', {});
+            });
+
+            const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 't') as TextNode;
+            expect(node.size).toEqual({ w: 1500, h: 100 });
+            // The live layout equals the render's (`h / shrink`).
+            expect(text.width()).toBeCloseTo(1500, 5);
+            expect(text.height()).toBeCloseTo(100 / committedShrink(resolve(useStore.getState().currentDoc!)[0] as ResolvedText, 1500, 100), 5);
+        });
+
+        it('keeps a two-step resize exact (height, then width → 15×1.5 mm)', () => {
+            const stage = mountSelection([linesShrinkTextNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            const shrink = text.scaleX();
+            expect(shrink).toBeLessThan(1);
+
+            // Step 1: make it 1.5 mm tall (height-only).
+            act(() => {
+                (transformer as unknown as { _movingAnchorName: string })._movingAnchorName = 'bottom-center';
+                transformer.fire('transformstart', {});
+                text.scaleY(shrink * 1.5);
+                transformer.fire('transform', {});
+            });
+            act(() => {
+                transformer.fire('transformend', {});
+            });
+
+            let node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 't') as TextNode;
+            expect(node.size).toEqual({ w: 1000, h: 150 });
+            // F3: the live layout must be the committed render's, not the stale
+            // imperative height the next gesture would read back.
+            expect(text.height()).toBeCloseTo(150 / committedShrink(resolve(useStore.getState().currentDoc!)[0] as ResolvedText, 1000, 150), 5);
+
+            // Step 2: widen it to 15 mm (width-only, from the reconciled state).
+            act(() => {
+                (transformer as unknown as { _movingAnchorName: string })._movingAnchorName = 'middle-right';
+                transformer.fire('transformstart', {});
+                text.scaleX(text.scaleX() * 1.5);
+                transformer.fire('transform', {});
+            });
+            act(() => {
+                transformer.fire('transformend', {});
+            });
+
+            node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 't') as TextNode;
+            // Pre-fix this committed 15×2.25 (the layout height 1350 leaked in).
+            expect(node.size).toEqual({ w: 1500, h: 150 });
+            expect(node.fontSize).toBe(300);
+            expect(text.scaleX()).toBeCloseTo(
+                committedShrink(resolve(useStore.getState().currentDoc!)[0] as ResolvedText, 1500, 150),
+                5,
+            );
+        });
+
+        it('normalizes a shrink text in a multi-selection commit (not 7.5×0.5)', () => {
+            const stage = mountSelection([linesShrinkTextNode('t'), rectNode('r', 2000, 0)], ['t', 'r']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const attached = transformer.nodes();
+            const text = attached.find((node) => node.getClassName() === 'Text') as Konva.Text;
+            const rect = attached.find((node) => node.getClassName() === 'Rect') as Konva.Rect;
+            expect(text, 'the Transformer must attach to the selected text').toBeTruthy();
+            expect(rect, 'the Transformer must attach to the selected rect').toBeTruthy();
+            const textShrink = text.scaleX();
+            expect(textShrink).toBeLessThan(1);
+
+            act(() => {
+                // A 50% widen applied to the whole selection: every node's live
+                // scale is `document scale × shrink`.
+                transformer.fire('transformstart', {});
+                text.scaleX(textShrink * 1.5);
+                rect.scaleX(1.5);
+                transformer.fire('transform', {});
+            });
+            act(() => {
+                transformer.fire('transformend', {});
+            });
+
+            const doc = useStore.getState().currentDoc!;
+            const node = doc.nodes.find((entry) => entry.id === 't') as TextNode;
+            // F4a: the text's live scale carries the shrink display factor, so
+            // the commit must divide it out (10 → 15 mm, height untouched).
+            expect(node.size).toEqual({ w: 1500, h: 100 });
+            expect(node.fontSize).toBe(300);
+            expect(node.transform.scaleX).toBe(1);
+            expect(doc.nodes.find((entry) => entry.id === 'r')!.size).toEqual({ w: 1500, h: 1000 });
+        });
+
+        it('restores the live shrink text on a cancelled resize (scale + layout)', () => {
+            const stage = mountSelection([linesShrinkTextNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            const shrink = text.scaleX();
+            const layout = { w: text.width(), h: text.height() };
+            expect(shrink).toBeLessThan(1);
+
+            act(() => {
+                (transformer as unknown as { _movingAnchorName: string })._movingAnchorName = 'middle-right';
+                transformer.fire('transformstart', {});
+                text.scaleX(shrink * 2);
+                text.scaleY(shrink * 2);
+                transformer.fire('transform', {});
+            });
+            // Sanity: the live recipe really grew the box before the cancel.
+            expect(text.width()).toBeGreaterThan(layout.w);
+
+            act(() => {
+                window.dispatchEvent(new Event('pointercancel'));
+            });
+
+            const doc = useStore.getState().currentDoc!;
+            const node = doc.nodes.find((entry) => entry.id === 't') as TextNode;
+            expect(node.size).toEqual({ w: 1000, h: 100 });
+            expect(useStore.getState().docPast).toHaveLength(0);
+            // F4b: the live node is back at the committed render — display
+            // scale AND layout box — not at raw scale 1 / doc height.
+            expect(text.scaleX()).toBeCloseTo(shrink, 5);
+            expect(text.scaleY()).toBeCloseTo(shrink, 5);
+            expect(text.width()).toBeCloseTo(layout.w, 5);
+            expect(text.height()).toBeCloseTo(layout.h, 5);
         });
 
         it('restores the committed text box when a box-only resize is cancelled', () => {
@@ -1320,6 +1756,38 @@ describe('PreviewStage inline text editing (P5)', () => {
         expect(textarea.value).toBe('hello world');
         // While editing, the node's Konva Text must not paint under the overlay.
         expect(renderedTextValues(stage)).not.toContain('hello world');
+    });
+
+    it('seeds the caret from the stage-local double-click point (rulers on, bug 5)', () => {
+        useStore.setState({ rulersVisible: true });
+        const stage = mountSelect([textNode('t')]);
+        const konvaText = stage.findOne('Text') as Konva.Text;
+        const nodeM = konvaText.getAbsoluteTransform().getMatrix();
+        const at = toScreen(stage, 600, 250);
+        // The stage-local point and the pre-fix point (the 24 px ruler gutter
+        // subtracted a second time), both mapped into node-local hm.
+        const local = localPointOf(nodeM, at.x, at.y);
+        const doubleGutter = localPointOf(nodeM, at.x - 24, at.y - 24);
+
+        dblClick(stage, 600, 250);
+
+        const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+        const ctx = document.createElement('canvas').getContext('2d')!;
+        const font = { fontSize: 300, fontFamily: 'sans-serif', fontStyle: 'normal', lineHeight: 1 };
+        const expected = caretFromPoint(ctx, 'hello world', local.x, local.y, 1000, font, 'word', 'left');
+        const buggy = caretFromPoint(
+            ctx,
+            'hello world',
+            doubleGutter.x,
+            doubleGutter.y,
+            1000,
+            font,
+            'word',
+            'left',
+        );
+        // Keep the test discriminating: 24 stage px must change the seed here.
+        expect(buggy).not.toBe(expected);
+        expect(textarea.selectionStart).toBe(expected);
     });
 
     it('does not mount the overlay on a double-click on a non-text node', () => {

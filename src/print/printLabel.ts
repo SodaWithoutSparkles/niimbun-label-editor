@@ -1,6 +1,12 @@
 import { ImageEncoder, PageColorType, type LabelType } from '@mmote/niimbluelib';
 import type { LabelDoc } from '../core/doc/types';
-import type { PageColorMode, QuantizerByType, QuantizerDefaults } from '../core/render';
+import type {
+    GrayscaleTone,
+    PageColorMode,
+    QuantizerByType,
+    QuantizerDefaults,
+    RedBlackTuning,
+} from '../core/render';
 import type { CsvRecord } from '../data/csvRepo';
 import {
     renderLabelPage,
@@ -75,6 +81,18 @@ export interface PrintOverrides {
     quantizerDefaults?: QuantizerDefaults;
     /** Per-object-type default-quantizer overrides; absent = `DEFAULT_POLICY_BY_TYPE`. */
     defaultQuantizerByType?: QuantizerByType;
+    /**
+     * Red/black page tuning. Forwarded to the render options **only** when the
+     * page colour is red/black, so mono/grayscale option objects (and therefore
+     * their rendered bytes and preview keys) stay byte-identical.
+     */
+    redBlack?: RedBlackTuning;
+    /**
+     * Grayscale usable ink band (paper/printer dependent). Forwarded to the
+     * render options **only** when the page colour is grayscale, so mono and
+     * red/black option objects stay byte-identical.
+     */
+    grayscaleTone?: GrayscaleTone;
 }
 
 export interface CsvPrintJobOptions {
@@ -146,7 +164,9 @@ export const pageColorModeOf = (pageColor: PageColorType | undefined): PageColor
  *
  * `pageColor` is forwarded **only when non-mono**: the absent key is today's
  * mono render, so existing option objects stay identical (and the preview key
- * unchanged) unless a caller actually selected another page colour.
+ * unchanged) unless a caller actually selected another page colour. The
+ * grayscale band and the red/black tuning follow the same rule, each gated on
+ * its own page colour.
  *
  * Exported so W4's thumbnail path performs the *same* split as the job: the
  * dialog's preview bytes must equal the print job's page bytes for the same
@@ -169,6 +189,18 @@ export const renderOptionsOf = (
             : {}),
         ...(overrides?.defaultQuantizerByType !== undefined
             ? { defaultQuantizerByType: overrides.defaultQuantizerByType }
+            : {}),
+        // The duotone knobs can only change a red/black page. Gating on the
+        // page colour (not just presence) keeps mono/grayscale option objects
+        // byte-identical even when a caller passes a stale tuning value.
+        ...(overrides?.redBlack !== undefined && pageColor === 'redBlack'
+            ? { redBlack: overrides.redBlack }
+            : {}),
+        // The usable ink band can only change a grayscale page. Gating on the
+        // page colour (not just presence) keeps mono/red-black option objects
+        // byte-identical even when a caller passes a stale band.
+        ...(overrides?.grayscaleTone !== undefined && pageColor === 'grayscale'
+            ? { grayscaleTone: overrides.grayscaleTone }
             : {}),
         ...(pageColor !== 'mono' ? { pageColor } : {}),
     };

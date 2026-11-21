@@ -6,7 +6,7 @@ import { createLabelDoc } from '../../core/doc/factory';
 import { grayLevelColor, type RgbaBuffer } from '../../core/render';
 import type { LabelDoc, Node, Region } from '../../core/doc/types';
 import { installCanvasShim } from '../../test/canvasHarness';
-import { renderLabelPage } from './renderLabelPage';
+import { renderLabelPage, invertRgb } from './renderLabelPage';
 
 /**
  * P3 wave A — grayscale page colour end to end through the shared render path.
@@ -245,6 +245,111 @@ describe('renderLabelPage — grayscale page colour', () => {
             }
         }
         expect(count10).toBeGreaterThan(count9 * 5);
+    });
+
+    it('does not bleed ink outside a black shape on a band-limited page', async () => {
+        // REGRESSION (phase 3, bug 2). The default band 4..14 has no level-0
+        // (black) entry, so the diffuser used to keep a -17 residual on an
+        // authored black and pushed it into the white surround: 186 px of ink
+        // landed outside the rect. The engine now clamps the scalar plane at the
+        // band's darkest ink, so authored black prints level 14 and nothing
+        // spreads. x = 200 hm @254 dpi = px 20; w = 600 hm = 60 px.
+        const page = await renderLabelPage(
+            docWith([rect('r', 200, 600, '#000000')]),
+            {},
+            { pageColor: 'grayscale', grayscaleTone: { minLevel: 4, maxLevel: 14 } },
+        );
+
+        for (let y = 0; y < page.heightPx; y++) {
+            for (let x = 0; x < page.widthPx; x++) {
+                if (x >= 20 && x < 80) continue;
+                expect(pixelAt(page.rgba, x, y)[0], `(${x},${y}) outside the rect`).toBe(255);
+            }
+        }
+        expect(pixelAt(page.rgba, 50, 25)).toEqual([
+            grayLevelColor(14),
+            grayLevelColor(14),
+            grayLevelColor(14),
+            255,
+        ]);
+    });
+
+    it('inverts the band as an ordinal reversal, so paper and ink stay distinct', async () => {
+        // REGRESSION (phase 3, bug 3 review). A full-ramp invert mapped paper
+        // (level 0) to level 15, outside a 4..8 band. The band is reversed as
+        // an **ordered set** — paper, 4, 5, 6, 7, 8 — so paper ↔ 8, 4 ↔ 7,
+        // 5 ↔ 6. A level-arithmetic clamp is not enough: for a degenerate band
+        // it collapses every pixel to one level.
+        const page = await renderLabelPage(
+            docWith([
+                rect('black', 0, 200, '#000000'), // renders at the band floor, level 8
+                rect('grey6', 300, 200, '#999999'), // exact level-6 centre (153)
+            ]),
+            {},
+            { pageColor: 'grayscale', grayscaleTone: { minLevel: 4, maxLevel: 8 }, invert: true },
+        );
+
+        // Every emitted pixel is paper or an in-band level: the reversed set
+        // is {paper, 4, 5, 6, 7, 8}.
+        for (let y = 0; y < page.heightPx; y++) {
+            for (let x = 0; x < page.widthPx; x++) {
+                const [r, g, b] = pixelAt(page.rgba, x, y);
+                expect([g, b], `(${x},${y}) is neutral`).toEqual([r, r]);
+                const level = (255 - r) / 17;
+                expect(Number.isInteger(level), `(${x},${y}) is a ramp level`).toBe(true);
+                expect(
+                    level === 0 || (level >= 4 && level <= 8),
+                    `(${x},${y}) level ${level}`,
+                ).toBe(true);
+            }
+        }
+        // Paper (level 0) ↔ the darkest allowed level 8.
+        expect(pixelAt(page.rgba, 80, 25)[0]).toBe(grayLevelColor(8));
+        // Level-6 grey → its ordinal partner, level 5.
+        expect(pixelAt(page.rgba, 40, 25)[0]).toBe(grayLevelColor(5));
+        // The authored black rendered at level 8 → paper.
+        expect(pixelAt(page.rgba, 10, 25)[0]).toBe(255);
+    });
+
+    it('keeps a degenerate 4/4 band visible when inverted', async () => {
+        // REGRESSION (phase 3, bug 3 review). With the old level clamp,
+        // `lowest === highest` mapped every level (paper included) to 4, so the
+        // inverted page was a flat level-4 sheet and the design vanished.
+        // Reversing ordinals over {paper, 4} swaps the two states instead:
+        // paper → 4, ink → paper.
+        const page = await renderLabelPage(
+            docWith([rect('r', 0, 400, '#000000')]),
+            {},
+            { pageColor: 'grayscale', grayscaleTone: { minLevel: 4, maxLevel: 4 }, invert: true },
+        );
+
+        // Both states are present: the inverted ink is paper and the paper is
+        // the single allowed ink level.
+        expect(countGrey(page.rgba, 255)).toBeGreaterThan(0);
+        expect(countGrey(page.rgba, grayLevelColor(4))).toBeGreaterThan(0);
+        expect(pixelAt(page.rgba, 20, 25)[0]).toBe(255);
+        expect(pixelAt(page.rgba, 80, 25)[0]).toBe(grayLevelColor(4));
+    });
+
+    it('keeps the full-ramp invert byte-identical to the legacy luminance invert', async () => {
+        // The full 0..15 ramp reverses to `k → 15 - k` (paper → 15), so the
+        // band-aware path must reproduce `invertRgb` byte for byte. This pins
+        // that the band branch did not change the default-ramp grayscale page.
+        const doc = docWith([
+            rect('r', 0, 400, '#eeeeee'),
+            rect('m', 500, 300, '#808080'),
+        ]);
+        const plain = await renderLabelPage(doc, {}, { pageColor: 'grayscale' });
+        const inverted = await renderLabelPage(doc, {}, { pageColor: 'grayscale', invert: true });
+
+        const legacy: RgbaBuffer = {
+            width: plain.rgba.width,
+            height: plain.rgba.height,
+            data: new Uint8ClampedArray(plain.rgba.data),
+        };
+        invertRgb(legacy);
+
+        expect(Array.from(inverted.rgba.data)).toEqual(Array.from(legacy.data));
     });
 
     it('leaves the mono path byte-identical and 1-bit', async () => {

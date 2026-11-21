@@ -13,11 +13,14 @@ and is capability-gated.
 - **Physical verification (owner, 2026-11-08, density 3 default):** the 16-level
   ramp is **not fully usable on paper** — levels **0–2 are indistinguishable from
   the background**, level **3 is very faint**, and on some stock level **15 merges
-  with 14 (sometimes 13)**. Usable range is roughly **4–14**. A later **dynamic
-  range** option (map the authored tone range onto the physically usable band) is
-  requested — see **D-75**. Red/black physical calibration is still pending. Owner
-  checklist: [`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md); the harness
-  has a **Density** select for heat/energy tests (density does not change the ramp
+  with 14 (sometimes 13)**. Usable range is roughly **4–14**. **P10 shipped the
+  usable band as a user setting** (`grayscaleTone`, default 4/14; level 0 stays
+  paper white) instead of hard-coding one printer's range — **D-75 resolved**. The
+  shipped defaults are the owner's density-3 stock, not a universal constant
+  (calibration: **D-78/D-79**). Red/black physical calibration is still pending.
+  Owner checklist:
+  [`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md); the harness has a
+  **Density** select for heat/energy tests (density does not change the ramp
   mapping).
 - **Red/black mode on mono stock** (owner, 2026-11-08): prints an intermediate
   **grey ≈ grayscale levels 11–12**, not black/red. The mode assumes red/black
@@ -73,11 +76,23 @@ post-clip → offset → encoder canvas`.
 
 - **mono** — unchanged: per-object policy mask + `quantizeRgba` (1-bit goldens
   byte-identical).
-- **grayscale** — skips the policy mask entirely; one `diffuseToPalette` pass
-  with `grayscaleRampPalette()`. The knobs come from `buildQuantizeOptions`, i.e.
-  the **global** quantizer's effective settings. At the default global strategy
-  (`threshold`) that resolves to gamma 1, strength 1, serpentine true, so the
-  mode is serpentine Floyd–Steinberg over the 16 band-centre greys. Per-node
+- **grayscale** — skips the policy mask entirely; one `diffuseRamp` pass with a
+  **band-limited** `grayscaleRampPalette(minLevel, maxLevel)` over **one BT.601
+  scalar luminance plane** (a neutral ramp has no chroma sink, so an RGB error
+  vector would clip against 0/255 and collapse saturated sources). The palette is
+  **paper white (level 0) plus every level in the usable band**; level 0 is
+  always kept so margins, region clips and highlights stay blank (a strict
+  `[4..14]` remap would grey the whole page). The app passes the persisted
+  `grayscaleTone` (default **4–14**); direct callers/tests with no arguments get
+  the unchanged 0–15 ramp. A reversed band (`min > max`) ties at `max`. Entry
+  selection is by the **band-centre grey value** (`|entry.r − L|` over the exact
+  integers `255 − 17k`), which reproduces `ImageEncoder.colorToGrayLevel` without
+  re-weighting the accumulated scalar. Dithering runs between the **allowed**
+  entries, so a tone between level 0 and level 4 dithers across that gap instead
+  of vanishing into invisible levels. The knobs come from `buildQuantizeOptions`,
+  i.e. the **global** quantizer's effective settings. At the default global
+  strategy (`threshold`) that resolves to gamma 1, strength 1, serpentine true,
+  so the mode is serpentine Floyd–Steinberg over the band greys. Per-node
   policies and params do not apply (no mask is built; `policyOverflowCount` is
   absent).
 - **redBlack** — builds the policy mask exactly as mono, then uses it only to
@@ -85,12 +100,36 @@ post-clip → offset → encoder canvas`.
   - slot 0 is the global strategy; every slot whose resolved quantizer is
     `threshold` is flat, every other quantizer (including `screentone` and
     `ostromoukhov`) is diffusion;
-  - flat pixel = point op: classify the **raw source bytes**, write one exact
-    entry, emit/receive no error (a diffuse neighbour's deposited error is
-    discarded at the seam);
-  - everything else = vector Floyd–Steinberg through the 3-entry palette;
-  - output is exactly `#ffffff` / `#000000` / `#ff0000` — the encoder's split
-    depends on exact bytes. `policyOverflowCount` is still reported.
+  - flat pixel = point op: `classifyFlatRedBlack` on the **raw source bytes**
+    (page-resolved threshold and gamma), one exact entry, no error in or out (a
+    diffuse neighbour's deposited error is discarded at the seam);
+  - everything else goes through one `separateRedBlack` pass
+    (`core/render/duotone.ts`):
+    - **red spot** — OKLab chroma projected on the 29° red axis; hue gate (full
+      ≤15°, zero ≥34°) × near-neutral chroma guard × saturation tone. Halftoned
+      as **clustered 3×3 cells** (0.254 mm @ 300 dpi, grid anchored at the
+      raster origin) with allowed levels `0` plus `k/9` for `k` in the
+      **coverage band** `[round(min·9/100) .. floor(max·9/100)]`, clamped 1..9
+      (defaults **50–100 % → `0, 5/9 … 9/9`**, today's set; empty/reversed band
+      clamps `max` up to `min`'s level). Dots grow by connected priority (centre
+      plus-shape, then corners); a non-zero cell inks ≥4 dots — the 4/9
+      (~44 %) minimum of a full cell — so a full cell's **effective floor is
+      4/9 (~44 %)** even when the slider asks for less, and a cell that cannot
+      form a 4-dot connected cluster is suppressed entirely (isolated dots do
+      not develop; flat art is not bridged). Serpentine FS runs at cell
+      resolution on the realised residual.
+    - **black** — `BT.601 darkness − red ink darkness`:
+      `k = clamp01(((1 − Y − 0.04) / 0.96 − 0.70 · ρ) · blackGain)` with
+      `RED_INK_LUMA 0.30`, so a bright red or pink takes no black and a dark red
+      keeps only its shadow. Dot-level serpentine FS on the **free** dots (red
+      forbidden); per-cell demand rescaled by `1/(1 − redFraction)`; error
+      renormalised onto free forward neighbours and dropped when none exist.
+    - red wins; the masks are exclusive by construction and asserted. Output is
+      exactly `#ffffff` / `#000000` / `#ff0000` — the encoder's split depends on
+      exact bytes. `policyOverflowCount` is still reported.
+- The old palette engine (`diffuseToPalette`, `nearestPaletteEntry`,
+  `PaletteDiffuseOptions`, `PaletteEntry.weight`) is **removed** in P9;
+  `redBlackPalette()` survives only as the exact-byte table.
 
 Post-pass helpers are palette-safe: `invertRgb` scales luminance (neutral pixels
 still `v → 255−v`; red stays red, never cyan), and `countInkPx` counts every
@@ -108,6 +147,11 @@ non-white pixel, so red ink is ink in the mirror-loss notice.
   BT.601 luminance (`0.299r + 0.587g + 0.114b`). A squared-RGB nearest grey would
   be the channel mean and disagrees on coloured input (saturated green: ≈150
   luminance vs 85 mean).
+- The render path repeats that mapping in `diffuseRamp`: it picks the entry by
+  `|entry.r − L|` over the band-centre values, deliberately **not**
+  `palette.nearest` — the accumulated scalar is already a luminance, and
+  re-applying the BT.601 weights through their float sum can flip a value on a
+  boundary. `nearest` stays on the palette for direct colour → level tests.
 - Encoder contract (0.49): 4 bits/px, 2 px/byte, **high nibble first**, `cols`
   padded to `ceil(cols/8)·8`, all-zero rows `void`, identical consecutive rows
   `repeat`, nibble RLE runs. **Alpha is ignored**: a transparent pixel is RGB 0
@@ -118,11 +162,12 @@ non-white pixel, so red ink is ink in the mirror-loss notice.
 
 ## Red/black converter
 
-- Palette order `[white, black, red]`, with exported indices
-  `RED_BLACK_WHITE/BLACK/RED`. Default nearest test = weighted squared RGB
-  distance; `PaletteEntry.weight` is the calibration hook for **heat-selected**
-  red (a red dot is not pigment and may not be as dark as a black dot at the same
-  coverage). Every weight is `1` until the P7 print measures otherwise.
+- `redBlackPalette()` order is `[white, black, red]`, with exported indices
+  `RED_BLACK_WHITE/BLACK/RED`. The entries are the three **exact output bytes**
+  the encoder's DoubleColor split relies on; the palette has no `nearest` and no
+  per-entry `weight`. It is the flat point-op table only — photo separation is
+  not a palette quantizer (P9 removed `PaletteEntry.weight` and the weighted-RGB
+  nearest test).
 - Flat classifier `classifyFlatRedBlack(r, g, b, threshold = 128, gamma = 1)`:
   1. **Red dominance first**: `r > g && r > b` → red, at any luminance and
      independent of gamma. Colour is truth; antialiased red glyph edges stay red.
@@ -134,20 +179,70 @@ non-white pixel, so red ink is ink in the mirror-loss notice.
 - Flat vs diffuse is selected by the **existing per-object policy system** — no
   new policy vocabulary and `policyKeyOf` is unchanged. Type defaults already
   send text/QR/barcode/code to `threshold` (flat) and images to diffusion.
-- Diffusion uses a full **RGB error vector** on three channel planes, not two
-  scalar diffusions: dark-red regions sit between black and red, so scalar
-  decomposition would mis-mix them. Entries are never blended; every output
-  pixel is an exact palette colour.
+- Photo pixels are separated by `separateRedBlack` (see [Render
+  dispatch](#render-dispatch-renderlabelpage)): hue-selective red spot with
+  clustered halftone, black generated on the free dots. No RGB error vector
+  remains anywhere; every output pixel is one of the three exact bytes.
 - Encoder split: `0xff0000` → red plane; any other non-white → black plane;
   white → neither. A near-red pixel would silently print black.
+
+## Page tuning (P9, extended P10)
+
+- **Persisted settings.** `redBlackSettings: { redIntensity, blackDepth,
+  redCoverageMin, redCoverageMax }` (defaults `1` / `0.5` / `50` / `100`) lives
+  in the settings slice (`DEFAULT_RED_BLACK_SETTINGS`, `storeDefaults.ts`), is
+  merged by `setRedBlackSettings` with clamps (`redIntensity 0..1.5`,
+  `blackDepth 0..1`, coverage 0..100 integers, reversed band ties `min = max`,
+  non-finite keeps the current value) and is carried by `pickPersistedKeys`.
+  Global preference, never document data.
+- **Grayscale band.** `grayscaleTone: { minLevel, maxLevel }` (defaults
+  **4 / 14**) is the same kind of setting: `setGrayscaleTone` clamps to 0..15
+  integers, ties `min = max` when reversed, and `normalizeGrayscaleTone` repairs
+  a corrupt blob. Level 0 is **not** part of the band: the render palette always
+  keeps paper white. A store default of 4/14 therefore renders `[0, 4..14]`.
+- **UI.** Under the page-colour row in the print dialog, gated on the selected
+  **and supported** page colour:
+  - Grayscale — *Lightest ink level* / *Darkest ink level* range inputs (0–15,
+    step 1, default 4/14) with `level N` readouts and a hint that level 0 stays
+    paper white and the band is paper-dependent.
+  - Red & black — *Red intensity* 0–150 %, *Black depth* 0–100 %, *Red coverage
+    from* / *Red coverage to* 0–100 % (defaults 50/100), each with a readout; the
+    coverage hint states the ~50 % local-coverage need on this stock class and
+    that a non-zero cell always inks at least 4 of 9 dots (~44 %).
+- **Threading (invariant 7).** `PrintOverrides.redBlack` → `renderOptionsOf`
+  forwards it only when defined **and** the page is `redBlack`;
+  `PrintOverrides.grayscaleTone` is forwarded only when defined **and** the page
+  is `grayscale`, so mono/other option objects stay byte-identical.
+  `previewOptionsKey` appends `gt<min>,<max>` only when present and
+  `rb<intensity>,<depth>[,<min>,<max>]` for a coverage-bearing object; dialog
+  thumbnails (`PrintThumbnailOverrides`) forward both and include them in the
+  rebuild key only when defined; the job sees the same options. The
+  `?printcolours` harness reads the persisted store values too, so its preview
+  and print match the dialog.
+- **Calibration defaults are one stock's, not constants.** Every shipped default
+  above (`grayscaleTone` 4/14, red intensity 100 %, black depth 50 %, coverage
+  50/100) was measured/tuned on the **owner's density-3 stock**. Calibration is
+  per printer/paper/density and must not be hard-coded as universal truth — the
+  sliders are the per-paper lever. See **D-78/D-79**.
+- **Engine mapping.** Demands are scaled **before** halftoning:
+  `redGain = 2^(2·(redIntensity − 1))` (1 → ×1, 1.5 → ×2, 0 → 0) and
+  `blackGain = 2^(2·(blackDepth − 0.5))` (0.5 → ×1, 0 → ×0.5, 1 → ×2). The red
+  coverage band selects the allowed cell levels (`redBlackCellLevels`); defaults
+  reproduce the P9 set exactly. The clamps keep `ρ = 0` at 0, and black can only
+  take free dots, so tuning cannot break the red floor.
+- **Scope.** In red/black, page-level gamma/strength/serpentine do **not** apply
+  to photo pixels (only the flat point op uses the page threshold/gamma).
+  Grayscale still takes the global quantizer's gamma/strength/serpentine. See
+  **D-74**.
 
 ## Tint by luminance
 
 - `tintRgbaByLuminance` (`core/render/tint.ts`):
   `out = 255 + (tint − 255) · (1 − L/255)` per channel, `L` = BT.601 luminance.
   Source luminance selects **ink density**; the tint selects **ink colour**.
-- Red tint on neutral grey gives `(255, L, L)`, which the red/black palette
-  diffuses into red/white dots only — a greyscale image "dithered in red".
+- Red tint on neutral grey gives `(255, L, L)`, which the red/black duotone
+  separation turns into red/white dots only — the red ink's own darkness covers
+  the source tone, so black stays at 0 — a greyscale image "dithered in red".
   Black tint is the identity; white erases; alpha is never touched; `#rgb`,
   `#rgba`, `#rrggbb`, `#rrggbbaa` parse (alpha ignored), `'transparent'` is a
   no-op.
@@ -201,7 +296,9 @@ black therefore bleeds a faint red fringe.
 - **Red coverage floor ≈ 50 %** (calibration sweep, densities 1–3): the 75/50
   coverage bars print, the 25/12/6 bars are invisible. The **official app shows
   the same floor**, so this is printer/stock physics (**D-78**); sparse red dots
-  do not develop. Red images lose their highlight half.
+  do not develop. The pre-P9 red dither lost its highlight half; the P9 clustering
+  replaces sparse dots with fewer activated cells, but the physical floor is
+  still being calibrated.
 - **The ~0.5–1.5 mm bars at every colour transition are a library bug, not the
   stock** (cross-check 2026-11-08): the **same raster** prints clean from the
   official NIIMBOT desktop app, while niim.blue (same `@mmote/niimbluelib`)
@@ -220,44 +317,82 @@ black therefore bleeds a faint red fringe.
   (printhead width in hm) crops the final raster on the **head axis** (width for
   `top`/`bottom`, height for `left`/`right`) after the offset stage, left/top
   aligned, exact 1:1 copy (no resampling). `PrintDialog` derives it from
-  `capabilities.printheadPixels` at `(printerStatus.dpi ?? resolved.dpi)`, enables
-  it **by default** for a `DoubleColor` page whose head-axis size exceeds it, and
-  shows a visible "Clamp to print head" toggle as the escape hatch. It flows to
-  the page preview, thumbnails and the job (invariant 7). Only red/black pages
-  get the key: mono/grayscale output is byte-identical without it.
+  `capabilities.printheadPixels` at the **resolved render dpi** (`clampDpi =
+  resolved.dpi`), enables it **by default** for a `DoubleColor` page whose
+  head-axis size exceeds it, and shows a visible "Clamp to print head" toggle as
+  the escape hatch. It flows to the page preview, thumbnails and the job
+  (invariant 7). Only red/black pages get the key: mono/grayscale output is
+  byte-identical without it.
 - The isolated red ramp is **clean** — no red→black overheat. The earlier
   "red-black gradient mess" was the library boundary artefact plus the colour
   gradient, not the red-only dither path.
 
 Implications: page colour must match the stock; do **not** compensate the library
-artefact in our renderer — wait for upstream. Palette `weight`s remain `1`. The
-`?printcolours` harness has the calibration pattern + density sweep; `repro/`
-holds the exact 300 dpi raster and split panes for the library author.
+artefact in our renderer — wait for upstream. The red/black tuning sliders change
+the separation demands, not the library's row encoding, so they cannot fix the
+boundary bars. The `?printcolours` harness has the calibration pattern + density
+sweep and the P9 duotone patterns; `repro/` holds the exact 300 dpi raster and
+split panes for the library author.
 
 ## v1 limitations / open items
 
-- **Page-level diffuser knobs.** In red/black, gamma/strength/serpentine (and the
-  flat classifier's threshold/gamma) are the resolved **page-level** options;
-  per-node diffuser params are not applied. The per-object strategy still decides
-  flat vs diffuse. Grayscale applies no per-node params at all. P6's dialog copy
-  tells the user (`print.pageColorDoubleHint`). See `tech-debt.md` **D-74**.
-- **Per-ink screentone deferred** (owner 2026-10-30): `screentone` and
-  `ostromoukhov` are treated as diffusion in red/black. Mixed red/black
-  clustered dots need a later phase.
-- **Calibration unknown.** All palette weights are `1`; red-vs-black physical
-  density is unmeasured. One red/black print in `P7-VERIFY.md` decides it; do not
-  hand-tune constants before that.
-- **Long grayscale buffer unverified.** `PrinterCapabilities.sixteenGrayMaxBuffer`
-  is parsed but never enforced by 0.49. The 50×160 mm harness pattern covers it.
-  See **D-73**.
-- **Grayscale dynamic range requested** (owner, 2026-11-08): at density 3 the
-  paper shows roughly levels 4–14; 0–2 sit on paper white, 3 is very faint, and on
-  some stock 15 merges into 14/13. A later option should map the authored tone
-  range onto the physically usable band (bounds depend on density/paper). Recorded
-  as **D-75**; the current ramp stays the library-defined 0–15.
-- **D-05 seam drift** still applies — in red/black the palette pass adds a
-  flat-beside-diffuse border where deposited error is discarded, on top of the
-  existing diffuse-beside-diffuse seam.
+- **Page-level knobs only.** In red/black the photo path has four knobs
+  (`redIntensity`, `blackDepth`, `redCoverageMin`, `redCoverageMax`); the flat
+  classifier additionally takes the page's resolved `threshold` and `gamma`.
+  `strength` and `serpentine` are inert in red/black, and no per-node diffuser
+  params are applied. The per-object strategy decides only flat vs diffuse.
+  Grayscale applies no per-node params at all and takes the band plus the global
+  quantizer's gamma/strength/serpentine. P6's dialog copy tells the user
+  (`print.pageColorDoubleHint`). See `tech-debt.md` **D-74**.
+- **No RGB-vector palette engine.** P9 removed `diffuseToPalette`, the
+  weighted-RGB nearest test and the per-entry `weight` calibration hook;
+  red/black photos are a two-ink separation, so "red weight vs black weight" no
+  longer exists. Angled/blue-noise red screens and per-ink screentone are still
+  deferred; `screentone` and `ostromoukhov` count as diffusion in this mode.
+- **Duotone constants are a starting profile, per printer/paper/density.** `RED_INK_LUMA 0.30`, the
+  29° red axis with a 15–34° hue gate, the chroma curves (0.015–0.06 guard,
+  0.015–0.18 tone), the 0.04 white clip, the 3×3 cell / `5/9` coverage floor and
+  the black gain curve are **uncalibrated**, taken from the owner's density-3
+  stock. Do **not** hard-code them as universal truth: they are per
+  printer/paper/density, and the dialog sliders (`grayscaleTone`,
+  `redIntensity`/`blackDepth`, `redCoverageMin`/`Max`) are the per-paper lever.
+  Code constants change only after the calibration print
+  ([`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md), P9 addendum). See
+  **D-78** (cluster floor) and **D-79** (constants) — both open as calibration
+  debt, not release blockers.
+- **Long continuous grayscale buffer unverified.** `PrinterCapabilities.sixteenGrayMaxBuffer`
+  is parsed but never enforced by 0.49. A 48×80 mm Floyd–Steinberg print stalled
+  ≈0.5 s at the printer's buffer and **completed with no truncation**, so the
+  risk is flow control (a stall), not corruption. The harness pattern
+  "Grayscale — continuous 50×160" is 50×160 mm at 300 dpi on **continuous**
+  stock (`LabelType.Continuous`) and is the remaining long-page test. See
+  **D-73**.
+- **Grayscale usable band is a user control; its defaults are one stock's calibration** (owner,
+  2026-11-08; P10, 2026-11-12): at density 3 the paper shows roughly levels 4–14;
+  0–2 sit on paper white, 3 is very faint, and on some stock 15 merges into
+  14/13. `grayscaleTone` (default 4/14, level 0 always kept as paper white) is
+  persisted and threaded to preview, thumbnails and job, so the band is no
+  longer hard-coded to one printer/paper. The shipped **defaults** still come
+  from the owner's density-3 stock and must not be read as a universal constant;
+  re-calibrating them is **D-78/D-79**. **D-75 is resolved in P10.** The
+  renderer dithers across the 0→min gap. **Band-limited rendering also clamps**
+  (phase 3, 2026-11-21): the scalar plane's low side is clamped to the band's
+  darkest entry *before* diffusion, because a band with no black entry used to
+  keep a residual on authored black and bleed a level-`max` halo far outside the
+  shape (default band: 186 px outside a 60×32 black rect; now zero). A full
+  0..15 ramp clamps to 0, so its output stays byte-identical. **Invert is
+  an ordinal reversal** over `{paper} ∪ [min..max]`: with
+  `N = max − min + 1`, paper has ordinal 0 and band level `k` has
+  `k − min + 1` (or `k` when `min = 0`, since level 0 *is* paper); `o' = N − o`
+  maps back to paper at 0, else `min + o' − 1`. Band 4..8 therefore maps
+  paper↔8, 4↔7, 5↔6, and a degenerate 4/4 keeps paper↔4 instead of collapsing
+  the page to one level (the level-arithmetic clamp did that). Mono/red-black
+  keep `invertRgb`. Full-ramp grayscale invert is byte-identical to
+  `invertRgb` (`k → 15 − k`, paper → 15). No global tone-range remap: midtones
+  are never rescaled.
+- **D-05 seam drift** still applies — in red/black the flat point op discards
+  any error a diffuse neighbour deposited, on top of the existing
+  diffuse-beside-diffuse seam.
 - **Paper colourspace is never inferred.** RFID reports red/black stock as
   ordinary gap labels, and grayscale photo stock may report as black; selection
   is always manual. No paper-type colourspace hints shipped.
@@ -267,12 +402,42 @@ holds the exact 300 dpi raster and split panes for the library author.
 
 ## Tests / where to look
 
-- Engine + classifier + flat mask: `src/core/render/palette.test.ts`.
+- Duotone engine: `src/core/render/duotone.test.ts` (separation table, hue
+  gates, cluster invariant, exclusivity, sliders, flat mask, determinism).
+- Ramp engine + flat classifier/mask: `src/core/render/palette.test.ts`
+  (`diffuseRamp`, band centres, `classifyFlatRedBlack`).
 - Render modes: `src/editor/render/renderLabelPage.grayscale.test.ts`,
   `renderLabelPage.redBlack.test.ts`.
 - Packet + encoder contract: `src/print/printLabel.doubleColor.test.ts`;
   multi-page mode parity in `printLabel.test.ts` (~:490-556).
 - Dialog gating/copy: `src/components/print/PrintDialog.test.tsx`.
 - Harness patterns: `src/components/dev/printColoursPatterns.test.ts`.
+- Grayscale band (palette membership, dithering across the 0→min gap) and red
+  coverage level sets: `src/core/render/palette.test.ts`,
+  `src/core/render/duotone.test.ts` (`redBlackCellLevels`).
+- P10 store/threading/UI: `src/store/settingsSlice.test.ts`,
+  `src/store/preferenceValidation.test.ts`,
+  `src/editor/render/previewKeys.test.ts`,
+  `src/components/print/usePrintThumbnails.test.tsx`,
+  `src/print/printLabel.test.ts` (`renderOptionsOf`),
+  `src/components/print/PrintDialog.test.tsx`,
+  `src/components/dev/PrintColoursSmoke.test.tsx`.
+- `?printcolours` P9 calibration patterns (the harness reads the persisted
+  `redBlackSettings`, so slider changes re-render the preview and go into the
+  printed job):
+  - `redBlackClustersSmall` — 60×60-dot patches of **authored** exact red at
+    2×2 and 3×3 cluster footprints (threshold policy, so the engine does not
+    modify them); target columns 25/50/56/67/78/100 %, each cell captioned with
+    its **achieved** coverage; plus the 1/2/3-dot line and 1.5/2 mm text detail
+    block.
+  - `redBlackClustersLarge` — the same ladder at 4×4 and 6×6 footprints.
+  - `redBlackHues` — six sample colours through the duotone engine (row A) vs
+    the flat classifier (row B), red→brown and pink→white ramps, pink-hue
+    highlights at OKLab L 0.60–0.95, the neutral black ramp, and touching 2 mm
+    red/black cells for registration.
 - Harness + owner checklist: `?printcolours`,
-  [`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md).
+  [`P7-VERIFY.md`](../2026-11-02_print-colours/P7-VERIFY.md). The
+  "Grayscale — continuous 50×160" pattern sets `labelType: LabelType.Continuous`
+  and the smoke forwards it into the job (single print and density sweep) so the
+  long page really is sent as continuous stock; every other pattern leaves the
+  printer-reported label type alone.

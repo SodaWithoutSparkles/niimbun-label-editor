@@ -8,10 +8,12 @@ import { rasterDimensions } from '../../core/render';
 import { createLabelDoc } from '../../core/doc/factory';
 import type { LabelDoc } from '../../core/doc/types';
 import type { CsvRecord } from '../../data/csvRepo';
-import type { RenderedLabelPage, AssetDeps } from '../../editor/render';
+import type { RenderedLabelPage, AssetDeps, ResolveContext } from '../../editor/render';
+import { offsetRasterDimensions } from '../../editor/render';
 import type { JobProgress, JobRunResult, JobRunner } from '../../print/jobRunner';
 import type { PrintJob, PrinterCapabilities, PrinterStatus } from '../../print/transport';
 import { useStore } from '../../store/useStore';
+import { DEFAULT_GRAYSCALE_TONE, DEFAULT_RED_BLACK_SETTINGS } from '../../store/storeDefaults';
 import { PrintDialog } from './PrintDialog';
 import type { PrintCsvStatus } from './usePrintJob';
 import { THUMBNAIL_DPI } from './usePrintThumbnails';
@@ -364,6 +366,136 @@ describe('PrintDialog — warnings', () => {
             const group = useStore.getState().editorWarnings.print;
             expect(group?.warnings.map((warning) => warning.kind)).toContain('print-policy-overflow');
         });
+    });
+});
+
+describe('PrintDialog — D-31 ink sample covers the offset and every row', () => {
+    /** 160 dots wide at the 300 dpi hint: the head used below. */
+    const headSizedDoc = () => createLabelDoc({ backingW: 1355, backingH: 7800, dpi: 300 });
+    const HEAD_PX = 160;
+
+    /** A page of `dims` with a black band in columns `[from, from + 40)`. */
+    const bandPage = (dims: { widthPx: number; heightPx: number }, from: number): RenderedLabelPage => {
+        const data = new Uint8ClampedArray(dims.widthPx * dims.heightPx * 4).fill(255);
+        for (let y = 0; y < dims.heightPx; y++) {
+            for (let x = from; x < Math.min(from + 40, dims.widthPx); x++) {
+                const i = (y * dims.widthPx + x) * 4;
+                data[i] = 0;
+                data[i + 1] = 0;
+                data[i + 2] = 0;
+            }
+        }
+        return {
+            rgba: { data, width: dims.widthPx, height: dims.heightPx },
+            widthPx: dims.widthPx,
+            heightPx: dims.heightPx,
+            canvas: {
+                toDataURL: () => 'data:image/png;base64,stub',
+            } as unknown as HTMLCanvasElement,
+        };
+    };
+
+    /** Mimic the real offset renderer: ink drawn at the offset, canvas grown. */
+    const offsetBandPage = (
+        doc: LabelDoc,
+        offset: { x: number; y: number; type: 'inner' | 'outer' } | undefined,
+    ): RenderedLabelPage => {
+        const base = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+        const dims = offset ? offsetRasterDimensions(base.widthPx, base.heightPx, offset) : base;
+        const inkFrom = offset ? Math.max(offset.x, 0) : 100;
+        return bandPage(dims, inkFrom);
+    };
+
+    it('warns when an outer offset pushes a head-sized page past the head', async () => {
+        // The page is exactly HEAD_PX wide, so the base size gate does NOT trip.
+        // The +280 outer offset grows the raster to 440 columns: the shifted ink
+        // now lands past the 160-dot head and the warning must fire.
+        renderLabelPageMock.mockImplementation(async (doc: LabelDoc, _ctx, opts) =>
+            offsetBandPage(doc, (opts as { offset?: { x: number; y: number; type: 'inner' | 'outer' } } | undefined)?.offset),
+        );
+
+        renderDialog({
+            doc: headSizedDoc(),
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, printheadPixels: HEAD_PX }),
+        });
+
+        // Fits exactly before the offset: no warning yet.
+        expect(screen.queryByTestId('print-warning-overflow')).not.toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('Offset X'), { target: { value: '280' } });
+        fireEvent.change(screen.getByLabelText('Offset type'), { target: { value: 'outer' } });
+
+        expect(await screen.findByTestId('print-warning-overflow')).toBeInTheDocument();
+    });
+
+    it('warns when a later CSV row overflows even though the first row fits', async () => {
+        // Row 2 carries a long text; the mocked raster mirrors it with ink past
+        // the 567-dot head. Rows 0/1 stay inside it.
+        renderLabelPageMock.mockImplementation(async (doc: LabelDoc, ctx?: ResolveContext) => {
+            const text = ctx?.overrides?.get('t')?.text ?? '';
+            const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+            return text.length > 50 ? bandPage(dims, 590) : bandPage(dims, 100);
+        });
+        const prepareRow = async (rowIndex: number): Promise<ResolveContext> => ({
+            overrides: new Map([
+                ['t', { text: `${rowIndex}:${'x'.repeat(rowIndex === 2 ? 200 : 1)}`, placeholder: false }],
+            ]),
+        });
+
+        render(
+            <PrintDialog
+                open
+                onClose={vi.fn()}
+                doc={wideDoc()}
+                csv={csvOf(4)}
+                prepareRow={prepareRow}
+                runner={new FakeRunner()}
+                printerStatus={statusOf(B1_PRO)}
+            />,
+        );
+
+        expect(await screen.findByTestId('print-warning-overflow')).toBeInTheDocument();
+
+        // Short-circuit: once row 2 clips, row 3 is never sampled.
+        const sampledRows = renderLabelPageMock.mock.calls
+            .map(([, ctx]) => (ctx as ResolveContext | undefined)?.overrides?.get('t')?.text ?? '')
+            .filter((text) => text !== '')
+            .map((text) => Number.parseInt(text, 10));
+        expect(sampledRows).toContain(2);
+        expect(sampledRows).not.toContain(3);
+    });
+
+    it('stays silent when the only CSV row fits within the head', async () => {
+        renderLabelPageMock.mockImplementation(async (doc: LabelDoc, ctx?: ResolveContext) => {
+            const text = ctx?.overrides?.get('t')?.text ?? '';
+            const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+            return text.length > 50 ? bandPage(dims, 590) : bandPage(dims, 100);
+        });
+        const prepareRow = async (rowIndex: number): Promise<ResolveContext> => ({
+            overrides: new Map([['t', { text: `${rowIndex}:x`, placeholder: false }]]),
+        });
+
+        render(
+            <PrintDialog
+                open
+                onClose={vi.fn()}
+                doc={wideDoc()}
+                csv={csvOf(1)}
+                prepareRow={prepareRow}
+                runner={new FakeRunner()}
+                printerStatus={statusOf(B1_PRO)}
+            />,
+        );
+
+        // The size gate trips (the page is wider than the head), so the ink
+        // sample must have rendered before "no warning" is meaningful.
+        await waitFor(() => expect(renderLabelPageMock.mock.calls.length).toBeGreaterThanOrEqual(2));
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+        expect(screen.queryByTestId('print-warning-overflow')).not.toBeInTheDocument();
     });
 });
 
@@ -1148,6 +1280,63 @@ describe('PrintDialog — persisted print offset (P9)', () => {
         expect(screen.getByLabelText('Offset X')).toHaveValue('68');
     });
 
+    it.each([
+        { resolvedDpi: 300, thumbX: 10 },
+        // 30 * 100 / 203 = 14.78 → 15: the offset is re-expressed, not forwarded.
+        { resolvedDpi: 203, thumbX: 15 },
+    ])(
+        'scales the offset into thumbnail px but keeps print px for preview and job ($resolvedDpi dpi)',
+        async ({ resolvedDpi, thumbX }) => {
+            renderDialog({
+                doc: narrowDoc(),
+                runner: new FakeRunner(),
+                printerStatus:
+                    resolvedDpi === 300
+                        ? statusOf(B1_PRO)
+                        : { ...statusOf(B1_PRO), dpi: resolvedDpi },
+            });
+
+            fireEvent.change(screen.getByLabelText('Offset X'), { target: { value: '30' } });
+
+            // The page preview renders at the resolved print dpi, so the offset
+            // stays in print px: one device dot is one dot at every render dpi.
+            await waitFor(() =>
+                expect(
+                    renderLabelPageMock.mock.calls.some(([, , opts]) => {
+                        const o = opts as { dpi?: number; offset?: { x?: number } } | undefined;
+                        return o?.dpi === resolvedDpi && o.offset?.x === 30;
+                    }),
+                ).toBe(true),
+            );
+
+            // The queue cache renders at THUMBNAIL_DPI, so a verbatim forward
+            // would exaggerate the shift by `resolvedDpi / THUMBNAIL_DPI`.
+            fireEvent.change(screen.getByLabelText('View as'), { target: { value: 'queue' } });
+            await waitFor(() =>
+                expect(
+                    renderLabelPageMock.mock.calls.some(([, , opts]) => {
+                        const o = opts as
+                            | { dpi?: number; offset?: { x?: number; y?: number } }
+                            | undefined;
+                        return (
+                            o?.dpi === THUMBNAIL_DPI &&
+                            o.offset?.x === thumbX &&
+                            o.offset?.y === 0
+                        );
+                    }),
+                ).toBe(true),
+            );
+
+            // The job renders at the print dpi too, so it keeps print px.
+            fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+            await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+            const jobOpts = buildCsvPrintJobMock.mock.calls[0]![2] as {
+                overrides?: { offset?: { x?: number; y?: number } };
+            };
+            expect(jobOpts.overrides?.offset).toMatchObject({ x: 30, y: 0 });
+        },
+    );
+
     it('reports the hm offset once on unmount, never per keystroke', () => {
         const onPrintOffsetChange = vi.fn();
         const doc = narrowDoc();
@@ -1630,6 +1819,255 @@ describe('PrintDialog — page colour', () => {
     });
 });
 
+describe('PrintDialog — red/black tuning (P9 wave C)', () => {
+    const pageColorSelect = () => screen.getByLabelText('Page colour');
+    const redSlider = () => screen.queryByLabelText('Red intensity');
+    const blackSlider = () => screen.queryByLabelText('Black depth');
+    const printButton = () => screen.getByRole('button', { name: 'Print' });
+
+    const thumbnailOverrides = (): { redBlack?: unknown } | undefined =>
+        (usePrintThumbnailsMock.mock.calls.at(-1)![0] as {
+            overrides?: { redBlack?: unknown };
+        }).overrides;
+
+    const jobOverrides = (): { redBlack?: unknown } | undefined =>
+        (
+            buildCsvPrintJobMock.mock.calls[0]![2] as {
+                overrides?: { redBlack?: unknown };
+            }
+        ).overrides;
+
+    afterEach(() => {
+        useStore.setState({
+            redBlackSettings: DEFAULT_RED_BLACK_SETTINGS,
+            grayscaleTone: DEFAULT_GRAYSCALE_TONE,
+        });
+    });
+
+    it('shows both sliders only for a supported red/black page', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, grayscale: true }),
+        });
+
+        // Mono: nothing.
+        expect(redSlider()).not.toBeInTheDocument();
+        expect(blackSlider()).not.toBeInTheDocument();
+
+        // Grayscale: still nothing (the knobs only act on the duotone path).
+        fireEvent.change(pageColorSelect(), { target: { value: 'grayscale' } });
+        expect(redSlider()).not.toBeInTheDocument();
+        expect(blackSlider()).not.toBeInTheDocument();
+
+        // Red & black: both, with the persisted defaults shown.
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        expect(redSlider()).toBeInTheDocument();
+        expect(blackSlider()).toBeInTheDocument();
+        expect(redSlider()).toHaveValue('100');
+        expect(blackSlider()).toHaveValue('50');
+        // Coverage defaults ride in the same red/black block.
+        expect(screen.getByLabelText('Red coverage from')).toHaveValue('50');
+        expect(screen.getByLabelText('Red coverage to')).toHaveValue('100');
+        // Readouts exist (100 % appears for red intensity and coverage-to, 50 %
+        // for black depth and coverage-from).
+        expect(screen.getAllByText('100%').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('50%').length).toBeGreaterThan(0);
+    });
+
+    it('has no sliders when the printer cannot print red & black', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, doubleColor: false }),
+        });
+
+        expect(redSlider()).not.toBeInTheDocument();
+        expect(blackSlider()).not.toBeInTheDocument();
+    });
+
+    it('writes the store and threads the tuning into preview, thumbnails and job', async () => {
+        renderDialog({ runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+
+        fireEvent.change(redSlider()!, { target: { value: '130' } });
+        expect(useStore.getState().redBlackSettings).toEqual({
+            redIntensity: 1.3,
+            blackDepth: 0.5,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
+        });
+        fireEvent.change(blackSlider()!, { target: { value: '20' } });
+        expect(useStore.getState().redBlackSettings).toEqual({
+            redIntensity: 1.3,
+            blackDepth: 0.2,
+            redCoverageMin: 50,
+            redCoverageMax: 100,
+        });
+
+        // The doc-dpi page preview renders through the shared path with it.
+        await waitFor(() =>
+            expect(
+                renderLabelPageMock.mock.calls.some(([, , opts]) => {
+                    const tuning = (opts as { redBlack?: { redIntensity?: number } } | undefined)
+                        ?.redBlack;
+                    return tuning?.redIntensity === 1.3;
+                }),
+            ).toBe(true),
+        );
+        // The queue thumbnails get the same pixel-changing override.
+        expect(thumbnailOverrides()).toMatchObject({
+            redBlack: { redIntensity: 1.3, blackDepth: 0.2 },
+        });
+
+        // The job carries it too (the dialog's options object is shared).
+        fireEvent.click(printButton());
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobOverrides()).toMatchObject({
+            redBlack: { redIntensity: 1.3, blackDepth: 0.2 },
+        });
+
+        // Back to mono: the tuning must not leak into another page colour.
+        fireEvent.change(pageColorSelect(), { target: { value: 'mono' } });
+        expect(thumbnailOverrides()).not.toHaveProperty('redBlack');
+    });
+
+    it('writes and threads the red coverage band', async () => {
+        renderDialog({ runner: new FakeRunner(), printerStatus: statusOf(B1_PRO) });
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+
+        fireEvent.change(screen.getByLabelText('Red coverage from'), {
+            target: { value: '60' },
+        });
+        expect(useStore.getState().redBlackSettings).toMatchObject({
+            redCoverageMin: 60,
+            redCoverageMax: 100,
+        });
+        fireEvent.change(screen.getByLabelText('Red coverage to'), {
+            target: { value: '90' },
+        });
+        expect(useStore.getState().redBlackSettings).toMatchObject({
+            redCoverageMin: 60,
+            redCoverageMax: 90,
+        });
+
+        await waitFor(() =>
+            expect(
+                renderLabelPageMock.mock.calls.some(([, , opts]) => {
+                    const tuning = (
+                        opts as
+                            | { redBlack?: { redCoverageMin?: number; redCoverageMax?: number } }
+                            | undefined
+                    )?.redBlack;
+                    return tuning?.redCoverageMin === 60 && tuning?.redCoverageMax === 90;
+                }),
+            ).toBe(true),
+        );
+        expect(thumbnailOverrides()).toMatchObject({
+            redBlack: { redCoverageMin: 60, redCoverageMax: 90 },
+        });
+
+        fireEvent.click(printButton());
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobOverrides()).toMatchObject({
+            redBlack: { redCoverageMin: 60, redCoverageMax: 90 },
+        });
+    });
+});
+
+describe('PrintDialog — grayscale usable ink band (P10)', () => {
+    const pageColorSelect = () => screen.getByLabelText('Page colour');
+    const lightest = () => screen.queryByLabelText('Lightest ink level');
+    const darkest = () => screen.queryByLabelText('Darkest ink level');
+    const printButton = () => screen.getByRole('button', { name: 'Print' });
+    const grayscaleStatus = () => statusOf({ ...B1_PRO, grayscale: true });
+
+    const thumbnailOverrides = (): { grayscaleTone?: unknown } | undefined =>
+        (usePrintThumbnailsMock.mock.calls.at(-1)![0] as {
+            overrides?: { grayscaleTone?: unknown };
+        }).overrides;
+
+    const jobOverrides = (): { grayscaleTone?: unknown } | undefined =>
+        (
+            buildCsvPrintJobMock.mock.calls[0]![2] as {
+                overrides?: { grayscaleTone?: unknown };
+            }
+        ).overrides;
+
+    afterEach(() => {
+        useStore.setState({ grayscaleTone: DEFAULT_GRAYSCALE_TONE });
+    });
+
+    it('shows both level sliders only for a supported grayscale page', () => {
+        renderDialog({ runner: new FakeRunner(), printerStatus: grayscaleStatus() });
+
+        // Mono: nothing.
+        expect(lightest()).not.toBeInTheDocument();
+        expect(darkest()).not.toBeInTheDocument();
+
+        // Red & black: the duotone knobs, not the grayscale band.
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        expect(lightest()).not.toBeInTheDocument();
+        expect(darkest()).not.toBeInTheDocument();
+
+        // Grayscale: both, with the 4/14 defaults shown.
+        fireEvent.change(pageColorSelect(), { target: { value: 'grayscale' } });
+        expect(lightest()).toBeInTheDocument();
+        expect(darkest()).toBeInTheDocument();
+        expect(lightest()).toHaveValue('4');
+        expect(darkest()).toHaveValue('14');
+        expect(screen.getByText('level 4')).toBeInTheDocument();
+        expect(screen.getByText('level 14')).toBeInTheDocument();
+        expect(screen.getByText(/Level 0 always stays paper white/)).toBeInTheDocument();
+    });
+
+    it('hides the band when the printer cannot print grayscale pages', () => {
+        renderDialog({
+            runner: new FakeRunner(),
+            printerStatus: statusOf({ ...B1_PRO, grayscale: false }),
+        });
+        fireEvent.change(pageColorSelect(), { target: { value: 'grayscale' } });
+        // The option is disabled; even forced, no controls are rendered.
+        expect(lightest()).not.toBeInTheDocument();
+        expect(darkest()).not.toBeInTheDocument();
+    });
+
+    it('writes the store and threads the band into preview, thumbnails and job', async () => {
+        renderDialog({ runner: new FakeRunner(), printerStatus: grayscaleStatus() });
+        fireEvent.change(pageColorSelect(), { target: { value: 'grayscale' } });
+
+        fireEvent.change(lightest()!, { target: { value: '5' } });
+        expect(useStore.getState().grayscaleTone).toEqual({ minLevel: 5, maxLevel: 14 });
+        fireEvent.change(darkest()!, { target: { value: '12' } });
+        expect(useStore.getState().grayscaleTone).toEqual({ minLevel: 5, maxLevel: 12 });
+
+        // The doc-dpi page preview renders through the shared path with it.
+        await waitFor(() =>
+            expect(
+                renderLabelPageMock.mock.calls.some(([, , opts]) => {
+                    const tone = (
+                        opts as { grayscaleTone?: { minLevel?: number; maxLevel?: number } } | undefined
+                    )?.grayscaleTone;
+                    return tone?.minLevel === 5 && tone?.maxLevel === 12;
+                }),
+            ).toBe(true),
+        );
+        // The queue thumbnails get the same pixel-changing override.
+        expect(thumbnailOverrides()).toMatchObject({
+            grayscaleTone: { minLevel: 5, maxLevel: 12 },
+        });
+
+        // The job carries it too (the dialog's options object is shared).
+        fireEvent.click(printButton());
+        await waitFor(() => expect(buildCsvPrintJobMock).toHaveBeenCalledTimes(1));
+        expect(jobOverrides()).toMatchObject({
+            grayscaleTone: { minLevel: 5, maxLevel: 12 },
+        });
+
+        // Back to mono: the band must not leak into another page colour.
+        fireEvent.change(pageColorSelect(), { target: { value: 'mono' } });
+        expect(thumbnailOverrides()).not.toHaveProperty('grayscaleTone');
+    });
+});
+
 describe('PrintDialog — red/black head clamp (D-77)', () => {
     /** 50 mm wide at 300 dpi; the reported head is 567 px = 48 mm. */
     const wideRedBlackDoc = () =>
@@ -1804,6 +2242,72 @@ describe('PrintDialog — red/black head clamp (D-77)', () => {
         expect(toggle).toBeInTheDocument();
         expect(toggle).toBeChecked();
         expect(thumbnailOverrides()).toMatchObject({ maxHeadHm: 4800 });
+    });
+
+    it('skips the ink sample when the active clamp guarantees no ink passes the head', async () => {
+        // The mock deliberately ignores `maxHeadHm` and returns the uncropped
+        // page with row 1 inked past the head: if the sampler walked the rows,
+        // it would prepare row 1 and raise the warning. The active clamp makes
+        // that verdict impossible (the real render is cropped to the head), so
+        // the walk must be skipped entirely.
+        const longText = (rowIndex: number) => `${rowIndex}:${'x'.repeat(rowIndex === 1 ? 200 : 1)}`;
+        const prepareRow = vi.fn(async (rowIndex: number): Promise<ResolveContext> => ({
+            overrides: new Map([['t', { text: longText(rowIndex), placeholder: false }]]),
+        }));
+        renderLabelPageMock.mockImplementation(async (doc: LabelDoc, ctx?: ResolveContext) => {
+            const text = ctx?.overrides?.get('t')?.text ?? '';
+            const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+            const data = new Uint8ClampedArray(dims.widthPx * dims.heightPx * 4).fill(255);
+            if (text.length > 50) {
+                for (let y = 0; y < dims.heightPx; y++) {
+                    for (let x = B1_PRO.printheadPixels!; x < dims.widthPx; x++) {
+                        const i = (y * dims.widthPx + x) * 4;
+                        data[i] = 0;
+                        data[i + 1] = 0;
+                        data[i + 2] = 0;
+                    }
+                }
+            }
+            return {
+                rgba: { data, width: dims.widthPx, height: dims.heightPx },
+                widthPx: dims.widthPx,
+                heightPx: dims.heightPx,
+                canvas: {
+                    toDataURL: () => 'data:image/png;base64,stub',
+                } as unknown as HTMLCanvasElement,
+            };
+        });
+
+        render(
+            <PrintDialog
+                open
+                onClose={vi.fn()}
+                doc={wideRedBlackDoc()}
+                csv={csvOf(3)}
+                prepareRow={prepareRow}
+                runner={new FakeRunner()}
+                printerStatus={headStatus()}
+            />,
+        );
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        expect(clampToggle()).toBeChecked();
+
+        // The clamped preview rendered through the shared path…
+        await waitFor(() =>
+            expect(
+                renderLabelPageMock.mock.calls.some(
+                    ([, , opts]) =>
+                        (opts as { maxHeadHm?: number } | undefined)?.maxHeadHm === 4800,
+                ),
+            ).toBe(true),
+        );
+        // …and no sampler walk followed (it would have prepared row 1).
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+        expect(prepareRow.mock.calls.some(([rowIndex]) => rowIndex === 1)).toBe(false);
+        expect(screen.queryByTestId('print-warning-overflow')).not.toBeInTheDocument();
     });
 
     it('hides the toggle when the page already fits the head (48 mm)', () => {

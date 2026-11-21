@@ -62,6 +62,37 @@ afterEach(() => {
         storageError: false,
         notifications: [],
         isSettingsOpen: false,
+        selectedNodeIds: [],
+        docPast: [],
+        docFuture: [],
+    });
+});
+
+describe('Header — Edit ▸ Delete Selected', () => {
+    it('deletes the whole selection with a single history entry', async () => {
+        const adapter = createMemoryAdapter();
+        const repo = createLabelRepo(adapter);
+        const doc = createLabelDoc({
+            id: 'label-1',
+            name: 'My label',
+            now: 1_000_000,
+            nodes: ['a', 'b', 'c'].map((id): Node => ({ ...fieldNode, id })),
+        });
+        useStore.setState({
+            view: 'editor',
+            currentDoc: doc,
+            labelRepo: repo,
+            galleryLoading: false,
+            selectedNodeIds: ['a', 'b', 'c'],
+        });
+        const before = useStore.getState().docPast.length;
+
+        render(<Header />);
+        fireEvent.click(screen.getByText('Edit'));
+        fireEvent.click(screen.getByText('Delete Selected'));
+
+        expect(useStore.getState().currentDoc!.nodes).toHaveLength(0);
+        expect(useStore.getState().docPast).toHaveLength(before + 1);
     });
 });
 

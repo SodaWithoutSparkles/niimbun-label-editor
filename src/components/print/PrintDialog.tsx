@@ -33,6 +33,7 @@ import type { EditorWarning } from '../../editor/warnings';
 import { docUsesScreentone } from '../../editor/screentoneUsage';
 import {
     mergeNotices,
+    THUMBNAIL_DPI,
     usePrintThumbnails,
     type PrintThumbnailOverrides,
 } from './usePrintThumbnails';
@@ -47,6 +48,42 @@ import {
     rowCountOf,
     timesForCsv,
 } from './printDialogModel';
+
+/**
+ * D-31 ink-sample bounds. Each sampled row is a full resolved-dpi render, so an
+ * unbounded CSV walk would block the warning for large batches: measured at
+ * 300 dpi, one render costs ~15 ms at 0.27 Mpx, ~72 ms at 2.2 Mpx and ~170 ms
+ * at 4.3 Mpx (for rasters ≤ 8 Mpx, the budget below bounds the sampled rows'
+ * total area at roughly 0.3 s).
+ *
+ * One row is the **minimum**, so a single raster larger than the budget (still
+ * permitted up to the 16 Mpx raster cap) exceeds it: that regime renders one
+ * full page — the status-quo single-render cost — not 0.3 s. The budget only
+ * bounds *additional* sampled rows; it is not a hard wall-clock cap.
+ *
+ * The row cap keeps a tiny label from sampling a huge batch. When either bound
+ * bites, the walk strides **evenly across the distinct active records** (first
+ * and last included), so a late content-dependent overflow is still reachable
+ * instead of silently checking only row 1.
+ */
+const INK_SAMPLE_PIXEL_BUDGET = 8_000_000;
+const INK_SAMPLE_ROW_CAP = 12;
+
+/**
+ * Distinct active row indices to sample, in ascending order. All of them when
+ * they fit `limit`; otherwise `limit` of them strided evenly across the whole
+ * record set. Copies repeat the same content, so duplicate indices collapse.
+ */
+const inkSampleRows = (activeRows: readonly number[], limit: number): number[] => {
+    const distinct = [...new Set(activeRows)];
+    const count = Math.min(distinct.length, Math.max(1, limit));
+    if (count >= distinct.length) return distinct;
+    if (count === 1) return [distinct[0]!];
+    return Array.from({ length: count }, (_, index) => {
+        const at = Math.round((index * (distinct.length - 1)) / (count - 1));
+        return distinct[at]!;
+    });
+};
 
 /**
  * Print dialog (P7 W4).
@@ -151,6 +188,14 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     // (preview, thumbnails and the print job) from here.
     const quantizerDefaults = useStore((state) => state.quantizerDefaults);
     const defaultQuantizerByType = useStore((state) => state.defaultQuantizerByType);
+    // Red/black page tuning (P9 wave C). Persisted global preference; threaded
+    // into the preview, thumbnails and the job from here.
+    const redBlackSettings = useStore((state) => state.redBlackSettings);
+    const setRedBlackSettings = useStore((state) => state.setRedBlackSettings);
+    // Grayscale usable ink band (P10). Persisted global preference; threaded
+    // into the preview, thumbnails and the job from here.
+    const grayscaleTone = useStore((state) => state.grayscaleTone);
+    const setGrayscaleTone = useStore((state) => state.setGrayscaleTone);
     const capabilities = printerStatus.capabilities;
     /** 16-level grayscale pages are supported only by tasks that report it. */
     const grayscaleSupported = capabilities?.grayscale === true;
@@ -341,18 +386,35 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         [],
     );
 
+    const parsedOffset = useMemo(() => {
+        const x = Number.parseInt(offsetX, 10);
+        const y = Number.parseInt(offsetY, 10);
+        if (!Number.isInteger(x) || !Number.isInteger(y) || (x === 0 && y === 0)) {
+            return undefined;
+        }
+        return { x, y, type: offsetType };
+    }, [offsetX, offsetY, offsetType]);
+
     const dims = useMemo(
         () =>
             rasterDimensions(doc.label.backingW, doc.label.backingH, resolved.dpi),
         [doc.label.backingW, doc.label.backingH, resolved.dpi],
     );
+    // R12 + D-31: `renderLabelPage` applies the offset last, and an `outer`
+    // offset **grows** the canvas. Both the raster-cap pre-flight and the
+    // overflow gate must judge the same offset-adjusted extent the head sees:
+    // with the base size alone a page that fits *before* the offset skips the
+    // ink check even when the shift pushes its ink past the head.
+    const capDims = parsedOffset
+        ? offsetRasterDimensions(dims.widthPx, dims.heightPx, parsedOffset)
+        : dims;
     const orientedWidthPx =
         doc.label.printDirection === 'left' || doc.label.printDirection === 'right'
-            ? dims.heightPx
-            : dims.widthPx;
+            ? capDims.heightPx
+            : capDims.widthPx;
     const overflows = printheadOverflow(
-        dims.widthPx,
-        dims.heightPx,
+        capDims.widthPx,
+        capDims.heightPx,
         doc.label.printDirection,
         capabilities?.printheadPixels,
     );
@@ -380,22 +442,9 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     // reported.
     const labelTypeDiff = labelTypeMismatch(reportedLabelType, effectiveLabelType);
 
-    const parsedOffset = useMemo(() => {
-        const x = Number.parseInt(offsetX, 10);
-        const y = Number.parseInt(offsetY, 10);
-        if (!Number.isInteger(x) || !Number.isInteger(y) || (x === 0 && y === 0)) {
-            return undefined;
-        }
-        return { x, y, type: offsetType };
-    }, [offsetX, offsetY, offsetType]);
-
     // R12: the print path has no degradation, so a raster above the cap would
-    // throw mid-job. `renderLabelPage` applies the offset last, and an `outer`
-    // offset **grows** the canvas, so the guard must pre-flight the same
-    // offset-expanded dimensions the renderer allocates.
-    const capDims = parsedOffset
-        ? offsetRasterDimensions(dims.widthPx, dims.heightPx, parsedOffset)
-        : dims;
+    // throw mid-job. `capDims` above is the offset-expanded size the renderer
+    // allocates.
     const rasterCapExceeded = capDims.widthPx * capDims.heightPx > MAX_RASTER_PIXELS;
 
     /**
@@ -431,11 +480,39 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     /** Only a page that needs the clamp, with the escape hatch left on. */
     const headClampHm = needsHeadClamp && clampRedBlack ? headWidthHm : undefined;
 
+    /**
+     * The duotone knobs apply to a red/black page only. `undefined` otherwise,
+     * so mono/grayscale option objects carry no key and their bytes/keys stay
+     * exactly as before.
+     */
+    const redBlackTuning =
+        pageColor === PageColorType.DoubleColor ? redBlackSettings : undefined;
+    /**
+     * The usable grayscale ink band applies to a grayscale page only
+     * (`undefined` otherwise), so mono/red-black option objects and keys stay
+     * exactly as before.
+     */
+    const grayscaleTuning =
+        pageColor === PageColorType.Grayscale ? grayscaleTone : undefined;
+
     const thumbnailOverrides = useMemo<PrintThumbnailOverrides>(
         () => ({
             ...(invert ? { invert: true } : {}),
             ...(mirror ? { mirror: true } : {}),
-            ...(parsedOffset ? { offset: parsedOffset } : {}),
+            // The offset is defined in **print-dpi** device px, but the thumbnail
+            // cache renders at `THUMBNAIL_DPI`. Scale it into thumbnail px here,
+            // or `renderLabelPage` shifts the 100-dpi raster by the print-dpi
+            // dot count and the preview exaggerates the offset by
+            // `resolved.dpi / THUMBNAIL_DPI`.
+            ...(parsedOffset
+                ? {
+                      offset: {
+                          ...parsedOffset,
+                          x: Math.round((parsedOffset.x * THUMBNAIL_DPI) / resolved.dpi),
+                          y: Math.round((parsedOffset.y * THUMBNAIL_DPI) / resolved.dpi),
+                      },
+                  }
+                : {}),
             quantizerDefaults,
             defaultQuantizerByType,
             // Mono is the absent key (today's render); only another mode is
@@ -445,15 +522,22 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                 : {}),
             // D-77: only a page that actually needs the crop carries the key.
             ...(headClampHm !== undefined ? { maxHeadHm: headClampHm } : {}),
+            // P9: red/black tuning, only for a red/black page.
+            ...(redBlackTuning !== undefined ? { redBlack: redBlackTuning } : {}),
+            // P10: usable grayscale band, only for a grayscale page.
+            ...(grayscaleTuning !== undefined ? { grayscaleTone: grayscaleTuning } : {}),
         }),
         [
             invert,
             mirror,
             parsedOffset,
+            resolved.dpi,
             quantizerDefaults,
             defaultQuantizerByType,
             pageColor,
             headClampHm,
+            redBlackTuning,
+            grayscaleTuning,
         ],
     );
 
@@ -469,8 +553,14 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             dpi: resolved.dpi,
             ...(assets !== undefined ? { assets } : {}),
             ...thumbnailOverrides,
+            // `thumbnailOverrides` carries the offset scaled to
+            // `THUMBNAIL_DPI`; this raster renders at the resolved print dpi, so
+            // restore the print-px value (same number the job receives).
+            ...(parsedOffset ? { offset: parsedOffset } : {}),
+            ...(redBlackTuning !== undefined ? { redBlack: redBlackTuning } : {}),
+            ...(grayscaleTuning !== undefined ? { grayscaleTone: grayscaleTuning } : {}),
         }),
-        [resolved.dpi, assets, thumbnailOverrides],
+        [resolved.dpi, assets, thumbnailOverrides, parsedOffset, redBlackTuning, grayscaleTuning],
     );
 
     const handlePreviewReport = useCallback(
@@ -548,6 +638,11 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             ...(headClampHm !== undefined ? { maxHeadHm: headClampHm } : {}),
             quantizerDefaults,
             defaultQuantizerByType,
+            // P9: the job renders the same red/black separation as the preview
+            // and thumbnails (invariant 7).
+            ...(redBlackTuning !== undefined ? { redBlack: redBlackTuning } : {}),
+            // P10: the job renders the same usable grayscale band (invariant 7).
+            ...(grayscaleTuning !== undefined ? { grayscaleTone: grayscaleTuning } : {}),
         }),
         [
             densityEnabled,
@@ -564,48 +659,71 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
             headClampHm,
             quantizerDefaults,
             defaultQuantizerByType,
+            redBlackTuning,
+            grayscaleTuning,
         ],
     );
 
-    // D-31: `printheadOverflow` above is only the cheap **size** trigger. A blank
-    // over-width label must not warn, so once it trips we lazily render the page
-    // at the resolved print dpi through the shared path (invariant 7) and warn
-    // only if ink actually lands past the head. `renderOptionsOf` applies the *identical*
-    // override split the print job uses, so the sample matches what would print.
+    // D-31: `overflows` above is only the cheap **size** trigger (already
+    // offset-adjusted). A blank over-width label must not warn, so once it trips
+    // we lazily render pages at the resolved print dpi through the shared path
+    // (invariant 7) and warn only if ink actually lands past the head.
+    // `renderOptionsOf` applies the *identical* override split the print job
+    // uses, so the sample matches what would print.
     //
-    // The sample uses the **first active record's** `prepareRow` context. CSV
-    // content is per-row, so a later row with narrower ink can only over-warn
-    // (never miss a clip), which is acceptable for a non-blocking warning. The
-    // check is recomputed only while the size check trips (and the dialog is
-    // open); the effect re-runs on the doc + override values.
+    // CSV content is per-row, so a clean first record proves nothing: a later
+    // longer text can overflow after an in-fitting row. The walk therefore
+    // covers the distinct active records and **short-circuits on the first
+    // clipped page**. It is bounded by `INK_SAMPLE_PIXEL_BUDGET` /
+    // `INK_SAMPLE_ROW_CAP` so a large batch cannot turn an advisory warning into
+    // seconds of rendering; the even stride keeps later rows reachable.
     const inkRenderOptions = useMemo<RenderLabelPageOptions>(
         () => renderOptionsOf(printOverrides, assets),
         [printOverrides, assets],
     );
-    const firstActiveRowIndex = activeRows[0];
     const [inkOverflow, setInkOverflow] = useState(false);
 
     useEffect(() => {
-        if (!open || !overflows || firstActiveRowIndex === undefined) {
+        // D-77 invariant: with the head clamp active, `inkRenderOptions` carries
+        // `maxHeadHm`, so `renderLabelPage` crops every sampled page's cross-feed
+        // axis to at most the head width (`cropHeadAxis`). No page the sampler
+        // could produce holds ink beyond the head, so skip the renders instead
+        // of walking up to `INK_SAMPLE_ROW_CAP` already-cropped pages.
+        if (!open || !overflows || activeRows.length === 0 || headClampHm !== undefined) {
             setInkOverflow(false);
             return;
         }
-        // Clear the previous verdict: while the new async render is in flight a
+        // Clear the previous verdict: while the new async walk is in flight a
         // stale "may be clipped" warning must not linger.
         setInkOverflow(false);
         let cancelled = false;
+        // The sample renders the offset-expanded raster, so the area budget
+        // must use the same extent the gate judged.
+        const sampleDims = parsedOffset
+            ? offsetRasterDimensions(dims.widthPx, dims.heightPx, parsedOffset)
+            : dims;
+        const area = Math.max(1, sampleDims.widthPx * sampleDims.heightPx);
+        const limit = Math.min(
+            INK_SAMPLE_ROW_CAP,
+            Math.max(1, Math.floor(INK_SAMPLE_PIXEL_BUDGET / area)),
+        );
+        const sampleRows = inkSampleRows(activeRows, limit);
         void (async () => {
             try {
-                const ctx = prepareRow ? await prepareRow(firstActiveRowIndex) : {};
-                const page = await renderLabelPage(doc, ctx, inkRenderOptions);
-                if (!cancelled) {
-                    setInkOverflow(
+                for (const rowIndex of sampleRows) {
+                    const ctx = prepareRow ? await prepareRow(rowIndex) : {};
+                    const page = await renderLabelPage(doc, ctx, inkRenderOptions);
+                    if (cancelled) return;
+                    if (
                         hasInkBeyondPrinthead(
                             page,
                             doc.label.printDirection,
                             capabilities?.printheadPixels,
-                        ),
-                    );
+                        )
+                    ) {
+                        setInkOverflow(true);
+                        return;
+                    }
                 }
             } catch {
                 // A render failure must never leave a stale warning up.
@@ -618,11 +736,14 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     }, [
         open,
         overflows,
-        firstActiveRowIndex,
+        activeRows,
         prepareRow,
         doc,
         inkRenderOptions,
         capabilities?.printheadPixels,
+        dims,
+        parsedOffset,
+        headClampHm,
     ]);
 
     const showOverflow = overflows && inkOverflow;
@@ -1061,6 +1182,159 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
                                 aria-label={t('print.pageColor')}
                             />
                         </SettingRow>
+                        {pageColor === PageColorType.Grayscale && grayscaleSupported && (
+                            <>
+                                <SettingRow
+                                    label={t('print.grayscaleLightest')}
+                                    description={t('print.grayscaleToneHint')}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={15}
+                                            step={1}
+                                            value={grayscaleTone.minLevel}
+                                            onChange={(event) =>
+                                                setGrayscaleTone({
+                                                    minLevel: Number(event.target.value),
+                                                })
+                                            }
+                                            className="w-40 accent-blue-500"
+                                            aria-label={t('print.grayscaleLightest')}
+                                        />
+                                        <span className="w-14 text-right font-mono text-xs text-gray-400">
+                                            {t('print.grayscaleLevelValue', {
+                                                level: grayscaleTone.minLevel,
+                                            })}
+                                        </span>
+                                    </div>
+                                </SettingRow>
+                                <SettingRow label={t('print.grayscaleDarkest')}>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={15}
+                                            step={1}
+                                            value={grayscaleTone.maxLevel}
+                                            onChange={(event) =>
+                                                setGrayscaleTone({
+                                                    maxLevel: Number(event.target.value),
+                                                })
+                                            }
+                                            className="w-40 accent-blue-500"
+                                            aria-label={t('print.grayscaleDarkest')}
+                                        />
+                                        <span className="w-14 text-right font-mono text-xs text-gray-400">
+                                            {t('print.grayscaleLevelValue', {
+                                                level: grayscaleTone.maxLevel,
+                                            })}
+                                        </span>
+                                    </div>
+                                </SettingRow>
+                            </>
+                        )}
+                        {pageColor === PageColorType.DoubleColor && redBlackSupported && (
+                            <>
+                                <SettingRow
+                                    label={t('print.redIntensity')}
+                                    description={t('print.redIntensityHint')}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={150}
+                                            step={1}
+                                            value={Math.round(
+                                                redBlackSettings.redIntensity * 100,
+                                            )}
+                                            onChange={(event) =>
+                                                setRedBlackSettings({
+                                                    redIntensity:
+                                                        Number(event.target.value) / 100,
+                                                })
+                                            }
+                                            className="w-40 accent-blue-500"
+                                            aria-label={t('print.redIntensity')}
+                                        />
+                                        <span className="w-10 text-right font-mono text-xs text-gray-400">
+                                            {Math.round(redBlackSettings.redIntensity * 100)}%
+                                        </span>
+                                    </div>
+                                </SettingRow>
+                                <SettingRow
+                                    label={t('print.blackDepth')}
+                                    description={t('print.blackDepthHint')}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={100}
+                                            step={1}
+                                            value={Math.round(redBlackSettings.blackDepth * 100)}
+                                            onChange={(event) =>
+                                                setRedBlackSettings({
+                                                    blackDepth: Number(event.target.value) / 100,
+                                                })
+                                            }
+                                            className="w-40 accent-blue-500"
+                                            aria-label={t('print.blackDepth')}
+                                        />
+                                        <span className="w-10 text-right font-mono text-xs text-gray-400">
+                                            {Math.round(redBlackSettings.blackDepth * 100)}%
+                                        </span>
+                                    </div>
+                                </SettingRow>
+                                <SettingRow
+                                    label={t('print.redCoverageFrom')}
+                                    description={t('print.redCoverageHint')}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={100}
+                                            step={1}
+                                            value={redBlackSettings.redCoverageMin}
+                                            onChange={(event) =>
+                                                setRedBlackSettings({
+                                                    redCoverageMin: Number(event.target.value),
+                                                })
+                                            }
+                                            className="w-40 accent-blue-500"
+                                            aria-label={t('print.redCoverageFrom')}
+                                        />
+                                        <span className="w-10 text-right font-mono text-xs text-gray-400">
+                                            {redBlackSettings.redCoverageMin}%
+                                        </span>
+                                    </div>
+                                </SettingRow>
+                                <SettingRow label={t('print.redCoverageTo')}>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={100}
+                                            step={1}
+                                            value={redBlackSettings.redCoverageMax}
+                                            onChange={(event) =>
+                                                setRedBlackSettings({
+                                                    redCoverageMax: Number(event.target.value),
+                                                })
+                                            }
+                                            className="w-40 accent-blue-500"
+                                            aria-label={t('print.redCoverageTo')}
+                                        />
+                                        <span className="w-10 text-right font-mono text-xs text-gray-400">
+                                            {redBlackSettings.redCoverageMax}%
+                                        </span>
+                                    </div>
+                                </SettingRow>
+                            </>
+                        )}
                         {needsHeadClamp && headWidthHm !== undefined && (
                             <SettingRow
                                 label={t('print.clampToHead')}

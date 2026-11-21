@@ -25,12 +25,14 @@ import { redBlackPalette, RED_BLACK_BLACK, RED_BLACK_RED } from './palette';
  * **Why clustered red (D-78).** Printed red is heat-selected, and the measured
  * physical floor is ≈50 % local coverage: sparse red dots do not develop on
  * red/black stock. Clustering does not raise the *average* coverage — it makes
- * every activated cell carry at least four connected dots (and at least half
- * its available dots), so the printer either gets a developable patch or no red
- * at all. This is why the old per-pixel palette diffusion produced invisibly
- * sparse highlights and speckle. Cells with fewer than four available dots
- * (tiny rasters, flat-perforated cells) are suppressed entirely: an isolated
- * dot or pair cannot develop, and flat art must not be bridged.
+ * every activated cell carry at least four connected dots, so the printer either
+ * gets a developable patch or no red at all. That 4-dot minimum is `4/9`
+ * (~44 %) in a full 3×3 cell, which is also the lowest cell level a user can
+ * select via `redCoverageMin`; below that the slider still inks four dots. This
+ * is why the old per-pixel palette diffusion produced invisibly sparse
+ * highlights and speckle. Cells with fewer than four available dots (tiny
+ * rasters, flat-perforated cells) are suppressed entirely: an isolated dot or
+ * pair cannot develop, and flat art must not be bridged.
  *
  * **Tone conservation.** Both quantisers pick their level from the *clamped*
  * accumulated value, but diffuse the **realized** residual
@@ -67,10 +69,14 @@ import { redBlackPalette, RED_BLACK_BLACK, RED_BLACK_RED } from './palette';
  * halftone passes.
  *
  * **Page-level diffuser knobs do not apply.** Unlike the old palette pass,
- * gamma/strength/serpentine have no meaning here: this mode has exactly two
- * knobs, `redIntensity` and `blackDepth`, applied to the continuous ink demands
- * **before** halftoning. `blackDepth` scales the black demand (`0.5` → ×1,
- * `0` → ×0.5, `1` → ×2) before the clamp. The flat classifier still takes the
+ * gamma/strength/serpentine have no meaning here: the mode has four knobs —
+ * `redIntensity`, `blackDepth`, `redCoverageMin` and `redCoverageMax` — applied
+ * to the continuous ink demands and the allowed cell levels **before**
+ * halftoning. `blackDepth` scales the black demand (`0.5` → ×1, `0` → ×0.5,
+ * `1` → ×2) before the clamp. The coverage pair selects the allowed red cell
+ * levels (`k/9`, see {@link redBlackCellLevels}); a non-zero cell still inks at
+ * least four connected dots, so a full cell never prints below `4/9` (~44 %)
+ * even when the slider asks for less. The flat classifier still takes the
  * page's resolved threshold and gamma from the caller.
  *
  * Geometry: the 3×3 cell grid is anchored at the raster origin. The render
@@ -88,8 +94,13 @@ import { redBlackPalette, RED_BLACK_BLACK, RED_BLACK_RED } from './palette';
 /** Red-halftone cell size in device dots (0.254 mm at 300 dpi). */
 export const RED_BLACK_CELL = 3;
 
-/** Options for {@link separateRedBlack}. */
-export interface RedBlackSeparateOptions {
+/**
+ * The two page-level duotone knobs, shared by the engine, the render options and
+ * the persisted store settings. Both are optional here because the engine
+ * normalizes an absent value to its default; the store keeps the required form
+ * (`RedBlackSettings`).
+ */
+export interface RedBlackTuning {
     /** 0..1.5, default 1. Multiplies the red (chroma) demand. 0 = no red at all. */
     redIntensity?: number;
     /**
@@ -99,6 +110,23 @@ export interface RedBlackSeparateOptions {
      * the red ink's own darkness).
      */
     blackDepth?: number;
+    /**
+     * 0..100, default 50. Smallest red cell coverage, as a percent of the dots
+     * in a full 3×3 cell. The engine's allowed cell levels are `k/9` for `k`
+     * between this percent and {@link redCoverageMax}, so the slider picks a
+     * **band of levels**, not a single level.
+     *
+     * Physical floor: a non-zero cell still inks at least four connected dots,
+     * so a full cell never prints below `4/9` (~44 %) whatever a lower slider
+     * says. That makes ~44–100 the slider's useful range (D-78).
+     */
+    redCoverageMin?: number;
+    /** 0..100, default 100. Largest red cell coverage (see `redCoverageMin`). */
+    redCoverageMax?: number;
+}
+
+/** Options for {@link separateRedBlack}. */
+export interface RedBlackSeparateOptions extends RedBlackTuning {
     /** Authored-art mask, one byte/px: non-zero = point op, excluded from both planes. */
     flat?: Uint8Array;
     /** Classifier for a flat pixel's raw source bytes → 0 white / 1 black / 2 red. */
@@ -145,6 +173,46 @@ const WHITE_CLIP = 0.04;
 
 const DEFAULT_RED_INTENSITY = 1;
 const DEFAULT_BLACK_DEPTH = 0.5;
+/** Default red cell-coverage band (50–100 %): today's `5/9 … 9/9` level set. */
+export const DEFAULT_RED_COVERAGE_MIN = 50;
+export const DEFAULT_RED_COVERAGE_MAX = 100;
+
+/** Clamp a coverage percent; a non-finite value takes `fallback`. */
+const normalizePercent = (value: number | undefined, fallback: number): number =>
+    value === undefined || !Number.isFinite(value)
+        ? fallback
+        : Math.min(100, Math.max(0, value));
+
+/**
+ * The allowed red cell levels for a coverage band, in cell-fraction units
+ * (`0`, `k/9`, …). `k` runs from the level nearest the requested minimum to the
+ * largest level at or below the requested maximum, clamped to `1..9`, so a full
+ * cell's level can be written as `k/9`.
+ *
+ * Defaults (50–100) produce exactly the historical set
+ * `[0, 5/9, 6/9, 7/9, 8/9, 1]`. A reversed/empty band clamps `max` up to
+ * `min`'s level, so there is always at least one ink level. The ≥4-dot cluster
+ * floor still means a non-zero full cell never prints below `4/9` (~44 %)
+ * regardless of a lower slider value — see D-78.
+ */
+export const redBlackCellLevels = (
+    minCoverage?: number,
+    maxCoverage?: number,
+): number[] => {
+    const min = normalizePercent(minCoverage, DEFAULT_RED_COVERAGE_MIN);
+    const max = normalizePercent(maxCoverage, DEFAULT_RED_COVERAGE_MAX);
+    const clampLevel = (value: number): number => Math.min(9, Math.max(1, value));
+    // Nearest representable ninth for the lower bound (a slider percent rarely
+    // lands exactly on a ninth), floor for the upper bound so an allowed level
+    // never exceeds the requested maximum.
+    const lowest = clampLevel(Math.round((min * 9) / 100));
+    const highest = clampLevel(Math.floor((max * 9) / 100));
+    const top = highest < lowest ? lowest : highest;
+
+    const levels: number[] = [0];
+    for (let k = lowest; k <= top; k++) levels.push(k / 9);
+    return levels;
+};
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 
@@ -321,14 +389,15 @@ const RED_DOT_ORDER: readonly (readonly [number, number])[] = [
     [0, 2],
 ];
 
-/** Allowed red cell levels. No non-zero level below `5/9` (physical floor). */
-const RED_LEVELS: readonly number[] = [0, 5 / 9, 6 / 9, 7 / 9, 8 / 9, 1];
-
-/** Nearest allowed red level; ties go to the lower level. */
-const nearestRedLevel = (value: number): number => {
-    let best = RED_LEVELS[0]!;
+/**
+ * Nearest allowed red level for a 0..1 demand, ties to the lower level. The
+ * level set is built per pass from `redCoverageMin`/`redCoverageMax`
+ * ({@link redBlackCellLevels}).
+ */
+const nearestRedLevel = (levels: readonly number[], value: number): number => {
+    let best = levels[0]!;
     let bestDistance = Infinity;
-    for (const level of RED_LEVELS) {
+    for (const level of levels) {
         const distance = Math.abs(level - value);
         if (distance < bestDistance) {
             bestDistance = distance;
@@ -395,6 +464,9 @@ export const separateRedBlack = (
 
     const redGain = redGainOf(options.redIntensity);
     const blackGain = blackGainOf(options.blackDepth);
+    // The allowed cell levels are a coverage band (default 50–100 % = today's
+    // 5/9..9/9 set), built once per pass.
+    const redLevels = redBlackCellLevels(options.redCoverageMin, options.redCoverageMax);
     const entries = redBlackPalette().entries;
     const flatNearest = options.flatNearest;
     const demand: Demand = { red: 0, black: 0 };
@@ -477,17 +549,18 @@ export const separateRedBlack = (
             // clipping nor the 4-dot floor loses requested tone.
             const mean = cellDemand[cell]! / n;
             const raw = mean + cellError[cell]!;
-            const level = nearestRedLevel(clamp01(raw));
+            const level = nearestRedLevel(redLevels, clamp01(raw));
 
             // Physical floor (D-78): a non-zero cell inks at least four
-            // connected dots and at least half its available dots. Cells with
+            // connected dots — the 4-dot minimum that develops on paper, i.e.
+            // 4/9 (~44 %) in a full 3×3 cell. There is deliberately no
+            // "half the available dots" term: it would force 5/9 in a full
+            // cell and make a user-chosen 44 % level unreachable. Cells with
             // fewer than four available dots are suppressed entirely — an
             // isolated dot or pair cannot develop, and flat art must not be
             // bridged.
             const target =
-                level === 0
-                    ? 0
-                    : Math.min(n, Math.max(4, Math.ceil(0.5 * n), Math.round(level * n)));
+                level === 0 ? 0 : Math.min(n, Math.max(4, Math.round(level * n)));
 
             let available = 0;
             for (const [dx, dy] of RED_DOT_ORDER) {

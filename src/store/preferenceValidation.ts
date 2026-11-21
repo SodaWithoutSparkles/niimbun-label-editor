@@ -12,9 +12,19 @@ import {
 } from '../core/render/screentone';
 import type { NodeType } from '../core/doc/types';
 import {
+    BLACK_DEPTH_MAX,
+    BLACK_DEPTH_MIN,
     CONNECT_METHODS,
+    DEFAULT_GRAYSCALE_TONE,
+    DEFAULT_RED_BLACK_SETTINGS,
+    GRAYSCALE_TONE_MAX_LEVEL,
+    GRAYSCALE_TONE_MIN_LEVEL,
     GRID_SPACING_MAX_HM,
     GRID_SPACING_MIN_HM,
+    RED_COVERAGE_MAX,
+    RED_COVERAGE_MIN,
+    RED_INTENSITY_MAX,
+    RED_INTENSITY_MIN,
     SCREEN_DPI_MAX,
     SCREEN_DPI_MIN,
 } from './storeDefaults';
@@ -22,8 +32,10 @@ import type {
     AppState,
     ConnectMethod,
     DefaultQuantizerByType,
+    GrayscaleToneSettings,
     KeyboardShortcutConfig,
     ModifierKey,
+    RedBlackSettings,
     TextSaveModifier,
 } from './storeTypes';
 
@@ -31,6 +43,7 @@ import type {
 export type PersistedSettings = Pick<
     AppState,
     | 'autoSave'
+    | 'autoOrientPortrait'
     | 'usePrinterDpi'
     | 'keyboardShortcuts'
     | 'toolSettings'
@@ -40,6 +53,8 @@ export type PersistedSettings = Pick<
     | 'connectMethod'
     | 'quantizerDefaults'
     | 'defaultQuantizerByType'
+    | 'redBlackSettings'
+    | 'grayscaleTone'
     | 'defaultPaperTypeId'
 >;
 
@@ -333,6 +348,79 @@ export const normalizeDefaultQuantizerByType = (
 };
 
 /**
+ * Returns the repaired red/black tuning, or `undefined` when the value is not
+ * an object at all (so the caller falls back to the default). All four knobs are
+ * required in the result: absent/non-finite values fall back to
+ * `DEFAULT_RED_BLACK_SETTINGS`, out-of-range values clamp, and unknown keys are
+ * dropped. A reversed coverage band clamps `min` down to `max`. An object that
+ * cleans to defaults is still returned, matching the "present value wins over
+ * the seed" convention of the other settings.
+ */
+export const normalizeRedBlackSettings = (
+    value: unknown,
+): RedBlackSettings | undefined => {
+    if (!isRecord(value)) return undefined;
+    const redCoverageMax = isFiniteNumber(value.redCoverageMax)
+        ? Math.min(
+              RED_COVERAGE_MAX,
+              Math.max(RED_COVERAGE_MIN, Math.round(value.redCoverageMax)),
+          )
+        : DEFAULT_RED_BLACK_SETTINGS.redCoverageMax;
+    const redCoverageMin = Math.min(
+        isFiniteNumber(value.redCoverageMin)
+            ? Math.min(
+                  RED_COVERAGE_MAX,
+                  Math.max(RED_COVERAGE_MIN, Math.round(value.redCoverageMin)),
+              )
+            : DEFAULT_RED_BLACK_SETTINGS.redCoverageMin,
+        redCoverageMax,
+    );
+    return {
+        redIntensity: isFiniteNumber(value.redIntensity)
+            ? Math.min(
+                  RED_INTENSITY_MAX,
+                  Math.max(RED_INTENSITY_MIN, value.redIntensity),
+              )
+            : DEFAULT_RED_BLACK_SETTINGS.redIntensity,
+        blackDepth: isFiniteNumber(value.blackDepth)
+            ? Math.min(BLACK_DEPTH_MAX, Math.max(BLACK_DEPTH_MIN, value.blackDepth))
+            : DEFAULT_RED_BLACK_SETTINGS.blackDepth,
+        redCoverageMin,
+        redCoverageMax,
+    };
+};
+
+/**
+ * Returns the repaired grayscale usable-ink band, or `undefined` when the value
+ * is not an object at all (so the caller falls back to the default). Both levels
+ * are required in the result and are integers in `0..15`: absent/non-finite
+ * values fall back to `DEFAULT_GRAYSCALE_TONE`, out-of-range values clamp, and
+ * unknown keys are dropped. A reversed band ties at the upper bound, exactly
+ * like the store setter and `grayscaleRampPalette`.
+ */
+export const normalizeGrayscaleTone = (
+    value: unknown,
+): GrayscaleToneSettings | undefined => {
+    if (!isRecord(value)) return undefined;
+    const maxLevel = isFiniteNumber(value.maxLevel)
+        ? Math.min(
+              GRAYSCALE_TONE_MAX_LEVEL,
+              Math.max(GRAYSCALE_TONE_MIN_LEVEL, Math.round(value.maxLevel)),
+          )
+        : DEFAULT_GRAYSCALE_TONE.maxLevel;
+    const minLevel = Math.min(
+        isFiniteNumber(value.minLevel)
+            ? Math.min(
+                  GRAYSCALE_TONE_MAX_LEVEL,
+                  Math.max(GRAYSCALE_TONE_MIN_LEVEL, Math.round(value.minLevel)),
+              )
+            : DEFAULT_GRAYSCALE_TONE.minLevel,
+        maxLevel,
+    );
+    return { minLevel, maxLevel };
+};
+
+/**
  * Validates the `ui_settings` payload and returns a complete
  * `PersistedSettings`, filling anything absent or malformed from `defaults`.
  */
@@ -344,6 +432,9 @@ export const validatePersistedSettings = (
 
     return {
         autoSave: normalizeBoolean(persisted.autoSave) ?? defaults.autoSave,
+        autoOrientPortrait:
+            normalizeBoolean(persisted.autoOrientPortrait) ??
+            defaults.autoOrientPortrait,
         usePrinterDpi:
             normalizeBoolean(persisted.usePrinterDpi) ?? defaults.usePrinterDpi,
         keyboardShortcuts:
@@ -368,6 +459,17 @@ export const validatePersistedSettings = (
         defaultQuantizerByType:
             normalizeDefaultQuantizerByType(persisted.defaultQuantizerByType) ??
             defaults.defaultQuantizerByType,
+        // Absent (or a non-object) => the default tuning. A present object
+        // always repairs to both knobs (clamped), so a partial blob cannot
+        // leave an undefined knob in the store.
+        redBlackSettings:
+            normalizeRedBlackSettings(persisted.redBlackSettings) ??
+            defaults.redBlackSettings,
+        // Absent (or a non-object) => the default band. A present object always
+        // repairs to both levels (clamped, ordered), so a partial blob cannot
+        // leave an undefined level in the store.
+        grayscaleTone:
+            normalizeGrayscaleTone(persisted.grayscaleTone) ?? defaults.grayscaleTone,
         // Absent (or unusable) => the caller's default, which is `undefined`:
         // "no preference". Never coerced to an empty string.
         defaultPaperTypeId:
@@ -391,6 +493,9 @@ export const pickPersistedKeys = (
     const repaired = validatePersistedSettings(persisted, defaults);
     const picked: Partial<PersistedSettings> = {};
     if ('autoSave' in persisted) picked.autoSave = repaired.autoSave;
+    if ('autoOrientPortrait' in persisted) {
+        picked.autoOrientPortrait = repaired.autoOrientPortrait;
+    }
     if ('usePrinterDpi' in persisted) picked.usePrinterDpi = repaired.usePrinterDpi;
     if ('keyboardShortcuts' in persisted) picked.keyboardShortcuts = repaired.keyboardShortcuts;
     if ('toolSettings' in persisted) picked.toolSettings = repaired.toolSettings;
@@ -402,6 +507,8 @@ export const pickPersistedKeys = (
     if ('defaultQuantizerByType' in persisted) {
         picked.defaultQuantizerByType = repaired.defaultQuantizerByType;
     }
+    if ('redBlackSettings' in persisted) picked.redBlackSettings = repaired.redBlackSettings;
+    if ('grayscaleTone' in persisted) picked.grayscaleTone = repaired.grayscaleTone;
     // The `in` guard (not a truthiness check) keeps a present-but-empty value
     // distinguishable from an absent key: the former repairs to `undefined`
     // and is allowed to override the seed, the latter falls through to it.

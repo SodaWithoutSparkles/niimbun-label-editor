@@ -19,6 +19,16 @@ interface PanelPosition {
 const PANEL_GAP_PX = 8;
 const VIEWPORT_MARGIN_PX = 8;
 
+/**
+ * Decimal places of a `step`, including exponent notation: `0.01` → 2,
+ * `1e-7` → 7, `1.5e-3` → 4. Positive exponents (`1e+21`) need none — the
+ * value is already an integer.
+ */
+const stepPrecision = (step: number): number => {
+    const match = /(?:\.(\d+))?(?:e-(\d+))?$/.exec(step.toString());
+    return (match?.[1]?.length ?? 0) + Number(match?.[2] ?? 0);
+};
+
 interface PopoverSliderProps {
     value: number;
     onChange: (value: number) => void;
@@ -54,6 +64,12 @@ interface PopoverSliderProps {
 
     // Alignment
     popoverAlign?: 'center' | 'start' | 'end';
+
+    // Circular fields (e.g. rotation): an out-of-range commit wraps by `period`
+    // instead of clamping, so the committed angle keeps its visual meaning.
+    // In-range values are committed signed as typed (`-15` stays `-15`).
+    circular?: boolean;
+    period?: number; // wrap span; defaults to `max - min`
 }
 
 export const PopoverSlider: React.FC<PopoverSliderProps> = ({
@@ -77,7 +93,9 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
     buttonStep = step,
     className = '',
     popoverClassName = '',
-    popoverAlign = 'center'
+    popoverAlign = 'center',
+    circular = false,
+    period = max - min
 }) => {
     const { t } = useTranslation();
     const [isOpen, setIsOpen] = useState(false);
@@ -290,6 +308,53 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
     }, [isOpen]);
 
     const handleConfirm = (newVal: number) => {
+        if (circular) {
+            // A value already inside the bounds keeps its signed form: typed
+            // `-15` must commit `-15`, never the equivalent `345`. Only an
+            // out-of-range value wraps, and it wraps on the RAW value before
+            // step rounding: `newVal / step` can overflow to Infinity (1e308 at
+            // 0.1°) and would poison the step math with NaN.
+            let wrapped = newVal;
+            if (period > 0 && (newVal < min || newVal > max)) {
+                // JS remainder is exact and finite for any finite input, and
+                // keeps the sign (`400 → 40`, `-400 → -40`, `720 → 0` — the same
+                // reduce as `normalizeRotDeg`, so a live edit and this commit
+                // agree at exact multiples, where a subtract-until-in-range
+                // loop would have stopped at 360).
+                wrapped = newVal % period;
+                // One period shift re-enters [min, max] whenever the range is
+                // at least a period wide (the sane config); bounded rather than
+                // a loop so a degenerate period can never spin.
+                if (wrapped < min) wrapped += period;
+                else if (wrapped > max) wrapped -= period;
+            }
+            // Clamp to allowed precision based on step; fix float precision
+            // issues (e.g. 0.1 + 0.2 = 0.300000004). Scale both operands by the
+            // step's decimal factor first: `0.15 / 0.1` is 1.4999… and would
+            // round down, while `1.5 / 1` is an exact tie that rounds up to 0.2,
+            // matching `normalizeRotDeg`'s `Math.round(deg * 10) / 10`.
+            const precision = stepPrecision(step);
+            const factor = 10 ** precision;
+            const scaledStep = Math.round(step * factor);
+            // A degenerate scaled step (an exponent-form step whose factor
+            // overflows, or a zero step) would divide by 0/Infinity: fall back
+            // to unscaled rounding so the committed value stays finite.
+            const rounded =
+                Number.isFinite(factor) && Number.isFinite(scaledStep) && scaledStep > 0
+                    ? Math.round((wrapped * factor) / scaledStep) * step
+                    : Math.round(wrapped / step) * step;
+            // `toFixed` throws above 100 digits and would truncate a genuinely
+            // sub-1e-100 step to "0", collapsing the value; `rounded` is already
+            // grid-correct there, so keep it as-is.
+            const fixed = precision > 100 ? rounded : parseFloat(rounded.toFixed(precision));
+            // Belt-and-braces: keep the finite wrapped value if the step math
+            // still overflowed.
+            const committed = Number.isFinite(fixed) ? fixed : wrapped;
+            onChange(committed);
+            setTempValue(committed);
+            return;
+        }
+
         // Clamp to allowed precision based on step
         const rounded = Math.round(newVal / step) * step;
         // Fix float precision issues (e.g. 0.1 + 0.2 = 0.300000004)

@@ -65,6 +65,9 @@ export interface Palette {
     readonly nearest?: (r: number, g: number, b: number) => number;
 }
 
+/** Byte step between adjacent grey levels: fifteen gaps span exactly 255. */
+export const GRAY_LEVEL_STEP = 17;
+
 /**
  * The grey byte at the **centre** of library gray level `k`: `255 - 17k`
  * (0 → white, 15 → black).
@@ -78,32 +81,108 @@ export interface Palette {
  * centre re-encodes to that same level with no rounding slack. That is what
  * keeps preview ≡ print and makes an exact ramp value dither-free.
  */
-export const grayLevelColor = (level: number): number => 255 - 17 * level;
+export const grayLevelColor = (level: number): number => 255 - GRAY_LEVEL_STEP * level;
 
 /** Levels in the printer's grayscale page colour (`0` = white … `15` = black). */
 export const GRAYSCALE_LEVELS = 16;
 
 /**
- * The 16-level grayscale PageColor ramp: index == library level, ordered
- * 0 = white → 15 = black, each entry at its exact band centre.
+ * The physically usable ink band for a grayscale page, as a user setting.
+ *
+ * The printer maps 16 levels evenly, but paper/printer physics decides which of
+ * them actually show ink: at density 3 the owner measured roughly 0–2 as
+ * indistinguishable from paper, 3 very faint, and 15 merging into 14 on some
+ * stock. The app therefore renders only {@link minLevel}…{@link maxLevel} — plus
+ * level 0, which is **always kept** so label margins, region clips and
+ * highlights stay paper white (a strict `[4..14]` remap would grey the whole
+ * page). This type is the optional render-option form; the store keeps the
+ * required form (`GrayscaleToneSettings`) with the app default 4/14.
+ */
+export interface GrayscaleTone {
+    /** Lightest ink level to print, 0..15. Default 0 (engine default). */
+    minLevel?: number;
+    /** Darkest ink level to print, 0..15. Default 15 (engine default). */
+    maxLevel?: number;
+}
+
+/** Clamp one level to the printer range; a non-finite value takes `fallback`. */
+const normalizeGrayLevel = (value: number | undefined, fallback: number): number => {
+    if (value === undefined || !Number.isFinite(value)) return fallback;
+    return Math.min(GRAYSCALE_LEVELS - 1, Math.max(0, Math.round(value)));
+};
+
+/**
+ * Resolve a user ink band to the engine's integer levels: both clamp to 0..15
+ * and a reversed band (`min > max`) ties at the upper bound, so `(14, 4)` is
+ * exactly level 4. {@link grayscaleRampPalette} and the band-aware invert use
+ * this one resolver so the rendered palette and the inversion can never
+ * disagree about the band.
+ */
+export const resolveGrayscaleBand = (
+    minLevel?: number,
+    maxLevel?: number,
+): { lowest: number; highest: number } => {
+    const highest = normalizeGrayLevel(maxLevel, GRAYSCALE_LEVELS - 1);
+    const requestedLowest = normalizeGrayLevel(minLevel, 0);
+    return { lowest: requestedLowest > highest ? highest : requestedLowest, highest };
+};
+
+/**
+ * The grayscale PageColor ramp for the usable band `minLevel`..`maxLevel`
+ * (defaults `0`..`15`, today's full ramp). Entries are always
+ * **paper white (level 0) plus every level in the band**, each at its exact
+ * band centre `255 - 17k`.
+ *
+ * Level 0 is kept unconditionally: the page margins and clipped regions are
+ * painted white, and a band that excluded 0 would map paper white to the
+ * lightest *ink* level and print a grey page. The band is paper/printer
+ * dependent, so the app passes the persisted `grayscaleTone`; a direct caller
+ * or test gets the unchanged 0..15 ramp.
+ *
+ * A reversed band (`minLevel > maxLevel`) is a tie at the upper bound: `min` is
+ * clamped to `max`, so `(14, 4)` prints exactly level 4 (plus paper white). The
+ * same rule is applied by the store and the preference validator
+ * ({@link resolveGrayscaleBand}).
  *
  * `nearest` mirrors `ImageEncoder.colorToGrayLevel` rather than using squared
- * RGB distance. For a neutral target the squared-distance nearest grey is the
- * channel **mean**, `(r + g + b) / 3`, which disagrees with the encoder's
- * BT.601 luminance on coloured input (saturated green: luminance ≈ 150, channel
- * mean 85) and would make the preview pick a different level from the print.
- * That is why this palette — and not every palette — carries a `nearest`.
+ * RGB distance, and is attached **only to the full 0..15 ramp**, where the
+ * palette index still equals the library level. For a restricted band the
+ * encoder level is not an entry index, so `nearest` is omitted rather than
+ * returning an index that would address the wrong entry. `diffuseRamp` selects
+ * by entry grey value and never reads `nearest`.
  */
-export const grayscaleRampPalette = (): Palette => ({
-    id: 'grayscale-ramp',
-    entries: Array.from({ length: GRAYSCALE_LEVELS }, (_, level) => {
+export const grayscaleRampPalette = (
+    minLevel = 0,
+    maxLevel = GRAYSCALE_LEVELS - 1,
+): Palette => {
+    const { lowest, highest } = resolveGrayscaleBand(minLevel, maxLevel);
+
+    const levels = [0];
+    for (let level = Math.max(1, lowest); level <= highest; level++) levels.push(level);
+    const entries = levels.map((level) => {
         const value = grayLevelColor(level);
         return { r: value, g: value, b: value };
-    }),
-    // Library formula, mirrored: `clamp(round((1 - L / 255) * 15), 0, 15)`.
-    nearest: (r, g, b) =>
-        Math.max(0, Math.min(15, Math.round((1 - monoLuminance(r, g, b) / 255) * 15))),
-});
+    });
+
+    const isFullRamp = lowest === 0 && highest === GRAYSCALE_LEVELS - 1;
+    return {
+        id: isFullRamp ? 'grayscale-ramp' : `grayscale-ramp-${lowest}-${highest}`,
+        entries,
+        // Library formula, mirrored: `clamp(round((1 - L / 255) * 15), 0, 15)`.
+        ...(isFullRamp
+            ? {
+                  nearest: (r: number, g: number, b: number) =>
+                      Math.max(
+                          0,
+                          Math.min(
+                              GRAYSCALE_LEVELS - 1,
+                              Math.round((1 - monoLuminance(r, g, b) / 255) * (GRAYSCALE_LEVELS - 1)),
+                          ),
+                      ),
+              }
+            : {}),
+    };
+};
 
 /**
  * The DoubleColor page palette: `[white, black, red]`, no `nearest`.
@@ -215,8 +294,10 @@ export interface RampDiffuseOptions {
  * `nearest(L, L, L)` would re-apply the BT.601 weights, whose float sum is
  * `0.9999999999999999`; a value sitting on a boundary can then flip to the
  * other level and make preview ≠ print. The accumulated scalar is already a
- * luminance, so it is used unclamped (diffusion may push it outside `0..255`
- * without affecting the nearest test). Ties go to the earlier entry.
+ * luminance, so it is used unclamped for the nearest test (diffusion may push it
+ * outside `0..255` without affecting it); only the low side is clamped to the
+ * darkest entry before the scan, so a band-limited palette cannot bleed ink
+ * outward. Ties go to the earlier entry.
  *
  * Order of operations:
  *
@@ -226,13 +307,21 @@ export interface RampDiffuseOptions {
  *     is no hue to preserve, so a plain scalar curve is correct — and the
  *     neutral path does not round the copied luminance. `lut[0] = 0` and
  *     `lut[255] = 255`, so the endpoints stay fixed.
- *  3. Serpentine scan: `7/16` forward on the current row, then `3/16` (back
+ *  3. **Clamp the low side to the darkest representable entry.** A band-limited
+ *     palette (e.g. 4..14) has no entry below its darkest ink, so an authored
+ *     black would otherwise keep `value - darkest ≈ -17` as residual and
+ *     diffuse it outward: after crossing the 246.5 boundary the *surrounding*
+ *     white pixels flip to the band's lightest level, inking a halo far outside
+ *     the shape. Tones darker than the paper can show become the darkest
+ *     printable ink instead. A full 0..15 ramp clamps to 0, so its output stays
+ *     byte-identical.
+ *  4. Serpentine scan: `7/16` forward on the current row, then `3/16` (back
  *     diagonal), `5/16` (below) and `1/16` (forward diagonal) on the next row.
  *     Reverse rows mirror the taps by negating the column offset; out-of-bounds
  *     taps are dropped. `strength` multiplies the error *before* distribution
  *     and is clamped to `0..4`; `0` degenerates to a nearest-value point op. A
  *     non-finite `strength` normalizes to the neutral `1`.
- *  4. Write the chosen entry's exact integer bytes to RGB. Entries are never
+ *  5. Write the chosen entry's exact integer bytes to RGB. Entries are never
  *     blended, so every output pixel is a palette colour.
  *
  * Defaults are neutral: `strength 1`, `serpentine true`, `gamma 1`.
@@ -271,6 +360,16 @@ export const diffuseRamp = (
         for (let p = 0; p < count; p++) {
             plane[p] = lut[toByte(plane[p])];
         }
+    }
+
+    // Paper cannot show a tone darker than the band's darkest ink. Without
+    // this clamp an authored black keeps a `value - darkest` residual that the
+    // diffuser pushes into neighbours, inking a halo outside the shape (the
+    // default 4..14 band has no 0 entry, so black used to bleed). The full
+    // 0..15 ramp clamps to 0 and is therefore unchanged.
+    const darkest = entries[entries.length - 1]!.r;
+    for (let p = 0; p < count; p++) {
+        if (plane[p] < darkest) plane[p] = darkest;
     }
 
     // Mirror the settings UI's strength range: a huge finite value would overflow

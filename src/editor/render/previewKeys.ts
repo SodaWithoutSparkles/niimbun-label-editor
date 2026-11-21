@@ -55,6 +55,29 @@ export const previewOptionsKey = (options: RenderLabelPageOptions): string => {
     if (options.maxHeadHm !== undefined) {
         parts.push(`c${options.maxHeadHm}`);
     }
+    // The grayscale usable band changes which levels can be emitted, so it is
+    // pixel-changing. It is only ever set for a grayscale page (see
+    // `renderOptionsOf`), and appends nothing when absent, so mono/red-black
+    // keys stay unchanged.
+    if (options.grayscaleTone !== undefined) {
+        const { minLevel, maxLevel } = options.grayscaleTone;
+        parts.push(`gt${minLevel ?? '-'},${maxLevel ?? '-'}`);
+    }
+    // Red/black tuning changes the separation, so it is pixel-changing. It is
+    // only ever set for a red/black page (see `renderOptionsOf`), and appends
+    // nothing when absent, so mono/grayscale keys stay unchanged. The two fixed
+    // fields are emitted in a fixed order, so equal values give equal keys. The
+    // coverage band is appended only when supplied, keeping older tuning-only
+    // keys stable.
+    if (options.redBlack !== undefined) {
+        const { redIntensity, blackDepth, redCoverageMin, redCoverageMax } = options.redBlack;
+        const tuning = `rb${redIntensity ?? '-'},${blackDepth ?? '-'}`;
+        parts.push(
+            redCoverageMin === undefined && redCoverageMax === undefined
+                ? tuning
+                : `${tuning},${redCoverageMin ?? '-'},${redCoverageMax ?? '-'}`,
+        );
+    }
     return parts.join('|');
 };
 

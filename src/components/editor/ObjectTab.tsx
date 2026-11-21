@@ -52,6 +52,7 @@ import type { NodePatch } from '../../store/storeTypes';
 import { bytesProviderFor } from './usePreparedAssets';
 import { useSampleRowState } from './sampleRowContext';
 import { contentFieldKey, contentSourceOf } from '../../editor/contentSource';
+import { normalizeRotDeg } from '../../editor/rotation';
 import { ImageImportDialog } from './ImageImportDialog';
 
 /**
@@ -278,7 +279,12 @@ const numberValue = (
     context: { id: QuantizerId | undefined; quantizerDefaults: QuantizerDefaults },
 ): number => {
     if (isTransformKey(key)) {
-        return node.transform[key as (typeof TRANSFORM_KEYS)[number]];
+        const value = node.transform[key as (typeof TRANSFORM_KEYS)[number]];
+        // Display-only canonicalization: a saved document may hold any finite
+        // angle (721.23456789°) and ungrouping leaves float dust (0.1 + 0.2).
+        // The slider/readout must show the same signed angle the commit path
+        // writes, without rewriting stored geometry just by opening the tab.
+        return key === 'rotDeg' ? normalizeRotDeg(value) : value;
     }
     if (key === 'sizeW') return node.size?.w ?? 0;
     if (key === 'sizeH') return node.size?.h ?? 0;
@@ -457,6 +463,10 @@ export const numberRange = (
         case 'scaleX':
         case 'scaleY':
             return { min: 0.05, max: 10, step: 0.05 };
+        case 'rotDeg':
+            // One signed range kept raw (270° stays 270°, never −90°); out-of-
+            // range commits wrap in `PopoverSlider` rather than clamp.
+            return { min: -360, max: 360, step: 0.1 };
         case 'fontSize':
             return { min: 1, max: 2000, step: 1 };
         case 'quantizerThreshold':
@@ -831,7 +841,14 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                 updateNodeTransient(node.id, {
                     quantizerParams: Object.keys(params).length ? params : undefined,
                 });
-            } else if (isTransformKey(key)) updateNodeTransient(node.id, transformPatch(node, key, value));
+            } else if (isTransformKey(key)) {
+                // The input commits raw keystrokes live; rotation is circular, so
+                // reduce it here too instead of waiting for the blur/Enter commit.
+                updateNodeTransient(
+                    node.id,
+                    transformPatch(node, key, key === 'rotDeg' ? normalizeRotDeg(value) : value),
+                );
+            }
             else if (key === 'sizeW' || key === 'sizeH') {
                 // The slider's `min` binds a drag, but a typed value arrives here
                 // raw (PopoverSlider forwards the input event), so floor the
@@ -1021,6 +1038,7 @@ export const ObjectTab: React.FC<ObjectTabProps> = ({ selected }) => {
                                 min={range.min}
                                 max={range.max}
                                 step={range.step}
+                                {...(field.key === 'rotDeg' ? { circular: true, period: 360 } : {})}
                                 label={label}
                             />
                         </SettingRow>

@@ -114,6 +114,58 @@ describe('grayscale ramp palette', () => {
             expect(palette.nearest!(c, c, c), `level ${level}`).toBe(level);
         }
     });
+
+    it('keeps the no-arg ramp byte-identical to the full 0..15 ramp', () => {
+        const implicit = grayscaleRampPalette();
+        const explicit = grayscaleRampPalette(0, 15);
+        expect(implicit.entries).toEqual(explicit.entries);
+        expect(implicit.entries).toHaveLength(GRAYSCALE_LEVELS);
+        expect(implicit.id).toBe('grayscale-ramp');
+        // `nearest` is the encoder mirror only on the full ramp.
+        expect(typeof implicit.nearest).toBe('function');
+        expect(typeof explicit.nearest).toBe('function');
+    });
+
+    it('renders paper white plus every level in the usable band', () => {
+        const palette = grayscaleRampPalette(4, 14);
+        expect(palette.entries.map((entry) => entry.r)).toEqual([
+            255,
+            ...Array.from({ length: 11 }, (_, index) => grayLevelColor(4 + index)),
+        ]);
+        // Level 0 is always kept (paper white): a strict 4..14 remap would grey
+        // the page margin and every clipped region.
+        expect(palette.entries[0]).toEqual({ r: 255, g: 255, b: 255 });
+        // The restricted ramp is not the encoder-level identity, so no `nearest`.
+        expect(palette.nearest).toBeUndefined();
+    });
+
+    it('handles degenerate bands: 0..0 is white only, 15..15 keeps white + black', () => {
+        expect(grayscaleRampPalette(0, 0).entries).toEqual([{ r: 255, g: 255, b: 255 }]);
+        expect(grayscaleRampPalette(15, 15).entries).toEqual([
+            { r: 255, g: 255, b: 255 },
+            { r: 0, g: 0, b: 0 },
+        ]);
+    });
+
+    it('ties a reversed band at the upper bound (min clamps to max)', () => {
+        const reversed = grayscaleRampPalette(14, 4);
+        expect(reversed.entries.map((entry) => entry.r)).toEqual([
+            grayLevelColor(0),
+            grayLevelColor(4),
+        ]);
+    });
+
+    it('clamps and rounds the band to integer levels 0..15', () => {
+        expect(grayscaleRampPalette(-3, 99).entries).toHaveLength(GRAYSCALE_LEVELS);
+        // Non-finite bounds fall back to the engine defaults (full ramp).
+        expect(grayscaleRampPalette(Number.NaN, Infinity).entries).toHaveLength(
+            GRAYSCALE_LEVELS,
+        );
+        expect(grayscaleRampPalette(4.4, 13.6).entries.map((entry) => entry.r)).toEqual([
+            255,
+            ...Array.from({ length: 11 }, (_, index) => grayLevelColor(4 + index)),
+        ]);
+    });
 });
 
 describe('red/black palette', () => {
@@ -341,5 +393,116 @@ describe('diffuseRamp (scalar luminance plane)', () => {
         }
         // No pixel anywhere is darker than level 10 (no collapse to level 11).
         for (const [r] of rgbList(rgba)) expect(r).toBeGreaterThanOrEqual(level10);
+    });
+
+    it('dithers across the paper-white→lowest-ink gap when the band starts above 0', () => {
+        // Level 2's band centre (221) sits between paper white (255) and the
+        // lowest allowed ink level 4 (187). With the usable band 4..14 that tone
+        // must dither across the 36-value gap, not vanish into levels 1–3 that
+        // the paper cannot show.
+        const rgba = solid(16, 16, 221, 221, 221);
+        diffuseRamp(rgba, grayscaleRampPalette(4, 14));
+
+        const values = rgbList(rgba).map(([r]) => r);
+        const white = values.filter((value) => value === grayLevelColor(0)).length;
+        const level4 = values.filter((value) => value === grayLevelColor(4)).length;
+        expect(white).toBeGreaterThan(0);
+        expect(level4).toBeGreaterThan(0);
+        // Only the two band edges appear: the levels in between are not allowed.
+        for (const value of values) {
+            expect([grayLevelColor(0), grayLevelColor(4)]).toContain(value);
+        }
+    });
+
+    it('clamps tones darker than the band floor, so black cannot bleed into white', () => {
+        // REGRESSION (phase 3, bug 2). With band 4..14 the darkest entry is
+        // level 14 (17), so an authored black (0) had **no exact entry**. Its
+        // `value - entry.r = -17` residual was diffused into neighbours; past
+        // the 246.5 boundary those white neighbours flipped to level 14, inking
+        // a halo far outside the shape (measured: 186 px outside a 60×32 rect).
+        // The scalar plane now clamps at the darkest representable entry, so
+        // "darker than the paper can show" becomes the darkest printable ink.
+        const width = 100;
+        const height = 60;
+        const rect = { x: 20, y: 14, w: 60, h: 32 };
+        const isInside = (x: number, y: number): boolean =>
+            x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+        const rgba = bufferOf(width, height, (x, y) => {
+            const value = isInside(x, y) ? 0 : 255;
+            return [value, value, value, 255];
+        });
+
+        diffuseRamp(rgba, grayscaleRampPalette(4, 14));
+
+        const white = grayLevelColor(0);
+        let inkedInside = 0;
+        let inkedOutside = 0;
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const inked = rgba.data[(y * width + x) * 4] !== white;
+                if (!inked) continue;
+                if (isInside(x, y)) inkedInside++;
+                else inkedOutside++;
+            }
+        }
+        expect(inkedOutside).toBe(0);
+        expect(inkedInside).toBe(rect.w * rect.h);
+        // The whole rect takes the darkest allowed ink, not level 15.
+        expect(rgba.data[(rect.y * width + rect.x) * 4]).toBe(grayLevelColor(14));
+    });
+
+    it('emits only the band entries for a full-tone field', () => {
+        const rgba = solid(16, 16, 128, 128, 128);
+        const palette = grayscaleRampPalette(4, 14);
+        diffuseRamp(rgba, palette);
+        expectInPalette(rgba, palette);
+        // The old full ramp would have picked levels 7/8; both are still in the
+        // band, so the check is that nothing outside the band leaked out.
+        for (const [r] of rgbList(rgba)) {
+            expect(palette.entries.some((entry) => entry.r === r)).toBe(true);
+        }
+    });
+
+    it('renders (0,15) byte-identically to the legacy no-arg ramp', () => {
+        // A gradient plus saturated red/green blocks exercises both the neutral
+        // dithering and the scalar plane's chroma handling. Compare the whole
+        // RGBA buffer, not just the palette entries: the pre-band output path
+        // must stay byte-identical when the band covers 0..15.
+        const fixture = (): RgbaBuffer =>
+            bufferOf(24, 12, (x, y) => {
+                if (x < 8) return [200, 40, 30, 255];
+                if (x < 16) {
+                    const g = 255 - Math.round((y / 11) * 255);
+                    return [g, g, g, 255];
+                }
+                return [40, 120, 40, 255];
+            });
+
+        const implicit = fixture();
+        diffuseRamp(implicit, grayscaleRampPalette());
+
+        const explicit = fixture();
+        diffuseRamp(explicit, grayscaleRampPalette(0, 15));
+
+        // The pre-band path: the same 0..15 table built by hand.
+        const legacy = fixture();
+        const legacyPalette: Palette = {
+            id: 'legacy-grayscale-ramp',
+            entries: Array.from({ length: GRAYSCALE_LEVELS }, (_, level) => {
+                const value = grayLevelColor(level);
+                return { r: value, g: value, b: value };
+            }),
+            nearest: (r, g, b) =>
+                Math.max(
+                    0,
+                    Math.min(15, Math.round((1 - monoLuminance(r, g, b) / 255) * 15)),
+                ),
+        };
+        diffuseRamp(legacy, legacyPalette);
+
+        expect(explicit.data).toEqual(implicit.data);
+        expect(explicit.data).toEqual(legacy.data);
+        expect(explicit.width).toBe(implicit.width);
+        expect(explicit.height).toBe(implicit.height);
     });
 });

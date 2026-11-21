@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LabelDoc } from '../../core/doc/types';
 import {
     quantizerSettingsKey,
+    type GrayscaleTone,
     type PageColorMode,
     type QuantizerByType,
     type QuantizerDefaults,
+    type RedBlackTuning,
 } from '../../core/render';
 import type { CsvRecord } from '../../data/csvRepo';
 import {
@@ -73,6 +75,18 @@ export interface PrintThumbnailOverrides {
      * rebuild key **only when defined**.
      */
     maxHeadHm?: number;
+    /**
+     * Red/black tuning. Pixel-changing and forwarded to the shared render path;
+     * appended to the rebuild key **only when defined**, so every mono and
+     * grayscale thumbnail key stays stable.
+     */
+    redBlack?: RedBlackTuning;
+    /**
+     * Grayscale usable ink band. Pixel-changing and forwarded to the shared
+     * render path; appended to the rebuild key **only when defined**, so every
+     * mono and red/black thumbnail key stays stable.
+     */
+    grayscaleTone?: GrayscaleTone;
 }
 
 export interface UsePrintThumbnailsOptions {
@@ -177,7 +191,25 @@ const overridesContentKey = (overrides: PrintThumbnailOverrides | undefined): st
     // change the raster, so only a set value changes the rebuild key.
     const maxHeadHm =
         overrides.maxHeadHm !== undefined ? `|c${overrides.maxHeadHm}` : '';
-    return `${invert}|${mirror}|${offset}|${quantizer}${pageColor}${maxHeadHm}`;
+    // Red/black tuning is pixel-changing, but only a defined value can differ
+    // from the engine default, so an absent key changes nothing. Coverage is
+    // appended only when supplied, keeping tuning-only keys stable.
+    const redBlack =
+        overrides.redBlack !== undefined
+            ? `|rb${overrides.redBlack.redIntensity ?? '-'},${overrides.redBlack.blackDepth ?? '-'}${
+                  overrides.redBlack.redCoverageMin === undefined &&
+                  overrides.redBlack.redCoverageMax === undefined
+                      ? ''
+                      : `,${overrides.redBlack.redCoverageMin ?? '-'},${overrides.redBlack.redCoverageMax ?? '-'}`
+              }`
+            : '';
+    // The grayscale usable band is pixel-changing; the absent-key convention
+    // keeps every mono/red-black thumbnail key stable.
+    const grayscaleTone =
+        overrides.grayscaleTone !== undefined
+            ? `|gt${overrides.grayscaleTone.minLevel ?? '-'},${overrides.grayscaleTone.maxLevel ?? '-'}`
+            : '';
+    return `${invert}|${mirror}|${offset}|${quantizer}${pageColor}${maxHeadHm}${redBlack}${grayscaleTone}`;
 };
 
 export const usePrintThumbnails = (
@@ -275,6 +307,12 @@ export const usePrintThumbnails = (
                     : {}),
                 ...(currentOverrides?.maxHeadHm !== undefined
                     ? { maxHeadHm: currentOverrides.maxHeadHm }
+                    : {}),
+                ...(currentOverrides?.redBlack !== undefined
+                    ? { redBlack: currentOverrides.redBlack }
+                    : {}),
+                ...(currentOverrides?.grayscaleTone !== undefined
+                    ? { grayscaleTone: currentOverrides.grayscaleTone }
                     : {}),
             });
 

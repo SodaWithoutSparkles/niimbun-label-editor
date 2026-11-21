@@ -4,18 +4,28 @@ import { Ellipse, Layer, Line, Rect, Stage, Transformer } from 'react-konva';
 import type Konva from 'konva';
 import { useStore } from '../../store/useStore';
 import type { InsertAction } from '../../store/slices/toolsSlice';
+import type { NodePatch } from '../../store/storeTypes';
 import { cn } from '../../utils/cn';
 import { flattenResolved, resolve, DEFAULT_FONT_FAMILY } from '../../editor/render/resolve';
-import type { ResolvedContent, ResolvedNode, ResolveContext } from '../../editor/render/resolve';
+import type { ResolvedContent, ResolvedNode, ResolvedText, ResolveContext } from '../../editor/render/resolve';
 import type { GlobalWarning } from '../../templates/globals';
 import type { EditorWarning } from '../../editor/warnings';
 import { buildFontWarnings, buildPreviewWarnings } from '../../editor/previewWarnings';
 import type { LabelDoc, Node, TextNode } from '../../core/doc/types';
 import { matrixToKonvaAttrs } from '../../editor/render/konvaFactory';
 import { shrinkScaleOf } from '../../editor/render/textMetrics';
-import { movePatch, transformEndPatch, commitPreservesAspect, transformerTargetSize, dragOriginOf, type DragOrigin } from '../../editor/transformGesture';
+import {
+    movePatch,
+    transformEndPatch,
+    rotationOnlyPatch,
+    commitPreservesAspect,
+    transformerTargetSize,
+    dragOriginOf,
+    type DragOrigin,
+} from '../../editor/transformGesture';
+import { worldDeltaToLocal } from '../../editor/transformPatch';
 import { nodeSize, pointsExtent, preservesAspectByDefault, DEFAULT_CONTENT_SIZE, DEFAULT_FONT_SIZE, type Size } from '../../core/doc/geometry';
-import { type Mat2D } from '../../core/doc/derive';
+import { effectiveTransform, type Mat2D } from '../../core/doc/derive';
 import { resolveGuides } from '../../editor/render/guides';
 import { nodesIntersectNonPrintable } from '../../editor/render/regionOverlay';
 import {
@@ -122,6 +132,14 @@ interface DragState {
     startWorld: Point;
     /** Full origin transform per node so a move preserves rot/scale (must-fix #4). */
     origins: Map<string, DragOrigin>;
+    /**
+     * Each dragged node's **parent** world rotation in degrees, captured at
+     * drag start (bug 3). The pointer delta is world-space while `transform.x/y`
+     * are parent-local, so the delta must be rotated by `−parentRotDeg` before
+     * it is added to the origin. Parent transforms cannot change during a
+     * child-only drag, so the cached value stays exact.
+     */
+    parentRotations: Map<string, number>;
     /** World bounds per dragged node captured at drag start, for snapping. */
     bounds: Map<string, ViewRect>;
     /**
@@ -227,6 +245,87 @@ const nodeBaseExtent = (node: Node): Size =>
     node.type === 'shape' && (node.shape === 'line' || node.shape === 'polygon')
         ? pointsExtent(node.points ?? [])
         : nodeSize(node);
+
+/**
+ * The `shrink` display scale a **resolved** text renders with. `1` for every
+ * other wrap and for a degenerate box, whose measured factor is `0` while the
+ * renderers fall back to 1.
+ *
+ * The text basis must be the **resolved** one (`node.text`, i.e. the sample-row
+ * / override content the canvas actually draws), never the doc node's raw
+ * source: a CSV-bound node's static value is empty, so measuring it yields a
+ * one-line box and the wrong factor — which baked the display scale into the
+ * committed width. `ResolvedShape` folds the same factor into the Konva node's
+ * own scale, so the overlay placement and the box-only resize recipe divide it
+ * out to work in document units. The caller may override the size/font size to
+ * ask for the factor a **committed** box will render with.
+ */
+const shrinkFactorForText = (
+    text: Pick<ResolvedText, 'wrap' | 'text' | 'fontSize' | 'fontFamily' | 'fontStyle' | 'lineHeight' | 'letterSpacing'>,
+    size: Size,
+): number => {
+    if (text.wrap !== 'shrink') return 1;
+    const shrink = shrinkScaleOf({
+        text: text.text,
+        width: size.w,
+        height: size.h,
+        fontSize: text.fontSize,
+        fontFamily: text.fontFamily,
+        fontStyle: text.fontStyle,
+        lineHeight: text.lineHeight,
+        letterSpacing: text.letterSpacing,
+    });
+    return shrink > 0 ? shrink : 1;
+};
+
+/**
+ * The `shrink` display factor the renderer will apply to `source` **after**
+ * `patch` commits: measured on the resolved content and the patch's committed
+ * box/font size. The live Konva node must be reset to this value, not to ±1:
+ * React-Konva diffs against the last **rendered prop**, so when the committed
+ * box's shrink equals the pre-gesture one it skips the scale write, and a ±1
+ * reset would leave the glyphs at 1× (finding B).
+ */
+const committedShrinkFor = (source: Node, resolved: ResolvedText | undefined, patch: NodePatch): number => {
+    if (!resolved || source.type !== 'text' || source.wrap !== 'shrink') return 1;
+    const geometry = patch as { size?: Size; fontSize?: number };
+    return shrinkFactorForText(
+        { ...resolved, fontSize: geometry.fontSize ?? resolved.fontSize },
+        geometry.size ?? { w: resolved.w, h: resolved.h },
+    );
+};
+
+/**
+ * The display shrink a source text renders with **now**, measured on the
+ * resolved content and the committed (pre-gesture) box. `1` for every other
+ * node and wrap. Used to normalise a text node in the multi-select commit,
+ * whose live scale also carries the display factor.
+ */
+const sourceShrinkOf = (source: Node, resolved: ResolvedText | undefined): number =>
+    resolved && source.type === 'text' && source.wrap === 'shrink'
+        ? shrinkFactorForText(resolved, { w: resolved.w, h: resolved.h })
+        : 1;
+
+/**
+ * The **layout** box the renderer lays a text out in: the document box, except
+ * a shrink text whose height is pre-divided by the display scale (the single
+ * `scale(shrink)` then paints it at the document height — `ResolvedShape`).
+ */
+const textLayoutSize = (source: TextNode, size: Size, shrink: number): Size =>
+    source.wrap === 'shrink' ? { w: size.w, h: size.h / shrink } : size;
+
+/**
+ * Force a live text node to the layout state the next render produces from a
+ * committed box. The box-only recipe writes `width`/`height` imperatively and
+ * React-Konva only re-applies a **changed** prop; a shrink text's layout height
+ * (`h / shrink`) is invariant across a height gesture, so the stale imperative
+ * height survived the commit and the next gesture read it back (F3). A `cut`
+ * clip group also carries the box on its clip rect and child Text.
+ */
+const applyLiveLayout = (konvaNode: Konva.Node, source: TextNode, layout: Size): void => {
+    konvaNode.setAttrs({ width: layout.w, height: layout.h });
+    if (source.wrap === 'cut') syncCutTextBox(konvaNode as Konva.Group, layout.w, layout.h);
+};
 
 /**
  * The `Konva.Text` child of each `cut` clip group, cached for the live resize.
@@ -720,6 +819,31 @@ export const PreviewStage: React.FC = () => {
         return node && node.type === 'text' ? node : null;
     }, [selectedNodeIds, doc]);
 
+    /**
+     * Resolved text nodes by id — the **same** content basis the canvas draws
+     * (sample-row overrides included). A doc `TextNode` can carry a CSV source
+     * whose static value is empty, so measuring the raw node would describe a
+     * different text than the one on screen.
+     */
+    const resolvedTextById = useMemo(() => {
+        const map = new Map<string, ResolvedText>();
+        for (const node of flatResolved) if (node.type === 'text') map.set(node.id, node);
+        return map;
+    }, [flatResolved]);
+
+    /**
+     * The shrink display scale the box-only text renders with (see
+     * `shrinkFactorForText`), measured on the resolved content and the
+     * pre-gesture box. The live Konva node carries it in its own scale, so the
+     * resize recipe divides it out to work in document units. `1` for every
+     * non-shrink text and for non-text selections.
+     */
+    const boxOnlyTextShrink = useMemo(() => {
+        if (!boxOnlyTextSource) return 1;
+        const resolved = resolvedTextById.get(boxOnlyTextSource.id);
+        return resolved ? shrinkFactorForText(resolved, { w: resolved.w, h: resolved.h }) : 1;
+    }, [boxOnlyTextSource, resolvedTextById]);
+
     const registerRef = useCallback((id: string, node: Konva.Node | null) => {
         if (node) nodeRefs.current.set(id, node);
         else nodeRefs.current.delete(id);
@@ -807,15 +931,30 @@ export const PreviewStage: React.FC = () => {
     const beginDrag = useCallback(
         (world: Point, ids: readonly string[], collapseTo: string | null = null) => {
             const origins = new Map<string, DragOrigin>();
+            const parentRotations = new Map<string, number>();
             const bounds = new Map<string, ViewRect>();
             if (!doc) return;
+            // Built lazily: the root-level drags that make up most gestures
+            // never need the parent lookup at all.
+            let byId: Map<string, Node> | null = null;
+            const byIdOf = (): Map<string, Node> => (byId ??= new Map(doc.nodes.map((entry) => [entry.id, entry])));
             for (const id of ids) {
                 const node = doc.nodes.find((entry) => entry.id === id);
-                if (node) origins.set(id, dragOriginOf(node));
+                if (node) {
+                    origins.set(id, dragOriginOf(node));
+                    // A child's `transform.x/y` live in the parent's frame, so
+                    // cache the parent's **effective** rotation (ancestors
+                    // included) to rotate the world delta into it (bug 3).
+                    const parent = node.parentId ? byIdOf().get(node.parentId) : undefined;
+                    if (parent) {
+                        const matrix = effectiveTransform(parent, byIdOf());
+                        parentRotations.set(id, (Math.atan2(matrix.b, matrix.a) * 180) / Math.PI);
+                    }
+                }
                 const box = nodeBoundsRef.current.get(id);
                 if (box) bounds.set(id, box);
             }
-            dragRef.current = { startWorld: world, origins, bounds, collapseTo, moved: false };
+            dragRef.current = { startWorld: world, origins, parentRotations, bounds, collapseTo, moved: false };
         },
         [doc],
     );
@@ -1005,30 +1144,20 @@ export const PreviewStage: React.FC = () => {
         // `ResolvedShape` applies. The overlay owns the shrink from here on (it
         // recomputes it live from the session text and scales the content), so
         // divide the captured scale by the same factor instead of
-        // double-applying it.
-        const shrink =
-            node.wrap === 'shrink'
-                ? shrinkScaleOf({
-                      text: node.text.kind === 'static' ? node.text.value : '',
-                      width: size.w,
-                      height: size.h,
-                      fontSize,
-                      fontFamily,
-                      fontStyle,
-                      lineHeight,
-                      letterSpacing: node.letterSpacing,
-                  })
-                : 1;
-        // A zero-size box measures `scale === 0`; dividing by it would emit
-        // `Infinity`/`NaN`, which the overlay inherits in its `deviceScale` and
-        // caret width. Same guard as the two renderers and the overlay.
-        const layoutShrink = shrink > 0 ? shrink : 1;
+        // double-applying it. Measure on the resolved content, which is what the
+        // canvas (and the overlay's session text) shows.
+        const resolvedText = resolvedTextById.get(node.id);
+        const layoutShrink = resolvedText ? shrinkFactorForText(resolvedText, size) : 1;
         const scaleX = (Math.hypot(nodeM[0], nodeM[1]) || 1) / layoutShrink;
         const scaleY = (Math.hypot(nodeM[2], nodeM[3]) || 1) / layoutShrink;
         // The double-click point, mapped into the node's own (unscaled) space so
         // the caret lands under the pointer even when the node is rotated/scaled.
+        // `pointer` is already relative to the stage content (Konva subtracts
+        // its own element origin), and the ruler gutter is CSS padding on the
+        // container **outside** that element — passing it here would shift the
+        // caret by a second 24 px (bug 5).
         const pointer = stage.getPointerPosition() ?? { x: screenX, y: screenY };
-        const clickLocal = localPointOf(nodeM, pointer.x, pointer.y, gutter, gutter);
+        const clickLocal = localPointOf(nodeM, pointer.x, pointer.y);
         beginTextEdit({
             id: node.id,
             screenX,
@@ -1047,7 +1176,7 @@ export const PreviewStage: React.FC = () => {
             letterSpacing: node.letterSpacing,
             align: node.align ?? 'left',
         });
-    }, [activeTool, finishPolygon, pointerWorld, targets, doc, beginTextEdit, rulersVisible]);
+    }, [activeTool, finishPolygon, pointerWorld, targets, doc, beginTextEdit, rulersVisible, resolvedTextById]);
 
     const handlePointerMove = useCallback((event?: Konva.KonvaEventObject<PointerEvent>) => {
         const stage = stageRef.current;
@@ -1199,7 +1328,12 @@ export const PreviewStage: React.FC = () => {
             }
 
             for (const [id, origin] of drag.origins) {
-                updateNodeTransient(id, movePatch(origin, dx, dy));
+                // Convert the world-space delta into the node's parent frame
+                // before it meets the parent-local origin (bug 3): in a 90°
+                // group, dragging right must move the child right on screen,
+                // i.e. up in the group's local axes.
+                const local = worldDeltaToLocal(dx, dy, drag.parentRotations.get(id) ?? 0);
+                updateNodeTransient(id, movePatch(origin, local.dx, local.dy));
             }
         }
     }, [doc, marquee, viewport, snapEnabled, selectedNodeIds, backing, innerSize, nodeBoundsById, updateNodeTransient, activeTool, polygonPoints, gridSpacingHm]);
@@ -1276,22 +1410,25 @@ export const PreviewStage: React.FC = () => {
             if (!konvaNode || !source || source.type === 'group') continue;
             konvaNode.position({ x: source.transform.x, y: source.transform.y });
             konvaNode.rotation(source.transform.rotDeg);
-            konvaNode.scale({ x: source.transform.scaleX, y: source.transform.scaleY });
-            // The box-only text recipe (item 6) writes the box imperatively; a
-            // cancel must restore it, or the abandoned live size would linger
-            // until the next unrelated re-render.
             if (source.type === 'text') {
+                // A text renders at `transform.scale × shrink`, laid out in the
+                // `w × h/shrink` box (see `ResolvedShape`). Restoring the raw
+                // document scale/box here dropped the display factor, leaving
+                // enlarged, clipped glyphs after a cancelled resize (F4b).
                 const box = nodeSize(source);
-                konvaNode.setAttrs({ width: box.w, height: box.h });
-                // A `cut` text also owns a clip rect + child Text box that the
-                // live recipe moves; restore them or the abandoned size keeps
-                // clipping after the cancel.
-                if (source.wrap === 'cut') syncCutTextBox(konvaNode as Konva.Group, box.w, box.h);
+                const shrink = sourceShrinkOf(source, resolvedTextById.get(id));
+                konvaNode.scale({
+                    x: source.transform.scaleX * shrink,
+                    y: source.transform.scaleY * shrink,
+                });
+                applyLiveLayout(konvaNode, source, textLayoutSize(source, box, shrink));
+            } else {
+                konvaNode.scale({ x: source.transform.scaleX, y: source.transform.scaleY });
             }
         }
         transformerRef.current?.forceUpdate();
         layerRef.current?.batchDraw();
-    }, [doc, selectedNodeIds]);
+    }, [doc, selectedNodeIds, resolvedTextById]);
 
     /**
      * Abandon a live Transformer gesture without committing it. Konva's
@@ -1646,21 +1783,29 @@ export const PreviewStage: React.FC = () => {
         const scaleY = konvaNode.scaleY();
         // The live box after this event: Konva's scale is the gesture factor so
         // far, applied to the box the previous event left behind.
-        const nextWidth = konvaNode.width() * Math.abs(scaleX);
-        const nextHeight = konvaNode.height() * Math.abs(scaleY);
+        //
+        // A shrink text's live scale also carries its display factor
+        // (`ResolvedShape` folds `shrinkScaleOf` into the node scale), so the
+        // raw factors are divided by it: the recipe works in document units and
+        // must not bake a `w × shrink` box into the document (bug 4 seam).
+        const shrink = boxOnlyTextShrink;
+        const nextWidth = konvaNode.width() * (Math.abs(scaleX) / shrink);
+        const nextHeight = konvaNode.height() * (Math.abs(scaleY) / shrink);
         konvaNode.setAttrs({
             width: nextWidth,
             height: nextHeight,
-            // Preserve the flip sign, matching the commit's scale collapse.
-            scaleX: Math.sign(scaleX) || 1,
-            scaleY: Math.sign(scaleY) || 1,
+            // Preserve the flip sign **and** the shrink display scale, matching
+            // the commit's scale collapse (the commit re-renders the shrink
+            // from the box, so the document scale itself stays ±1).
+            scaleX: (Math.sign(scaleX) || 1) * shrink,
+            scaleY: (Math.sign(scaleY) || 1) * shrink,
         });
         // A `cut` text registers its clip group: sync the clip rect and the
         // child Text to the same live box, or the clip stays at the committed
         // size for the whole gesture.
         if (boxOnlyTextSource.wrap === 'cut') syncCutTextBox(konvaNode as Konva.Group, nextWidth, nextHeight);
         boxOnlyTextRef.current = true;
-    }, [boxOnlyTextSource]);
+    }, [boxOnlyTextSource, boxOnlyTextShrink]);
 
     /**
      * Batch a Transformer gesture into **one** undo entry (must-fix #3): apply
@@ -1703,23 +1848,70 @@ export const PreviewStage: React.FC = () => {
             // ending the gesture, so read it from the value captured at
             // `transformstart` rather than depend on the teardown ordering.
             const anchor = activeAnchorRef.current;
+            // A rotater gesture is **rotation only**: Konva changes the node's
+            // rotation and translates its origin (it pivots about the
+            // Transformer's centre) and nothing else. Committing the resize path
+            // for it baked the live display scale — the shrink-to-fit scale of a
+            // text, or an inspector `transform.scale` — into `size`/`fontSize`
+            // (bug 4). The anchor, not `boxOnlyTextRef`, is the signal:
+            // `handleTransform` early-returns for the rotater before it ever
+            // sets that flag.
+            const rotateOnly = anchor === 'rotater';
             for (const id of selectedNodeIds) {
                 const konvaNode = nodeRefs.current.get(id);
                 const source = doc.nodes.find((entry) => entry.id === id);
                 // Groups are not attached to the Transformer (D-10); skip them.
                 if (!konvaNode || !source || source.type === 'group') continue;
+                if (rotateOnly) {
+                    updateNodeTransient(
+                        id,
+                        rotationOnlyPatch(source, {
+                            x: konvaNode.x(),
+                            y: konvaNode.y(),
+                            rotDeg: konvaNode.rotation(),
+                            // Konva's decomposition may express a mirrored doc as
+                            // the negated scale pair; the live signs let the
+                            // patch detect that representation change.
+                            scaleX: konvaNode.scaleX(),
+                            scaleY: konvaNode.scaleY(),
+                        }),
+                    );
+                    continue;
+                }
                 // Read geometry from the live node: the Transformer mutates the
                 // Konva node's scale/rotation in place during a gesture, while
                 // the document stays at the pre-gesture baseline.
                 const base = nodeBaseExtent(source);
+                const resolvedSource = resolvedTextById.get(id);
+                // The display shrink the live node currently carries (1 unless
+                // this is a shrink text). Its live scale is
+                // `document scale × shrink`, so anything derived from that scale
+                // must be divided by this before it can become a document size.
+                const sourceShrink = sourceShrinkOf(source, resolvedSource);
                 // Box-only text (item 6): the live recipe already baked the
                 // gesture scale into the node's width/height and reset the scale
                 // to its sign, so the box — not `base × scale` — is the commit
                 // target. Live equals commit because the same box is what the
                 // user saw reflow.
-                const target = boxOnly
-                    ? { w: konvaNode.width(), h: konvaNode.height() }
-                    : transformerTargetSize(base, konvaNode.scaleX(), konvaNode.scaleY());
+                //
+                // A shrink text is laid out at `w × h / shrink` (the single
+                // display scale then brings it back to `w·shrink × h`), so only
+                // its **height** is still in layout units: convert it back to
+                // document units. Width is already the document box width.
+                let target: Size;
+                if (boxOnly) {
+                    target = { w: konvaNode.width(), h: konvaNode.height() * sourceShrink };
+                } else {
+                    const scaled = transformerTargetSize(base, konvaNode.scaleX(), konvaNode.scaleY());
+                    // A text in a **multi-selection** never runs the box-only
+                    // recipe, so its live scale still carries the shrink display
+                    // factor; divide it out or the committed box bakes it (a
+                    // 10×1 mm text saved as 7.5×0.5, F4a).
+                    target =
+                        sourceShrink === 1
+                            ? scaled
+                            : { w: scaled.w / sourceShrink, h: scaled.h / sourceShrink };
+                }
                 // A `cut` text's clip group is committed with the same rounded
                 // box the doc gets below: keep the clip rect and the child Text
                 // on it so no frame renders with a stale cut (the re-render then
@@ -1740,17 +1932,6 @@ export const PreviewStage: React.FC = () => {
                 // mirror reverts on release.
                 const liveScaleX = konvaNode.scaleX();
                 const liveScaleY = konvaNode.scaleY();
-                // Konva's Transformer mutates the selected node's own scale in
-                // place during a gesture and never resets it. On the commit
-                // re-render React-Konva skips re-applying an unchanged
-                // `scaleX`/`scaleY` prop (strict mode off), so the node would
-                // keep the gesture scale `k` and render at `base·k²`. Reset the
-                // node's own scale here — preserving the flip sign — so the
-                // committed geometry is the single source of the size. The
-                // Transformer's chrome re-sync here relies on the commit
-                // re-render re-running the attach effect; `forceUpdate` is called
-                // explicitly below so the reset is not merely incidental.
-                konvaNode.scale({ x: Math.sign(liveScaleX) || 1, y: Math.sign(liveScaleY) || 1 });
                 const scaleX = Math.abs(liveScaleX);
                 const scaleY = Math.abs(liveScaleY);
                 const liveUniform = Math.abs(scaleX - scaleY) <= 1e-6 * Math.max(1, scaleX, scaleY);
@@ -1772,26 +1953,56 @@ export const PreviewStage: React.FC = () => {
                           selectedNodesPreserveAspect,
                           liveUniform,
                       );
-                updateNodeTransient(
-                    id,
-                    transformEndPatch(
-                        source,
-                        { w: Math.round(target.w), h: Math.round(target.h) },
-                        preserveAspect,
-                        {
-                            x: konvaNode.x(),
-                            y: konvaNode.y(),
-                            rotDeg: konvaNode.rotation(),
-                            // Signed: a flipped gesture must stay flipped.
-                            scaleX: liveScaleX,
-                            scaleY: liveScaleY,
-                        },
-                        // Hand the exact live uniform factor (magnitude) to the
-                        // resize so rounding the target box cannot bias the
-                        // commit.
-                        preserveAspect ? scaleX : undefined,
-                    ),
+                const patch = transformEndPatch(
+                    source,
+                    { w: Math.round(target.w), h: Math.round(target.h) },
+                    preserveAspect,
+                    {
+                        x: konvaNode.x(),
+                        y: konvaNode.y(),
+                        rotDeg: konvaNode.rotation(),
+                        // Signed: a flipped gesture must stay flipped.
+                        scaleX: liveScaleX,
+                        scaleY: liveScaleY,
+                    },
+                    // Hand the exact live uniform factor (magnitude, in document
+                    // units — the live scale carries the shrink display factor)
+                    // to the resize so rounding the target box cannot bias the
+                    // commit.
+                    preserveAspect ? scaleX / sourceShrink : undefined,
                 );
+                // Konva's Transformer mutates the selected node's own scale in
+                // place during a gesture and never resets it. On the commit
+                // re-render React-Konva skips re-applying an unchanged
+                // `scaleX`/`scaleY` prop (strict mode off), so the node would
+                // keep the gesture scale `k` and render at `base·k²`. Reset the
+                // node's own scale here so the committed geometry is the single
+                // source of the size. The reset value must be the scale the
+                // renderer will apply for the **committed** box: ±1 for ordinary
+                // nodes, but `sign × shrink` for a shrink text, whose committed
+                // shrink React-Konva may skip (unchanged prop) — a ±1 reset then
+                // doubled the glyphs (finding B).
+                const committedShrink = committedShrinkFor(source, resolvedSource, patch);
+                konvaNode.scale({
+                    x: (Math.sign(liveScaleX) || 1) * committedShrink,
+                    y: (Math.sign(liveScaleY) || 1) * committedShrink,
+                });
+                // The live **layout** must equal the next render's too: the
+                // box-only recipe grew `width`/`height` imperatively, and a
+                // shrink text's layout height (`h / shrink`) can be unchanged by
+                // the commit, so React-Konva skips it — the NEXT gesture then
+                // read that stale height back and baked it into the box (F3).
+                if (source.type === 'text') {
+                    const committedSize = (patch as { size?: Size }).size;
+                    if (committedSize) {
+                        applyLiveLayout(
+                            konvaNode,
+                            source,
+                            textLayoutSize(source, committedSize, committedShrink),
+                        );
+                    }
+                }
+                updateNodeTransient(id, patch);
             }
             commitDoc();
             // Explicit chrome re-sync: the reset above relies on the commit
@@ -1799,7 +2010,7 @@ export const PreviewStage: React.FC = () => {
             // the node's `*Change` events, so force it here.
             transformerRef.current?.forceUpdate();
         },
-        [doc, selectedNodeIds, selectedNodesPreserveAspect, updateNodeTransient, commitDoc, revertSelectedNodesFromDoc],
+        [doc, selectedNodeIds, selectedNodesPreserveAspect, resolvedTextById, updateNodeTransient, commitDoc, revertSelectedNodesFromDoc],
     );
 
     // A page reload/close inside the autosave debounce would otherwise drop the

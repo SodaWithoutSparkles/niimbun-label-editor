@@ -1,20 +1,116 @@
-import type { StoreSlice } from '../storeTypes';
+import type { GrayscaleToneSettings, RedBlackSettings, StoreSlice } from '../storeTypes';
 import {
+    BLACK_DEPTH_MAX,
+    BLACK_DEPTH_MIN,
     DEFAULT_CONNECT_METHOD,
+    DEFAULT_GRAYSCALE_TONE,
     DEFAULT_GRID_SPACING_HM,
     DEFAULT_QUANTIZER_BY_TYPE,
     DEFAULT_QUANTIZER_DEFAULTS,
+    DEFAULT_RED_BLACK_SETTINGS,
     DEFAULT_SCREEN_DPI,
+    GRAYSCALE_TONE_MAX_LEVEL,
+    GRAYSCALE_TONE_MIN_LEVEL,
     GRID_SPACING_MAX_HM,
     GRID_SPACING_MIN_HM,
+    RED_COVERAGE_MAX,
+    RED_COVERAGE_MIN,
+    RED_INTENSITY_MAX,
+    RED_INTENSITY_MIN,
     SCREEN_DPI_MAX,
     SCREEN_DPI_MIN,
+    defaultAutoOrientPortrait,
     defaultAutoSave,
     defaultKeyboardShortcuts,
     defaultLanguage,
     defaultToolSettings,
     defaultUsePrinterDpi,
 } from '../storeDefaults';
+
+/**
+ * Clamp a red/black knob and fall back to `current` when the candidate is not
+ * finite, so a programmatic (or corrupt) write can never poison the setting.
+ */
+const clampKnob = (value: unknown, current: number, min: number, max: number): number =>
+    typeof value === 'number' && Number.isFinite(value)
+        ? Math.min(max, Math.max(min, value))
+        : current;
+
+/** Same as {@link clampKnob}, rounded to an integer (levels, percents). */
+const clampInteger = (value: unknown, current: number, min: number, max: number): number =>
+    typeof value === 'number' && Number.isFinite(value)
+        ? Math.min(max, Math.max(min, Math.round(value)))
+        : current;
+
+/**
+ * Merge a patch into the settings and clamp every knob. The coverage band is
+ * resolved **max first**, then `min` is clamped down to it, so a reversed
+ * patch ties at the upper bound (and a `max`-only patch cannot leave an
+ * inverted band behind).
+ */
+const mergeRedBlackSettings = (
+    current: RedBlackSettings,
+    patch: Partial<RedBlackSettings>,
+): RedBlackSettings => {
+    const redCoverageMax = clampInteger(
+        patch.redCoverageMax,
+        current.redCoverageMax,
+        RED_COVERAGE_MIN,
+        RED_COVERAGE_MAX,
+    );
+    const redCoverageMin = Math.min(
+        clampInteger(
+            patch.redCoverageMin,
+            current.redCoverageMin,
+            RED_COVERAGE_MIN,
+            RED_COVERAGE_MAX,
+        ),
+        redCoverageMax,
+    );
+    return {
+        redIntensity: clampKnob(
+            patch.redIntensity,
+            current.redIntensity,
+            RED_INTENSITY_MIN,
+            RED_INTENSITY_MAX,
+        ),
+        blackDepth: clampKnob(
+            patch.blackDepth,
+            current.blackDepth,
+            BLACK_DEPTH_MIN,
+            BLACK_DEPTH_MAX,
+        ),
+        redCoverageMin,
+        redCoverageMax,
+    };
+};
+
+/**
+ * Merge a partial grayscale band and clamp both levels to 0..15 integers. A
+ * reversed band ties at the upper bound, matching the engine
+ * (`grayscaleRampPalette`) and the preference validator.
+ */
+const mergeGrayscaleTone = (
+    current: GrayscaleToneSettings,
+    patch: Partial<GrayscaleToneSettings>,
+): GrayscaleToneSettings => {
+    const maxLevel = clampInteger(
+        patch.maxLevel,
+        current.maxLevel,
+        GRAYSCALE_TONE_MIN_LEVEL,
+        GRAYSCALE_TONE_MAX_LEVEL,
+    );
+    const minLevel = Math.min(
+        clampInteger(
+            patch.minLevel,
+            current.minLevel,
+            GRAYSCALE_TONE_MIN_LEVEL,
+            GRAYSCALE_TONE_MAX_LEVEL,
+        ),
+        maxLevel,
+    );
+    return { minLevel, maxLevel };
+};
 
 /**
  * Preference fields and actions. Moved verbatim out of `preferencesSlice`
@@ -28,6 +124,12 @@ export const createSettingsSlice: StoreSlice = (set) => ({
         const nextAutoSave = !state.autoSave;
         return { autoSave: nextAutoSave };
     }),
+
+    // "Default view orientation" (opt-in, default OFF). Persisted with the
+    // other global settings; never document data. Takes effect at the next
+    // document open, never on the document already on screen.
+    autoOrientPortrait: defaultAutoOrientPortrait,
+    setAutoOrientPortrait: (autoOrientPortrait) => set({ autoOrientPortrait }),
 
     // Print raster dpi preference (P2). Persisted with the other global
     // settings; never document data. A value setter (not a toggle) because the
@@ -106,6 +208,24 @@ export const createSettingsSlice: StoreSlice = (set) => ({
     defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
     setDefaultQuantizerByType: (defaultQuantizerByType) => set({ defaultQuantizerByType }),
 
+    // Red/black page tuning (P9 wave C). Persisted with the other global
+    // settings; applied to every red/black page (preview, thumbnails, job).
+    // Never document data. A merged setter clamps both knobs to the engine
+    // ranges, so the dialog can write raw slider values.
+    redBlackSettings: DEFAULT_RED_BLACK_SETTINGS,
+    setRedBlackSettings: (patch) => set((state) => ({
+        redBlackSettings: mergeRedBlackSettings(state.redBlackSettings, patch),
+    })),
+
+    // Grayscale usable ink band (P10). Persisted with the other global
+    // settings; applied to every grayscale page (preview, thumbnails, job).
+    // Level 0 stays paper white in the palette, so the band never greys the page
+    // margin. Never document data.
+    grayscaleTone: DEFAULT_GRAYSCALE_TONE,
+    setGrayscaleTone: (patch) => set((state) => ({
+        grayscaleTone: mergeGrayscaleTone(state.grayscaleTone, patch),
+    })),
+
     // Preferred paper type for a new label (§11, P8). Optional on purpose: an
     // unset preference means "no default", so the create-label dialog falls
     // back to the first seed / `custom`. Persisted with the other global
@@ -121,6 +241,7 @@ export const createSettingsSlice: StoreSlice = (set) => ({
 
     resetSettings: () => set({
         autoSave: defaultAutoSave,
+        autoOrientPortrait: defaultAutoOrientPortrait,
         usePrinterDpi: defaultUsePrinterDpi,
         keyboardShortcuts: defaultKeyboardShortcuts,
         toolSettings: defaultToolSettings,
@@ -130,6 +251,8 @@ export const createSettingsSlice: StoreSlice = (set) => ({
         connectMethod: DEFAULT_CONNECT_METHOD,
         quantizerDefaults: DEFAULT_QUANTIZER_DEFAULTS,
         defaultQuantizerByType: DEFAULT_QUANTIZER_BY_TYPE,
+        redBlackSettings: DEFAULT_RED_BLACK_SETTINGS,
+        grayscaleTone: DEFAULT_GRAYSCALE_TONE,
         defaultPaperTypeId: undefined,
     }),
 });

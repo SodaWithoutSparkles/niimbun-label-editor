@@ -344,6 +344,139 @@ describe('usePrintThumbnails', () => {
         expect(renderPage.mock.calls[0]![2]).toHaveProperty('maxHeadHm', 4800);
     });
 
+    it('forwards red/black tuning and rebuilds the cache when a knob changes', async () => {
+        const renderPage = makeRender(fakePage());
+        const { result, rerender } = renderHook(
+            ({ redIntensity }: { redIntensity: number }) =>
+                usePrintThumbnails({
+                    doc,
+                    csv: null,
+                    renderPage,
+                    overrides: { pageColor: 'redBlack', redBlack: { redIntensity, blackDepth: 0.5 } },
+                }),
+            { initialProps: { redIntensity: 1 } },
+        );
+
+        await waitFor(() =>
+            expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub'),
+        );
+        expect(renderPage.mock.calls[0]![2]).toMatchObject({
+            pageColor: 'redBlack',
+            redBlack: { redIntensity: 1, blackDepth: 0.5 },
+        });
+
+        // A changed knob re-renders with the new value.
+        rerender({ redIntensity: 1.2 });
+        expect(result.current.urlFor(0)).toBeUndefined();
+        await waitFor(() =>
+            expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub'),
+        );
+        expect(renderPage).toHaveBeenCalledTimes(2);
+        expect(renderPage.mock.calls[1]![2]).toMatchObject({
+            redBlack: { redIntensity: 1.2, blackDepth: 0.5 },
+        });
+
+        // A fresh-but-equal overrides object keeps the cache.
+        rerender({ redIntensity: 1.2 });
+        expect(renderPage).toHaveBeenCalledTimes(2);
+    });
+
+    it('forwards the grayscale band and rebuilds the cache when it changes', async () => {
+        const renderPage = makeRender(fakePage());
+        const { result, rerender } = renderHook(
+            ({ minLevel }: { minLevel: number }) =>
+                usePrintThumbnails({
+                    doc,
+                    csv: null,
+                    renderPage,
+                    overrides: {
+                        pageColor: 'grayscale',
+                        grayscaleTone: { minLevel, maxLevel: 14 },
+                    },
+                }),
+            { initialProps: { minLevel: 4 } },
+        );
+
+        await waitFor(() =>
+            expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub'),
+        );
+        expect(renderPage.mock.calls[0]![2]).toMatchObject({
+            pageColor: 'grayscale',
+            grayscaleTone: { minLevel: 4, maxLevel: 14 },
+        });
+
+        // A changed bound re-renders; a fresh-but-equal object does not.
+        rerender({ minLevel: 5 });
+        expect(result.current.urlFor(0)).toBeUndefined();
+        await waitFor(() =>
+            expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub'),
+        );
+        expect(renderPage).toHaveBeenCalledTimes(2);
+        expect(renderPage.mock.calls[1]![2]).toMatchObject({
+            grayscaleTone: { minLevel: 5, maxLevel: 14 },
+        });
+        rerender({ minLevel: 5 });
+        expect(renderPage).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the mono key stable when no grayscale band is set', async () => {
+        const renderPage = makeRender(fakePage());
+        const { result, rerender } = renderHook(
+            ({ overrides }: { overrides: Record<string, unknown> }) =>
+                usePrintThumbnails({ doc, csv: null, renderPage, overrides }),
+            { initialProps: { overrides: {} } },
+        );
+
+        await waitFor(() =>
+            expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub'),
+        );
+        // An explicit `undefined` band (as a caller might forward unconditionally)
+        // appends nothing: no rebuild, no render option.
+        rerender({ overrides: { grayscaleTone: undefined } });
+        expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub');
+        expect(renderPage).toHaveBeenCalledTimes(1);
+        expect(renderPage.mock.calls[0]![2]).not.toHaveProperty('grayscaleTone');
+    });
+
+    it('forwards the red coverage band and rebuilds only when it changes', async () => {
+        const renderPage = makeRender(fakePage());
+        const { result, rerender } = renderHook(
+            ({ redCoverageMin }: { redCoverageMin: number }) =>
+                usePrintThumbnails({
+                    doc,
+                    csv: null,
+                    renderPage,
+                    overrides: {
+                        pageColor: 'redBlack',
+                        redBlack: {
+                            redIntensity: 1,
+                            blackDepth: 0.5,
+                            redCoverageMin,
+                            redCoverageMax: 100,
+                        },
+                    },
+                }),
+            { initialProps: { redCoverageMin: 50 } },
+        );
+
+        await waitFor(() =>
+            expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub'),
+        );
+        expect(renderPage.mock.calls[0]![2]).toMatchObject({
+            redBlack: { redCoverageMin: 50, redCoverageMax: 100 },
+        });
+
+        rerender({ redCoverageMin: 60 });
+        expect(result.current.urlFor(0)).toBeUndefined();
+        await waitFor(() =>
+            expect(result.current.urlFor(0)).toBe('data:image/png;base64,stub'),
+        );
+        expect(renderPage).toHaveBeenCalledTimes(2);
+        expect(renderPage.mock.calls[1]![2]).toMatchObject({
+            redBlack: { redCoverageMin: 60, redCoverageMax: 100 },
+        });
+    });
+
     it('rebuilds the cache when the head clamp changes', async () => {
         const renderPage = makeRender(fakePage());
         const { result, rerender } = renderHook(

@@ -429,19 +429,29 @@ export const TextEditorOverlay: React.FC<TextEditorOverlayProps> = ({
         if (ta) measure(focusEndpoint(ta));
     }, [measure, focusEndpoint]);
 
-    // Seed the caret under the double-click point, once, on open. `clickLocalX/Y`
-    // are node-local hm (the parent inverted the node matrix), so this is correct
-    // for a rotated/scaled node; layout px = local hm × the node's screen scale.
+    // Seed the caret under the double-click point, once, on open.
+    // `clickLocalX/Y` are already in this textarea's **layout px**: the parent
+    // inverted the node's full absolute matrix (viewport zoom, ancestor groups
+    // and the shrink display scale included), and the wrapper CSS transform
+    // re-applies that scale to the whole editor. Multiplying by `session.scaleX`
+    // here applied zoom/shrink a second time, so the caret opened several
+    // characters away from the pointer on any zoomed node (bug 5).
     const seedRef = useRef(false);
     useEffect(() => {
         const ta = taRef.current;
         const ctx = measurementContext();
         if (!ta || !ctx || seedRef.current) return;
         seedRef.current = true;
-        const scale = session.scaleX || 1;
-        const x = session.clickLocalX * scale;
-        const y = session.clickLocalY * scale;
-        const offset = caretFromPoint(ctx, ta.value, x, y, contentWidth(), font, wrap, session.align);
+        const offset = caretFromPoint(
+            ctx,
+            ta.value,
+            session.clickLocalX,
+            session.clickLocalY,
+            contentWidth(),
+            font,
+            wrap,
+            session.align,
+        );
         ta.focus();
         ta.setSelectionRange(offset, offset);
         measure(offset);
