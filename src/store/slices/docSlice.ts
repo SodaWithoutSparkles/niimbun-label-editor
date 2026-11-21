@@ -274,15 +274,19 @@ export const createDocSlice: StoreSlice = (set, get) => {
         deleteLabel: async (id) => {
             const repo = get().labelRepo;
             if (!repo) return;
-            const closingCurrent = get().currentDoc?.meta.id === id;
-            if (closingCurrent) {
-                // The open doc is being removed: flush its pending save first
-                // and **await** it, so the write settles before the remove. A
-                // deferred autosave landing after `repo.remove` would recreate
-                // the label (remove-before-save inversion, must-fix #8).
-                await get().flushAutosave();
-                get().clearDocHistory();
-            }
+            // Every delete — of the open doc or any other label — serializes
+            // against the autosave chain first, and **awaits** it. The flush
+            // cancels the debounce synchronously and settles every write started
+            // so far, so a late autosave can never land after `repo.remove` and
+            // recreate the label (remove-before-save inversion, must-fix #8).
+            // This covers a write already in flight when a gallery delete starts
+            // too, since `setView` flushes the editor boundary without awaiting.
+            await get().flushAutosave();
+            // The open doc is going away: drop its undo history and transient
+            // baseline. Checked live (not before the flush) so a doc switch
+            // during the flush cannot wipe the newly opened doc's history, and
+            // deleting some other label leaves the open doc's history intact.
+            if (get().currentDoc?.meta.id === id) get().clearDocHistory();
             let removed = false;
             try {
                 await repo.remove(id);
