@@ -738,6 +738,37 @@ describe('editorSlice — document operations', () => {
         expect(store.getState().docPast).toHaveLength(1);
     });
 
+    it('redoDoc prunes an id the restored doc no longer has (F5)', () => {
+        // Repro: delete a → undo → select the restored node → redo → Shift-select
+        // the survivor. The stale id used to survive redo, so the transformer saw
+        // two ids: eight handles and no aspect lock.
+        const store = setupStore(makeDoc([textNode('a'), textNode('b')]));
+
+        store.getState().removeNode('a');
+        store.getState().undoDoc();
+        store.getState().selectNode('a');
+        store.getState().redoDoc();
+
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['b']);
+        // The restored doc defines which ids may stay selected.
+        expect(store.getState().selectedNodeIds).toEqual([]);
+
+        store.getState().toggleSelectNode('b');
+        expect(store.getState().selectedNodeIds).toHaveLength(1);
+        expect(store.getState().selectedNodeIds).toEqual(['b']);
+    });
+
+    it('undoDoc prunes an id the restored snapshot no longer has (F5)', () => {
+        const store = setupStore(makeDoc([textNode('a')]));
+
+        const added = store.getState().addNode(textNode('b'))!;
+        store.getState().selectNode(added);
+        store.getState().undoDoc();
+
+        expect(store.getState().currentDoc!.nodes.map((n) => n.id)).toEqual(['a']);
+        expect(store.getState().selectedNodeIds).toEqual([]);
+    });
+
     it('cloneNode deep-clones a subtree with unique ids and offsets the root', () => {
         const store = setupStore(makeDoc([textNode('p'), textNode('c', 'p')]));
         const newRoot = store.getState().cloneNode('p');

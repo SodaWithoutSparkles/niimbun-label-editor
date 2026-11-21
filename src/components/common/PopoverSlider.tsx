@@ -19,6 +19,16 @@ interface PanelPosition {
 const PANEL_GAP_PX = 8;
 const VIEWPORT_MARGIN_PX = 8;
 
+/**
+ * Decimal places of a `step`, including exponent notation: `0.01` → 2,
+ * `1e-7` → 7, `1.5e-3` → 4. Positive exponents (`1e+21`) need none — the
+ * value is already an integer.
+ */
+const stepPrecision = (step: number): number => {
+    const match = /(?:\.(\d+))?(?:e-(\d+))?$/.exec(step.toString());
+    return (match?.[1]?.length ?? 0) + Number(match?.[2] ?? 0);
+};
+
 interface PopoverSliderProps {
     value: number;
     onChange: (value: number) => void;
@@ -319,10 +329,24 @@ export const PopoverSlider: React.FC<PopoverSliderProps> = ({
                 else if (wrapped > max) wrapped -= period;
             }
             // Clamp to allowed precision based on step; fix float precision
-            // issues (e.g. 0.1 + 0.2 = 0.300000004).
-            const precision = step.toString().split('.')[1]?.length || 0;
-            const rounded = Math.round(wrapped / step) * step;
-            const fixed = parseFloat(rounded.toFixed(precision));
+            // issues (e.g. 0.1 + 0.2 = 0.300000004). Scale both operands by the
+            // step's decimal factor first: `0.15 / 0.1` is 1.4999… and would
+            // round down, while `1.5 / 1` is an exact tie that rounds up to 0.2,
+            // matching `normalizeRotDeg`'s `Math.round(deg * 10) / 10`.
+            const precision = stepPrecision(step);
+            const factor = 10 ** precision;
+            const scaledStep = Math.round(step * factor);
+            // A degenerate scaled step (an exponent-form step whose factor
+            // overflows, or a zero step) would divide by 0/Infinity: fall back
+            // to unscaled rounding so the committed value stays finite.
+            const rounded =
+                Number.isFinite(factor) && Number.isFinite(scaledStep) && scaledStep > 0
+                    ? Math.round((wrapped * factor) / scaledStep) * step
+                    : Math.round(wrapped / step) * step;
+            // `toFixed` throws above 100 digits and would truncate a genuinely
+            // sub-1e-100 step to "0", collapsing the value; `rounded` is already
+            // grid-correct there, so keep it as-is.
+            const fixed = precision > 100 ? rounded : parseFloat(rounded.toFixed(precision));
             // Belt-and-braces: keep the finite wrapped value if the step math
             // still overflowed.
             const committed = Number.isFinite(fixed) ? fixed : wrapped;

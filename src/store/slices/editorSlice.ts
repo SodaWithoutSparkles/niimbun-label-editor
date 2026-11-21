@@ -240,34 +240,52 @@ export const createEditorSlice: StoreSlice = (set, get) => {
     let autosaveWrites: Promise<void> = Promise.resolve();
 
     /**
-     * Newest snapshot waiting for the writer loop. Only one can be queued: while
-     * a write is stalled, later debounce ticks supersede it instead of growing
-     * the chain without bound (a full `LabelDoc` per queued write).
+     * Pending snapshots waiting for the writer loop, keyed by doc id. Coalescing
+     * is per label: a newer snapshot of the same doc supersedes the older one,
+     * while a different label's snapshot is kept — the loop can start late
+     * (chained behind an explicit write), so several labels can be waiting at
+     * once. Map insertion order gives a deterministic drain order.
      */
-    let queuedAutosave: {
-        doc: LabelDoc;
-        repo: NonNullable<ReturnType<typeof get>['labelRepo']>;
-    } | null = null;
+    const queuedAutosaves = new Map<
+        string,
+        {
+            doc: LabelDoc;
+            repo: NonNullable<ReturnType<typeof get>['labelRepo']>;
+        }
+    >();
 
-    /** True while the writer loop is draining `queuedAutosave`. */
+    /** True while the writer loop is draining `queuedAutosaves`. */
     let drainingAutosaves = false;
 
     /**
-     * Queue one autosave write. Coalesces to the newest snapshot while a write
-     * is in flight; `autosaveWrites` always covers everything queued so far.
+     * Queue one autosave write. Coalesces to the newest snapshot per label while
+     * the chain is busy; `autosaveWrites` always covers everything queued so far.
+     *
+     * The writer loop is **chained onto** the current chain rather than
+     * replacing it: a serialized explicit write already appended there must stay
+     * covered by `flushAutosave`, or a delete awaiting the flush could race past
+     * it and the explicit save would recreate the removed label (F2).
      */
     const enqueueAutosave = (
         doc: LabelDoc,
         repo: NonNullable<ReturnType<typeof get>['labelRepo']>,
     ): void => {
-        queuedAutosave = { doc, repo };
+        // Entry gate: never queue a write for a label whose delete committed.
+        if (get().deletedLabelIds.includes(doc.meta.id)) return;
+        // A re-set of an existing key keeps its original slot; the value is the
+        // newest snapshot, so same-label coalescing is preserved.
+        queuedAutosaves.set(doc.meta.id, { doc, repo });
         if (drainingAutosaves) return;
         drainingAutosaves = true;
-        autosaveWrites = (async () => {
+        const runLoop = async (): Promise<void> => {
             try {
-                while (queuedAutosave) {
-                    const next = queuedAutosave;
-                    queuedAutosave = null;
+                // Delete before awaiting so a snapshot enqueued during the write
+                // joins the map and is picked up by the next iteration. Entries
+                // enqueued during the final `size` check cannot interleave: the
+                // exit path from that check to `finally` is synchronous.
+                while (queuedAutosaves.size > 0) {
+                    const [id, next] = queuedAutosaves.entries().next().value!;
+                    queuedAutosaves.delete(id);
                     await saveDoc(next.doc, next.repo);
                 }
             } finally {
@@ -275,7 +293,11 @@ export const createEditorSlice: StoreSlice = (set, get) => {
                 // from stranding every later autosave behind a stuck flag.
                 drainingAutosaves = false;
             }
-        })();
+        };
+        // Append, never reset to a fresh promise: one serialized queue for the
+        // autosave loop and every `serializeRepositoryWrite` write. The chain
+        // stays non-rejecting; `runLoop` itself never rejects.
+        autosaveWrites = autosaveWrites.then(runLoop).catch(() => undefined);
     };
 
     // Baseline of an in-progress transient gesture. `null` when no gesture is
@@ -291,15 +313,36 @@ export const createEditorSlice: StoreSlice = (set, get) => {
      * (the explicit save path owns user-visible errors), and `Promise.resolve()`
      * also catches a *synchronous* throw from `save`. Returns when the write has
      * settled, so a caller that needs deterministic ordering can await it.
+     *
+     * A label whose delete has already committed is skipped: an autosave queued
+     * (or scheduled) before the tombstone landed must never recreate it.
      */
     const saveDoc = (
         doc: LabelDoc,
         repo: NonNullable<ReturnType<typeof get>['labelRepo']>,
     ): Promise<void> =>
         Promise.resolve()
-            .then(() => repo.save(doc))
-            .then(() => get().setLastAutoSaveAt(Date.now()))
+            .then(() => {
+                if (get().deletedLabelIds.includes(doc.meta.id)) return false;
+                return repo.save(doc).then(() => true);
+            })
+            .then((saved) => {
+                if (saved) get().setLastAutoSaveAt(Date.now());
+            })
             .catch(() => undefined);
+
+    /**
+     * Append a caller-owned repository write to the autosave chain, so an
+     * awaited flush (delete, doc switch) also serializes against it. Append,
+     * never reset to a fresh promise: the assignment must keep covering every
+     * earlier write. The chain stays non-rejecting; the returned promise still
+     * reports the caller's own failure.
+     */
+    const serializeRepositoryWrite = (write: () => Promise<void>): Promise<void> => {
+        const run = autosaveWrites.then(write);
+        autosaveWrites = run.catch(() => undefined);
+        return run;
+    };
 
     /** Cancel any pending debounce and forget its captured doc. */
     const cancelAutosave = (): void => {
@@ -319,7 +362,19 @@ export const createEditorSlice: StoreSlice = (set, get) => {
      * only decide whether background writes are allowed at all.
      */
     const scheduleAutosave = (doc: LabelDoc): void => {
+        // Displacement, not cancellation: a snapshot pending for a DIFFERENT
+        // label is that label's latest content, so commit it now instead of
+        // letting this edit replace (and silently drop) it. Same-label casts are
+        // unaffected: the older snapshot is superseded by the newer one.
+        const displaced = pendingAutosaveDoc;
         cancelAutosave();
+        if (displaced && displaced.meta.id !== doc.meta.id) {
+            const state = get();
+            // Same guards as the timer path: background writes must be allowed.
+            if (state.autoSave && state.view === 'editor' && state.labelRepo) {
+                enqueueAutosave(displaced, state.labelRepo);
+            }
+        }
         pendingAutosaveDoc = doc;
         autosaveTimer = setTimeout(() => {
             autosaveTimer = null;
@@ -871,6 +926,10 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             return flushAutosave();
         },
 
+        serializeRepositoryWrite: (write) => {
+            return serializeRepositoryWrite(write);
+        },
+
         removeNode: (id) => {
             const doc = get().currentDoc;
             if (!doc || !doc.nodes.some((node) => node.id === id)) return;
@@ -1082,12 +1141,17 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             // Re-stamp `updatedAt` (epoch seconds): the gallery sorts on it, and
             // restoring a snapshot must surface as fresh activity.
             previous.meta.updatedAt = nowSeconds();
-            set({
+            // Prune the selection to the restored doc (same invariant as the
+            // delete prune, D-83): a snapshot may not contain a node selected
+            // since, and a stale id inflates the transformer's selection count.
+            const nodeIds = new Set(previous.nodes.map((node) => node.id));
+            set((state) => ({
                 currentDoc: previous,
                 docPast: past,
                 // LIFO: `redoDoc` takes from the front.
                 docFuture: [current, ...state.docFuture],
-            });
+                selectedNodeIds: state.selectedNodeIds.filter((id) => nodeIds.has(id)),
+            }));
             scheduleAutosave(previous);
         },
 
@@ -1106,13 +1170,17 @@ export const createEditorSlice: StoreSlice = (set, get) => {
             transientBase = null;
             // Re-stamp on restore, matching `undoDoc` (gallery sort key).
             next.meta.updatedAt = nowSeconds();
-            set({
+            // Same selection prune as `undoDoc`: the restored doc defines which
+            // ids may stay selected (D-83).
+            const nodeIds = new Set(next.nodes.map((node) => node.id));
+            set((state) => ({
                 currentDoc: next,
                 docPast: current
                     ? [...state.docPast, current].slice(-DOC_HISTORY_CAP)
                     : state.docPast,
                 docFuture: rest,
-            });
+                selectedNodeIds: state.selectedNodeIds.filter((id) => nodeIds.has(id)),
+            }));
             scheduleAutosave(next);
         },
     };

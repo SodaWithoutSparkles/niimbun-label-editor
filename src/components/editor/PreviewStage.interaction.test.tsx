@@ -1093,6 +1093,141 @@ describe('PreviewStage P3 selection & resize semantics', () => {
             expect(text.scaleX()).toBeCloseTo(committedShrink(resolved, 1500, 100), 5);
         });
 
+        it('widens a fresh shrink box without touching its height', () => {
+            const stage = mountSelection([linesShrinkTextNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            const shrink = text.scaleX();
+
+            act(() => {
+                (transformer as unknown as { _movingAnchorName: string })._movingAnchorName = 'middle-right';
+                transformer.fire('transformstart', {});
+                text.scaleX(shrink * 1.5);
+                transformer.fire('transform', {});
+            });
+            act(() => {
+                transformer.fire('transformend', {});
+            });
+
+            const node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 't') as TextNode;
+            expect(node.size).toEqual({ w: 1500, h: 100 });
+            // The live layout equals the render's (`h / shrink`).
+            expect(text.width()).toBeCloseTo(1500, 5);
+            expect(text.height()).toBeCloseTo(100 / committedShrink(resolve(useStore.getState().currentDoc!)[0] as ResolvedText, 1500, 100), 5);
+        });
+
+        it('keeps a two-step resize exact (height, then width → 15×1.5 mm)', () => {
+            const stage = mountSelection([linesShrinkTextNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            const shrink = text.scaleX();
+            expect(shrink).toBeLessThan(1);
+
+            // Step 1: make it 1.5 mm tall (height-only).
+            act(() => {
+                (transformer as unknown as { _movingAnchorName: string })._movingAnchorName = 'bottom-center';
+                transformer.fire('transformstart', {});
+                text.scaleY(shrink * 1.5);
+                transformer.fire('transform', {});
+            });
+            act(() => {
+                transformer.fire('transformend', {});
+            });
+
+            let node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 't') as TextNode;
+            expect(node.size).toEqual({ w: 1000, h: 150 });
+            // F3: the live layout must be the committed render's, not the stale
+            // imperative height the next gesture would read back.
+            expect(text.height()).toBeCloseTo(150 / committedShrink(resolve(useStore.getState().currentDoc!)[0] as ResolvedText, 1000, 150), 5);
+
+            // Step 2: widen it to 15 mm (width-only, from the reconciled state).
+            act(() => {
+                (transformer as unknown as { _movingAnchorName: string })._movingAnchorName = 'middle-right';
+                transformer.fire('transformstart', {});
+                text.scaleX(text.scaleX() * 1.5);
+                transformer.fire('transform', {});
+            });
+            act(() => {
+                transformer.fire('transformend', {});
+            });
+
+            node = useStore.getState().currentDoc!.nodes.find((entry) => entry.id === 't') as TextNode;
+            // Pre-fix this committed 15×2.25 (the layout height 1350 leaked in).
+            expect(node.size).toEqual({ w: 1500, h: 150 });
+            expect(node.fontSize).toBe(300);
+            expect(text.scaleX()).toBeCloseTo(
+                committedShrink(resolve(useStore.getState().currentDoc!)[0] as ResolvedText, 1500, 150),
+                5,
+            );
+        });
+
+        it('normalizes a shrink text in a multi-selection commit (not 7.5×0.5)', () => {
+            const stage = mountSelection([linesShrinkTextNode('t'), rectNode('r', 2000, 0)], ['t', 'r']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const attached = transformer.nodes();
+            const text = attached.find((node) => node.getClassName() === 'Text') as Konva.Text;
+            const rect = attached.find((node) => node.getClassName() === 'Rect') as Konva.Rect;
+            expect(text, 'the Transformer must attach to the selected text').toBeTruthy();
+            expect(rect, 'the Transformer must attach to the selected rect').toBeTruthy();
+            const textShrink = text.scaleX();
+            expect(textShrink).toBeLessThan(1);
+
+            act(() => {
+                // A 50% widen applied to the whole selection: every node's live
+                // scale is `document scale × shrink`.
+                transformer.fire('transformstart', {});
+                text.scaleX(textShrink * 1.5);
+                rect.scaleX(1.5);
+                transformer.fire('transform', {});
+            });
+            act(() => {
+                transformer.fire('transformend', {});
+            });
+
+            const doc = useStore.getState().currentDoc!;
+            const node = doc.nodes.find((entry) => entry.id === 't') as TextNode;
+            // F4a: the text's live scale carries the shrink display factor, so
+            // the commit must divide it out (10 → 15 mm, height untouched).
+            expect(node.size).toEqual({ w: 1500, h: 100 });
+            expect(node.fontSize).toBe(300);
+            expect(node.transform.scaleX).toBe(1);
+            expect(doc.nodes.find((entry) => entry.id === 'r')!.size).toEqual({ w: 1500, h: 1000 });
+        });
+
+        it('restores the live shrink text on a cancelled resize (scale + layout)', () => {
+            const stage = mountSelection([linesShrinkTextNode('t')], ['t']);
+            const transformer = stage.findOne('Transformer') as Konva.Transformer;
+            const text = transformer.nodes()[0] as Konva.Text;
+            const shrink = text.scaleX();
+            const layout = { w: text.width(), h: text.height() };
+            expect(shrink).toBeLessThan(1);
+
+            act(() => {
+                (transformer as unknown as { _movingAnchorName: string })._movingAnchorName = 'middle-right';
+                transformer.fire('transformstart', {});
+                text.scaleX(shrink * 2);
+                text.scaleY(shrink * 2);
+                transformer.fire('transform', {});
+            });
+            // Sanity: the live recipe really grew the box before the cancel.
+            expect(text.width()).toBeGreaterThan(layout.w);
+
+            act(() => {
+                window.dispatchEvent(new Event('pointercancel'));
+            });
+
+            const doc = useStore.getState().currentDoc!;
+            const node = doc.nodes.find((entry) => entry.id === 't') as TextNode;
+            expect(node.size).toEqual({ w: 1000, h: 100 });
+            expect(useStore.getState().docPast).toHaveLength(0);
+            // F4b: the live node is back at the committed render — display
+            // scale AND layout box — not at raw scale 1 / doc height.
+            expect(text.scaleX()).toBeCloseTo(shrink, 5);
+            expect(text.scaleY()).toBeCloseTo(shrink, 5);
+            expect(text.width()).toBeCloseTo(layout.w, 5);
+            expect(text.height()).toBeCloseTo(layout.h, 5);
+        });
+
         it('restores the committed text box when a box-only resize is cancelled', () => {
             const stage = mountSelection([textNode('t')], ['t']);
             const transformer = stage.findOne('Transformer') as Konva.Transformer;

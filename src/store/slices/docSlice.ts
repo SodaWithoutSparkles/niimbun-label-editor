@@ -85,6 +85,10 @@ export const createDocSlice: StoreSlice = (set, get) => {
         // the reader share one slice.
         lastSavedAt: null,
         setLastSavedAt: (timestamp) => set({ lastSavedAt: timestamp }),
+        // Ids whose delete is in progress or has committed in this session.
+        // Never persisted; the autosave writer and the explicit save consult it
+        // so a late write can never recreate a deleted label.
+        deletedLabelIds: [],
         gallery: [],
         galleryLoading: true,
         storageError: false,
@@ -239,6 +243,9 @@ export const createDocSlice: StoreSlice = (set, get) => {
             // the rest of the slice's gallery behaviour.
             const repo = get().labelRepo;
             if (!doc || !repo) return false;
+            // A label whose delete already committed must never be rewritten:
+            // a stale editor save would resurrect it.
+            if (get().deletedLabelIds.includes(doc.meta.id)) return false;
             // Cancel/flush the pending debounced autosave first, and **await** it
             // so ordering is deterministic: the older captured doc must settle
             // before this newer explicit save, or a deferred autosave would land
@@ -248,12 +255,24 @@ export const createDocSlice: StoreSlice = (set, get) => {
             // Stamp fresh activity so the gallery sorts the explicit save to the
             // top; shallow-copy so the state update is observable.
             const updated: LabelDoc = { ...doc, meta: { ...doc.meta, updatedAt: Math.floor(Date.now() / 1000) } };
+            let wrote = false;
             try {
-                await repo.save(updated);
+                // Route the explicit write through the autosave chain: a delete
+                // that awaits `flushAutosave` then also waits for this write, so
+                // it can never land after `repo.remove` and recreate the label.
+                await get().serializeRepositoryWrite(async () => {
+                    // Execution-time tombstone check: the delete may have
+                    // committed while this write waited for the chain.
+                    if (get().deletedLabelIds.includes(updated.meta.id)) return;
+                    await repo.save(updated);
+                    wrote = true;
+                });
             } catch {
                 get().addNotification({ type: 'error', message: i18next.t('errors.saveFailed') });
                 return false;
             }
+            // The label was deleted while the write waited: nothing was saved.
+            if (!wrote) return false;
             // Identity guard: a committed edit while `repo.save` was in flight
             // replaced `currentDoc` with a newer object. Do not revert it to
             // `updated` (that would silently drop the edit and desync `docPast`
@@ -287,6 +306,16 @@ export const createDocSlice: StoreSlice = (set, get) => {
             // during the flush cannot wipe the newly opened doc's history, and
             // deleting some other label leaves the open doc's history intact.
             if (get().currentDoc?.meta.id === id) get().clearDocHistory();
+            // Tombstone BEFORE the remove (but after the flush, so the label's
+            // last edits still land): from this point any write that starts for
+            // this id — or reaches its execution-time check — is dropped, so a
+            // write can never finish after `repo.remove` and recreate the label.
+            // `flushAutosave` resolved into synchronous code, so nothing can
+            // interleave between this mark and the remove call.
+            const tombstoned = !get().deletedLabelIds.includes(id);
+            if (tombstoned) {
+                set((state) => ({ deletedLabelIds: [...state.deletedLabelIds, id] }));
+            }
             let removed = false;
             try {
                 await repo.remove(id);
@@ -295,6 +324,16 @@ export const createDocSlice: StoreSlice = (set, get) => {
                 openRequestId++;
                 removed = true;
             } catch {
+                // The remove failed. Roll the tombstone back only if the label
+                // still exists: a concurrent delete of the same id may have
+                // committed, and re-opening it for writes would let a late save
+                // recreate it.
+                const still = await repo.get(id);
+                if (tombstoned && still) {
+                    set((state) => ({
+                        deletedLabelIds: state.deletedLabelIds.filter((deletedId) => deletedId !== id),
+                    }));
+                }
                 // A failed delete must still refresh and report, not silently
                 // leave the card on screen with no feedback. It must also not
                 // close the document it failed to delete.

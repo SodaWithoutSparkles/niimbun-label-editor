@@ -169,6 +169,14 @@ export interface AppState {
     lastAutoSaveAt: number | null;
     setLastAutoSaveAt: (timestamp: number | null) => void;
     /**
+     * Ids whose delete is in progress or has committed in this session. Never
+     * persisted: an id is tombstoned before `repo.remove` (and rolled back if
+     * the remove fails). The autosave writer and the explicit save consult it,
+     * so a write that was already queued (or scheduled) when the delete started
+     * can never recreate the label.
+     */
+    deletedLabelIds: string[];
+    /**
      * "Default view orientation": when ON, a freshly opened portrait label is
      * shown on its side (long axis horizontal). When OFF (the default) the real
      * orientation is kept. Persisted with the other global settings; never
@@ -484,6 +492,13 @@ export interface AppState {
      * boundary callers may ignore the promise.
      */
     flushAutosave: () => Promise<void>;
+    /**
+     * Appends a caller-owned repository write (the explicit save) to the same
+     * chain `flushAutosave` awaits, so a delete can never race past it. The
+     * chain itself stays non-rejecting; the returned promise still reports the
+     * caller's own failure.
+     */
+    serializeRepositoryWrite: (write: () => Promise<void>) => Promise<void>;
     removeNode: (id: string) => void;
     /**
      * Deletes every selected node (and each one's descendants) as ONE undo

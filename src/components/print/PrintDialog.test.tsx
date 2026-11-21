@@ -2244,6 +2244,72 @@ describe('PrintDialog — red/black head clamp (D-77)', () => {
         expect(thumbnailOverrides()).toMatchObject({ maxHeadHm: 4800 });
     });
 
+    it('skips the ink sample when the active clamp guarantees no ink passes the head', async () => {
+        // The mock deliberately ignores `maxHeadHm` and returns the uncropped
+        // page with row 1 inked past the head: if the sampler walked the rows,
+        // it would prepare row 1 and raise the warning. The active clamp makes
+        // that verdict impossible (the real render is cropped to the head), so
+        // the walk must be skipped entirely.
+        const longText = (rowIndex: number) => `${rowIndex}:${'x'.repeat(rowIndex === 1 ? 200 : 1)}`;
+        const prepareRow = vi.fn(async (rowIndex: number): Promise<ResolveContext> => ({
+            overrides: new Map([['t', { text: longText(rowIndex), placeholder: false }]]),
+        }));
+        renderLabelPageMock.mockImplementation(async (doc: LabelDoc, ctx?: ResolveContext) => {
+            const text = ctx?.overrides?.get('t')?.text ?? '';
+            const dims = rasterDimensions(doc.label.backingW, doc.label.backingH, doc.label.dpi);
+            const data = new Uint8ClampedArray(dims.widthPx * dims.heightPx * 4).fill(255);
+            if (text.length > 50) {
+                for (let y = 0; y < dims.heightPx; y++) {
+                    for (let x = B1_PRO.printheadPixels!; x < dims.widthPx; x++) {
+                        const i = (y * dims.widthPx + x) * 4;
+                        data[i] = 0;
+                        data[i + 1] = 0;
+                        data[i + 2] = 0;
+                    }
+                }
+            }
+            return {
+                rgba: { data, width: dims.widthPx, height: dims.heightPx },
+                widthPx: dims.widthPx,
+                heightPx: dims.heightPx,
+                canvas: {
+                    toDataURL: () => 'data:image/png;base64,stub',
+                } as unknown as HTMLCanvasElement,
+            };
+        });
+
+        render(
+            <PrintDialog
+                open
+                onClose={vi.fn()}
+                doc={wideRedBlackDoc()}
+                csv={csvOf(3)}
+                prepareRow={prepareRow}
+                runner={new FakeRunner()}
+                printerStatus={headStatus()}
+            />,
+        );
+
+        fireEvent.change(pageColorSelect(), { target: { value: 'double' } });
+        expect(clampToggle()).toBeChecked();
+
+        // The clamped preview rendered through the shared path…
+        await waitFor(() =>
+            expect(
+                renderLabelPageMock.mock.calls.some(
+                    ([, , opts]) =>
+                        (opts as { maxHeadHm?: number } | undefined)?.maxHeadHm === 4800,
+                ),
+            ).toBe(true),
+        );
+        // …and no sampler walk followed (it would have prepared row 1).
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+        expect(prepareRow.mock.calls.some(([rowIndex]) => rowIndex === 1)).toBe(false);
+        expect(screen.queryByTestId('print-warning-overflow')).not.toBeInTheDocument();
+    });
+
     it('hides the toggle when the page already fits the head (48 mm)', () => {
         renderDialog({
             doc: atHeadDoc(),

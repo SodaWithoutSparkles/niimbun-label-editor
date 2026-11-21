@@ -353,6 +353,16 @@ describe('ObjectTab — rotation keeps one signed, wrapped angle', () => {
         expect(input.value).toBe('0.3');
         expect(stored()).toBe(0.1 + 0.2);
     });
+
+    it('keeps the Enter commit in agreement with the live edit at a tie (0.15 → 0.2)', () => {
+        const input = renderRotation(0);
+        fireEvent.change(input, { target: { value: '0.15' } });
+        // Live path: `normalizeRotDeg(0.15)` is 0.2. Enter must not fall back
+        // to 0.1 through binary division noise.
+        expect(stored()).toBe(0.2);
+        fireEvent.keyDown(input, { key: 'Enter' });
+        expect(stored()).toBe(0.2);
+    });
 });
 
 const textNode = (over: Record<string, unknown> = {}): Node =>

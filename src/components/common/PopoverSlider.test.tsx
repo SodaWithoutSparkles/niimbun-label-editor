@@ -242,24 +242,32 @@ describe('PopoverSlider circular commit', () => {
     const input = () => screen.getByRole('spinbutton') as HTMLInputElement;
 
     /**
-     * A signed rotation-like field: one range [-360, 360] at 0.1° that wraps by
-     * a full turn. The live keystroke path forwards raw values; Enter/blur goes
-     * through `handleConfirm`, which is the path under test here.
+     * A circular numeric field; defaults to a signed rotation-like range
+     * ([-360, 360] at 0.1°, wrapping by a full turn). The live keystroke path
+     * forwards raw values; Enter/blur goes through `handleConfirm`, the path
+     * under test here.
      */
-    const renderCircular = () => {
+    const renderCircular = (options: {
+        value?: number;
+        min?: number;
+        max?: number;
+        step?: number;
+        period?: number;
+    } = {}) => {
+        const { value = 0, min = -360, max = 360, step = 0.1, period = 360 } = options;
         const onChange = vi.fn();
         render(
             <PopoverSlider
-                value={0}
+                value={value}
                 onChange={onChange}
-                min={-360}
-                max={360}
-                step={0.1}
+                min={min}
+                max={max}
+                step={step}
                 circular
-                period={360}
+                period={period}
             />,
         );
-        fireEvent.click(screen.getByText('0'));
+        fireEvent.click(screen.getByText(String(value)));
         return onChange;
     };
 
@@ -287,6 +295,30 @@ describe('PopoverSlider circular commit', () => {
         expect(onChange).toHaveBeenLastCalledWith(-40);
     });
 
+    it('rounds a half-step tie like the live path (0.15 → 0.2)', () => {
+        const onChange = renderCircular();
+        fireEvent.change(input(), { target: { value: '0.15' } });
+        fireEvent.keyDown(input(), { key: 'Enter' });
+
+        expect(onChange).toHaveBeenLastCalledWith(0.2);
+    });
+
+    it('rounds a negative half-step tie toward +∞ (-0.15 → -0.1)', () => {
+        const onChange = renderCircular();
+        fireEvent.change(input(), { target: { value: '-0.15' } });
+        fireEvent.keyDown(input(), { key: 'Enter' });
+
+        expect(onChange).toHaveBeenLastCalledWith(-0.1);
+    });
+
+    it('rounds 0.25 up to 0.3, matching normalizeRotDeg', () => {
+        const onChange = renderCircular();
+        fireEvent.change(input(), { target: { value: '0.25' } });
+        fireEvent.keyDown(input(), { key: 'Enter' });
+
+        expect(onChange).toHaveBeenLastCalledWith(0.3);
+    });
+
     it('wraps an exact multiple to 0 (720 → 0, matching the live path)', () => {
         const onChange = renderCircular();
         fireEvent.change(input(), { target: { value: '720' } });
@@ -307,5 +339,49 @@ describe('PopoverSlider circular commit', () => {
         expect(committed).toBeLessThanOrEqual(360);
         // One period wrap, rounded to the field's 0.1° step.
         expect(committed).toBeCloseTo(1e308 % 360, 5);
+    });
+
+    it('rounds on an exponent-form step (1e-7: 0.00000015 → 0.0000002)', () => {
+        const onChange = renderCircular({ min: 0, max: 1, step: 1e-7, period: 1 });
+        fireEvent.change(input(), { target: { value: '0.00000015' } });
+        fireEvent.keyDown(input(), { key: 'Enter' });
+
+        const calls = onChange.mock.calls;
+        const committed = calls[calls.length - 1]![0] as number;
+        expect(committed).toBe(0.0000002);
+        expect(Number.isFinite(committed)).toBe(true);
+        // On the field's grid: an integer number of 1e-7 steps.
+        expect(committed / 1e-7).toBeCloseTo(2, 10);
+    });
+
+    it('keeps a degenerate exponent step finite instead of leaking NaN/Infinity', () => {
+        // `10 ** 320` overflows, so the scaled step is non-finite and the
+        // unscaled fallback runs; the committed value must remain a finite
+        // in-range number rather than NaN/Infinity.
+        const onChange = renderCircular({ min: 0, max: 1, step: 1e-320, period: 1 });
+        fireEvent.change(input(), { target: { value: '0.5' } });
+        fireEvent.keyDown(input(), { key: 'Enter' });
+
+        const calls = onChange.mock.calls;
+        const committed = calls[calls.length - 1]![0] as number;
+        expect(Number.isFinite(committed)).toBe(true);
+        expect(Number.isNaN(committed)).toBe(false);
+        expect(committed).toBeGreaterThanOrEqual(0);
+        expect(committed).toBeLessThanOrEqual(1);
+    });
+
+    it('keeps a sub-1e-100 step instead of collapsing it to 0 (1e-101: 5e-101)', () => {
+        // `toFixed(100)` cannot express this grid and prints "0"; the commit
+        // must keep the already-rounded value.
+        const onChange = renderCircular({ min: 0, max: 1, step: 1e-101, period: 1 });
+        fireEvent.change(input(), { target: { value: '5e-101' } });
+        fireEvent.keyDown(input(), { key: 'Enter' });
+
+        const calls = onChange.mock.calls;
+        const committed = calls[calls.length - 1]![0] as number;
+        expect(committed).not.toBe(0);
+        // Relative comparison: an absolute `toBeCloseTo` precision cannot
+        // express a 1e-101 magnitude (0 would pass any coarse threshold).
+        expect(Math.abs(committed - 5e-101)).toBeLessThanOrEqual(Number.EPSILON * 5e-101);
     });
 });

@@ -124,13 +124,23 @@ export const printheadOverflow = (
  * that is wider than the head still warns even though nothing would be clipped.
  * This predicate says whether any ink actually falls past `printheadPixels`.
  *
- * Axis mirrors {@link printheadOverflow}: `top`/`bottom` compare the width, so
- * the over-width region is the columns `x >= printheadPixels`; `left`/`right`
- * compare the height, so the over-height region is the rows
- * `y >= printheadPixels`. The scan **early-exits on the first ink pixel** and
- * returns `false` when there is no such region (`undefined` head size, or the
- * raster is not actually over) — a missing reported head size disables the
- * warning, exactly like the size check.
+ * The scan maps the encoder's clipped output columns back onto the **source**
+ * raster. The encoder feeds `top` unrotated, bakes 180° for `bottom`, rotates
+ * 90° CW for `left` (and 180° + 90° CW for `right`), and the printer keeps the
+ * start of every encoded row. The clipped source edge is therefore:
+ *
+ * - `top`    → right columns  `x >= head`      (no rotation)
+ * - `bottom` → left columns   `x <  W - head`  (180° flips the row)
+ * - `left`   → top rows       `y <  H - head`  (90° CW flips the column)
+ * - `right`  → bottom rows    `y >= head`      (180° + 90° CW)
+ *
+ * Scanning the source unrotated for all four directions (the old behaviour)
+ * missed a bottom/left page whose ink only reaches the far end after the bake:
+ * a top-left dot lands on encoded column 15 for `bottom` and `left`, i.e. past
+ * an 8-dot head. The cross-feed size comes from the source page; the scan
+ * **early-exits on the first ink pixel** and returns `false` when there is no
+ * such region (`undefined` head size, or the raster is not actually over) — a
+ * missing reported head size disables the warning, exactly like the size check.
  *
  * A pixel is ink when it is **not paper white** (`r !== 255 || g !== 255 ||
  * b !== 255`), mirroring `countInkPx`. The detector runs on the post-quantize
@@ -161,8 +171,9 @@ export const hasInkBeyondPrinthead = (
     const isInk = (base: number): boolean =>
         data[base] !== 255 || data[base + 1] !== 255 || data[base + 2] !== 255;
 
-    if (!sideways) {
-        // top/bottom: feed axis is height; the head spans the width.
+    // Each branch scans the source edge that the encoder clips for that feed
+    // direction (see the mapping above).
+    if (direction === 'top') {
         for (let y = 0; y < heightPx; y++) {
             const row = y * widthPx;
             for (let x = printheadPixels; x < widthPx; x++) {
@@ -171,7 +182,29 @@ export const hasInkBeyondPrinthead = (
         }
         return false;
     }
-    // left/right: feed axis is width; the head spans the height.
+    if (direction === 'bottom') {
+        // 180° bake: the source's left columns reach the far end of the row.
+        const clippedWidth = widthPx - printheadPixels;
+        for (let y = 0; y < heightPx; y++) {
+            const row = y * widthPx;
+            for (let x = 0; x < clippedWidth; x++) {
+                if (isInk((row + x) * 4)) return true;
+            }
+        }
+        return false;
+    }
+    if (direction === 'left') {
+        // 90° CW: the source's top rows become the far end of the encoded row.
+        const clippedHeight = heightPx - printheadPixels;
+        for (let y = 0; y < clippedHeight; y++) {
+            const row = y * widthPx;
+            for (let x = 0; x < widthPx; x++) {
+                if (isInk((row + x) * 4)) return true;
+            }
+        }
+        return false;
+    }
+    // right: 180° + 90° CW — the source's bottom rows reach the far end.
     for (let y = printheadPixels; y < heightPx; y++) {
         const row = y * widthPx;
         for (let x = 0; x < widthPx; x++) {

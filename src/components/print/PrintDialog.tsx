@@ -684,7 +684,12 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
     const [inkOverflow, setInkOverflow] = useState(false);
 
     useEffect(() => {
-        if (!open || !overflows || activeRows.length === 0) {
+        // D-77 invariant: with the head clamp active, `inkRenderOptions` carries
+        // `maxHeadHm`, so `renderLabelPage` crops every sampled page's cross-feed
+        // axis to at most the head width (`cropHeadAxis`). No page the sampler
+        // could produce holds ink beyond the head, so skip the renders instead
+        // of walking up to `INK_SAMPLE_ROW_CAP` already-cropped pages.
+        if (!open || !overflows || activeRows.length === 0 || headClampHm !== undefined) {
             setInkOverflow(false);
             return;
         }
@@ -738,6 +743,7 @@ export const PrintDialog: React.FC<PrintDialogProps> = ({
         capabilities?.printheadPixels,
         dims,
         parsedOffset,
+        headClampHm,
     ]);
 
     const showOverflow = overflows && inkOverflow;

@@ -159,27 +159,52 @@ describe('hasInkBeyondPrinthead', () => {
         expect(hasInkBeyondPrinthead(inkPage(100, 600, () => false), 'left', 567)).toBe(false);
     });
 
-    it('scans columns x >= head for top/bottom and finds ink only there', () => {
-        const withinHead = inkPage(600, 100, (x) => x < 567);
+    it('finds a top-left dot clipped by bottom and left feed (16×16, 8-dot head)', () => {
+        // Regression (F6): the encoder maps source (0,0) to output column 15 for
+        // both `bottom` (180° bake) and `left` (90° CW), so an 8-dot head clips
+        // it. Scanning the unrotated source missed it.
+        const topLeft = inkPage(16, 16, (x, y) => x === 0 && y === 0);
+        // `top` keeps the row start and `right` maps the row onto columns, so
+        // the dot is printable in both.
+        expect(hasInkBeyondPrinthead(topLeft, 'top', 8)).toBe(false);
+        expect(hasInkBeyondPrinthead(topLeft, 'right', 8)).toBe(false);
+        expect(hasInkBeyondPrinthead(topLeft, 'bottom', 8)).toBe(true);
+        expect(hasInkBeyondPrinthead(topLeft, 'left', 8)).toBe(true);
+    });
+
+    it('scans right columns for top and left columns for bottom', () => {
+        // 600-wide source, 567-dot head: 33 source columns fall past the head.
+        const rightEdge = inkPage(600, 100, (x) => x >= 567);
+        expect(hasInkBeyondPrinthead(rightEdge, 'top', 567)).toBe(true);
+        // `bottom` bakes 180°, so the source's LEFT columns reach the far end.
+        expect(hasInkBeyondPrinthead(rightEdge, 'bottom', 567)).toBe(false);
+
+        const leftEdge = inkPage(600, 100, (x) => x < 33);
+        expect(hasInkBeyondPrinthead(leftEdge, 'bottom', 567)).toBe(true);
+        expect(hasInkBeyondPrinthead(leftEdge, 'top', 567)).toBe(false);
+
+        // Ink strictly between the two clipped bands is printable either way.
+        const withinHead = inkPage(600, 100, (x) => x >= 33 && x < 567);
         expect(hasInkBeyondPrinthead(withinHead, 'top', 567)).toBe(false);
         expect(hasInkBeyondPrinthead(withinHead, 'bottom', 567)).toBe(false);
 
         const atBoundary = inkPage(600, 100, (x) => x === 567);
         expect(hasInkBeyondPrinthead(atBoundary, 'top', 567)).toBe(true);
-
-        const far = inkPage(600, 100, (x) => x === 599);
-        expect(hasInkBeyondPrinthead(far, 'top', 567)).toBe(true);
+        expect(hasInkBeyondPrinthead(atBoundary, 'bottom', 567)).toBe(false);
     });
 
-    it('scans rows y >= head for left/right (axis swap) and finds ink only there', () => {
-        // Ink below the head row only: no overflow under top/bottom, overflow
-        // under left/right.
-        const belowHeadRow = inkPage(100, 600, (_x, y) => y >= 567);
-        expect(hasInkBeyondPrinthead(belowHeadRow, 'top', 567)).toBe(false);
-        expect(hasInkBeyondPrinthead(belowHeadRow, 'left', 567)).toBe(true);
-        expect(hasInkBeyondPrinthead(belowHeadRow, 'right', 567)).toBe(true);
+    it('scans bottom rows for right and top rows for left (axis swap)', () => {
+        // 600-high source, 567-dot head: 33 source rows fall past the head.
+        const bottomEdge = inkPage(100, 600, (_x, y) => y >= 567);
+        expect(hasInkBeyondPrinthead(bottomEdge, 'right', 567)).toBe(true);
+        // `left` rotates 90° CW, so the source's TOP rows reach the far end.
+        expect(hasInkBeyondPrinthead(bottomEdge, 'left', 567)).toBe(false);
 
-        const withinHeadRows = inkPage(100, 600, (_x, y) => y < 567);
+        const topEdge = inkPage(100, 600, (_x, y) => y < 33);
+        expect(hasInkBeyondPrinthead(topEdge, 'left', 567)).toBe(true);
+        expect(hasInkBeyondPrinthead(topEdge, 'right', 567)).toBe(false);
+
+        const withinHeadRows = inkPage(100, 600, (_x, y) => y >= 33 && y < 567);
         expect(hasInkBeyondPrinthead(withinHeadRows, 'left', 567)).toBe(false);
         expect(hasInkBeyondPrinthead(withinHeadRows, 'right', 567)).toBe(false);
     });

@@ -651,6 +651,270 @@ describe('docSlice — deleteLabel awaits in-flight autosave', () => {
         expect(await repo.get('doc-1')).toBeNull();
     });
 
+    it('waits for an in-flight explicit save before removing the label (F2a)', async () => {
+        vi.useFakeTimers();
+        const docA = makeDoc([textNode('a')]);
+        const docB: LabelDoc = { ...makeDoc([textNode('b')]), meta: { ...docA.meta, id: 'doc-b' } };
+        const { repo, save, remove, docs, releaseSave } = makeStoredRepo();
+        docs.set('doc-1', docA);
+        docs.set('doc-b', docB);
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo(repo);
+        store.setState({ currentDoc: docA, view: 'editor', autoSave: true });
+
+        // Explicit save, gated in flight.
+        const saving = store.getState().saveCurrentLabel();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(save).toHaveBeenCalledTimes(1);
+
+        // Gallery boundary; A is no longer current, its explicit write still runs.
+        store.setState({ currentDoc: docB });
+        store.getState().setView('gallery');
+
+        const deleting = store.getState().deleteLabel('doc-1');
+        await vi.advanceTimersByTimeAsync(0);
+        // Remove must serialize behind the explicit save, not race it.
+        expect(remove).not.toHaveBeenCalled();
+
+        releaseSave();
+        await Promise.all([saving, deleting]);
+
+        expect(remove).toHaveBeenCalledTimes(1);
+        expect(save.mock.invocationCallOrder[0]!).toBeLessThan(remove.mock.invocationCallOrder[0]!);
+        // The settled write ran before the remove, so the label stays deleted.
+        expect(docs.has('doc-1')).toBe(false);
+        expect(await repo.get('doc-1')).toBeNull();
+    });
+
+    it('does not resurrect a label edited during its own delete (F2b)', async () => {
+        vi.useFakeTimers();
+        const docA = makeDoc([textNode('a')]);
+        const docB: LabelDoc = { ...makeDoc([textNode('b')]), meta: { ...docA.meta, id: 'doc-b' } };
+        let releaseRemove!: () => void;
+        const removeGate = new Promise<void>((resolve) => {
+            releaseRemove = resolve;
+        });
+        const remove = vi.fn(async (id: string): Promise<void> => {
+            await removeGate;
+            docs.delete(id);
+        });
+        const { repo, save, docs } = makeStoredRepo();
+        docs.set('doc-1', docA);
+        docs.set('doc-b', docB);
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo({ ...repo, remove });
+        store.getState().setDocAutosaveDelay(50);
+        store.setState({ currentDoc: docB, view: 'editor', autoSave: true });
+
+        // Delete the non-current A; the remove window stays open.
+        const deleting = store.getState().deleteLabel('doc-1');
+        await vi.advanceTimersByTimeAsync(0);
+        // A still exists during the gated remove: open and edit it, scheduling a
+        // debounced write that outlives the delete's flush.
+        expect(await store.getState().openLabel('doc-1')).toBe(docA);
+        store.getState().addNode(textNode('a2'));
+
+        releaseRemove();
+        await deleting;
+        expect(store.getState().deletedLabelIds).toContain('doc-1');
+
+        // The delete's own `setView('gallery')` flush already enqueued A's
+        // pending snapshot after the tombstone, which dropped it. Opening another
+        // doc has nothing left to flush, and no timer survives.
+        await store.getState().openLabel('doc-b');
+        await vi.advanceTimersByTimeAsync(50);
+
+        expect(save).not.toHaveBeenCalled();
+        expect(docs.has('doc-1')).toBe(false);
+        expect(await repo.get('doc-1')).toBeNull();
+    });
+
+    it('blocks a write started inside the remove window (tombstone before remove)', async () => {
+        vi.useFakeTimers();
+        const docA = makeDoc([textNode('a')]);
+        const docB: LabelDoc = { ...makeDoc([textNode('b')]), meta: { ...docA.meta, id: 'doc-b' } };
+        let releaseRemove!: () => void;
+        const removeGate = new Promise<void>((resolve) => {
+            releaseRemove = resolve;
+        });
+        const remove = vi.fn(async (id: string): Promise<void> => {
+            await removeGate;
+            docs.delete(id);
+        });
+        const { repo, docs } = makeStoredRepo();
+        const save = vi.fn(async (doc: LabelDoc): Promise<void> => {
+            docs.set(doc.meta.id, doc);
+        });
+        docs.set('doc-1', docA);
+        docs.set('doc-b', docB);
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo({ ...repo, remove, save });
+        store.getState().setDocAutosaveDelay(50);
+        store.setState({ currentDoc: docB, view: 'editor', autoSave: true });
+
+        // The tombstone is set before `repo.remove`, so the window is open with
+        // no write allowed for this id.
+        const deleting = store.getState().deleteLabel('doc-1');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(store.getState().deletedLabelIds).toContain('doc-1');
+        // A still exists in storage during the gate: open it and edit it.
+        expect(await store.getState().openLabel('doc-1')).toBe(docA);
+        store.getState().addNode(textNode('a2'));
+        // The debounce fires while the remove is still pending.
+        await vi.advanceTimersByTimeAsync(50);
+
+        expect(save).not.toHaveBeenCalled();
+
+        releaseRemove();
+        await deleting;
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(save).not.toHaveBeenCalled();
+        expect(docs.has('doc-1')).toBe(false);
+        expect(await repo.get('doc-1')).toBeNull();
+    });
+
+    it('a failed remove leaves the label writable (tombstone rolled back)', async () => {
+        vi.useFakeTimers();
+        const docA = makeDoc([textNode('a')]);
+        const remove = vi.fn(async (): Promise<void> => {
+            throw new Error('remove failed');
+        });
+        const { repo, docs } = makeStoredRepo();
+        const save = vi.fn(async (doc: LabelDoc): Promise<void> => {
+            docs.set(doc.meta.id, doc);
+        });
+        docs.set('doc-1', docA);
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo({ ...repo, remove, save });
+        store.getState().setDocAutosaveDelay(50);
+        store.setState({ currentDoc: docA, view: 'editor', autoSave: true });
+
+        await store.getState().deleteLabel('doc-1');
+
+        // The record still exists, so the tombstone must be gone.
+        expect(store.getState().deletedLabelIds).not.toContain('doc-1');
+        store.getState().addNode(textNode('a2'));
+        await vi.advanceTimersByTimeAsync(50);
+
+        expect(save).toHaveBeenCalledTimes(1);
+        expect(docs.get('doc-1')?.nodes).toHaveLength(2);
+    });
+
+    it('skips an explicit save whose execution lands after the delete tombstone (nit)', async () => {
+        vi.useFakeTimers();
+        const doc = makeDoc([textNode('a')]);
+        let releaseRemove!: () => void;
+        const removeGate = new Promise<void>((resolve) => {
+            releaseRemove = resolve;
+        });
+        const remove = vi.fn(async (id: string): Promise<void> => {
+            await removeGate;
+            docs.delete(id);
+        });
+        const { repo, save, docs } = makeStoredRepo();
+        docs.set('doc-1', doc);
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo({ ...repo, remove });
+        store.setState({ currentDoc: doc, view: 'editor' });
+
+        // `saveCurrentLabel` passes its entry guard, then waits on the flush.
+        const saving = store.getState().saveCurrentLabel();
+        // Same turn: the delete's flush resolves into the tombstone before the
+        // save's serialized body reaches its execution-time check.
+        const deleting = store.getState().deleteLabel('doc-1');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(store.getState().deletedLabelIds).toContain('doc-1');
+
+        releaseRemove();
+        const [saved] = await Promise.all([saving, deleting]);
+
+        expect(saved).toBe(false);
+        expect(store.getState().lastSavedAt).toBeNull();
+        expect(save).not.toHaveBeenCalled();
+        expect(docs.has('doc-1')).toBe(false);
+    });
+
+    it('keeps the tombstone when a concurrent delete of the same id succeeded (nit)', async () => {
+        vi.useFakeTimers();
+        const doc = makeDoc([textNode('a')]);
+        const { repo, docs } = makeStoredRepo();
+        let rejectFirst!: (error: Error) => void;
+        const remove = vi.fn((): Promise<void> => {
+            if (remove.mock.calls.length === 1) {
+                return new Promise<void>((_resolve, reject) => {
+                    rejectFirst = reject;
+                });
+            }
+            docs.delete('doc-1');
+            return Promise.resolve();
+        });
+        docs.set('doc-1', doc);
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo({ ...repo, remove });
+        store.setState({ view: 'gallery' });
+
+        const first = store.getState().deleteLabel('doc-1');
+        await vi.advanceTimersByTimeAsync(0);
+        // The second delete takes the "already tombstoned" path and succeeds.
+        await store.getState().deleteLabel('doc-1');
+        expect(docs.has('doc-1')).toBe(false);
+
+        rejectFirst(new Error('remove failed'));
+        await first;
+
+        // The failed first delete must not un-tombstone a label the concurrent
+        // delete already removed.
+        expect(store.getState().deletedLabelIds).toContain('doc-1');
+    });
+
+    it('chains an enqueued autosave behind a serialized explicit save (F2)', async () => {
+        vi.useFakeTimers();
+        const doc = makeDoc([textNode('a')]);
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const { repo, docs } = makeStoredRepo();
+        const save = vi.fn(async (written: LabelDoc): Promise<void> => {
+            // Hold only the explicit (first) write open.
+            if (save.mock.calls.length === 1) await gate;
+            docs.set(written.meta.id, written);
+        });
+        const remove = vi.fn(async (id: string): Promise<void> => {
+            docs.delete(id);
+        });
+        docs.set('doc-1', doc);
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo({ ...repo, save, remove });
+        store.getState().setDocAutosaveDelay(50);
+        store.setState({ currentDoc: doc, view: 'editor', autoSave: true });
+
+        // Explicit save enters the chain and is held open.
+        const saving = store.getState().saveCurrentLabel();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(save).toHaveBeenCalledTimes(1);
+
+        // A debounced autosave fires behind it: it must join the same chain.
+        store.getState().addNode(textNode('b'));
+        await vi.advanceTimersByTimeAsync(50);
+        expect(save).toHaveBeenCalledTimes(1);
+
+        const deleting = store.getState().deleteLabel('doc-1');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(remove).not.toHaveBeenCalled();
+
+        release();
+        const flushing = store.getState().flushAutosave();
+        await Promise.all([saving, flushing, deleting]);
+
+        // Both writes settled, in order, before the remove.
+        expect(save).toHaveBeenCalledTimes(2);
+        expect(remove).toHaveBeenCalledTimes(1);
+        expect(save.mock.invocationCallOrder[1]!).toBeLessThan(remove.mock.invocationCallOrder[0]!);
+        expect(docs.has('doc-1')).toBe(false);
+    });
+
     it('navigates to the gallery when the deleted label was the open document', async () => {
         const doc = makeDoc([textNode('a')]);
         const { repo, docs } = makeStoredRepo();
@@ -715,8 +979,11 @@ describe('docSlice — deleteLabel awaits in-flight autosave', () => {
         store.setState({ view: 'gallery' });
 
         const opening = store.getState().openLabel('doc-1');
-        await store.getState().deleteLabel('doc-1');
+        // The failed-remove path re-reads the record before rolling the
+        // tombstone back, so both waits share the gated `get`.
+        const deleting = store.getState().deleteLabel('doc-1');
         releaseGet();
+        await deleting;
 
         // The record still exists, so the open must commit.
         expect(await opening).toBe(doc);
@@ -900,5 +1167,89 @@ describe('docSlice — autosave survives a doc switch', () => {
         const reopened = await store.getState().openLabel('doc-1');
         expect(reopened?.nodes).toHaveLength(2);
         expect(reopened?.nodes).toEqual(edited.nodes);
+    });
+
+    it('commits the displaced snapshot when another doc is edited after the switch (F1)', async () => {
+        vi.useFakeTimers();
+        const docA = makeDoc([textNode('a')]);
+        const docB: LabelDoc = { ...makeDoc([textNode('b')]), meta: { ...docA.meta, id: 'doc-b' } };
+        let releaseGet!: () => void;
+        const getGate = new Promise<void>((resolve) => {
+            releaseGet = resolve;
+        });
+        const { repo, docs } = makeStoredRepo();
+        // Delay only B's read, keeping A current while the edit is made.
+        const get = vi.fn(async (id: string): Promise<LabelDoc | null> => {
+            if (id === 'doc-b') await getGate;
+            return docs.get(id) ?? null;
+        });
+        const save = vi.fn(async (doc: LabelDoc): Promise<void> => {
+            docs.set(doc.meta.id, doc);
+        });
+        docs.set('doc-1', docA);
+        docs.set('doc-b', docB);
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo({ ...repo, get, save });
+        store.getState().setDocAutosaveDelay(50);
+        store.setState({ currentDoc: docA, view: 'editor', autoSave: true });
+
+        const opening = store.getState().openLabel('doc-b');
+        await vi.advanceTimersByTimeAsync(0);
+        // A's debounce is scheduled during the read, after openLabel's flush.
+        store.getState().addNode(textNode('a2'));
+        releaseGet();
+        await opening;
+        expect(store.getState().currentDoc).toBe(docB);
+        // Editing B inside A's debounce window used to cancel A's snapshot.
+        store.getState().addNode(textNode('b2'));
+        await vi.advanceTimersByTimeAsync(0);
+
+        // The displaced snapshot is committed immediately, with A's edit.
+        expect(save.mock.calls.some((call) => call[0].meta.id === 'doc-1')).toBe(true);
+        expect(docs.get('doc-1')?.nodes).toHaveLength(2);
+
+        // Re-opening A reads the edit back.
+        const reopened = await store.getState().openLabel('doc-1');
+        expect(reopened?.nodes).toHaveLength(2);
+    });
+
+    it('keeps one pending snapshot per label while the chain is stalled (blocking)', async () => {
+        vi.useFakeTimers();
+        const docA = makeDoc([textNode('a')]);
+        const docB: LabelDoc = { ...makeDoc([textNode('b')]), meta: { ...docA.meta, id: 'doc-b' } };
+        let releaseChain!: () => void;
+        const chainGate = new Promise<void>((resolve) => {
+            releaseChain = resolve;
+        });
+        const { repo, docs } = makeStoredRepo();
+        const save = vi.fn(async (doc: LabelDoc): Promise<void> => {
+            docs.set(doc.meta.id, doc);
+        });
+        docs.set('doc-1', docA);
+        docs.set('doc-b', docB);
+        const store = createAppStore(makeStorage());
+        store.getState().setLabelRepo({ ...repo, save });
+        store.getState().setDocAutosaveDelay(50);
+        store.setState({ currentDoc: docA, view: 'editor', autoSave: true });
+
+        // Stall the shared chain so the writer loop cannot start yet.
+        void store.getState().serializeRepositoryWrite(() => chainGate);
+        await vi.advanceTimersByTimeAsync(0);
+
+        // A's debounce fires and is flush-enqueued into the stalled loop.
+        store.getState().addNode(textNode('a2'));
+        void store.getState().flushAutosave();
+        // B becomes current (as openLabel would) and its debounce fires too.
+        store.setState({ currentDoc: docB });
+        store.getState().addNode(textNode('b2'));
+        await vi.advanceTimersByTimeAsync(50);
+
+        releaseChain();
+        await store.getState().flushAutosave();
+
+        // Both labels were queued at once: A must not be overwritten by B.
+        expect(save.mock.calls.map((call) => call[0].meta.id)).toEqual(['doc-1', 'doc-b']);
+        expect(docs.get('doc-1')?.nodes).toHaveLength(2);
+        expect(docs.get('doc-b')?.nodes).toHaveLength(2);
     });
 });
